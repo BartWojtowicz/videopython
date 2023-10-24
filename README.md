@@ -16,7 +16,7 @@ pip3 install -r requirements.txt
 
 ### Running Unit Tests
 ```bash
-PYTHONPATH=. pytest
+PYTHONPATH=. pytest videopython
 ```
 
 ### How to download stock data?
