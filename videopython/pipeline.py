@@ -5,11 +5,11 @@ from videopython.video import Video
 # Early idea, should probably be rethinked a little
 class TransformationPipeline:
 
-    def __init__(self):
+    def __init__(self, transformations: Transformation | None):
         """Initializes pipeline."""
-        self.transformations = []
+        self.transformations = transformations if transformations else []
 
-    def add(self, transformation: Transformation):
+    def add_transformation(self, transformation: Transformation):
         """Adds transformation to pipeline.
 
         Args:
@@ -27,7 +27,7 @@ class TransformationPipeline:
             txt += f"{i + 1}. {transformation}\n"
         return txt
 
-    def run_pipeline(self, video: Video) -> Video:
+    def transform(self, video: Video) -> Video:
         """Applies pipeline to video.
 
         Args:

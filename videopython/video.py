@@ -1,12 +1,10 @@
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import ffmpeg
 import cv2
 import numpy as np
 
-from videopython.project_config import LocationConfig
 from videopython.utils.common import generate_random_video_name
 
 
@@ -116,7 +114,7 @@ class Video:
     def is_loaded(self) -> bool:
         return self.fps and self.frames
 
-    def split(self, frame_idx: Optional[int] = None):
+    def split(self, frame_idx: int | None = None):
         if frame_idx:
             assert 0 <= frame_idx <= len(self.frames)
         else:
@@ -135,16 +133,14 @@ class Video:
         )
         return canvas
 
-    def save(self, output_dir: Optional[Path] = None):
-        """Transforms the video and saves into `data/new_videos/`.
+    def save(self, output_dir: Path | str = None):
+        """Transforms the video and saves into `output_dir`.
 
         Args:
-            output_path: Output path for transformed video.
+            output_path: Output directory for transformed video.
         """
-        if not output_dir:
-            output_dir = LocationConfig.project_root
         vid_name = generate_random_video_name()
-        output_path = str(output_dir / vid_name)
+        output_path = str(Path(output_dir) / vid_name)
         canvas = self._prepare_new_canvas(output_path)
         for frame in self.frames[:, :, :, ::-1]:
             canvas.write(frame)
