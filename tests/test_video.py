@@ -1,7 +1,8 @@
 import pytest
 from dataclasses import dataclass
 
-from videopython.video import VideoMetadata, Video
+from videopython.base import Video
+from videopython.base.video import VideoMetadata
 from videopython.project_config import LocationConfig
 
 

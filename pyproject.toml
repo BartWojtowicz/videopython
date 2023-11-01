@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "videopython"
+version = "0.0.1"
+description = "Minimal video generation and processing library."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+keywords = ["video", "movie", "opencv", "generation", "editing"]
+
+authors = [
+  {name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
+  {name = "Bartosz Rudnikowicz", email = "bartoszrudnikowicz840@gmail.com" }, 
+  {name = "Piotr Pukisz", email = "piotr.pukisz@gmail.com" },
+]
+
+classifiers = [
+  "License :: OSI Approved :: Apache Software License v2.0",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Operating System :: OS Independent",
+]
+
+dependencies = [
+    "click>=8.1.7",
+    "ffmpeg-python>=0.2.0",
+    "numpy>=1.25.2",
+    "opencv-python>=4.7.0.68",
+    "pytest>=7.4.0"
+]
+
+[project.urls]  # Optional
+"Homepage" = "https://github.com/bartwojtowicz/videopython/"
+"Bug Reports" = "https://github.com/bartwojtowicz/videopython/issues"
+"Source" = "https://github.com/bartwojtowicz/videopython/"

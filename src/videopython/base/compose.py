@@ -1,6 +1,6 @@
-from videopython.transitions import Transition
-from videopython.video import Video
-from videopython.pipeline import TransformationPipeline
+from videopython.base.transitions import Transition
+from videopython.base.video import Video
+from videopython.base.pipeline import TransformationPipeline
 
 
 class VideoComposer:

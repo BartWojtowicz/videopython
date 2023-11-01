@@ -5,7 +5,7 @@ from typing import final
 
 import numpy as np
 
-from videopython.video import Video
+from videopython.base.video import Video
 
 
 class Transitions(Enum):

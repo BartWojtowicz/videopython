@@ -1,5 +1,5 @@
-from videopython.transforms import Transformation
-from videopython.video import Video
+from videopython.base.transforms import Transformation
+from videopython.base.video import Video
 
 
 # Early idea, should probably be rethinked a little

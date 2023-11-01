@@ -26,4 +26,4 @@ jobs:
       run: pip install -r requirements.txt
 
     - name: Run tests
-      run: PYTHONPATH=. pytest videopython
+      run: PYTHONPATH=./src/ pytest
