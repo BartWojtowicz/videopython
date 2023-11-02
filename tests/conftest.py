@@ -2,13 +2,14 @@ import pytest
 import numpy as np
 
 from videopython.base import Video
+from videopython.project_config import LocationConfig
 
 
 @pytest.fixture
-def video_form_path(video_path: str):
-    return Video.from_video(video_path)
+def short_video():
+    return Video.from_path(str(LocationConfig.test_videos_dir / "fast_benchmark.mp4"))
 
 
 @pytest.fixture
-def video_from_frames(frames: np, ndarray, fps: int):
-    return Video.from_frames(frames, fps)
+def long_video():
+    return Video.from_path(str(LocationConfig.test_videos_dir / "slow_benchmark.mp4"))
