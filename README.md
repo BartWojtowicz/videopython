@@ -37,7 +37,7 @@ transformed_video.save("./data/exported/")
 
 ### Running Unit Tests
 ```bash
-PYTHONPATH=. pytest videopython
+PYTHONPATH=./src/ pytest
 ```
 
 ### How to download stock data?
