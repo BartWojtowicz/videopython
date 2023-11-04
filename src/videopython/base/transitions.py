@@ -48,8 +48,7 @@ class FadeTransition(Transition):
         t = len(frames1)
         linspace = np.linspace(0, 1, t, dtype=np.float16).reshape(t, 1, 1, 1)
         transitioned_frames = (
-            frames1 * (np.ones_like(linspace, dtype=np.float16) - linspace)
-            + frames2 * linspace
+            frames1 * (np.ones_like(linspace, dtype=np.float16) - linspace) + frames2 * linspace
         )
         return transitioned_frames.astype(np.uint8)
 
@@ -64,7 +63,8 @@ class FadeTransition(Transition):
             videos[0].frames[-effect_time_fps:], videos[1].frames[:effect_time_fps]
         )
 
-        transition_video = Video.from_frames(transition, video_fps)
-        videos[0].frames = videos[0].frames[:-effect_time_fps]
-        videos[1].frames = videos[1].frames[effect_time_fps:]
-        return videos[0] + transition_video + videos[1]
+        return (
+            videos[0][:-effect_time_fps]
+            + Video.from_frames(transition, video_fps)
+            + videos[1][effect_time_fps:]
+        )
