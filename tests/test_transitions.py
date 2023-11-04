@@ -4,8 +4,6 @@ import pytest
 from videopython.base.transitions import FadeTransition
 from videopython.base import Video
 
-from conftest import short_video, long_video
-
 
 def test_fade_transition_length(short_video, long_video):
     transition_short = FadeTransition(effect_time_seconds=1)
