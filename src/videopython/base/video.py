@@ -4,13 +4,17 @@ from pathlib import Path
 import ffmpeg
 import cv2
 import numpy as np
+from diffusers import DiffusionPipeline, DPMSolverMultistepScheduler
+from diffusers.utils import export_to_video
 
+import torch
 from videopython.utils.common import generate_random_video_name
 
 
 @dataclass
 class VideoMetadata:
     """Class to store video metadata."""
+
     height: int
     width: int
     fps: int
@@ -18,7 +22,9 @@ class VideoMetadata:
     total_seconds: float
 
     def __str__(self):
-        return f"{self.height}x{self.width} @ {self.fps}fps, {self.total_seconds} seconds"
+        return (
+            f"{self.height}x{self.width} @ {self.fps}fps, {self.total_seconds} seconds"
+        )
 
     def __repr__(self) -> str:
         return self.__str__()
@@ -73,9 +79,11 @@ class VideoMetadata:
         )
 
     def can_be_merged_with(self, other_format: "VideoMetadata") -> bool:
-        return (self.height == other_format.height and
-                self.width == other_format.width and
-                round(self.fps) == round(other_format.fps))
+        return (
+            self.height == other_format.height
+            and self.width == other_format.width
+            and round(self.fps) == round(other_format.fps)
+        )
 
     def can_be_downsampled_to(self, target_format: "VideoMetadata") -> bool:
         """Checks if video can be downsampled to `target_format`.
@@ -86,14 +94,15 @@ class VideoMetadata:
         Returns:
             True if video can be downsampled to `target_format`, False otherwise.
         """
-        return (self.height >= target_format.height and
-                self.width >= target_format.width and
-                round(self.fps) >= round(target_format.fps) and
-                self.total_seconds >= target_format.total_seconds)
+        return (
+            self.height >= target_format.height
+            and self.width >= target_format.width
+            and round(self.fps) >= round(target_format.fps)
+            and self.total_seconds >= target_format.total_seconds
+        )
 
 
 class Video:
-
     def __init__(self):
         self.fps = None
         self.frames = None
@@ -111,6 +120,20 @@ class Video:
         new_vid.fps = fps
         return new_vid
 
+    @classmethod
+    def from_prompt(cls, prompt: str):
+        # TODO: Make it model independent
+        pipe = DiffusionPipeline.from_pretrained(
+            "damo-vilab/text-to-video-ms-1.7b",
+            torch_dtype=torch.float16,
+            variant="fp16",
+        )
+        pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
+        pipe.enable_model_cpu_offload()
+        video_frames = pipe(prompt, num_inference_steps=25).frames
+
+        return Video.from_frames(video_frames, fps=8)
+
     def is_loaded(self) -> bool:
         return self.fps and self.frames
 
@@ -120,8 +143,10 @@ class Video:
         else:
             frame_idx = len(self.frames) // 2
 
-        return (self.from_frames(self.frames[:frame_idx], self.fps),
-                self.from_frames(self.frames[frame_idx:], self.fps))
+        return (
+            self.from_frames(self.frames[:frame_idx], self.fps),
+            self.from_frames(self.frames[frame_idx:], self.fps),
+        )
 
     def _prepare_new_canvas(self, output_path: str):
         """Prepares a new `self._transformed_video` canvas for cut video."""
@@ -154,26 +179,31 @@ class Video:
         elif self.frame_shape != other.frame_shape:
             raise ValueError(
                 "Resolutions of the images do not match: "
-                f"{self.frame_shape} not compatible with {other.frame_shape}.")
+                f"{self.frame_shape} not compatible with {other.frame_shape}."
+            )
 
-        self.frames = np.concatenate([self.frames, other.frames],
-                                     axis=0).astype(np.uint8)
+        self.frames = np.concatenate([self.frames, other.frames], axis=0).astype(
+            np.uint8
+        )
         return self
 
     @staticmethod
     def _load_video_from_path(path: str):
         """Loads frames and fps information from video file.
-        
+
         Args:
             path: Path to video file.
         """
         metadata = VideoMetadata.from_video(path)
-        ffmpeg_out, _ = (ffmpeg.input(path).output(
-            "pipe:", format="rawvideo", pix_fmt="rgb24",
-            loglevel="quiet").run(capture_stdout=True))
+        ffmpeg_out, _ = (
+            ffmpeg.input(path)
+            .output("pipe:", format="rawvideo", pix_fmt="rgb24", loglevel="quiet")
+            .run(capture_stdout=True)
+        )
 
         frames = np.frombuffer(ffmpeg_out, np.uint8).reshape(
-            [-1, metadata.height, metadata.width, 3])
+            [-1, metadata.height, metadata.width, 3]
+        )
         fps = metadata.fps
         return frames, fps
 
