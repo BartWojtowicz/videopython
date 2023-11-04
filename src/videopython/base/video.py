@@ -191,7 +191,7 @@ class Video:
             )
 
         return self.from_frames(
-            np.concatenate([self.frames, other.frames], axis=0).astype(np.uint8), fps=self.fps
+            np.r_['0,2', self.frames, other.frames], fps=self.fps
         )
 
     @staticmethod
