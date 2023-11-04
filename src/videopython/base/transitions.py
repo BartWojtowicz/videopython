@@ -46,12 +46,11 @@ class FadeTransition(Transition):
     def fade(self, frames1, frames2):
         assert len(frames1) == len(frames2)
         t = len(frames1)
-
         # Calculate transitioned frames using weighted average
         transitioned_frames = (
-            frames1 * (t - np.arange(t))[:, np.newaxis, np.newaxis, np.newaxis]
+            frames1 * (t - np.arange(t) - 1)[:, np.newaxis, np.newaxis, np.newaxis]
             + frames2 * np.arange(t)[:, np.newaxis, np.newaxis, np.newaxis]
-        ) / t
+        ) / (t - 1)
 
         return transitioned_frames.astype(np.uint8)
 
