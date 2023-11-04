@@ -1,8 +1,7 @@
 import numpy as np
-import pytest
 
-from videopython.base import Video
 from videopython.base.transitions import FadeTransition, InstantTransition
+from videopython.base.video import Video
 
 
 def test_fade_transition_length(short_video):

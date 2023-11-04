@@ -2,8 +2,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from videopython.base import Video
-from videopython.base.video import VideoMetadata
+from videopython.base.video import Video, VideoMetadata
 from videopython.project_config import LocationConfig
 
 
