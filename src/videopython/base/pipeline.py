@@ -4,7 +4,6 @@ from videopython.base.video import Video
 
 # Early idea, should probably be rethinked a little
 class TransformationPipeline:
-
     def __init__(self, transformations: Transformation | None):
         """Initializes pipeline."""
         self.transformations = transformations if transformations else []

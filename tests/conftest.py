@@ -1,5 +1,5 @@
-import pytest
 import numpy as np
+import pytest
 
 from videopython.base import Video
 from videopython.project_config import LocationConfig

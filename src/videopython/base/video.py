@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-import ffmpeg
 import cv2
+import ffmpeg
 import numpy as np
 
 from videopython.utils.common import generate_random_video_name
@@ -114,6 +114,9 @@ class Video:
         new_vid.frames = frames
         new_vid.fps = fps
         return new_vid
+
+    def copy(self):
+        return Video().from_frames(self.frames.copy(), self.fps)
 
     def is_loaded(self) -> bool:
         return self.fps and self.frames

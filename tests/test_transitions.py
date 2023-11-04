@@ -1,20 +1,16 @@
 import numpy as np
 import pytest
 
-from videopython.base.transitions import FadeTransition, InstantTransition
 from videopython.base import Video
+from videopython.base.transitions import FadeTransition, InstantTransition
 
 
-def test_fade_transition_length(short_video, long_video):
+def test_fade_transition_length(short_video):
+    org_length = short_video.frames.shape[0]
     transition_short = FadeTransition(effect_time_seconds=1)
-    transition_long = FadeTransition(effect_time_seconds=3)
+    result_short = transition_short.apply((short_video, short_video.copy()))
 
-    # Apply the transition to the videos
-    result_short = transition_short.apply((short_video, short_video))
-    result_long = transition_long.apply((long_video, long_video))
-
-    assert short_video.frames.shape[0] == result_short.frames.shape[0]
-    assert long_video.frames.shape[0] == result_long.frames.shape[0]
+    assert result_short.frames.shape[0] == 2 * org_length - 1 * short_video.fps
 
 
 def test_fade_correctness():

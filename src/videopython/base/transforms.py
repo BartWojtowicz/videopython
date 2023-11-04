@@ -20,7 +20,7 @@ class CutFrames(Transformation):
 
     def __init__(self, start: int, end: int):
         """Initializes transformation.
-        
+
         Args:
             start: Start index of frames to cut.
             end: End index of frames to cut.
@@ -30,7 +30,7 @@ class CutFrames(Transformation):
 
     def apply(self, frames: np.ndarray) -> np.ndarray:
         """Applies transformation to frames.
-        
+
         Args:
             frames: Frames to transform.
 
@@ -41,7 +41,7 @@ class CutFrames(Transformation):
             raise ValueError(
                 f"Video has only {frames.shape[0]} frames, but {self.end} are required"
             )
-        return frames[self.start:self.end]
+        return frames[self.start : self.end]
 
 
 class CutSeconds(Transformation):
@@ -49,7 +49,7 @@ class CutSeconds(Transformation):
 
     def __init__(self, start: int, end: int, fps: int):
         """Initializes transformation.
-        
+
         Args:
             start: Start index of frames to cut.
             end: End index of frames to cut.
@@ -60,7 +60,7 @@ class CutSeconds(Transformation):
 
     def apply(self, frames: np.ndarray) -> np.ndarray:
         """Applies transformation to frames.
-        
+
         Args:
             frames: Frames to transform.
 
@@ -71,7 +71,7 @@ class CutSeconds(Transformation):
             raise ValueError(
                 f"Video has only {frames.shape[0]} frames, but {self.end} are required"
             )
-        return frames[self.start:self.end]
+        return frames[self.start : self.end]
 
 
 class CropStrategy(Enum):
@@ -82,11 +82,11 @@ class CropStrategy(Enum):
 class CropVideo(Transformation):
     """Crops video to desired shape."""
 
-    def __init__(self,
-                 output_shape: tuple[int, int],
-                 strategy: CropStrategy = CropStrategy.CENTER):
+    def __init__(
+        self, output_shape: tuple[int, int], strategy: CropStrategy = CropStrategy.CENTER
+    ):
         """Initializes transformation.
-        
+
         Args:
             output_shape: Expected output shape.
             strategy: Cropping strategy. Can be "center", "left".
@@ -96,15 +96,14 @@ class CropVideo(Transformation):
 
     def apply(self, frames: np.ndarray) -> np.ndarray:
         """Applies transformation to frames.
-        
+
         Args:
             frames: Frames to transform.
 
         Returns:
             Transformed frames.
         """
-        if (frames.shape[1] > self.output_shape[0] or
-                frames.shape[2] > self.output_shape[1]):
+        if frames.shape[1] > self.output_shape[0] or frames.shape[2] > self.output_shape[1]:
             raise ValueError(
                 f"Input shape {frames.shape} is bigger than output shape {self.output_shape}"
             )
@@ -119,7 +118,7 @@ class CropVideo(Transformation):
 
     def _crop_center(self, frames: np.ndarray) -> np.ndarray:
         """Crops frames from center.
-        
+
         Args:
             frames: Frames to transform.
 
@@ -130,12 +129,16 @@ class CropVideo(Transformation):
         target_height, target_width = self.output_shape
         start_height = (height - target_height) // 2
         start_width = (width - target_width) // 2
-        return frames[:, start_height:start_height + target_height,
-                      start_width:start_width + target_width, :]
+        return frames[
+            :,
+            start_height : start_height + target_height,
+            start_width : start_width + target_width,
+            :,
+        ]
 
     def _crop_left(self, frames: np.ndarray) -> np.ndarray:
         """Crops frames from left.
-        
+
         Args:
             frames: Frames to transform.
 
@@ -145,5 +148,4 @@ class CropVideo(Transformation):
         height, width = frames.shape[1:3]
         target_height, target_width = self.output_shape
         start_height = (height - target_height) // 2
-        return frames[:, start_height:start_height +
-                      target_height, :target_width, :]
+        return frames[:, start_height : start_height + target_height, :target_width, :]

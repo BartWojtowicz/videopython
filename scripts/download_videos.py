@@ -1,8 +1,8 @@
 import os
-import requests
 from pathlib import Path
 
 import click
+import requests
 
 PEXELS_API_URL = "https://api.pexels.com/videos/search"
 
@@ -30,8 +30,7 @@ PEXELS_API_URL = "https://api.pexels.com/videos/search"
     help="Directory to save downloaded videos.",
     prompt="Download directory",
     required=True,
-    type=click.Path(exists=True, file_okay=False, dir_okay=True,
-                    writable=True),
+    type=click.Path(exists=True, file_okay=False, dir_okay=True, writable=True),
 )
 @click.option(
     "-n",
@@ -41,8 +40,7 @@ PEXELS_API_URL = "https://api.pexels.com/videos/search"
     help="Number of videos to download. Defaults to 10.",
     type=int,
 )
-def download_videos(search_query: str, api_key: str, n_videos: int,
-                    download_dir: str):
+def download_videos(search_query: str, api_key: str, n_videos: int, download_dir: str):
     params = {"query": search_query, "per_page": n_videos, "page": 1}
     headers = {"Authorization": api_key}
 
