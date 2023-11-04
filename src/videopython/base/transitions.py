@@ -33,8 +33,8 @@ class Transition(ABC):
 class InstantTransition(Transition):
     """Instant cut without any transition."""
 
-    def _apply(self, videos: Video) -> Video:
-        return videos[0].concatenate(videos[1], axis=0)
+    def _apply(self, videos: list[Video] | tuple[Video]) -> Video:
+        return videos[0] + videos[1]
 
 
 class FadeTransition(Transition):
@@ -63,6 +63,7 @@ class FadeTransition(Transition):
         transition = self.fade(
             videos[0].frames[-effect_time_fps:], videos[1].frames[:effect_time_fps]
         )
+
         transition_video = Video.from_frames(transition, video_fps)
         videos[0].frames = videos[0].frames[:-effect_time_fps]
         videos[1].frames = videos[1].frames[effect_time_fps:]

@@ -118,6 +118,7 @@ class Video:
         new_vid.fps = fps
         return new_vid
 
+
     @classmethod
     def from_prompt(cls, prompt: str):
         # TODO: Make it model independent
@@ -131,6 +132,10 @@ class Video:
         video_frames = pipe(prompt, num_inference_steps=25).frames
 
         return Video.from_frames(video_frames, fps=8)
+
+    def copy(self):
+        return Video().from_frames(self.frames.copy(), self.fps)
+
 
     def is_loaded(self) -> bool:
         return self.fps and self.frames
@@ -172,6 +177,7 @@ class Video:
         return output_path
 
     def __add__(self, other):
+        # TODO: Should it be class method? How to make it work with sum()?
         if self.fps != other.fps:
             raise ValueError("FPS of videos do not match!")
         elif self.frame_shape != other.frame_shape:
@@ -180,8 +186,10 @@ class Video:
                 f"{self.frame_shape} not compatible with {other.frame_shape}."
             )
 
-        self.frames = np.concatenate([self.frames, other.frames], axis=0).astype(np.uint8)
-        return self
+        return self.from_frames(
+            np.concatenate([self.frames, other.frames], axis=0).astype(np.uint8), fps=self.fps
+        )
+
 
     @staticmethod
     def _load_video_from_path(path: str):
