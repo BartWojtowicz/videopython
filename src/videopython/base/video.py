@@ -4,6 +4,9 @@ from pathlib import Path
 import cv2
 import ffmpeg
 import numpy as np
+import torch
+from diffusers import DiffusionPipeline, DPMSolverMultistepScheduler
+from diffusers.utils import export_to_video
 
 from videopython.utils.common import generate_random_video_name
 
@@ -114,6 +117,20 @@ class Video:
         new_vid.frames = frames
         new_vid.fps = fps
         return new_vid
+
+    @classmethod
+    def from_prompt(cls, prompt: str):
+        # TODO: Make it model independent
+        pipe = DiffusionPipeline.from_pretrained(
+            "damo-vilab/text-to-video-ms-1.7b",
+            torch_dtype=torch.float16,
+            variant="fp16",
+        )
+        pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
+        pipe.enable_model_cpu_offload()
+        video_frames = pipe(prompt, num_inference_steps=25).frames
+
+        return Video.from_frames(video_frames, fps=8)
 
     def copy(self):
         return Video().from_frames(self.frames.copy(), self.fps)
