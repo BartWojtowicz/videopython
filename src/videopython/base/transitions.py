@@ -46,10 +46,13 @@ class FadeTransition(Transition):
     def fade(self, frames1, frames2):
         assert len(frames1) == len(frames2)
         t = len(frames1)
-        linspace = np.linspace(0, 1, t, dtype=np.float16).reshape(t, 1, 1, 1)
+
+        # Calculate transitioned frames using weighted average
         transitioned_frames = (
-            frames1 * (np.ones_like(linspace, dtype=np.float16) - linspace) + frames2 * linspace
-        )
+            frames1 * (t - np.arange(t))[:, np.newaxis, np.newaxis, np.newaxis]
+            + frames2 * np.arange(t)[:, np.newaxis, np.newaxis, np.newaxis]
+        ) / t
+
         return transitioned_frames.astype(np.uint8)
 
     def _apply(self, videos: tuple[Video, Video]) -> Video:
