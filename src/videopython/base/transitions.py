@@ -46,10 +46,10 @@ class FadeTransition(Transition):
     def fade(self, frames1, frames2):
         assert len(frames1) == len(frames2)
         t = len(frames1)
-        linspace = np.linspace(0, 1, t).reshape(t, 1, 1, 1).astype(np.float16)
+        linspace = np.linspace(0, 1, t, dtype=np.float16).reshape(t, 1, 1, 1)
         transitioned_frames = (
-            frames1.astype(np.float16) * (np.ones_like(linspace) - linspace)
-            + frames2.astype(np.float16) * linspace
+            frames1 * (np.ones_like(linspace, dtype=np.float16) - linspace)
+            + frames2 * linspace
         )
         return transitioned_frames.astype(np.uint8)
 
