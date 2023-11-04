@@ -1,5 +1,6 @@
-import pytest
 from dataclasses import dataclass
+
+import pytest
 
 from videopython.base import Video
 from videopython.base.video import VideoMetadata
@@ -9,21 +10,15 @@ from videopython.project_config import LocationConfig
 @dataclass
 class _Configuration:
     # Paths
-    SHORT_VIDEO_PATH = str(LocationConfig.test_videos_dir /
-                           "fast_benchmark.mp4")
-    LONG_VIDEO_PATH = str(LocationConfig.test_videos_dir /
-                          "slow_benchmark.mp4")
+    SHORT_VIDEO_PATH = str(LocationConfig.test_videos_dir / "fast_benchmark.mp4")
+    LONG_VIDEO_PATH = str(LocationConfig.test_videos_dir / "slow_benchmark.mp4")
     # Original metadata
-    ORIGINAL_SHORT_METADATA = VideoMetadata(height=500,
-                                            width=800,
-                                            fps=24,
-                                            frame_count=288,
-                                            total_seconds=12)
-    ORIGINAL_LONG_METADATA = VideoMetadata(height=1920,
-                                           width=1080,
-                                           fps=30,
-                                           frame_count=401,
-                                           total_seconds=13.37)
+    ORIGINAL_SHORT_METADATA = VideoMetadata(
+        height=500, width=800, fps=24, frame_count=288, total_seconds=12
+    )
+    ORIGINAL_LONG_METADATA = VideoMetadata(
+        height=1920, width=1080, fps=30, frame_count=401, total_seconds=13.37
+    )
     # Target metadata
     TARGET_SHORT_METADATA = VideoMetadata(
         height=400,
@@ -48,8 +43,7 @@ class _Configuration:
             _Configuration.SHORT_VIDEO_PATH,
             _Configuration.ORIGINAL_SHORT_METADATA,
         ),
-        (_Configuration.LONG_VIDEO_PATH,
-         _Configuration.ORIGINAL_LONG_METADATA),
+        (_Configuration.LONG_VIDEO_PATH, _Configuration.ORIGINAL_LONG_METADATA),
     ],
 )
 def test_from_video(video_path: str, target_metadata: VideoMetadata):

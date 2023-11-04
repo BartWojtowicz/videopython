@@ -15,7 +15,7 @@ class Transitions(Enum):
 
 class Transition(ABC):
     """Abstract class for Transitions on Videos.
-    
+
     To build a new transition, you need to implement the `_apply`
     abstractmethod.
     """
@@ -33,8 +33,8 @@ class Transition(ABC):
 class InstantTransition(Transition):
     """Instant cut without any transition."""
 
-    def _apply(self, videos: Video) -> Video:
-        return videos[0].concatenate(videos[1], axis=0)
+    def _apply(self, videos: list[Video] | tuple[Video]) -> Video:
+        return videos[0] + videos[1]
 
 
 class FadeTransition(Transition):
@@ -47,9 +47,10 @@ class FadeTransition(Transition):
         assert len(frames1) == len(frames2)
         t = len(frames1)
         linspace = np.linspace(0, 1, t).reshape(t, 1, 1, 1).astype(np.float16)
-        transitioned_frames = frames1.astype(
-            np.float16) * (np.ones_like(linspace) - linspace) + frames2.astype(
-                np.float16) * linspace
+        transitioned_frames = (
+            frames1.astype(np.float16) * (np.ones_like(linspace) - linspace)
+            + frames2.astype(np.float16) * linspace
+        )
         return transitioned_frames.astype(np.uint8)
 
     def _apply(self, videos: tuple[Video, Video]) -> Video:
@@ -59,8 +60,10 @@ class FadeTransition(Transition):
                 raise RuntimeError("Not enough space to make transition!")
 
         effect_time_fps = math.floor(self.effect_time_seconds * video_fps)
-        transition = self.fade(videos[0].frames[-effect_time_fps:],
-                               videos[1].frames[:effect_time_fps])
+        transition = self.fade(
+            videos[0].frames[-effect_time_fps:], videos[1].frames[:effect_time_fps]
+        )
+
         transition_video = Video.from_frames(transition, video_fps)
         videos[0].frames = videos[0].frames[:-effect_time_fps]
         videos[1].frames = videos[1].frames[effect_time_fps:]
