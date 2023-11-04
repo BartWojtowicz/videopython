@@ -1,13 +1,13 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-import ffmpeg
 import cv2
+import ffmpeg
 import numpy as np
+import torch
 from diffusers import DiffusionPipeline, DPMSolverMultistepScheduler
 from diffusers.utils import export_to_video
 
-import torch
 from videopython.utils.common import generate_random_video_name
 
 
