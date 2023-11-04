@@ -22,9 +22,7 @@ class VideoMetadata:
     total_seconds: float
 
     def __str__(self):
-        return (
-            f"{self.height}x{self.width} @ {self.fps}fps, {self.total_seconds} seconds"
-        )
+        return f"{self.height}x{self.width} @ {self.fps}fps, {self.total_seconds} seconds"
 
     def __repr__(self) -> str:
         return self.__str__()
@@ -182,9 +180,7 @@ class Video:
                 f"{self.frame_shape} not compatible with {other.frame_shape}."
             )
 
-        self.frames = np.concatenate([self.frames, other.frames], axis=0).astype(
-            np.uint8
-        )
+        self.frames = np.concatenate([self.frames, other.frames], axis=0).astype(np.uint8)
         return self
 
     @staticmethod
