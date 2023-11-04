@@ -65,8 +65,12 @@ class FadeTransition(Transition):
             videos[0].frames[-effect_time_fps:], videos[1].frames[:effect_time_fps]
         )
 
-        return (
-            videos[0][:-effect_time_fps]
-            + Video.from_frames(transition, video_fps)
-            + videos[1][effect_time_fps:]
+        return Video.from_frames(
+            np.r_[
+                "0,2",
+                videos[0].frames[:-effect_time_fps],
+                transition,
+                videos[1].frames[effect_time_fps:],
+            ],
+            fps=video_fps,
         )
