@@ -44,6 +44,9 @@ class TransformationPipeline:
             video = transformation.apply(video)
         return video
 
+    def __call__(self, video: Video) -> Video:
+        return self.run(video)
+
 
 class CutFrames(Transformation):
     def __init__(self, start_frame: int, end_frame: int):
