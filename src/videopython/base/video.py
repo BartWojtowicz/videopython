@@ -132,6 +132,12 @@ class Video:
 
         return Video.from_frames(video_frames, fps=8)
 
+    def __getitem__(self, val):
+        if isinstance(val, slice):
+            return self.from_frames(self.frames[val], fps=self.fps)
+        elif isinstance(val, int):
+            return self.frames[val]
+
     def copy(self):
         return Video().from_frames(self.frames.copy(), self.fps)
 
@@ -184,9 +190,7 @@ class Video:
                 f"{self.frame_shape} not compatible with {other.frame_shape}."
             )
 
-        return self.from_frames(
-            np.concatenate([self.frames, other.frames], axis=0).astype(np.uint8), fps=self.fps
-        )
+        return self.from_frames(np.r_["0,2", self.frames, other.frames], fps=self.fps)
 
     @staticmethod
     def _load_video_from_path(path: str):
