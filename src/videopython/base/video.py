@@ -119,6 +119,16 @@ class Video:
         return new_vid
 
     @classmethod
+    def from_image(cls, image, fps, length):
+        new_vid = cls()
+        if len(image.shape) == 3:
+            image = np.expand_dims(image, axis=0)
+
+        new_vid.frames = np.repeat(image, round(length * fps), axis=0)
+        new_vid.fps = fps
+        return new_vid
+
+    @classmethod
     def from_prompt(cls, prompt: str):
         # TODO: Make it model independent
         pipe = DiffusionPipeline.from_pretrained(

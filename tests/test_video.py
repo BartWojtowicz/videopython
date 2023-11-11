@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 
+import numpy as np
 import pytest
+from PIL import Image
 
 from videopython.base.video import Video, VideoMetadata
 from videopython.project_config import LocationConfig
@@ -11,6 +13,7 @@ class _Configuration:
     # Paths
     SHORT_VIDEO_PATH = str(LocationConfig.test_videos_dir / "fast_benchmark.mp4")
     LONG_VIDEO_PATH = str(LocationConfig.test_videos_dir / "slow_benchmark.mp4")
+    SMALL_IMG_PATH = str(LocationConfig.test_videos_dir / "small_image.png")
     # Original metadata
     ORIGINAL_SHORT_METADATA = VideoMetadata(
         height=500, width=800, fps=24, frame_count=288, total_seconds=12
@@ -18,6 +21,7 @@ class _Configuration:
     ORIGINAL_LONG_METADATA = VideoMetadata(
         height=1920, width=1080, fps=30, frame_count=401, total_seconds=13.37
     )
+
     # Target metadata
     TARGET_SHORT_METADATA = VideoMetadata(
         height=400,
@@ -86,6 +90,17 @@ def test_can_be_downsampled_to(
     """Tests VideoMetadata.can_be_downsampled_to."""
     metadata = VideoMetadata.from_video(video_path)
     assert metadata.can_be_downsampled_to(target_metadata) == expected
+
+
+def test_video_from_image():
+    with Image.open(_Configuration.SMALL_IMG_PATH) as img:
+        img = np.array(img)
+    video = Video.from_image(img, fps=30, length=0.5)
+
+    assert video.frames.shape == (15, *img.shape)
+    assert video.fps == 30
+    assert np.array_equal(video.frames[0], img)
+    assert np.array_equal(video.frames[-1], img)
 
 
 @pytest.mark.parametrize(
