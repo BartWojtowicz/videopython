@@ -9,9 +9,11 @@ class LocationConfig:
     test_dir: Path = project_root.parent.parent / "tests"
     test_videos_dir: Path = test_dir / "test_data"
     downloaded_videos_dir: Path = data_dir / "downloaded"
+    generated_images_dir: Path = data_dir / "generated"
     exported_videos_dir: Path = data_dir / "exported"
 
     def __post_init__(self):
         self.data_dir.mkdir(exist_ok=True)
         self.downloaded_videos_dir.mkdir(exist_ok=True)
+        self.generated_images_dir.mkdir(exist_ok=True)
         self.exported_videos_dir.mkdir(exist_ok=True)
