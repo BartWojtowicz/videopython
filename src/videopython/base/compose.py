@@ -1,5 +1,8 @@
-from videopython.base.pipeline import TransformationPipeline
-from videopython.base.transitions import Transition
+from itertools import repeat
+from multiprocessing import Pool
+
+from videopython.base.transforms import TransformationPipeline
+from videopython.base.transitions import InstantTransition, Transition
 from videopython.base.video import Video
 
 
@@ -11,20 +14,43 @@ class VideoComposer:
 
     def __init__(
         self,
-        transformation_pipeline: TransformationPipeline,
-        transition: Transition | list[Transition],
+        transformation_pipeline: TransformationPipeline | None = None,
+        transition: Transition = InstantTransition(),
     ):
+        """Initializes VideoComposer.
+
+        Args:
+            transformation_pipeline: Pipeline of transformations to apply on each video.
+            transition: Transition to apply between videos
+        """
         self.transition = transition
         self.transformation_pipeline = transformation_pipeline
 
-    def compose(self, videos: list[Video]) -> Video:
-        # TODO: Apply transitions somehow :)
-        transformed_videos = []
-        for video in videos:
-            transformed_videos.append(self.transformation_pipeline.transform(video))
+    def _apply_transformation(
+        self, video: Video, transformation_pipeline: TransformationPipeline
+    ) -> Video:
+        return transformation_pipeline(video)
 
-        self._compatibility_check(transformed_videos)
-        return sum(transformed_videos)
+    def compose(self, videos: list[Video]) -> Video:
+        # Apply transformation on each video using multiprocessing pool:
+        if self.transformation_pipeline:
+            transformed_videos = []
+            with Pool() as pool:
+                transformed_videos = pool.starmap(
+                    self._apply_transformation,
+                    zip(videos, repeat(self.transformation_pipeline)),
+                )
+            videos = transformed_videos
+
+        # Check if videos are compatible:
+        self._compatibility_check(videos)
+
+        # Apply transition:
+        final_video = videos.pop(0)
+        for _ in range(len(videos)):
+            final_video = self.transition.apply((final_video, videos.pop(0)))
+
+        return final_video
 
     @staticmethod
     def _compatibility_check(videos: list[Video]):
