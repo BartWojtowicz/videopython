@@ -11,26 +11,28 @@ from videopython.project_config import LocationConfig
 @dataclass
 class _Configuration:
     # Paths
-    SHORT_VIDEO_PATH = str(LocationConfig.test_videos_dir / "fast_benchmark.mp4")
-    LONG_VIDEO_PATH = str(LocationConfig.test_videos_dir / "slow_benchmark.mp4")
+
     SMALL_IMG_PATH = str(LocationConfig.test_videos_dir / "small_image.png")
+    SMALL_VIDEO_PATH = str(LocationConfig.test_videos_dir / "fast_benchmark.mp4")
+    BIG_VIDEO_PATH = str(LocationConfig.test_videos_dir / "slow_benchmark.mp4")
+
     # Original metadata
-    ORIGINAL_SHORT_METADATA = VideoMetadata(
+    ORIGINAL_SMALL_METADATA = VideoMetadata(
         height=500, width=800, fps=24, frame_count=288, total_seconds=12
     )
-    ORIGINAL_LONG_METADATA = VideoMetadata(
+    ORIGINAL_BIG_METADATA = VideoMetadata(
         height=1920, width=1080, fps=30, frame_count=401, total_seconds=13.37
     )
 
     # Target metadata
-    TARGET_SHORT_METADATA = VideoMetadata(
+    TARGET_SMALL_METADATA = VideoMetadata(
         height=400,
         width=600,
         fps=24,
         frame_count=5 * 24,
         total_seconds=5,
     )
-    TARGET_LONG_METADATA = VideoMetadata(
+    TARGET_BIG_METADATA = VideoMetadata(
         height=1800,
         width=1000,
         fps=30,
@@ -43,10 +45,10 @@ class _Configuration:
     "video_path, target_metadata",
     [
         (
-            _Configuration.SHORT_VIDEO_PATH,
-            _Configuration.ORIGINAL_SHORT_METADATA,
+            _Configuration.SMALL_VIDEO_PATH,
+            _Configuration.ORIGINAL_SMALL_METADATA,
         ),
-        (_Configuration.LONG_VIDEO_PATH, _Configuration.ORIGINAL_LONG_METADATA),
+        (_Configuration.BIG_VIDEO_PATH, _Configuration.ORIGINAL_BIG_METADATA),
     ],
 )
 def test_from_video(video_path: str, target_metadata: VideoMetadata):
@@ -59,24 +61,24 @@ def test_from_video(video_path: str, target_metadata: VideoMetadata):
     "video_path, target_metadata, expected",
     [
         (
-            _Configuration.SHORT_VIDEO_PATH,
-            _Configuration.TARGET_SHORT_METADATA,
+            _Configuration.SMALL_VIDEO_PATH,
+            _Configuration.TARGET_SMALL_METADATA,
             True,
         ),
         (
-            _Configuration.LONG_VIDEO_PATH,
-            _Configuration.TARGET_LONG_METADATA,
+            _Configuration.BIG_VIDEO_PATH,
+            _Configuration.TARGET_BIG_METADATA,
             True,
         ),
         (
-            _Configuration.SHORT_VIDEO_PATH,
-            _Configuration.TARGET_LONG_METADATA,
+            _Configuration.SMALL_VIDEO_PATH,
+            _Configuration.TARGET_BIG_METADATA,
             False,
             # Cannot be downsampled, because target video is longer.
         ),
         (
-            _Configuration.LONG_VIDEO_PATH,
-            _Configuration.TARGET_SHORT_METADATA,
+            _Configuration.BIG_VIDEO_PATH,
+            _Configuration.TARGET_SMALL_METADATA,
             True,
             # FPS differs, but can be downsampled
         ),
@@ -107,12 +109,12 @@ def test_video_from_image():
     "video_path, target_metadata",
     [
         (
-            _Configuration.SHORT_VIDEO_PATH,
-            _Configuration.ORIGINAL_SHORT_METADATA,
+            _Configuration.SMALL_VIDEO_PATH,
+            _Configuration.ORIGINAL_SMALL_METADATA,
         ),
         (
-            _Configuration.LONG_VIDEO_PATH,
-            _Configuration.ORIGINAL_LONG_METADATA,
+            _Configuration.BIG_VIDEO_PATH,
+            _Configuration.ORIGINAL_BIG_METADATA,
         ),
     ],
 )

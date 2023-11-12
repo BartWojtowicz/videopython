@@ -8,11 +8,6 @@ import numpy as np
 from videopython.base.video import Video
 
 
-class Transitions(Enum):
-    NULL = "null"
-    FADE = "fade"
-
-
 class Transition(ABC):
     """Abstract class for Transitions on Videos.
 

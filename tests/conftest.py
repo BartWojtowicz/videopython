@@ -5,10 +5,10 @@ from videopython.project_config import LocationConfig
 
 
 @pytest.fixture
-def short_video():
+def small_video():
     return Video.from_path(str(LocationConfig.test_videos_dir / "fast_benchmark.mp4"))
 
 
 @pytest.fixture
-def long_video():
+def big_video():
     return Video.from_path(str(LocationConfig.test_videos_dir / "slow_benchmark.mp4"))
