@@ -4,14 +4,17 @@ Minimal video generation and processing library written on top of `numpy`, `open
 
 ## Setup 
 
+### Install ffmpeg
 ```bash
-# Install ffmpeg with brew for MacOS:
+# Install with brew for MacOS:
 brew install ffmpeg
 # Install with apt-get for Ubuntu:
 sudo apt-get install ffmpeg
+```
 
-# Install python dependencies
-pip3 install -r requirements.txt
+### Install with pip
+```bash
+pip install videopython
 ```
 
 ## Basic Usage
@@ -25,20 +28,24 @@ video = Video.from_path("tests/test_data/fast_benchmark.mp4")
 print(video.metadata)
 print(video.frames.shape) # Video is based on numpy representation of frames
 
-transformed_video = video + video
-print(transformed_video.metadata)
+# Generate videos
+video1 = Video.from_prompt("dogs playing in the snow")
+video2 = Video.from_prompt("dogs going back home")
 
+# Add videos
+combined_video = video1 + video2
+print(combined_video.metadata)
+
+# Apply fade transition between videos
 fade = FadeTransition(2.0) # 2s effect time
-transformed_video = fade.apply(videos=(video, transformed_video))
-print(transformed_video.metadata)
+faded_video = fade.apply(videos=(video1, video2))
+print(faded_video.metadata)
 
-transformed_video.save("./data/exported/")
+# Save to a file
+faded_video.save("my_video.mp4")
 ```
 
 ### Running Unit Tests
 ```bash
 PYTHONPATH=./src/ pytest
 ```
-
-### How to download stock data?
-[Read here.](./scripts/README.md)
