@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 
 import cv2
 import numpy as np
+from multiprocessing import Pool
 
 from videopython.base.video import Video
 
@@ -78,15 +79,18 @@ class Resize(Transformation):
         self.new_width = new_width
         self.new_height = new_height
 
+    def _resize_frame(self, frame, new_width, new_height):
+        return cv2.resize(
+            frame,
+            (new_width, new_height),
+            interpolation=cv2.INTER_AREA,
+        )
+
     def apply(self, video: Video) -> Video:
-        frames_copy = []
-        for i in range(video.frames.shape[0]):
-            frames_copy.append(
-                cv2.resize(
-                    video.frames[i],
-                    (self.new_width, self.new_height),
-                    interpolation=cv2.INTER_AREA,
-                )
+        with Pool() as pool:
+            frames_copy = pool.starmap(
+                self._resize_frame,
+                [(frame, self.new_width, self.new_height) for frame in video.frames],
             )
         video.frames = np.array(frames_copy)
         return video
