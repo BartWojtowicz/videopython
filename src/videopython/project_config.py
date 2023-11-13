@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -17,3 +18,8 @@ class LocationConfig:
         self.downloaded_videos_dir.mkdir(exist_ok=True)
         self.generated_images_dir.mkdir(exist_ok=True)
         self.exported_videos_dir.mkdir(exist_ok=True)
+
+
+@dataclass
+class APIkeys:
+    stability_key = os.environ("STABILITY_KEY")

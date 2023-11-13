@@ -8,7 +8,7 @@ import stability_sdk.interfaces.gooseai.generation.generation_pb2 as generation
 from PIL import Image
 from stability_sdk import client
 
-from videopython.project_config import LocationConfig
+from videopython.project_config import APIkeys, LocationConfig
 
 
 def get_image_from_prompt(
@@ -25,15 +25,14 @@ def get_image_from_prompt(
     """Generates image from prompt using the stability.ai API."""
 
     stability_api = client.StabilityInference(
-        key=os.environ["STABILITY_KEY"],
+        key=APIkeys.stability_key,
         verbose=verbose,
         engine=engine,  # Set the engine to use for generation.
         # Check out the following link for a list of available engines: https://platform.stability.ai/docs/features/api-parameters#engine
     )
 
-    # Set up our initial generation parameters.
     answers = stability_api.generate(
-        prompt="expansive landscape rolling greens with gargantuan yggdrasil, intricate world-spanning roots towering under a blue alien sky, masterful, ghibli",
+        prompt=prompt,
         seed=seed,
         steps=steps,  # Amount of inference steps performed on image generation.
         cfg_scale=cfg_scale,  # Influences how strongly your generation is guided to match your prompt.
