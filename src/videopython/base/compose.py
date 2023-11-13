@@ -15,7 +15,8 @@ class VideoComposer:
     def __init__(
         self,
         transformation_pipeline: TransformationPipeline | None = None,
-        transition: Transition = InstantTransition,
+        transition: Transition = InstantTransition(),
+
     ):
         """Initializes VideoComposer.
 
