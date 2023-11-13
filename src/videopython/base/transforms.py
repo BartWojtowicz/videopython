@@ -1,7 +1,8 @@
 from abc import ABC, abstractmethod
 
-from videopython.base.video import Video
 import cv2
+
+from videopython.base.video import Video
 
 
 class Transformation(ABC):

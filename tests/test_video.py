@@ -93,6 +93,7 @@ def test_can_be_downsampled_to(
     metadata = VideoMetadata.from_video(video_path)
     assert metadata.can_be_downsampled_to(target_metadata) == expected
 
+
 @pytest.mark.parametrize(
     "video_path, height,width",
     [
@@ -106,7 +107,8 @@ def test_can_be_downsampled_to(
             500,
             700,
         ),
-    ]
+    ],
+)
 def test_video_resize(video_path, height, width):
     """Tests Video.resize."""
     video = Video.from_path(video_path)
