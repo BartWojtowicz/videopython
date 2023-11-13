@@ -1,4 +1,6 @@
 from dataclasses import dataclass
+from pathlib import Path
+import tempfile
 
 import numpy as np
 import pytest
@@ -123,3 +125,12 @@ def test_load_video(video_path: str, target_metadata: VideoMetadata):
     """Tests Video.load_video."""
     video = Video.from_path(video_path)
     assert (video.frames.shape == target_metadata.get_video_shape()).all()
+
+
+def test_save_video(black_frames_video):
+    """Tests Video.save_video."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        saved_path = black_frames_video.save(Path(temp_dir) / "test_save_video.mp4")
+        assert Path(saved_path).exists()
+        assert np.all(Video.from_path(saved_path).frames == black_frames_video.frames)
+
