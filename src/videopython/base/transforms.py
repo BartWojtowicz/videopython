@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 
 from videopython.base.video import Video
+import cv2
 
 
 class Transformation(ABC):
@@ -67,4 +68,16 @@ class CutSeconds(Transformation):
         video.frames = video.frames[
             round(self.start_second * video.fps) : round(self.end_second * video.fps)
         ]
+        return video
+
+
+class Resample(Transformation):
+    def __init__(self, new_width: int, new_height: int):
+        self.new_width = new_width
+        self.new_height = new_height
+
+    def apply(self, video: Video) -> Video:
+        video.frames = cv2.resize(
+            video.frames, (self.new_width, self.new_height), interpolation=cv2.INTER_AREA
+        )
         return video
