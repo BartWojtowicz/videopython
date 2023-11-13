@@ -22,4 +22,4 @@ class LocationConfig:
 
 @dataclass
 class APIkeys:
-    stability_key = os.environ("STABILITY_KEY")
+    stability_key = os.getenv("STABILITY_KEY")
