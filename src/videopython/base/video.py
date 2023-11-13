@@ -8,6 +8,7 @@ import torch
 from diffusers import DiffusionPipeline, DPMSolverMultistepScheduler
 from diffusers.utils import export_to_video
 
+from videopython.project_config import LocationConfig
 from videopython.utils.common import generate_random_video_name
 
 
@@ -175,20 +176,29 @@ class Video:
         )
         return canvas
 
-    def save(self, output_dir: Path | str = None):
-        """Transforms the video and saves into `output_dir`.
+    def save(self, filename: str = None) -> str:
+        """Transforms the video and saves as `filename`.
 
         Args:
-            output_path: Output directory for transformed video.
+            filename: Name of the output video file.
         """
-        vid_name = generate_random_video_name()
-        output_path = str(Path(output_dir) / vid_name)
-        canvas = self._prepare_new_canvas(output_path)
+        # Parse filename
+        if not filename:
+            filename = generate_random_video_name()
+        elif not filename.suffix == ".mp4":
+            raise ValueError("Only .mp4 save option is supported.")
+        # Check if directory exists
+        if not (Path(filename).parent.is_dir() and Path(filename).parent.exists()):
+            filename = LocationConfig.project_root / filename.name
+            print(f"Directory {filename.parent} does not exist. Saving to {filename}")
+        # Save video
+        filename = str(filename)
+        canvas = self._prepare_new_canvas(filename)
         for frame in self.frames[:, :, :, ::-1]:
             canvas.write(frame)
         cv2.destroyAllWindows()
         canvas.release()
-        return output_path
+        return filename
 
     def __add__(self, other):
         # TODO: Should it be class method? How to make it work with sum()?
