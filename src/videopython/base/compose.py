@@ -16,7 +16,6 @@ class VideoComposer:
         self,
         transformation_pipeline: TransformationPipeline | None = None,
         transition: Transition = InstantTransition(),
-
     ):
         """Initializes VideoComposer.
 

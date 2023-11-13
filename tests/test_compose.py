@@ -20,6 +20,7 @@ def test_vanilla_compose(small_video):
     assert np.all(composed_video.frames[0] == original_video.frames[0])
     assert np.all(composed_video.frames[-1] == original_video.frames[-1])
 
+
 def test_fade_compose_100_frames(small_video):
     original_video = small_video.copy()
     videos_to_compose = small_video.split()
@@ -33,4 +34,3 @@ def test_fade_compose_100_frames(small_video):
     assert composed_video.fps == original_video.fps
     assert np.all(composed_video.frames[0] == original_video.frames[0])
     assert np.all(composed_video.frames[-1] == original_video.frames[-1])
-

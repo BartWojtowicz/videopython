@@ -12,7 +12,6 @@ from videopython.project_config import LocationConfig
 class _Configuration:
     # Paths
 
-
     SMALL_IMG_PATH = str(LocationConfig.test_videos_dir / "small_image.png")
     SMALL_VIDEO_PATH = str(LocationConfig.test_videos_dir / "fast_benchmark.mp4")
     BIG_VIDEO_PATH = str(LocationConfig.test_videos_dir / "slow_benchmark.mp4")
