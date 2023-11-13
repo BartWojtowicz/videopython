@@ -98,7 +98,7 @@ def test_video_from_image():
     with Image.open(_Configuration.SMALL_IMG_PATH) as img:
         img = np.array(img.convert("RGB"))  # Otherwise we get a 4 channel image for .png
 
-    video = Video.from_image(img, fps=30, length=0.5)
+    video = Video.from_image(img, fps=30, length_seconds=0.5)
 
     assert video.frames.shape == (15, *img.shape)
     assert video.fps == 30
