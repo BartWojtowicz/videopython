@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 
 import cv2
+import numpy as np
 
 from videopython.base.video import Video
 
@@ -72,13 +73,20 @@ class CutSeconds(Transformation):
         return video
 
 
-class Resample(Transformation):
+class Resize(Transformation):
     def __init__(self, new_width: int, new_height: int):
         self.new_width = new_width
         self.new_height = new_height
 
     def apply(self, video: Video) -> Video:
-        video.frames = cv2.resize(
-            video.frames, (self.new_width, self.new_height), interpolation=cv2.INTER_AREA
-        )
+        frames_copy = []
+        for i in range(video.frames.shape[0]):
+            frames_copy.append(
+                cv2.resize(
+                    video.frames[i],
+                    (self.new_width, self.new_height),
+                    interpolation=cv2.INTER_AREA,
+                )
+            )
+        video.frames = np.array(frames_copy)
         return video
