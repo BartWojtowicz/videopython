@@ -1,8 +1,8 @@
 from abc import ABC, abstractmethod
+from multiprocessing import Pool
 
 import cv2
 import numpy as np
-from multiprocessing import Pool
 
 from videopython.base.video import Video
 
