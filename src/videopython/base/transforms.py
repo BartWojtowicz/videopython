@@ -79,7 +79,7 @@ class Resize(Transformation):
         self.new_width = new_width
         self.new_height = new_height
 
-    def _resize_frame(self, frame, new_width, new_height):
+    def _resize_frame(self, frame: np.ndarray, new_width: int, new_height: int) -> np.ndarray:
         return cv2.resize(
             frame,
             (new_width, new_height),
