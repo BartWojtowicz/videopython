@@ -1,3 +1,4 @@
+import cv2
 import numpy as np
 import pytest
 
@@ -37,7 +38,32 @@ def test_cut_seconds(start, end, small_video):
 )
 def test_video_resize(height, width, small_video):
     """Tests Video.resize."""
-    resampe = Resize(new_height=height, new_width=width)
-    video = resampe.apply(small_video)
+
+    resample = Resize(new_height=height, new_width=width)
+    video = resample.apply(small_video)
 
     assert video.frames.shape[1:3] == (height, width)
+    assert np.all(
+        video.frames[0]
+        == cv2.resize(
+            small_video.frames[0],
+            (width, height),
+            interpolation=cv2.INTER_AREA,
+        )
+    )
+    assert np.all(
+        video.frames[-1]
+        == cv2.resize(
+            small_video.frames[-1],
+            (width, height),
+            interpolation=cv2.INTER_AREA,
+        )
+    )
+    assert np.all(
+        video.frames[len(video.frames) // 2]
+        == cv2.resize(
+            small_video.frames[len(small_video.frames) // 2],
+            (width, height),
+            interpolation=cv2.INTER_AREA,
+        )
+    )

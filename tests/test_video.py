@@ -1,6 +1,6 @@
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-import tempfile
 
 import numpy as np
 import pytest
