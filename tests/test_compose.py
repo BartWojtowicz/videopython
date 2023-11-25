@@ -6,7 +6,6 @@ from videopython.base.transitions import FadeTransition, InstantTransition
 
 
 def test_vanilla_compose(small_video):
-
     original_video = small_video.copy()
     videos_to_compose = small_video.split()
 
