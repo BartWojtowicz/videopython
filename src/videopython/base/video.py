@@ -1,3 +1,4 @@
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -7,6 +8,7 @@ import numpy as np
 import torch
 from diffusers import DiffusionPipeline, DPMSolverMultistepScheduler
 from diffusers.utils import export_to_video
+from pydub import AudioSegment
 
 from videopython.project_config import LocationConfig
 from videopython.utils.common import generate_random_video_name
@@ -21,6 +23,7 @@ class VideoMetadata:
     fps: int
     frame_count: int
     total_seconds: float
+    audio: bool = False
 
     def __str__(self):
         return f"{self.height}x{self.width} @ {self.fps}fps, {self.total_seconds} seconds"
@@ -59,7 +62,7 @@ class VideoMetadata:
         )
 
     @classmethod
-    def from_frames(cls, frames: np.ndarray, fps: int):
+    def from_frames(cls, frames: np.ndarray, fps: int, with_audio: bool = False):
         """Creates VideoMetadata object from frames.
 
         Args:
@@ -75,6 +78,7 @@ class VideoMetadata:
             fps=fps,
             frame_count=frame_count,
             total_seconds=total_seconds,
+            with_audio=with_audio,
         )
 
     def can_be_merged_with(self, other_format: "VideoMetadata") -> bool:
@@ -105,6 +109,7 @@ class Video:
     def __init__(self):
         self.fps = None
         self.frames = None
+        self.audio = None
 
     @classmethod
     def from_path(cls, path):
@@ -142,6 +147,9 @@ class Video:
         video_frames = pipe(prompt, num_inference_steps=25).frames
 
         return Video.from_frames(video_frames, fps=8)
+
+    def add_audio_from_file(self, audio_path: str):
+        self.audio = AudioSegment.from_file(audio_path)
 
     def __getitem__(self, val):
         if isinstance(val, slice):
@@ -183,6 +191,8 @@ class Video:
             filename: Name of the output video file.
         """
         # Parse filename
+        filename = Path(filename)
+
         if not filename:
             filename = generate_random_video_name()
         elif not filename.suffix == ".mp4":
@@ -198,6 +208,23 @@ class Video:
             canvas.write(frame)
         cv2.destroyAllWindows()
         canvas.release()
+        if self.audio:
+            filename2 = f"{LocationConfig.repo}/au{filename}"
+            filename = f"{LocationConfig.repo}/{filename}"
+            self.audio = self.audio[: self.total_seconds * 1000]
+            raw_audio = self.audio.raw_data
+            channels = self.audio.channels
+            frame_rate = self.audio.frame_rate
+
+            ffmpeg_command = f"ffmpeg -y -i {filename} -f s16le -acodec pcm_s16le -ar {frame_rate} -ac {channels} -i pipe:0 -c:v copy -c:a aac -strict experimental {filename2}"
+
+            try:
+                # Use subprocess to run the ffmpeg command
+                process = subprocess.run(ffmpeg_command, input=raw_audio, check=True, shell=True)
+                print("Video with audio saved successfully.")
+            except subprocess.CalledProcessError as e:
+                print(f"Error saving video with audio: {e}")
+
         return filename
 
     def __add__(self, other):
