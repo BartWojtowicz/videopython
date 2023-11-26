@@ -149,13 +149,11 @@ class Video:
         num_frames: int = 24,
         gpu_optimized: bool = False,
     ):
-        if gpu_optimized:
-            pipe.enable_model_cpu_offload()
-            torch_dtype = torch.float16
-        else:
-            torch_dtype = torch.float32
+        torch_dtype = torch.float16 if gpu_optimized else torch.float32
         # TODO: Make it model independent
         pipe = DiffusionPipeline.from_pretrained("cerspense/zeroscope_v2_576w", torch_dtype=torch_dtype)
+        if gpu_optimized:
+            pipe.enable_model_cpu_offload()
         pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
         video_frames = np.asarray(
             pipe(
