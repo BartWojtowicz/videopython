@@ -17,6 +17,7 @@ class _Configuration:
     SMALL_IMG_PATH = str(LocationConfig.test_videos_dir / "small_image.png")
     SMALL_VIDEO_PATH = str(LocationConfig.test_videos_dir / "fast_benchmark.mp4")
     BIG_VIDEO_PATH = str(LocationConfig.test_videos_dir / "slow_benchmark.mp4")
+    AUDIO_PATH = str(LocationConfig.test_videos_dir / "test_audio.mp3")
 
     # Original metadata
     ORIGINAL_SMALL_METADATA = VideoMetadata(height=500, width=800, fps=24, frame_count=288, total_seconds=12)
@@ -123,9 +124,13 @@ def test_load_video(video_path: str, target_metadata: VideoMetadata):
     assert (video.frames.shape == target_metadata.get_video_shape()).all()
 
 
-def test_save_video(black_frames_video):
-    """Tests Video.save_video."""
+def test_save_with_audio(black_frames_video):
+    black_frames_video.add_audio_from_file(_Configuration.AUDIO_PATH)
     with tempfile.TemporaryDirectory() as temp_dir:
-        saved_path = black_frames_video.save(Path(temp_dir) / "test_save_video.mp4")
-        assert Path(saved_path).exists()
+        saved_path = black_frames_video.save(Path(temp_dir) / "test_add_audio_from_file.mp4")
+        black_frames_video.save(saved_path)
+
         assert np.all(Video.from_path(saved_path).frames == black_frames_video.frames)
+        assert Path(saved_path).exists()
+
+    assert black_frames_video.audio is not None

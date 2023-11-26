@@ -6,7 +6,7 @@ from videopython.project_config import LocationConfig
 
 
 @pytest.fixture
-def small_video():
+def black_frames_video():
     return Video.from_path(str(LocationConfig.test_videos_dir / "fast_benchmark.mp4"))
 
 
