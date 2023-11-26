@@ -1,6 +1,6 @@
 # About
 
-Minimal video generation and processing library written on top of `numpy`, `opencv` and `ffmpeg`.
+Minimal video generation and processing library.
 
 ## Setup 
 
@@ -20,7 +20,7 @@ pip install videopython
 ## Basic Usage
 
 ```python
-from videopython.base import Video
+from videopython.base.video import Video
 from videopython.base.transitions import FadeTransition
 
 # Load video

@@ -49,7 +49,9 @@ def get_image_from_prompt(
     filename = f"{prompt[:min(len(prompt), 6 )].rstrip()}.png"
     save_dir = LocationConfig.generated_images_dir / filename
     if save_dir.exists():
-        filename = f"{prompt[:min(len(prompt), 6 )].rstrip()}{str(random.randint(1,100000000))}.png"
+        filename = (
+            f"{prompt[:min(len(prompt), 6 )].rstrip()}{str(random.randint(1,100000000))}.png"
+        )
         save_dir = LocationConfig.generated_images_dir / filename
 
     for resp in answers:

@@ -10,7 +10,6 @@ from diffusers import DiffusionPipeline, DPMSolverMultistepScheduler
 from diffusers.utils import export_to_video
 from pydub import AudioSegment
 
-
 from videopython.project_config import LocationConfig
 from videopython.utils.common import generate_random_video_name
 
@@ -143,7 +142,7 @@ class Video:
         height: int = 320,
         width: int = 576,
         num_frames: int = 24,
-        gpu_optimized: bool = False
+        gpu_optimized: bool = False,
     ):
         if gpu_optimized:
             pipe.enable_model_cpu_offload()
@@ -151,7 +150,9 @@ class Video:
         else:
             torch_dtype = torch.float32
         # TODO: Make it model independent
-        pipe = DiffusionPipeline.from_pretrained("cerspense/zeroscope_v2_576w", torch_dtype=torch_dtype)
+        pipe = DiffusionPipeline.from_pretrained(
+            "cerspense/zeroscope_v2_576w", torch_dtype=torch_dtype
+        )
         pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
         video_frames = np.asarray(
             pipe(
@@ -207,10 +208,10 @@ class Video:
             filename: Name of the output video file.
         """
         # Parse filename
-        filename = Path(filename)
 
         if not filename:
             filename = generate_random_video_name()
+        filename = Path(filename)
         # Check correctness
         filename = Path(filename)
         if not filename.suffix == ".mp4":
@@ -219,15 +220,20 @@ class Video:
             filename = LocationConfig.project_root / filename.name
             print(f"Directory {filename.parent} does not exist. Saving to: {filename}")
         # Save video
+        filename_name = filename.name
         filename = str(filename.resolve())
+        print(f"filename: {filename}")
         canvas = self._prepare_new_canvas(filename)
         for frame in self.frames[:, :, :, ::-1]:
             canvas.write(frame)
         cv2.destroyAllWindows()
         canvas.release()
         if self.audio:
-            filename2 = f"{LocationConfig.repo}/au{filename}"
-            filename = f"{LocationConfig.repo}/{filename}"
+            filename2 = f"{LocationConfig.project_root}/au{filename_name}"
+
+            if len(self.audio) < self.total_seconds * 1000:
+                self.audio = self.audio * (len(self.audio // (self.total_seconds * 1000)) + 1)
+
             self.audio = self.audio[: self.total_seconds * 1000]
             raw_audio = self.audio.raw_data
             channels = self.audio.channels
@@ -270,7 +276,9 @@ class Video:
             .run(capture_stdout=True)
         )
 
-        frames = np.frombuffer(ffmpeg_out, np.uint8).reshape([-1, metadata.height, metadata.width, 3])
+        frames = np.frombuffer(ffmpeg_out, np.uint8).reshape(
+            [-1, metadata.height, metadata.width, 3]
+        )
         fps = metadata.fps
         return frames, fps
 
