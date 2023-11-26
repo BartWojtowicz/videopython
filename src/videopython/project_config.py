@@ -6,6 +6,7 @@ from pathlib import Path
 @dataclass
 class LocationConfig:
     project_root: Path = Path(__file__).parent
+    repo_root: Path = project_root.parent.parent
     data_dir: Path = project_root.parent.parent / "data"
     test_dir: Path = project_root.parent.parent / "tests"
     test_videos_dir: Path = test_dir / "test_data"
