@@ -6,7 +6,6 @@ import ffmpeg
 import numpy as np
 import torch
 from diffusers import DiffusionPipeline, DPMSolverMultistepScheduler
-from diffusers.utils import export_to_video
 
 from videopython.project_config import LocationConfig
 from videopython.utils.common import generate_random_video_name
@@ -130,18 +129,33 @@ class Video:
         return new_vid
 
     @classmethod
-    def from_prompt(cls, prompt: str):
+    def from_prompt(
+        cls,
+        prompt: str,
+        num_steps: int = 25,
+        height: int = 320,
+        width: int = 576,
+        num_frames: int = 24,
+        gpu_optimized: bool = False
+    ):
+        if gpu_optimized:
+            pipe.enable_model_cpu_offload()
+            torch_dtype = torch.float16
+        else:
+            torch_dtype = torch.float32
         # TODO: Make it model independent
-        pipe = DiffusionPipeline.from_pretrained(
-            "damo-vilab/text-to-video-ms-1.7b",
-            torch_dtype=torch.float16,
-            variant="fp16",
-        )
+        pipe = DiffusionPipeline.from_pretrained("cerspense/zeroscope_v2_576w", torch_dtype=torch_dtype)
         pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
-        pipe.enable_model_cpu_offload()
-        video_frames = pipe(prompt, num_inference_steps=25).frames
-
-        return Video.from_frames(video_frames, fps=8)
+        video_frames = np.asarray(
+            pipe(
+                prompt,
+                num_inference_steps=num_steps,
+                height=height,
+                width=width,
+                num_frames=num_frames,
+            ).frames
+        )
+        return Video.from_frames(video_frames, fps=24)
 
     def __getitem__(self, val):
         if isinstance(val, slice):
@@ -185,14 +199,15 @@ class Video:
         # Parse filename
         if not filename:
             filename = generate_random_video_name()
-        elif not filename.suffix == ".mp4":
+        # Check correctness
+        filename = Path(filename)
+        if not filename.suffix == ".mp4":
             raise ValueError("Only .mp4 save option is supported.")
-        # Check if directory exists
-        if not (Path(filename).parent.is_dir() and Path(filename).parent.exists()):
+        if not (filename.parent.is_dir() and filename.parent.exists()):
             filename = LocationConfig.project_root / filename.name
-            print(f"Directory {filename.parent} does not exist. Saving to {filename}")
+            print(f"Directory {filename.parent} does not exist. Saving to: {filename}")
         # Save video
-        filename = str(filename)
+        filename = str(filename.resolve())
         canvas = self._prepare_new_canvas(filename)
         for frame in self.frames[:, :, :, ::-1]:
             canvas.write(frame)
@@ -226,9 +241,7 @@ class Video:
             .run(capture_stdout=True)
         )
 
-        frames = np.frombuffer(ffmpeg_out, np.uint8).reshape(
-            [-1, metadata.height, metadata.width, 3]
-        )
+        frames = np.frombuffer(ffmpeg_out, np.uint8).reshape([-1, metadata.height, metadata.width, 3])
         fps = metadata.fps
         return frames, fps
 

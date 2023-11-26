@@ -29,15 +29,15 @@ print(video.metadata)
 print(video.frames.shape) # Video is based on numpy representation of frames
 
 # Generate videos
-video1 = Video.from_prompt("dogs playing in the snow")
-video2 = Video.from_prompt("dogs going back home")
+video1 = Video.from_prompt("Dogs playing in the snow.")
+video2 = Video.from_prompt("Dogs going back home.")
 
 # Add videos
 combined_video = video1 + video2
 print(combined_video.metadata)
 
 # Apply fade transition between videos
-fade = FadeTransition(2.0) # 2s effect time
+fade = FadeTransition(0.5) # 0.5s effect time
 faded_video = fade.apply(videos=(video1, video2))
 print(faded_video.metadata)
 

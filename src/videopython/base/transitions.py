@@ -1,6 +1,5 @@
 import math
 from abc import ABC, abstractmethod
-from enum import Enum
 from typing import final
 
 import numpy as np
@@ -56,9 +55,7 @@ class FadeTransition(Transition):
                 raise RuntimeError("Not enough space to make transition!")
 
         effect_time_fps = math.floor(self.effect_time_seconds * video_fps)
-        transition = self.fade(
-            videos[0].frames[-effect_time_fps:], videos[1].frames[:effect_time_fps]
-        )
+        transition = self.fade(videos[0].frames[-effect_time_fps:], videos[1].frames[:effect_time_fps])
 
         return Video.from_frames(
             np.r_[

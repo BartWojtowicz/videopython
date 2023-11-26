@@ -68,9 +68,7 @@ class CutSeconds(Transformation):
         self.end_second = end_second
 
     def apply(self, video: Video) -> Video:
-        video.frames = video.frames[
-            round(self.start_second * video.fps) : round(self.end_second * video.fps)
-        ]
+        video.frames = video.frames[round(self.start_second * video.fps) : round(self.end_second * video.fps)]
         return video
 
 

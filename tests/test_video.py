@@ -19,12 +19,8 @@ class _Configuration:
     BIG_VIDEO_PATH = str(LocationConfig.test_videos_dir / "slow_benchmark.mp4")
 
     # Original metadata
-    ORIGINAL_SMALL_METADATA = VideoMetadata(
-        height=500, width=800, fps=24, frame_count=288, total_seconds=12
-    )
-    ORIGINAL_BIG_METADATA = VideoMetadata(
-        height=1920, width=1080, fps=30, frame_count=401, total_seconds=13.37
-    )
+    ORIGINAL_SMALL_METADATA = VideoMetadata(height=500, width=800, fps=24, frame_count=288, total_seconds=12)
+    ORIGINAL_BIG_METADATA = VideoMetadata(height=1920, width=1080, fps=30, frame_count=401, total_seconds=13.37)
 
     # Target metadata
     TARGET_SMALL_METADATA = VideoMetadata(
@@ -133,4 +129,3 @@ def test_save_video(black_frames_video):
         saved_path = black_frames_video.save(Path(temp_dir) / "test_save_video.mp4")
         assert Path(saved_path).exists()
         assert np.all(Video.from_path(saved_path).frames == black_frames_video.frames)
-
