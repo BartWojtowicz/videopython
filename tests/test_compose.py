@@ -5,9 +5,9 @@ from videopython.base.transforms import TransformationPipeline
 from videopython.base.transitions import FadeTransition, InstantTransition
 
 
-def test_vanilla_compose(black_frames_video):
-    original_video = black_frames_video.copy()
-    videos_to_compose = black_frames_video.split()
+def test_vanilla_compose(small_video):
+    original_video = small_video.copy()
+    videos_to_compose = small_video.split()
 
     transformation_pipeline = TransformationPipeline([])
     transition = InstantTransition()
@@ -20,9 +20,9 @@ def test_vanilla_compose(black_frames_video):
     assert np.all(composed_video.frames[-1] == original_video.frames[-1])
 
 
-def test_fade_compose_100_frames(black_frames_video):
-    original_video = black_frames_video.copy()
-    videos_to_compose = black_frames_video.split()
+def test_fade_compose_100_frames(small_video):
+    original_video = small_video.copy()
+    videos_to_compose = small_video.split()
 
     transformation_pipeline = TransformationPipeline([])
     transition = FadeTransition(effect_time_seconds=1)
