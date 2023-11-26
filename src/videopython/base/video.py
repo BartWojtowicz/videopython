@@ -5,11 +5,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
-import ffmpeg
 import numpy as np
 import torch
 from diffusers import DiffusionPipeline, DPMSolverMultistepScheduler
-from diffusers.utils import export_to_video
 from pydub import AudioSegment
 
 from videopython.project_config import LocationConfig
@@ -278,13 +276,25 @@ class Video:
             path: Path to video file.
         """
         metadata = VideoMetadata.from_path(path)
-        ffmpeg_out, _ = (
-            ffmpeg.input(path)
-            .output("pipe:", format="rawvideo", pix_fmt="rgb24", loglevel="quiet")
-            .run(capture_stdout=True)
-        )
+        ffmpeg_command = [
+            "ffmpeg",
+            "-i",
+            path,
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "-loglevel",
+            "quiet",
+            "pipe:1",
+        ]
 
-        frames = np.frombuffer(ffmpeg_out, np.uint8).reshape([-1, metadata.height, metadata.width, 3])
+        # Run the ffmpeg command and capture the stdout
+        ffmpeg_process = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE)
+        ffmpeg_out, _ = ffmpeg_process.communicate()
+
+        # Convert the raw video data to a NumPy array
+        frames = np.frombuffer(ffmpeg_out, dtype=np.uint8).reshape([-1, metadata.height, metadata.width, 3])
         fps = metadata.fps
         return frames, fps
 
