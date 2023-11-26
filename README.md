@@ -1,6 +1,6 @@
 # About
 
-Minimal video generation and processing library written on top of `numpy`, `opencv` and `ffmpeg`.
+Minimal video generation and processing library.
 
 ## Setup 
 
@@ -20,7 +20,7 @@ pip install videopython
 ## Basic Usage
 
 ```python
-from videopython.base import Video
+from videopython.base.video import Video
 from videopython.base.transitions import FadeTransition
 
 # Load video
@@ -40,6 +40,9 @@ print(combined_video.metadata)
 fade = FadeTransition(0.5) # 0.5s effect time
 faded_video = fade.apply(videos=(video1, video2))
 print(faded_video.metadata)
+
+# Add audio from file
+faded_video.add_audio_from_file("tests/test_data/test_audio.mp3")
 
 # Save to a file
 faded_video.save("my_video.mp4")
