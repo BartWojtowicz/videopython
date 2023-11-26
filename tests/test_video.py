@@ -55,7 +55,7 @@ class _Configuration:
 )
 def test_from_video(video_path: str, target_metadata: VideoMetadata):
     """Tests VideoMetadata.from_video."""
-    metadata = VideoMetadata.from_video(video_path)
+    metadata = VideoMetadata.from_path(video_path)
     assert metadata == target_metadata
 
 
@@ -92,7 +92,7 @@ def test_can_be_downsampled_to(
     expected: bool,
 ):
     """Tests VideoMetadata.can_be_downsampled_to."""
-    metadata = VideoMetadata.from_video(video_path)
+    metadata = VideoMetadata.from_path(video_path)
     assert metadata.can_be_downsampled_to(target_metadata) == expected
 
 

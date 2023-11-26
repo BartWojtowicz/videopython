@@ -1,3 +1,4 @@
+from __future__ import annotations
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,7 +24,7 @@ class VideoMetadata:
     fps: int
     frame_count: int
     total_seconds: float
-    audio: bool = False
+    with_audio: bool = False
 
     def __str__(self):
         return f"{self.height}x{self.width} @ {self.fps}fps, {self.total_seconds} seconds"
@@ -40,7 +41,7 @@ class VideoMetadata:
         return np.array((self.frame_count, self.height, self.width, 3))
 
     @classmethod
-    def from_video(cls, video_path: str):
+    def from_path(cls, video_path: str):
         """Creates VideoMetadata object from video file.
 
         Args:
@@ -62,33 +63,36 @@ class VideoMetadata:
         )
 
     @classmethod
-    def from_frames(cls, frames: np.ndarray, fps: int, with_audio: bool = False):
+    def from_video(cls, video:Video):
         """Creates VideoMetadata object from frames.
 
         Args:
             frames: Frames of the video.
             fps: Frames per second of the video.
         """
-        frame_count, height, width, _ = frames.shape
-        total_seconds = round(frame_count / fps, 2)
+    
+        frame_count, height, width, _ = video.frames.shape
+        total_seconds = round(frame_count / video.fps, 2)
 
+        with_audio = bool(video.audio)
+        
         return cls(
             height=height,
             width=width,
-            fps=fps,
+            fps=video.fps,
             frame_count=frame_count,
             total_seconds=total_seconds,
-            audio=with_audio,
+            with_audio=with_audio,
         )
 
-    def can_be_merged_with(self, other_format: "VideoMetadata") -> bool:
+    def can_be_merged_with(self, other_format: VideoMetadata) -> bool:
         return (
             self.height == other_format.height
             and self.width == other_format.width
             and round(self.fps) == round(other_format.fps)
         )
 
-    def can_be_downsampled_to(self, target_format: "VideoMetadata") -> bool:
+    def can_be_downsampled_to(self, target_format: VideoMetadata) -> bool:
         """Checks if video can be downsampled to `target_format`.
 
         Args:
@@ -231,10 +235,11 @@ class Video:
         if self.audio:
             filename2 = f"{LocationConfig.project_root}/au{filename_name}"
 
-            if len(self.audio) < self.total_seconds * 1000:
-                self.audio = self.audio * (len(self.audio // (self.total_seconds * 1000)) + 1)
+            if len(self.audio) > self.total_seconds * 1000:
+                self.audio = self.audio[: self.total_seconds * 1000]
+            else:
+                self.audio += AudioSegment.silent(duration=self.total_seconds * 1000 - len(self.audio))
 
-            self.audio = self.audio[: self.total_seconds * 1000]
             raw_audio = self.audio.raw_data
             channels = self.audio.channels
             frame_rate = self.audio.frame_rate
@@ -271,7 +276,7 @@ class Video:
         Args:
             path: Path to video file.
         """
-        metadata = VideoMetadata.from_video(path)
+        metadata = VideoMetadata.from_path(path)
         ffmpeg_out, _ = (
             ffmpeg.input(path)
             .output("pipe:", format="rawvideo", pix_fmt="rgb24", loglevel="quiet")
@@ -302,4 +307,4 @@ class Video:
     @property
     def metadata(self) -> VideoMetadata:
         """Returns VideoMetadata object."""
-        return VideoMetadata.from_frames(self.frames, self.fps)
+        return VideoMetadata.from_video(self)
