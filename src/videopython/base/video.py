@@ -136,7 +136,7 @@ class Video:
         height: int = 320,
         width: int = 576,
         num_frames: int = 24,
-        gpu_optimized: bool = False
+        gpu_optimized: bool = False,
     ):
         if gpu_optimized:
             pipe.enable_model_cpu_offload()

@@ -47,10 +47,10 @@ def get_image_from_prompt(
     )
 
     filename = f"{prompt[:min(len(prompt), 6 )].rstrip()}.png"
-    save_dir = LocationConfig.generated_images_dir / filename
+    save_dir = LocationConfig.generated_files_dir / filename
     if save_dir.exists():
         filename = f"{prompt[:min(len(prompt), 6 )].rstrip()}{str(random.randint(1,100000000))}.png"
-        save_dir = LocationConfig.generated_images_dir / filename
+        save_dir = LocationConfig.generated_files_dir / filename
 
     for resp in answers:
         for artifact in resp.artifacts:
@@ -61,5 +61,5 @@ def get_image_from_prompt(
                 )
             if artifact.type == generation.ARTIFACT_IMAGE:
                 img = Image.open(io.BytesIO(artifact.binary))
-                img.save(LocationConfig.generated_images_dir / filename)
+                img.save(LocationConfig.generated_files_dir / filename)
     return np.array(img), filename
