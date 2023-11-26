@@ -26,9 +26,7 @@ class VideoComposer:
         self.transition = transition
         self.transformation_pipeline = transformation_pipeline
 
-    def _apply_transformation(
-        self, video: Video, transformation_pipeline: TransformationPipeline
-    ) -> Video:
+    def _apply_transformation(self, video: Video, transformation_pipeline: TransformationPipeline) -> Video:
         return transformation_pipeline(video)
 
     def compose(self, videos: list[Video]) -> Video:
@@ -54,6 +52,4 @@ class VideoComposer:
 
     @staticmethod
     def _compatibility_check(videos: list[Video]):
-        assert all(
-            [videos[0].metadata.can_be_merged_with(other_video.metadata) for other_video in videos]
-        )
+        assert all([videos[0].metadata.can_be_merged_with(other_video.metadata) for other_video in videos])

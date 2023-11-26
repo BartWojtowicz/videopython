@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -63,19 +64,19 @@ class VideoMetadata:
         )
 
     @classmethod
-    def from_video(cls, video:Video):
+    def from_video(cls, video: Video):
         """Creates VideoMetadata object from frames.
 
         Args:
             frames: Frames of the video.
             fps: Frames per second of the video.
         """
-    
+
         frame_count, height, width, _ = video.frames.shape
         total_seconds = round(frame_count / video.fps, 2)
 
         with_audio = bool(video.audio)
-        
+
         return cls(
             height=height,
             width=width,
@@ -154,9 +155,7 @@ class Video:
         else:
             torch_dtype = torch.float32
         # TODO: Make it model independent
-        pipe = DiffusionPipeline.from_pretrained(
-            "cerspense/zeroscope_v2_576w", torch_dtype=torch_dtype
-        )
+        pipe = DiffusionPipeline.from_pretrained("cerspense/zeroscope_v2_576w", torch_dtype=torch_dtype)
         pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
         video_frames = np.asarray(
             pipe(
@@ -283,9 +282,7 @@ class Video:
             .run(capture_stdout=True)
         )
 
-        frames = np.frombuffer(ffmpeg_out, np.uint8).reshape(
-            [-1, metadata.height, metadata.width, 3]
-        )
+        frames = np.frombuffer(ffmpeg_out, np.uint8).reshape([-1, metadata.height, metadata.width, 3])
         fps = metadata.fps
         return frames, fps
 
