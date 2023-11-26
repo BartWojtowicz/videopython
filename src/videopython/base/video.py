@@ -248,6 +248,8 @@ class Video:
             except subprocess.CalledProcessError as e:
                 print(f"Error saving video with audio: {e}")
 
+        Path(filename).unlink()
+
         return filename
 
     def __add__(self, other):
