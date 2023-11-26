@@ -133,4 +133,3 @@ def test_save_video(black_frames_video):
         saved_path = black_frames_video.save(Path(temp_dir) / "test_save_video.mp4")
         assert Path(saved_path).exists()
         assert np.all(Video.from_path(saved_path).frames == black_frames_video.frames)
-

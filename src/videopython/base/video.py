@@ -78,7 +78,7 @@ class VideoMetadata:
             fps=fps,
             frame_count=frame_count,
             total_seconds=total_seconds,
-            with_audio=with_audio,
+            audio=with_audio,
         )
 
     def can_be_merged_with(self, other_format: "VideoMetadata") -> bool:
