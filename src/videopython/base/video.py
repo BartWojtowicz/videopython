@@ -221,18 +221,19 @@ class Video:
             raise ValueError("Only .mp4 save option is supported.")
         if not (filename.parent.is_dir() and filename.parent.exists()):
             filename = LocationConfig.project_root / filename.name
-            print(f"Directory {filename.parent} does not exist. Saving to: {filename}")
+            print(f"Directory {filename.parent} does not exist. Saving to: {LocationConfig.project_root}")
+
         # Save video
         filename_name = filename.name
         filename = str(filename.resolve())
-        print(f"filename: {filename}")
+
         canvas = self._prepare_new_canvas(filename)
         for frame in self.frames[:, :, :, ::-1]:
             canvas.write(frame)
         cv2.destroyAllWindows()
         canvas.release()
         if self.audio:
-            filename2 = f"{LocationConfig.project_root}/au{filename_name}"
+            filename_with_audio = f"{LocationConfig.project_root}/audio_{filename_name}"
 
             if len(self.audio) > self.total_seconds * 1000:
                 self.audio = self.audio[: self.total_seconds * 1000]
@@ -243,16 +244,19 @@ class Video:
             channels = self.audio.channels
             frame_rate = self.audio.frame_rate
 
-            ffmpeg_command = f"ffmpeg -y -i {filename} -f s16le -acodec pcm_s16le -ar {frame_rate} -ac {channels} -i pipe:0 -c:v copy -c:a aac -strict experimental {filename2}"
+            ffmpeg_command = (
+                f"ffmpeg -loglevel error -y -i {filename} -f s16le -acodec pcm_s16le -ar {frame_rate} -ac "
+                f"{channels} -i pipe:0 -c:v copy -c:a aac -strict experimental {filename_with_audio}"
+            )
 
             try:
-                # Use subprocess to run the ffmpeg command
                 process = subprocess.run(ffmpeg_command, input=raw_audio, check=True, shell=True)
                 print("Video with audio saved successfully.")
             except subprocess.CalledProcessError as e:
                 print(f"Error saving video with audio: {e}")
 
             Path(filename).unlink()
+            Path(filename_with_audio).rename(filename)
 
         return filename
 
