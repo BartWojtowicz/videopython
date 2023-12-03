@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -10,8 +11,7 @@ import torch
 from diffusers import DiffusionPipeline, DPMSolverMultistepScheduler
 from pydub import AudioSegment
 
-from videopython.project_config import LocationConfig
-from videopython.utils.common import generate_random_video_name
+from videopython.utils.common import generate_random_name
 
 
 @dataclass
@@ -206,30 +206,28 @@ class Video:
         Args:
             filename: Name of the output video file.
         """
-        # Parse filename
-
-        if not filename:
-            filename = generate_random_video_name()
-        filename = Path(filename)
         # Check correctness
-        filename = Path(filename)
-        if not filename.suffix == ".mp4":
+        if not filename:
+            filename = Path(generate_random_name()).resolve()
+            directory = filename.parent
+        elif not Path(filename).suffix == ".mp4":
             raise ValueError("Only .mp4 save option is supported.")
-        if not (filename.parent.is_dir() and filename.parent.exists()):
-            filename = LocationConfig.project_root / filename.name
-            print(f"Directory {filename.parent} does not exist. Saving to: {LocationConfig.project_root}")
+        else:
+            filename = Path(filename)
+            directory = filename.parent
+            if not directory.exists():
+                raise ValueError(f"Selected directory `{directory}` does not exist!")
 
-        # Save video
-        filename_name = filename.name
-        filename = str(filename.resolve())
-
+        filename, directory = str(filename), str(directory)
+        # Save video video opencv
         canvas = self._prepare_new_canvas(filename)
         for frame in self.frames[:, :, :, ::-1]:
             canvas.write(frame)
         cv2.destroyAllWindows()
         canvas.release()
+        # If Video has audio, overlaay audio using ffmpeg
         if self.audio:
-            filename_with_audio = f"{LocationConfig.project_root}/audio_{filename_name}"
+            filename_with_audio = tempfile.NamedTemporaryFile(suffix=".mp4").name
 
             if len(self.audio) > self.total_seconds * 1000:
                 self.audio = self.audio[: self.total_seconds * 1000]
@@ -246,7 +244,7 @@ class Video:
             )
 
             try:
-                process = subprocess.run(ffmpeg_command, input=raw_audio, check=True, shell=True)
+                subprocess.run(ffmpeg_command, input=raw_audio, check=True, shell=True)
                 print("Video with audio saved successfully.")
             except subprocess.CalledProcessError as e:
                 print(f"Error saving video with audio: {e}")
