@@ -4,10 +4,10 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from conftest import TEST_DATA_DIR
 from PIL import Image
 
 from videopython.base.video import Video, VideoMetadata
-from conftest import TEST_DATA_DIR
 
 
 @dataclass

@@ -1,9 +1,9 @@
 from pathlib import Path
+
 import numpy as np
 import pytest
 
 from videopython.base.video import Video
-
 
 TEST_ROOT_DIR: Path = Path(__file__).parent
 TEST_DATA_DIR: Path = TEST_ROOT_DIR / "test_data"

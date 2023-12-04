@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "videopython"
-version = "0.1.0"
+version = "0.1.1"
 description = "Minimal video generation and processing library."
 readme = "README.md"
 requires-python = ">=3.10"
