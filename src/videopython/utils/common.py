@@ -2,9 +2,9 @@ import time
 import uuid
 
 
-def generate_random_video_name():
+def generate_random_name(suffix=".mp4"):
     """Generates random video name."""
-    return f"{uuid.uuid4()}.mp4"
+    return f"{uuid.uuid4()}{suffix}"
 
 
 def timeit(func: callable):

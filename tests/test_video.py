@@ -7,17 +7,16 @@ import pytest
 from PIL import Image
 
 from videopython.base.video import Video, VideoMetadata
-from videopython.project_config import LocationConfig
+from conftest import TEST_DATA_DIR
 
 
 @dataclass
 class _Configuration:
     # Paths
-
-    SMALL_IMG_PATH = str(LocationConfig.test_videos_dir / "small_image.png")
-    SMALL_VIDEO_PATH = str(LocationConfig.test_videos_dir / "fast_benchmark.mp4")
-    BIG_VIDEO_PATH = str(LocationConfig.test_videos_dir / "slow_benchmark.mp4")
-    AUDIO_PATH = str(LocationConfig.test_videos_dir / "test_audio.mp3")
+    SMALL_IMG_PATH = str(TEST_DATA_DIR / "small_image.png")
+    SMALL_VIDEO_PATH = str(TEST_DATA_DIR / "fast_benchmark.mp4")
+    BIG_VIDEO_PATH = str(TEST_DATA_DIR / "slow_benchmark.mp4")
+    AUDIO_PATH = str(TEST_DATA_DIR / "test_audio.mp3")
 
     # Original metadata
     ORIGINAL_SMALL_METADATA = VideoMetadata(height=500, width=800, fps=24, frame_count=288, total_seconds=12)

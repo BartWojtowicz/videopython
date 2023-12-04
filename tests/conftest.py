@@ -1,18 +1,22 @@
+from pathlib import Path
 import numpy as np
 import pytest
 
 from videopython.base.video import Video
-from videopython.project_config import LocationConfig
+
+
+TEST_ROOT_DIR: Path = Path(__file__).parent
+TEST_DATA_DIR: Path = TEST_ROOT_DIR / "test_data"
 
 
 @pytest.fixture
 def small_video():
-    return Video.from_path(str(LocationConfig.test_videos_dir / "fast_benchmark.mp4"))
+    return Video.from_path(str(TEST_DATA_DIR / "fast_benchmark.mp4"))
 
 
 @pytest.fixture
 def big_video():
-    return Video.from_path(str(LocationConfig.test_videos_dir / "slow_benchmark.mp4"))
+    return Video.from_path(str(TEST_DATA_DIR / "slow_benchmark.mp4"))
 
 
 @pytest.fixture
