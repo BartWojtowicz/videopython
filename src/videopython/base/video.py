@@ -20,7 +20,7 @@ class VideoMetadata:
 
     height: int
     width: int
-    fps: int
+    fps: float
     frame_count: int
     total_seconds: float
     with_audio: bool = False
@@ -40,7 +40,7 @@ class VideoMetadata:
         return np.array((self.frame_count, self.height, self.width, 3))
 
     @classmethod
-    def from_path(cls, video_path: str):
+    def from_path(cls, video_path: str) -> VideoMetadata:
         """Creates VideoMetadata object from video file.
 
         Args:
@@ -48,7 +48,7 @@ class VideoMetadata:
         """
         video = cv2.VideoCapture(video_path)
         frame_count = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
-        fps = round(video.get(cv2.CAP_PROP_FPS))
+        fps = round(video.get(cv2.CAP_PROP_FPS), 2)
         height = round(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
         width = round(video.get(cv2.CAP_PROP_FRAME_WIDTH))
         total_seconds = round(frame_count / fps, 2)
@@ -62,7 +62,7 @@ class VideoMetadata:
         )
 
     @classmethod
-    def from_video(cls, video: Video):
+    def from_video(cls, video: Video) -> VideoMetadata:
         """Creates VideoMetadata object from frames.
 
         Args:
@@ -115,26 +115,32 @@ class Video:
         self.audio = None
 
     @classmethod
-    def from_path(cls, path):
+    def from_path(cls, path: str) -> Video:
         new_vid = cls()
         new_vid.frames, new_vid.fps = cls._load_video_from_path(path)
+        audio = cls._load_audio_from_path(path)
+        if not audio:
+            print(f"No audio found for `{path}`, adding silent track!")
+            audio = AudioSegment.silent(duration=new_vid.total_seconds * 1000)
+        new_vid.audio = audio
         return new_vid
 
     @classmethod
-    def from_frames(cls, frames, fps):
+    def from_frames(cls, frames: np.ndarray, fps: float) -> Video:
         new_vid = cls()
         new_vid.frames = frames
         new_vid.fps = fps
+        new_vid.audio = AudioSegment.silent(duration=new_vid.total_seconds * 1000)
         return new_vid
 
     @classmethod
-    def from_image(cls, image: np.ndarray, fps: int = 24, length_seconds: float = 1.0):
+    def from_image(cls, image: np.ndarray, fps: float = 24.0, length_seconds: float = 1.0) -> Video:
         new_vid = cls()
         if len(image.shape) == 3:
             image = np.expand_dims(image, axis=0)
-
         new_vid.frames = np.repeat(image, round(length_seconds * fps), axis=0)
         new_vid.fps = fps
+        new_vid.audio = AudioSegment.silent(duration=new_vid.total_seconds * 1000)
         return new_vid
 
     @classmethod
@@ -146,7 +152,7 @@ class Video:
         width: int = 576,
         num_frames: int = 24,
         gpu_optimized: bool = False,
-    ):
+    ) -> Video:
         torch_dtype = torch.float16 if gpu_optimized else torch.float32
         # TODO: Make it model independent
         pipe = DiffusionPipeline.from_pretrained("cerspense/zeroscope_v2_576w", torch_dtype=torch_dtype)
@@ -162,35 +168,44 @@ class Video:
                 num_frames=num_frames,
             ).frames
         )
-        return Video.from_frames(video_frames, fps=24)
+        video = Video.from_frames(video_frames, fps=24.0)
+        video.audio = AudioSegment.silent(duration=video.total_seconds * 1000)
+        return video
 
-    def add_audio_from_file(self, audio_path: str):
-        self.audio = AudioSegment.from_file(audio_path)
-
-    def __getitem__(self, val):
+    def __getitem__(self, val: int | slice) -> Video | np.ndarray:
         if isinstance(val, slice):
-            return self.from_frames(self.frames[val], fps=self.fps)
+            sliced = self.from_frames(self.frames[val], fps=self.fps)
+            audio_start = (val.start / self.fps) * 1000
+            audio_end = (val.stop / self.fps) * 1000
+            sliced.audio = self.audio[audio_start:audio_end]
+            return sliced
         elif isinstance(val, int):
             return self.frames[val]
 
-    def copy(self):
-        return Video().from_frames(self.frames.copy(), self.fps)
+    def copy(self) -> Video:
+        copied = Video().from_frames(self.frames.copy(), self.fps)
+        copied.audio = self.audio
+        return copied
 
     def is_loaded(self) -> bool:
-        return self.fps and self.frames
+        return self.fps and self.frames and self.audio
 
-    def split(self, frame_idx: int | None = None):
+    def split(self, frame_idx: int | None = None) -> tuple[Video, Video]:
         if frame_idx:
             assert 0 <= frame_idx <= len(self.frames)
         else:
             frame_idx = len(self.frames) // 2
 
-        return (
+        split_videos = (
             self.from_frames(self.frames[:frame_idx], self.fps),
             self.from_frames(self.frames[frame_idx:], self.fps),
         )
+        audio_midpoint = (frame_idx / self.fps) * 1000
+        split_videos[0].audio = self.audio[:audio_midpoint]
+        split_videos[1].audio = self.audio[audio_midpoint:]
+        return split_videos
 
-    def _prepare_new_canvas(self, output_path: str):
+    def _prepare_new_canvas(self, output_path: str) -> cv2.VideoWriter:
         """Prepares a new `self._transformed_video` canvas for cut video."""
         canvas = cv2.VideoWriter(
             filename=output_path,
@@ -200,7 +215,7 @@ class Video:
         )
         return canvas
 
-    def save(self, filename: str = None) -> str:
+    def save(self, filename: str | None = None) -> str:
         """Transforms the video and saves as `filename`.
 
         Args:
@@ -225,7 +240,7 @@ class Video:
             canvas.write(frame)
         cv2.destroyAllWindows()
         canvas.release()
-        # If Video has audio, overlaay audio using ffmpeg
+        # If Video has audio, overlay audio using ffmpeg
         if self.audio:
             filename_with_audio = tempfile.NamedTemporaryFile(suffix=".mp4").name
 
@@ -254,7 +269,19 @@ class Video:
 
         return filename
 
-    def __add__(self, other):
+    def add_audio_from_file(self, path: str, overlay: bool = True, overlay_gain: int = 0, loop: bool = False) -> None:
+        new_audio = self._load_audio_from_path(path)
+        if (duration_diff := self.total_seconds - new_audio.duration_seconds) > 0 and not loop:
+            new_audio = new_audio + AudioSegment.silent(duration_diff * 1000)
+        elif new_audio.duration_seconds > self.total_seconds:
+            new_audio = new_audio[: self.total_seconds * 1000]
+
+        if overlay:
+            self.audio = self.audio.overlay(new_audio, loop=loop, gain_during_overlay=overlay_gain)
+        else:
+            self.audio = new_audio
+
+    def __add__(self, other: Video) -> Video:
         # TODO: Should it be class method? How to make it work with sum()?
         if self.fps != other.fps:
             raise ValueError("FPS of videos do not match!")
@@ -263,11 +290,20 @@ class Video:
                 "Resolutions of the images do not match: "
                 f"{self.frame_shape} not compatible with {other.frame_shape}."
             )
-
-        return self.from_frames(np.r_["0,2", self.frames, other.frames], fps=self.fps)
+        new_video = self.from_frames(np.r_["0,2", self.frames, other.frames], fps=self.fps)
+        new_video.audio = self.audio + other.audio
+        return new_video
 
     @staticmethod
-    def _load_video_from_path(path: str):
+    def _load_audio_from_path(path: str) -> AudioSegment | None:
+        try:
+            audio = AudioSegment.from_file(path)
+            return audio
+        except IndexError:
+            return None
+
+    @staticmethod
+    def _load_video_from_path(path: str) -> tuple[np.ndarray, float]:
         """Loads frames and fps information from video file.
 
         Args:
@@ -309,7 +345,7 @@ class Video:
     @property
     def total_seconds(self) -> float:
         """Returns total seconds of the video."""
-        return round(self.frames.shape[0] / self.fps, 1)
+        return round(self.frames.shape[0] / self.fps, 4)
 
     @property
     def metadata(self) -> VideoMetadata:
