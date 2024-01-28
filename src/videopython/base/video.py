@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import shlex
 import subprocess
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -216,10 +216,10 @@ class Video:
         return canvas
 
     def save(self, filename: str | None = None) -> str:
-        """Transforms the video and saves as `filename`.
+        """Saves the video.
 
         Args:
-            filename: Name of the output video file.
+            filename: Name of the output video file. Generates random UUID name if not provided.
         """
         # Check correctness
         if not filename:
@@ -234,39 +234,41 @@ class Video:
                 raise ValueError(f"Selected directory `{directory}` does not exist!")
 
         filename, directory = str(filename), str(directory)
-        # Save video video opencv
-        canvas = self._prepare_new_canvas(filename)
-        for frame in self.frames[:, :, :, ::-1]:
-            canvas.write(frame)
-        cv2.destroyAllWindows()
-        canvas.release()
-        # If Video has audio, overlay audio using ffmpeg
-        if self.audio:
-            filename_with_audio = tempfile.NamedTemporaryFile(suffix=".mp4").name
 
-            if len(self.audio) > self.total_seconds * 1000:
-                self.audio = self.audio[: self.total_seconds * 1000]
-            else:
-                self.audio += AudioSegment.silent(duration=self.total_seconds * 1000 - len(self.audio))
+        ffmpeg_video_command = (
+            f"ffmpeg -loglevel error -y -framerate {self.fps} -f rawvideo -pix_fmt rgb24"
+            f" -s {self.metadata.width}x{self.metadata.height} "
+            f"-i pipe:0 -c:v libx264 -pix_fmt yuv420p {filename}"
+        )
 
-            raw_audio = self.audio.raw_data
-            channels = self.audio.channels
-            frame_rate = self.audio.frame_rate
+        ffmpeg_audio_command = (
+            f"ffmpeg -loglevel error -y -i {filename} -f s16le -acodec pcm_s16le "
+            f"-ar {self.audio.frame_rate} -ac {self.audio.channels} -i pipe:0 "
+            f"-c:v copy -c:a aac -strict experimental {filename}_temp.mp4"
+        )
 
-            ffmpeg_command = (
-                f"ffmpeg -loglevel error -y -i {filename} -f s16le -acodec pcm_s16le -ar {frame_rate} -ac "
-                f"{channels} -i pipe:0 -c:v copy -c:a aac -strict experimental {filename_with_audio}"
+        try:
+            print("Saving frames to video...")
+            subprocess.run(
+                ffmpeg_video_command,
+                input=self.frames.tobytes(),
+                check=True,
+                shell=True,
             )
+        except subprocess.CalledProcessError as e:
+            print("Error saving frames to video!")
+            raise e
 
-            try:
-                subprocess.run(ffmpeg_command, input=raw_audio, check=True, shell=True)
-                print("Video with audio saved successfully.")
-            except subprocess.CalledProcessError as e:
-                print(f"Error saving video with audio: {e}")
-
+        try:
+            print("Adding audio track...")
+            subprocess.run(ffmpeg_audio_command, input=self.audio.raw_data, check=True, shell=True)
             Path(filename).unlink()
-            Path(filename_with_audio).rename(filename)
+            Path(filename + "_temp.mp4").rename(filename)
+        except subprocess.CalledProcessError as e:
+            print(f"Error adding audio track!")
+            raise e
 
+        print(f"Video saved into `{filename}`!")
         return filename
 
     def add_audio_from_file(self, path: str, overlay: bool = True, overlay_gain: int = 0, loop: bool = False) -> None:
@@ -310,21 +312,10 @@ class Video:
             path: Path to video file.
         """
         metadata = VideoMetadata.from_path(path)
-        ffmpeg_command = [
-            "ffmpeg",
-            "-i",
-            path,
-            "-f",
-            "rawvideo",
-            "-pix_fmt",
-            "rgb24",
-            "-loglevel",
-            "quiet",
-            "pipe:1",
-        ]
+        ffmpeg_command = f"ffmpeg -i {path} -f rawvideo -pix_fmt rgb24 -loglevel quiet pipe:1"
 
         # Run the ffmpeg command and capture the stdout
-        ffmpeg_process = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE)
+        ffmpeg_process = subprocess.Popen(shlex.split(ffmpeg_command), stdout=subprocess.PIPE)
         ffmpeg_out, _ = ffmpeg_process.communicate()
 
         # Convert the raw video data to a NumPy array
