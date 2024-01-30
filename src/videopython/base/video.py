@@ -23,7 +23,6 @@ class VideoMetadata:
     fps: float
     frame_count: int
     total_seconds: float
-    with_audio: bool = False
 
     def __str__(self):
         return f"{self.height}x{self.width} @ {self.fps}fps, {self.total_seconds} seconds"
@@ -73,15 +72,12 @@ class VideoMetadata:
         frame_count, height, width, _ = video.frames.shape
         total_seconds = round(frame_count / video.fps, 2)
 
-        with_audio = bool(video.audio)
-
         return cls(
             height=height,
             width=width,
             fps=video.fps,
             frame_count=frame_count,
             total_seconds=total_seconds,
-            with_audio=with_audio,
         )
 
     def can_be_merged_with(self, other_format: VideoMetadata) -> bool:
@@ -153,11 +149,12 @@ class Video:
         num_frames: int = 24,
         gpu_optimized: bool = False,
     ) -> Video:
-        torch_dtype = torch.float16 if gpu_optimized else torch.float32
-        # TODO: Make it model independent
         pipe = DiffusionPipeline.from_pretrained("cerspense/zeroscope_v2_576w", torch_dtype=torch_dtype)
         if gpu_optimized:
             pipe.enable_model_cpu_offload()
+            torch_dtype = torch.float16
+        else:
+            torch_dtype = torch.float32
         pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
         video_frames = np.asarray(
             pipe(
@@ -168,19 +165,7 @@ class Video:
                 num_frames=num_frames,
             ).frames
         )
-        video = Video.from_frames(video_frames, fps=24.0)
-        video.audio = AudioSegment.silent(duration=video.total_seconds * 1000)
-        return video
-
-    def __getitem__(self, val: int | slice) -> Video | np.ndarray:
-        if isinstance(val, slice):
-            sliced = self.from_frames(self.frames[val], fps=self.fps)
-            audio_start = (val.start / self.fps) * 1000
-            audio_end = (val.stop / self.fps) * 1000
-            sliced.audio = self.audio[audio_start:audio_end]
-            return sliced
-        elif isinstance(val, int):
-            return self.frames[val]
+        return Video.from_frames(video_frames, fps=24.0)
 
     def copy(self) -> Video:
         copied = Video().from_frames(self.frames.copy(), self.fps)
@@ -188,7 +173,7 @@ class Video:
         return copied
 
     def is_loaded(self) -> bool:
-        return self.fps and self.frames and self.audio
+        return self.fps is not None and self.frames is not None and self.audio is not None
 
     def split(self, frame_idx: int | None = None) -> tuple[Video, Video]:
         if frame_idx:
@@ -205,23 +190,15 @@ class Video:
         split_videos[1].audio = self.audio[audio_midpoint:]
         return split_videos
 
-    def _prepare_new_canvas(self, output_path: str) -> cv2.VideoWriter:
-        """Prepares a new `self._transformed_video` canvas for cut video."""
-        canvas = cv2.VideoWriter(
-            filename=output_path,
-            fourcc=cv2.VideoWriter_fourcc(*"mp4v"),
-            fps=self.fps,
-            frameSize=(self.video_shape[2], self.video_shape[1]),
-        )
-        return canvas
-
     def save(self, filename: str | None = None) -> str:
         """Saves the video.
 
         Args:
             filename: Name of the output video file. Generates random UUID name if not provided.
         """
-        # Check correctness
+        if not self.is_loaded():
+            raise RuntimeError(f"Video is not loaded, cannot save!")
+        # Check filename correctness or generate a new one if not given
         if not filename:
             filename = Path(generate_random_name()).resolve()
             directory = filename.parent
@@ -295,6 +272,21 @@ class Video:
         new_video = self.from_frames(np.r_["0,2", self.frames, other.frames], fps=self.fps)
         new_video.audio = self.audio + other.audio
         return new_video
+
+    def __str__(self) -> str:
+        return str(self.metadata)
+
+    def __getitem__(self, val: int | slice) -> Video | np.ndarray:
+        if isinstance(val, slice):
+            # Sub-slice video if given a slice
+            sliced = self.from_frames(self.frames[val], fps=self.fps)
+            audio_start = (val.start / self.fps) * 1000
+            audio_end = (val.stop / self.fps) * 1000
+            sliced.audio = self.audio[audio_start:audio_end]
+            return sliced
+        elif isinstance(val, int):
+            # Return single frame for integer indexing
+            return self.frames[val]
 
     @staticmethod
     def _load_audio_from_path(path: str) -> AudioSegment | None:
