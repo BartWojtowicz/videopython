@@ -12,6 +12,7 @@ from diffusers import DiffusionPipeline, DPMSolverMultistepScheduler
 from pydub import AudioSegment
 
 from videopython.utils.common import generate_random_name
+from videopython.utils.logger import logger
 
 
 @dataclass
@@ -120,7 +121,7 @@ class Video:
         new_vid.frames, new_vid.fps = cls._load_video_from_path(path)
         audio = cls._load_audio_from_path(path)
         if not audio:
-            print(f"No audio found for `{path}`, adding silent track!")
+            logger.warning(f"No audio found for `{path}`, adding silent track!")
             audio = AudioSegment.silent(duration=new_vid.total_seconds * 1000)
         new_vid.audio = audio
         return new_vid
@@ -248,7 +249,7 @@ class Video:
         )
 
         try:
-            print("Saving frames to video...")
+            logger.info("Saving frames to video...")
             subprocess.run(
                 ffmpeg_video_command,
                 input=self.frames.tobytes(),
@@ -256,19 +257,19 @@ class Video:
                 shell=True,
             )
         except subprocess.CalledProcessError as e:
-            print("Error saving frames to video!")
+            logger.info("Error saving frames to video!")
             raise e
 
         try:
-            print("Adding audio track...")
+            logger.info("Adding audio track...")
             subprocess.run(ffmpeg_audio_command, input=self.audio.raw_data, check=True, shell=True)
             Path(filename).unlink()
             Path(filename + "_temp.mp4").rename(filename)
         except subprocess.CalledProcessError as e:
-            print(f"Error adding audio track!")
+            logger.info(f"Error adding audio track!")
             raise e
 
-        print(f"Video saved into `{filename}`!")
+        logger.info(f"Video saved into `{filename}`!")
         return filename
 
     def add_audio_from_file(self, path: str, overlay: bool = True, overlay_gain: int = 0, loop: bool = False) -> None:

@@ -1,6 +1,8 @@
 import time
 import uuid
 
+from videopython.utils.logger import logger
+
 
 def generate_random_name(suffix=".mp4"):
     """Generates random video name."""
@@ -14,7 +16,7 @@ def timeit(func: callable):
         start = time.time()
         result = func(*args, **kwargs)
         end = time.time()
-        print(f"Execution time: {end - start:.3f} seconds.")
+        logger.info(f"Execution time: {end - start:.3f} seconds.")
         return result
 
     return timed
