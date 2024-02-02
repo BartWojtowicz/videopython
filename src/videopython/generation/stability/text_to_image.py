@@ -16,8 +16,9 @@ if not API_KEY:
     )
 
 
-def get_image_from_prompt(
+def text_to_image(
     prompt: str,
+    save: bool = True,
     output_dir: str | None = None,
     width: int = 1024,
     height: int = 1024,
@@ -27,7 +28,7 @@ def get_image_from_prompt(
     engine: str = "stable-diffusion-xl-1024-v1-0",
     verbose: bool = True,
     seed: int = 1,
-) -> tuple[np.ndarray, str]:
+) -> np.ndarray | str:
     """Generates image from prompt using the stability.ai API."""
     # Generate image
     stability_api = client.StabilityInference(
@@ -50,13 +51,6 @@ def get_image_from_prompt(
         # Defaults to k_dpmpp_2m if not specified. Clip Guidance only supports ancestral samplers.
         # (Available Samplers: ddim, plms, k_euler, k_euler_ancestral, k_heun, k_dpm_2, k_dpm_2_ancestral, k_dpmpp_2s_ancestral, k_lms, k_dpmpp_2m, k_dpmpp_sde)
     )
-    # Create output path
-    if output_dir:
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-    else:
-        output_dir = Path(os.getcwd())
-    filename = output_dir / generate_random_name(suffix=".png")
     # Parse API response
     for resp in answers:
         for artifact in resp.artifacts:
@@ -65,11 +59,19 @@ def get_image_from_prompt(
                     "Your request activated the API's safety filters and could not be processed."
                     "Please modify the prompt and try again."
                 )
-
             if artifact.type == generation.ARTIFACT_IMAGE:
                 img = Image.open(io.BytesIO(artifact.binary))
-                img.save(filename)
             else:
                 raise ValueError(f"Unknown artifact type: {artifact.type}")
 
-    return np.array(img), filename
+    if save:
+        if output_dir:
+            output_dir = Path(output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            output_dir = Path(os.getcwd())
+        filename = output_dir / generate_random_name(suffix=".png")
+        img.save(filename)
+        return str(filename.resolve())
+    else:
+        return np.array(img)
