@@ -1,10 +1,13 @@
 import io
 import os
+from pathlib import Path
 
 import numpy as np
 import stability_sdk.interfaces.gooseai.generation.generation_pb2 as generation
 from PIL import Image
 from stability_sdk import client
+
+from videopython.utils.common import generate_random_name
 
 API_KEY = os.getenv("STABILITY_KEY")
 if not API_KEY:
@@ -15,6 +18,8 @@ if not API_KEY:
 
 def text_to_image(
     prompt: str,
+    save: bool = True,
+    output_dir: str | None = None,
     width: int = 1024,
     height: int = 1024,
     num_samples: int = 1,
@@ -23,7 +28,7 @@ def text_to_image(
     engine: str = "stable-diffusion-xl-1024-v1-0",
     verbose: bool = True,
     seed: int = 1,
-) -> np.ndarray:
+) -> np.ndarray | str:
     """Generates image from prompt using the stability.ai API."""
     # Generate image
     stability_api = client.StabilityInference(
@@ -59,4 +64,14 @@ def text_to_image(
             else:
                 raise ValueError(f"Unknown artifact type: {artifact.type}")
 
-    return np.array(img)
+    if save:
+        if output_dir:
+            output_dir = Path(output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            output_dir = Path(os.getcwd())
+        filename = output_dir / generate_random_name(suffix=".png")
+        img.save(filename)
+        return str(filename.resolve())
+    else:
+        return np.array(img)
