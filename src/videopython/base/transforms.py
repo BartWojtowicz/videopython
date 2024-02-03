@@ -58,7 +58,7 @@ class CutFrames(Transformation):
         self.end_frame = end_frame
 
     def apply(self, video: Video) -> Video:
-        video.frames = video.frames[self.start_frame : self.end_frame]
+        video = video[self.start_frame : self.end_frame]
         return video
 
 
@@ -68,7 +68,7 @@ class CutSeconds(Transformation):
         self.end_second = end_second
 
     def apply(self, video: Video) -> Video:
-        video.frames = video.frames[round(self.start_second * video.fps) : round(self.end_second * video.fps)]
+        video = video[round(self.start_second * video.fps) : round(self.end_second * video.fps)]
         return video
 
 
