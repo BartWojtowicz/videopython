@@ -280,8 +280,17 @@ class Video:
         if isinstance(val, slice):
             # Sub-slice video if given a slice
             sliced = self.from_frames(self.frames[val], fps=self.fps)
-            audio_start = (val.start / self.fps) * 1000
-            audio_end = (val.stop / self.fps) * 1000
+            # Handle slicing without value for audio
+            start = val.start if val.start else 0
+            stop = val.stop if val.stop else len(self.frames)
+            # Handle negative values for audio slices
+            if start < 0:
+                start = len(self.frames) + start
+            if stop < 0:
+                stop = len(self.frames) + stop
+            # Append audio to the slice
+            audio_start = (start / self.fps) * 1000
+            audio_end = (stop / self.fps) * 1000
             sliced.audio = self.audio[audio_start:audio_end]
             return sliced
         elif isinstance(val, int):
