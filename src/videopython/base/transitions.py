@@ -57,7 +57,7 @@ class FadeTransition(Transition):
         effect_time_fps = math.floor(self.effect_time_seconds * video_fps)
         transition = self.fade(videos[0].frames[-effect_time_fps:], videos[1].frames[:effect_time_fps])
 
-        return Video.from_frames(
+        faded_videos = Video.from_frames(
             np.r_[
                 "0,2",
                 videos[0].frames[:-effect_time_fps],
@@ -66,3 +66,5 @@ class FadeTransition(Transition):
             ],
             fps=video_fps,
         )
+        faded_videos.audio = videos[0].audio.append(videos[1].audio, crossfade=(effect_time_fps / video_fps) * 1000)
+        return faded_videos
