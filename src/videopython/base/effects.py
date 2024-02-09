@@ -40,7 +40,7 @@ class FullImageOverlay(Effect):
         overlay_image[:, :, 3] = overlay_image[:, :, 3] * alpha
 
         self._overlay_alpha = (overlay_image[:, :, 3] / 255.0)[:, :, np.newaxis]
-        self._base_transparency = -self._overlay_alpha + 1
+        self._base_transparency = 1 - self._overlay_alpha
 
         self.overlay = overlay_image[:, :, :3] * self._overlay_alpha
 
