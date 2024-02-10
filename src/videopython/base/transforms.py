@@ -14,9 +14,6 @@ class Transformation(ABC):
     def apply(self, video: Video) -> Video:
         pass
 
-    def __call__(self, video: Video) -> Video:
-        return self.apply(video)
-
 
 class TransformationPipeline:
     def __init__(self, transformations: list[Transformation] | None):
