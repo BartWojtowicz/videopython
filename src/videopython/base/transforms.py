@@ -113,7 +113,7 @@ class ResampleFPS(Transformation):
             new_frame = (1 - ratio) * video.frames[int(new_frame_indices[i])] + ratio * video.frames[
                 int(np.ceil(new_frame_indices[i]))
             ]
-            new_frames.append(new_frame)
+            new_frames.append(new_frame.astype(np.uint8))
         video.frames = np.array(new_frames, dtype=np.uint8)
         video.fps = self.new_fps
         return video
