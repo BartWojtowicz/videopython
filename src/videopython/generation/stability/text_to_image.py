@@ -47,7 +47,7 @@ def text_to_image(
         width=width,
         height=height,
         samples=num_samples,
-        sampler=generation.SAMPLER_K_DPMPP_2M  # Choose which sampler we want to denoise our generation with.
+        sampler=generation.SAMPLER_K_DPMPP_2M,  # Choose which sampler we want to denoise our generation with.
         # Defaults to k_dpmpp_2m if not specified. Clip Guidance only supports ancestral samplers.
         # (Available Samplers: ddim, plms, k_euler, k_euler_ancestral, k_heun, k_dpm_2, k_dpm_2_ancestral, k_dpmpp_2s_ancestral, k_lms, k_dpmpp_2m, k_dpmpp_sde)
     )
