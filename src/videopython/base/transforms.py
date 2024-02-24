@@ -3,6 +3,7 @@ from multiprocessing import Pool
 
 import cv2
 import numpy as np
+from tqdm import tqdm
 
 from videopython.base.video import Video
 
@@ -88,4 +89,42 @@ class Resize(Transformation):
                 [(frame, self.new_width, self.new_height) for frame in video.frames],
             )
         video.frames = np.array(frames_copy)
+        return video
+
+
+class ResampleFPS(Transformation):
+    def __init__(self, new_fps: int | float):
+        self.new_fps = float(new_fps)
+
+    def _downsample(self, video: Video) -> Video:
+        target_frame_count = int(len(video.frames) * (self.new_fps / video.fps))
+        new_frame_indices = np.round(np.linspace(0, len(video.frames) - 1, target_frame_count)).astype(int)
+        video.frames = video.frames[new_frame_indices]
+        video.fps = self.new_fps
+        return video
+
+    def _upsample(self, video: Video) -> Video:
+        target_frame_count = int(len(video.frames) * (self.new_fps / video.fps))
+        new_frame_indices = np.linspace(0, len(video.frames) - 1, target_frame_count)
+        new_frames = []
+        for i in tqdm(range(len(new_frame_indices) - 1)):
+            # Interpolate between the two nearest frames
+            ratio = new_frame_indices[i] % 1
+            new_frame = (1 - ratio) * video.frames[int(new_frame_indices[i])] + ratio * video.frames[
+                int(np.ceil(new_frame_indices[i]))
+            ]
+            new_frames.append(new_frame.astype(np.uint8))
+        video.frames = np.array(new_frames, dtype=np.uint8)
+        video.fps = self.new_fps
+        return video
+
+    def apply(self, video: Video) -> Video:
+        if video.fps == self.new_fps:
+            return video
+        elif video.fps > self.new_fps:
+            print(f"Downsampling video from {video.fps} to {self.new_fps} FPS.")
+            video = self._downsample(video)
+        else:
+            print(f"Upsampling video from {video.fps} to {self.new_fps} FPS.")
+            video = self._upsample(video)
         return video
