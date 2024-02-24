@@ -40,8 +40,8 @@ jobs:
         with:
           python-version: 3.10.12
 
-      - name: Install dependencies
-        run: pip install black isort
+      - name: Install dev dependencies
+        run: pip install -r requirements-dev.txt
 
       - name: Run black
         run: black src -l 120 --check
@@ -62,16 +62,11 @@ jobs:
         with:
           python-version: 3.10.12
       
-      - name: Install dependencies
+      - name: Install main dependencies
         run: pip install -r requirements.txt
 
-      - name: Install mypy
-        run: pip install mypy
-
-      - name: Install missing mypy stubs
-        run: python3 -m pip install types-Pillow types-tqdm
+      - name: Install dev dependencies
+        run: pip install -r requirements-dev.txt
 
       - name: Run mypy
         run: mypy src
-
-  
