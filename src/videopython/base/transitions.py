@@ -15,19 +15,19 @@ class Transition(ABC):
     """
 
     @final
-    def apply(self, videos: tuple[Video, Video], **kwargs) -> Video:
+    def apply(self, videos: tuple[Video, Video]) -> Video:
         assert videos[0].metadata.can_be_merged_with(videos[1].metadata)
-        return self._apply(videos, **kwargs)
+        return self._apply(videos)
 
     @abstractmethod
-    def _apply(self, videos: tuple[Video, Video], **kwargs) -> Video:
+    def _apply(self, videos: tuple[Video, Video]) -> Video:
         pass
 
 
 class InstantTransition(Transition):
     """Instant cut without any transition."""
 
-    def _apply(self, videos: list[Video] | tuple[Video]) -> Video:
+    def _apply(self, videos: tuple[Video, Video]) -> Video:
         return videos[0] + videos[1]
 
 

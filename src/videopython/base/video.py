@@ -11,7 +11,7 @@ import torch
 from diffusers import DiffusionPipeline, DPMSolverMultistepScheduler
 from pydub import AudioSegment
 
-from videopython.utils.common import generate_random_name
+from videopython.utils.common import check_path, generate_random_name
 
 
 @dataclass
@@ -117,7 +117,7 @@ class Video:
         audio = cls._load_audio_from_path(path)
         if not audio:
             print(f"No audio found for `{path}`, adding silent track!")
-            audio = AudioSegment.silent(duration=new_vid.total_seconds * 1000)
+            audio = AudioSegment.silent(duration=round(new_vid.total_seconds * 1000))
         new_vid.audio = audio
         return new_vid
 
@@ -126,7 +126,7 @@ class Video:
         new_vid = cls()
         new_vid.frames = frames
         new_vid.fps = fps
-        new_vid.audio = AudioSegment.silent(duration=new_vid.total_seconds * 1000)
+        new_vid.audio = AudioSegment.silent(duration=round(new_vid.total_seconds * 1000))
         return new_vid
 
     @classmethod
@@ -136,7 +136,7 @@ class Video:
             image = np.expand_dims(image, axis=0)
         new_vid.frames = np.repeat(image, round(length_seconds * fps), axis=0)
         new_vid.fps = fps
-        new_vid.audio = AudioSegment.silent(duration=new_vid.total_seconds * 1000)
+        new_vid.audio = AudioSegment.silent(duration=round(new_vid.total_seconds * 1000))
         return new_vid
 
     @classmethod
@@ -149,13 +149,11 @@ class Video:
         num_frames: int = 24,
         gpu_optimized: bool = False,
     ) -> Video:
+        torch_dtype = torch.float16 if gpu_optimized else torch.float32
         pipe = DiffusionPipeline.from_pretrained("cerspense/zeroscope_v2_576w", torch_dtype=torch_dtype)
+        pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
         if gpu_optimized:
             pipe.enable_model_cpu_offload()
-            torch_dtype = torch.float16
-        else:
-            torch_dtype = torch.float32
-        pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
         video_frames = np.asarray(
             pipe(
                 prompt,
@@ -198,19 +196,10 @@ class Video:
         """
         if not self.is_loaded():
             raise RuntimeError(f"Video is not loaded, cannot save!")
-        # Check filename correctness or generate a new one if not given
-        if not filename:
-            filename = Path(generate_random_name()).resolve()
-            directory = filename.parent
-        elif not Path(filename).suffix == ".mp4":
-            raise ValueError("Only .mp4 save option is supported.")
-        else:
-            filename = Path(filename)
-            directory = filename.parent
-            if not directory.exists():
-                raise ValueError(f"Selected directory `{directory}` does not exist!")
 
-        filename, directory = str(filename), str(directory)
+        if filename is None:
+            filename = generate_random_name(suffix=".mp4")
+        filename = check_path(filename, dir_exists=True, suffix=".mp4")
 
         ffmpeg_video_command = (
             f"ffmpeg -loglevel error -y -framerate {self.fps} -f rawvideo -pix_fmt rgb24"
@@ -250,10 +239,14 @@ class Video:
 
     def add_audio_from_file(self, path: str, overlay: bool = True, overlay_gain: int = 0, loop: bool = False) -> None:
         new_audio = self._load_audio_from_path(path)
-        if (duration_diff := self.total_seconds - new_audio.duration_seconds) > 0 and not loop:
+        if new_audio is None:
+            print(f"Audio file `{path}` not found, skipping!")
+            return
+
+        if (duration_diff := round(self.total_seconds - new_audio.duration_seconds)) > 0 and not loop:
             new_audio = new_audio + AudioSegment.silent(duration_diff * 1000)
         elif new_audio.duration_seconds > self.total_seconds:
-            new_audio = new_audio[: self.total_seconds * 1000]
+            new_audio = new_audio[: round(self.total_seconds * 1000)]
 
         if overlay:
             self.audio = self.audio.overlay(new_audio, loop=loop, gain_during_overlay=overlay_gain)
@@ -276,26 +269,25 @@ class Video:
     def __str__(self) -> str:
         return str(self.metadata)
 
-    def __getitem__(self, val: int | slice) -> Video | np.ndarray:
-        if isinstance(val, slice):
-            # Sub-slice video if given a slice
-            sliced = self.from_frames(self.frames[val], fps=self.fps)
-            # Handle slicing without value for audio
-            start = val.start if val.start else 0
-            stop = val.stop if val.stop else len(self.frames)
-            # Handle negative values for audio slices
-            if start < 0:
-                start = len(self.frames) + start
-            if stop < 0:
-                stop = len(self.frames) + stop
-            # Append audio to the slice
-            audio_start = (start / self.fps) * 1000
-            audio_end = (stop / self.fps) * 1000
-            sliced.audio = self.audio[audio_start:audio_end]
-            return sliced
-        elif isinstance(val, int):
-            # Return single frame for integer indexing
-            return self.frames[val]
+    def __getitem__(self, val: slice) -> Video:
+        if not isinstance(val, slice):
+            raise ValueError("Only slices are supported for video indexing!")
+
+        # Sub-slice video if given a slice
+        sliced = self.from_frames(self.frames[val], fps=self.fps)
+        # Handle slicing without value for audio
+        start = val.start if val.start else 0
+        stop = val.stop if val.stop else len(self.frames)
+        # Handle negative values for audio slices
+        if start < 0:
+            start = len(self.frames) + start
+        if stop < 0:
+            stop = len(self.frames) + stop
+        # Append audio to the slice
+        audio_start = round(start / self.fps) * 1000
+        audio_end = round(stop / self.fps) * 1000
+        sliced.audio = self.audio[audio_start:audio_end]
+        return sliced
 
     @staticmethod
     def _load_audio_from_path(path: str) -> AudioSegment | None:
