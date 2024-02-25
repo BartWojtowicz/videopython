@@ -7,8 +7,6 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-import torch
-from diffusers import DiffusionPipeline, DPMSolverMultistepScheduler
 from pydub import AudioSegment
 
 from videopython.utils.common import check_path, generate_random_name
@@ -138,32 +136,6 @@ class Video:
         new_vid.fps = fps
         new_vid.audio = AudioSegment.silent(duration=round(new_vid.total_seconds * 1000))
         return new_vid
-
-    @classmethod
-    def from_prompt(
-        cls,
-        prompt: str,
-        num_steps: int = 25,
-        height: int = 320,
-        width: int = 576,
-        num_frames: int = 24,
-        gpu_optimized: bool = False,
-    ) -> Video:
-        torch_dtype = torch.float16 if gpu_optimized else torch.float32
-        pipe = DiffusionPipeline.from_pretrained("cerspense/zeroscope_v2_576w", torch_dtype=torch_dtype)
-        pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
-        if gpu_optimized:
-            pipe.enable_model_cpu_offload()
-        video_frames = np.asarray(
-            pipe(
-                prompt,
-                num_inference_steps=num_steps,
-                height=height,
-                width=width,
-                num_frames=num_frames,
-            ).frames
-        )
-        return Video.from_frames(video_frames, fps=24.0)
 
     def copy(self) -> Video:
         copied = Video().from_frames(self.frames.copy(), self.fps)
