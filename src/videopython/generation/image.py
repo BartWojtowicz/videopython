@@ -20,7 +20,7 @@ class TextToImage:
                 " or set it as an environment variable `STABILITY_KEY`. "
             )
 
-        self.client = client.Client(stability_key, verbose=verbose, engine=engine)
+        self.client = client.StabilityInference(stability_key, verbose=verbose, engine=engine)
 
     def generate_image(
         self,
