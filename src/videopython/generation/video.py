@@ -21,15 +21,14 @@ class TextToVideo:
     def generate_video(
         self, prompt: str, num_steps: int = 25, height: int = 320, width: int = 576, num_frames: int = 24
     ) -> Video:
-        video_frames = np.asarray(
-            self.pipeline(
-                prompt,
-                num_inference_steps=num_steps,
-                height=height,
-                width=width,
-                num_frames=num_frames,
-            ).frames
-        )
+        video_frames = self.pipeline(
+            prompt,
+            num_inference_steps=num_steps,
+            height=height,
+            width=width,
+            num_frames=num_frames,
+        ).frames[0]
+        video_frames = np.asarray(255 * video_frames, dtype=np.uint8)
         return Video.from_frames(video_frames, fps=24.0)
 
 
@@ -43,5 +42,5 @@ class ImageToVideo:
 
     def generate_video(self, prompt: str, image: Image) -> Video:
         video_frames = self.pipeline(prompt=prompt, image=image, output_type="np").frames[0]
-        video_frames = np.asarray(video_frames, dtype=np.uint8)
+        video_frames = np.asarray(255 * video_frames, dtype=np.uint8)
         return Video.from_frames(video_frames, fps=16.0)
