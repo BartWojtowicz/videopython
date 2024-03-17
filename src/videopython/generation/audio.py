@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 from pydub import AudioSegment
 from transformers import AutoTokenizer, VitsModel
@@ -16,4 +17,6 @@ class TextToSpeech:
         with torch.no_grad():
             output = self.pipeline(**tokenized).waveform
 
-        # TODO(bartosz): Read directly into AudioSegment here
+        output = (output.T.float().numpy() * (2**31 - 1)).astype(np.int32)
+        audio = AudioSegment(data=output, frame_rate=self.pipeline.config.sampling_rate, sample_width=4, channels=1)
+        return audio
