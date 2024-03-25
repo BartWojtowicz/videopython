@@ -18,21 +18,22 @@ pip install videopython
 ```
 
 ## Basic Usage
+> Using Nvidia A40 or better is recommended for the `videopython.generation` module.
 
 ```python
-# Generate image and animate it (currently need stabilit API for image generation )
-from videopython.generation.video import ImageToVideo
-from videopython.generation.image import TextToImage
+# Generate image and animate it
+from videopython.generation import ImageToVideo
+from videopython.generation import TextToImage
 
-image = TextToImage(stability_key=<YOUR_KEY>).generate_image(prompt="Space image")
+image = TextToImage().generate_image(prompt="Golden Retriever playing in the park")
 video = ImageToVideo().generate_video(image=image, fps=24)
 
-# Video generation with Zeroscope model
-from videopython.generation.video import TextToVideo
-video_gen = TextToVideo(gpu_optimized=True)
+# Video generation directly from prompt
+from videopython.generation import TextToVideo
+video_gen = TextToVideo()
 video = video_gen.generate_video("Dogs playing in the snow")
 for _ in range(10):
-    video += video_gen.generate_video("The same happy dog all over again")
+    video += video_gen.generate_video("Dogs playing in the snow")
 
 # Cut the first 2 seconds
 from videopython.base.transforms import CutSeconds
@@ -44,7 +45,7 @@ transformed_video = ResampleFPS(new_fps=30).apply(transformed_video)
 
 # Resize to 1000x1000
 from videopython.base.transforms import Resize
-transformed_video = Resize(new_width=1000, new_height=1000)).apply(transformed_video)
+transformed_video = Resize(new_width=1000, new_height=1000).apply(transformed_video)
 
 filepath = transformed_video.save()
 ```
