@@ -18,37 +18,34 @@ pip install videopython
 ```
 
 ## Basic Usage
+> Using Nvidia A40 or better is recommended for the `videopython.generation` module.
 
 ```python
-from videopython.base.video import Video
-from videopython.base.transitions import FadeTransition
+# Generate image and animate it
+from videopython.generation import ImageToVideo
+from videopython.generation import TextToImage
 
-# Load video
-video = Video.from_path("tests/test_data/fast_benchmark.mp4")
-print(video.metadata)
-print(video.frames.shape) # Video is based on numpy representation of frames
+image = TextToImage().generate_image(prompt="Golden Retriever playing in the park")
+video = ImageToVideo().generate_video(image=image, fps=24)
 
-# Generate videos
-video1 = Video.from_prompt("Dogs playing in the snow.")
-video2 = Video.from_prompt("Dogs going back home.")
+# Video generation directly from prompt
+from videopython.generation import TextToVideo
+video_gen = TextToVideo()
+video = video_gen.generate_video("Dogs playing in the snow")
+for _ in range(10):
+    video += video_gen.generate_video("Dogs playing in the snow")
 
-# Add videos
-combined_video = video1 + video2
-print(combined_video.metadata)
+# Cut the first 2 seconds
+from videopython.base.transforms import CutSeconds
+transformed_video = CutSeconds(start_second=0, end_second=2).apply(video.copy())
 
-# Apply fade transition between videos
-fade = FadeTransition(0.5) # 0.5s effect time
-faded_video = fade.apply(videos=(video1, video2))
-print(faded_video.metadata)
+# Upsample to 30 FPS
+from videopython.base.transforms import ResampleFPS
+transformed_video = ResampleFPS(new_fps=30).apply(transformed_video)
 
-# Add audio from file
-faded_video.add_audio_from_file("tests/test_data/test_audio.mp3")
+# Resize to 1000x1000
+from videopython.base.transforms import Resize
+transformed_video = Resize(new_width=1000, new_height=1000).apply(transformed_video)
 
-# Save to a file
-faded_video.save("my_video.mp4")
-```
-
-### Running Unit Tests
-```bash
-PYTHONPATH=./src/ pytest
+filepath = transformed_video.save()
 ```
