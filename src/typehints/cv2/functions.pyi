@@ -16,3 +16,11 @@ def resize(
     fy: float = 0,
     interpolation: int = INTER_LINEAR,
 ) -> npt.NDArray[_TImg]: ...
+def GaussianBlur(
+    src: npt.NDArray[_TImg],
+    ksize: _TSize,
+    sigmaX: float,
+    dst: npt.NDArray[_TImg] = ...,
+    sigmaY: float = ...,
+    borderType: int = ...,
+) -> npt.NDArray[_TImg]: ...
