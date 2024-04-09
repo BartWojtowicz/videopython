@@ -1,6 +1,6 @@
 import numpy as np
 
-from videopython.base.transitions import FadeTransition, InstantTransition
+from videopython.base.transitions import BlurTransition, FadeTransition, InstantTransition
 from videopython.base.video import Video
 
 
@@ -28,3 +28,9 @@ def test_instant_transition(small_video):
 
     assert result.frames.shape[0] == 2 * small_video.frames.shape[0]
     assert np.all(result.frames == (small_video + small_video).frames)
+
+
+def test_blur_transition(small_video):
+    org_length = len(small_video.frames)
+    result = BlurTransition(effect_time_seconds=2.0).apply((small_video, small_video.copy()))
+    assert len(result.frames) == 2 * org_length

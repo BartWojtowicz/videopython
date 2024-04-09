@@ -4,6 +4,7 @@ from typing import final
 
 import numpy as np
 
+from videopython.base.effects import Blur
 from videopython.base.video import Video
 
 
@@ -68,3 +69,38 @@ class FadeTransition(Transition):
         )
         faded_videos.audio = videos[0].audio.append(videos[1].audio, crossfade=(effect_time_fps / video_fps) * 1000)
         return faded_videos
+
+
+class BlurTransition(Transition):
+    def __init__(
+        self, effect_time_seconds: float = 1.5, blur_iterations: int = 400, blur_kernel_size: tuple[int, int] = (11, 11)
+    ):
+        self.effect_time_seconds = effect_time_seconds
+        self.blur_iterations = blur_iterations
+        self.blur_kernel_size = blur_kernel_size
+
+    def _apply(self, videos: tuple[Video, Video]) -> Video:
+        video_fps = videos[0].fps
+        for video in videos:
+            if video.total_seconds < self.effect_time_seconds:
+                raise RuntimeError("Not enough space to make transition!")
+
+        effect_time_fps = math.floor(self.effect_time_seconds * video_fps)
+
+        ascending_blur = Blur("ascending", self.blur_iterations, self.blur_kernel_size)
+        descending_blur = Blur("descending", self.blur_iterations, self.blur_kernel_size)
+        transition = ascending_blur.apply(videos[0][-effect_time_fps:]) + descending_blur.apply(
+            videos[1][:effect_time_fps]
+        )
+
+        blurred_videos = Video.from_frames(
+            np.r_[
+                "0,2",
+                videos[0].frames[:-effect_time_fps],
+                transition.frames,
+                videos[1].frames[effect_time_fps:],
+            ],
+            fps=video_fps,
+        )
+        blurred_videos.audio = videos[0].audio.append(videos[1].audio)
+        return blurred_videos
