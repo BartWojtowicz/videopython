@@ -3,6 +3,8 @@ from typing import Literal
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from videopython.exceptions import OutOfBoundsError
+
 
 class ImageText(object):
     def __init__(
@@ -79,7 +81,7 @@ class ImageText(object):
             font_size = self._get_font_size(text, font_filename, max_width, max_height)
         text_size = self.get_text_size(font_filename, font_size, text)
         if (text_size[0] + x > self.image_size[0]) or (text_size[1] + y > self.image_size[1]):
-            raise ValueError(f"Font size `{font_size}` is too big, text won't fit!")
+            raise OutOfBoundsError(f"Font size `{font_size}` is too big, text won't fit!")
         font = ImageFont.truetype(font_filename, font_size)
         self._draw.text((x, y), text, font=font, fill=color)
         return text_size
@@ -125,12 +127,12 @@ class ImageText(object):
     ) -> tuple[int, int]:
         x, y = xy
         if x + box_width > self.image_size[0]:
-            raise ValueError(f"Box width {box_width} is too big for the image width {self.image_size[0]}!")
+            raise OutOfBoundsError(f"Box width {box_width} is too big for the image width {self.image_size[0]}!")
         lines = self._split_lines_by_width(text, font_filename, font_size, box_width)
         lines_height = sum([self.get_text_size(font_filename, font_size, line)[1] for line in lines])
         if y + lines_height > self.image_size[1]:
             available_space = self.image_size[1] - y
-            raise ValueError(f"Text height {lines_height} is too big for the available space {available_space}!")
+            raise OutOfBoundsError(f"Text height {lines_height} is too big for the available space {available_space}!")
         # Write lines
         current_text_height = y
         for line in lines:

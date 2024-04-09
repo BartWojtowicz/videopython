@@ -22,3 +22,8 @@ def big_video():
 @pytest.fixture
 def black_frames_video():
     return Video.from_image(np.zeros((100, 100, 3), dtype=np.uint8), fps=24, length_seconds=5.0)
+
+
+@pytest.fixture
+def test_font_path():
+    return str(TEST_DATA_DIR / "test_font.ttf")
