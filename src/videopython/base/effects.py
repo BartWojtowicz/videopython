@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
-from typing import final
+from typing import Literal, final
 
+import cv2
 import numpy as np
 from tqdm import tqdm
 
@@ -54,4 +55,46 @@ class FullImageOverlay(Effect):
             )
         print("Overlaying video...")
         video.frames = np.array([self._overlay(frame) for frame in tqdm(video.frames)], dtype=np.uint8)
+        return video
+
+
+class Blur(Effect):
+    def __init__(
+        self,
+        mode: Literal["constant", "ascending", "descending"],
+        iterations: int,
+        kernel_size: tuple[int, int] = (5, 5),
+    ):
+        if iterations < 1:
+            raise ValueError("Iterations must be at least 1!")
+        self.mode = mode
+        self.iterations = iterations
+        self.kernel_size = kernel_size
+
+    def _apply(self, video: Video) -> Video:
+        n_frames = len(video.frames)
+        new_frames = []
+        if self.mode == "constant":
+            for frame in video.frames:
+                blurred_frame = frame
+                for _ in range(self.iterations):
+                    blurred_frame = cv2.GaussianBlur(blurred_frame, self.kernel_size, 0)
+                new_frames.append(blurred_frame)
+        elif self.mode == "ascending":
+            for i, frame in tqdm(enumerate(video.frames)):
+                frame_iterations = max(1, round((i / n_frames) * self.iterations))
+                blurred_frame = frame
+                for _ in range(frame_iterations):
+                    blurred_frame = cv2.GaussianBlur(blurred_frame, self.kernel_size, 0)
+                new_frames.append(blurred_frame)
+        elif self.mode == "descending":
+            for i, frame in tqdm(enumerate(video.frames)):
+                frame_iterations = max(round(((n_frames - i) / n_frames) * self.iterations), 1)
+                blurred_frame = frame
+                for _ in range(frame_iterations):
+                    blurred_frame = cv2.GaussianBlur(blurred_frame, self.kernel_size, 0)
+                new_frames.append(blurred_frame)
+        else:
+            raise ValueError(f"Unknown mode: `{self.mode}`.")
+        video.frames = np.asarray(new_frames)
         return video
