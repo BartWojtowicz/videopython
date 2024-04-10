@@ -1,6 +1,7 @@
 import numpy as np
 
-from videopython.base.transitions import BlurTransition, FadeTransition, InstantTransition
+from videopython.base.transitions import (BlurTransition, FadeTransition,
+                                          InstantTransition)
 from videopython.base.video import Video
 
 
