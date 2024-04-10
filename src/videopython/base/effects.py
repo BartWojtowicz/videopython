@@ -102,6 +102,8 @@ class Blur(Effect):
 
 class Zoom(Effect):
     def __init__(self, zoom_factor: float, mode: Literal["in", "out"]):
+        if zoom_factor <= 1:
+            raise ValueError("Zoom factor must be greater than 1!")
         self.zoom_factor = zoom_factor
         self.mode = mode
 
