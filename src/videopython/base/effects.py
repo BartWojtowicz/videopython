@@ -98,3 +98,41 @@ class Blur(Effect):
             raise ValueError(f"Unknown mode: `{self.mode}`.")
         video.frames = np.asarray(new_frames)
         return video
+
+
+class Zoom(Effect):
+    def __init__(self, zoom_factor: float, mode: Literal["in", "out"]):
+        self.zoom_factor = zoom_factor
+        self.mode = mode
+
+    def _apply(self, video: Video) -> Video:
+        n_frames = len(video.frames)
+        new_frames = []
+
+        width = video.metadata.width
+        height = video.metadata.height
+        crop_sizes_w, crop_sizes_h = np.linspace(width // self.zoom_factor, width, n_frames), np.linspace(
+            height // self.zoom_factor, height, n_frames
+        )
+
+        if self.mode == "in":
+            for frame, w, h in tqdm(zip(video.frames, reversed(crop_sizes_w), reversed(crop_sizes_h))):
+
+                x = width / 2 - w / 2
+                y = height / 2 - h / 2
+
+                cropped_frame = frame[int(y) : int(y + h), int(x) : int(x + w)]
+                zoomed_frame = cv2.resize(cropped_frame, (width, height))
+                new_frames.append(zoomed_frame)
+        elif self.mode == "out":
+            for frame, w, h in tqdm(zip(video.frames, crop_sizes_w, crop_sizes_h)):
+                x = width / 2 - w / 2
+                y = height / 2 - h / 2
+
+                cropped_frame = frame[int(y) : int(y + h), int(x) : int(x + w)]
+                zoomed_frame = cv2.resize(cropped_frame, (width, height))
+                new_frames.append(zoomed_frame)
+        else:
+            raise ValueError(f"Unknown mode: `{self.mode}`.")
+        video.frames = np.asarray(new_frames)
+        return video
