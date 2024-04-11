@@ -15,12 +15,24 @@ class Effect(ABC):
     """
 
     @final
-    def apply(self, video: Video) -> Video:
+    def apply(self, video: Video, start: float | None = None, stop: float | None = None) -> Video:
         original_shape = video.video_shape
-        video_with_effect = self._apply(video)
-        if not video_with_effect.video_shape == original_shape:
+        start = start if start is not None else 0
+        stop = stop if stop is not None else video.total_seconds
+        # Check for start and stop correctness
+        if not 0 <= start <= video.total_seconds:
+            raise ValueError(f"Video is only {video.total_seconds} long, but passed start: {start}!")
+        elif not start <= stop <= video.total_seconds:
+            raise ValueError(f"Video is only {video.total_seconds} long, but passed stop: {stop}!")
+        # Apply effect on video slice
+        effect_start_frame = round(start * video.fps)
+        effect_end_frame = round(stop * video.fps)
+        video_with_effect = self._apply(video[effect_start_frame:effect_end_frame])
+        video = video[:effect_start_frame] + video_with_effect + video[effect_end_frame:]
+        # Check if dimensions didn't change
+        if not video.video_shape == original_shape:
             raise RuntimeError("The effect must not change the number of frames and the shape of the frames!")
-        return video_with_effect
+        return video
 
     @abstractmethod
     def _apply(self, video: Video) -> Video:

@@ -1,6 +1,6 @@
 import numpy as np
 
-from videopython.base.effects import FullImageOverlay, Zoom
+from videopython.base.effects import Blur, FullImageOverlay, Zoom
 
 
 def test_full_image_overlay_rgba(black_frames_video):
@@ -33,3 +33,8 @@ def test_zoom_in_out(small_video):
 
     assert zoomed_out_video.video_shape == small_video.video_shape
     assert zoomed_out_video.metadata.frame_count == small_video.metadata.frame_count
+def test_effect_start_argument(small_video):
+    blur = Blur(mode="constant", iterations=10)
+    small_video_with_blur = blur.apply(small_video.copy(), start=6.)
+    assert (small_video.frames[0] == small_video_with_blur.frames[0]).all()
+    assert (small_video.frames[-1] != small_video_with_blur.frames[-1]).any()
