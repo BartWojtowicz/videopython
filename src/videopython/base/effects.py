@@ -123,7 +123,7 @@ class Zoom(Effect):
                 x = width / 2 - w / 2
                 y = height / 2 - h / 2
 
-                cropped_frame = frame[int(y) : int(y + h), int(x) : int(x + w)]
+                cropped_frame = frame[round(y) : round(y + h), round(x) : round(x + w)]
                 zoomed_frame = cv2.resize(cropped_frame, (width, height))
                 new_frames.append(zoomed_frame)
         elif self.mode == "out":
@@ -131,7 +131,7 @@ class Zoom(Effect):
                 x = width / 2 - w / 2
                 y = height / 2 - h / 2
 
-                cropped_frame = frame[int(y) : int(y + h), int(x) : int(x + w)]
+                cropped_frame = frame[round(y) : round(y + h), round(x) : round(x + w)]
                 zoomed_frame = cv2.resize(cropped_frame, (width, height))
                 new_frames.append(zoomed_frame)
         else:
