@@ -1,6 +1,6 @@
 import numpy as np
 
-from videopython.base.effects import FullImageOverlay
+from videopython.base.effects import FullImageOverlay, Zoom
 
 
 def test_full_image_overlay_rgba(black_frames_video):
@@ -22,3 +22,14 @@ def test_full_image_overlay_rgb(black_frames_video):
 
     assert (overlayed_video.frames.flatten() == 127).all()
     assert overlayed_video.video_shape == original_shape
+
+
+def test_zoom_in_out(small_video):
+    zoomed_in_video = Zoom(zoom_factor=2.0, mode="in").apply(small_video)
+    zoomed_out_video = Zoom(zoom_factor=2.0, mode="out").apply(small_video)
+
+    assert zoomed_in_video.video_shape == small_video.video_shape
+    assert zoomed_in_video.metadata.frame_count == small_video.metadata.frame_count
+
+    assert zoomed_out_video.video_shape == small_video.video_shape
+    assert zoomed_out_video.metadata.frame_count == small_video.metadata.frame_count
