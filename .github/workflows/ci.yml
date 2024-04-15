@@ -22,7 +22,7 @@ jobs:
         sudo apt-get install ffmpeg -y
 
     - name: Install dependencies
-      run: pip install -r requirements.txt
+      run: pip install -r requirements.txt -r requirements-dev.txt
 
     - name: Run tests
       run: PYTHONPATH=./src/ pytest
@@ -62,11 +62,8 @@ jobs:
         with:
           python-version: 3.10.12
       
-      - name: Install main dependencies
-        run: pip install -r requirements.txt
-
-      - name: Install dev dependencies
-        run: pip install -r requirements-dev.txt
+      - name: Install all dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt -r requirements-generation.txt
 
       - name: Run mypy
         run: mypy src
