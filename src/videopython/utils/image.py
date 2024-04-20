@@ -192,16 +192,34 @@ class SlideOverImage(object):
         image: np.ndarray,
         direction: Literal["left", "right"],
         video_shape: tuple[int, int] = (1080, 1920),
+        fps: float = 24.0,
+        length_seconds: float = 1.0,
     ) -> None:
         self.direction = direction
         self.video_width, self.video_height = video_shape
+        self.fps = fps
+        self.length_seconds = length_seconds
 
         resize_factor = image.shape[0] / self.video_height
-        resize_dims = (round(image.shape[0] / resize_factor), round(image.shape[1] / resize_factor))
+        resize_dims = (round(image.shape[1] / resize_factor), round(image.shape[0] / resize_factor))  # width, height
         self.image = cv2.resize(image, resize_dims)
 
         if self.video_height > self.image.shape[0] or self.video_width > self.image.shape[1]:
             raise ValueError("Image is too small for the video frame!")
 
-    def slide(self):
-        pass
+    def slide(self) -> np.ndarray:
+        max_offset = self.image.shape[1] - self.video_width
+        frame_count = round(self.fps * self.length_seconds)
+
+        deltas = np.linspace(0, max_offset, frame_count)
+        frames = []
+
+        for delta in deltas:
+            if self.direction == "right":
+                frame = self.image[:, round(delta) : round(delta) + self.video_width]
+            elif self.direction == "left":
+                frame = self.image[
+                    :, self.image.shape[1] - round(delta) - self.video_width : self.image.shape[1] - round(delta)
+                ]
+            frames.append(frame)
+        return np.stack(frames, axis=0)
