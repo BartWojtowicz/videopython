@@ -1,0 +1,2 @@
+class OutOfBoundsError(Exception):
+    pass
