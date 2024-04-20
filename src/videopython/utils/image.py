@@ -125,6 +125,20 @@ class ImageText(object):
         color: tuple[int, int, int] = (0, 0, 0),
         place: Literal["left", "right", "center"] = "left",
     ) -> tuple[int, int]:
+        """Write text in box described by upper-left corner and maxium width of the box.
+
+        Args:
+            text: Text to be written inside the box.
+            font_filename: Path to the font file.
+            xy: X and Y coordinates describing upper-left of the box containing the text.
+            box_width: Pixel width of the box containing the text.
+            font_size: Font size.
+            color: RGB color of the text.
+            place: Strategy for justifying the text inside the container box. Defaults to "left".
+
+        Returns:
+            Lower-left corner of the written text box.
+        """
         x, y = xy
         if x + box_width > self.image_size[0]:
             raise OutOfBoundsError(f"Box width {box_width} is too big for the image width {self.image_size[0]}!")
