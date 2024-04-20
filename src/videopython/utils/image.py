@@ -1,5 +1,6 @@
 from typing import Literal
 
+import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
@@ -183,3 +184,24 @@ class ImageText(object):
             # Increment text height
             current_text_height += line_size[1]
         return (x, current_text_height)
+
+
+class SlideOverImage(object):
+    def __init__(
+        self,
+        image: np.ndarray,
+        direction: Literal["left", "right"],
+        video_shape: tuple[int, int] = (1080, 1920),
+    ) -> None:
+        self.direction = direction
+        self.video_width, self.video_height = video_shape
+
+        resize_factor = image.shape[0] / self.video_height
+        resize_dims = (round(image.shape[0] / resize_factor), round(image.shape[1] / resize_factor))
+        self.image = cv2.resize(image, resize_dims)
+
+        if self.video_height > self.image.shape[0] or self.video_width > self.image.shape[1]:
+            raise ValueError("Image is too small for the video frame!")
+
+    def slide(self):
+        pass
