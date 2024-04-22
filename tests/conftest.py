@@ -22,7 +22,7 @@ def big_video():
 
 @pytest.fixture
 def small_image():
-    return np.array(Image.open(TEST_DATA_DIR / "test_image.jpg"))
+    return np.array(Image.open(TEST_DATA_DIR / "small_image.jpg"))
 
 
 @pytest.fixture
