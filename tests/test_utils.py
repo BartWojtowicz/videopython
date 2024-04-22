@@ -6,6 +6,6 @@ def test_slide_over_image(small_image):
     video = slide.slide(small_image)
 
     assert video.frames.shape[0] == 24
-    assert video.frames.shape[1] == 150
-    assert video.frames.shape[2] == small_image.shape[0]
+    assert video.frames.shape[1] == small_image.shape[0]
+    assert video.frames.shape[2] == 150
     assert video.frames.shape[3] == 3
