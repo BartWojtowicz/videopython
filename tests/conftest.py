@@ -2,6 +2,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from PIL import Image
 
 from videopython.base.video import Video
 
@@ -17,6 +18,11 @@ def small_video():
 @pytest.fixture
 def big_video():
     return Video.from_path(str(TEST_DATA_DIR / "slow_benchmark.mp4"))
+
+
+@pytest.fixture
+def small_image():
+    return np.array(Image.open(TEST_DATA_DIR / "small_image.png"))
 
 
 @pytest.fixture

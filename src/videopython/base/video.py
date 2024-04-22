@@ -122,6 +122,12 @@ class Video:
     @classmethod
     def from_frames(cls, frames: np.ndarray, fps: float) -> Video:
         new_vid = cls()
+        if frames.ndim != 4:
+            raise ValueError(f"Unsupported number of dimensions: {frames.shape}!")
+        elif frames.shape[-1] == 4:
+            frames = frames[:, :, :, :3]
+        elif frames.shape[-1] != 3:
+            raise ValueError(f"Unsupported number of dimensions: {frames.shape}!")
         new_vid.frames = frames
         new_vid.fps = fps
         new_vid.audio = AudioSegment.silent(duration=round(new_vid.total_seconds * 1000))
