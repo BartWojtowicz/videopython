@@ -214,8 +214,8 @@ class SlideOverImage:
             elif self.direction == "left":
                 frame = image[:, image.shape[1] - round(delta) - self.video_width : image.shape[1] - round(delta)]
             frames.append(frame)
-        frames = np.stack(frames, axis=0)
-        return Video.from_frames(frames=frames, fps=self.fps)
+
+        return Video.from_frames(frames=np.stack(frames, axis=0), fps=self.fps)
 
     def _resize(self, image: np.ndarray) -> np.ndarray:
         resize_factor = image.shape[0] / self.video_height
