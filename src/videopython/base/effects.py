@@ -40,7 +40,7 @@ class Effect(ABC):
 
 
 class FullImageOverlay(Effect):
-    def __init__(self, overlay_image: np.ndarray, alpha: float | None = None):
+    def __init__(self, overlay_image: np.ndarray, alpha: float | None = None, fade_time: float = 0.0):
         if alpha is not None and not 0 <= alpha <= 1:
             raise ValueError("Alpha must be in range [0, 1]!")
         elif not (overlay_image.ndim == 3 and overlay_image.shape[-1] in [3, 4]):
@@ -52,21 +52,37 @@ class FullImageOverlay(Effect):
             overlay_image = np.dstack([overlay_image, np.full(overlay_image.shape[:2], 255, dtype=np.uint8)])
         overlay_image[:, :, 3] = overlay_image[:, :, 3] * alpha
 
-        self._overlay_alpha = (overlay_image[:, :, 3] / 255.0)[:, :, np.newaxis]
-        self._base_transparency = 1 - self._overlay_alpha
+        self._overlay_transparency = (overlay_image[:, :, 3] / 255.0)[:, :, np.newaxis]
+        self.overlay = overlay_image[:, :, :3]
+        self.fade_time = fade_time
 
-        self.overlay = overlay_image[:, :, :3] * self._overlay_alpha
-
-    def _overlay(self, img: np.ndarray) -> np.ndarray:
-        return self.overlay + (img * self._base_transparency)
+    def _overlay(self, img: np.ndarray, alpha: float = 1.0) -> np.ndarray:
+        overlay_transparency = alpha * self._overlay_transparency
+        return self.overlay * overlay_transparency + (img * (1 - overlay_transparency))
 
     def _apply(self, video: Video) -> Video:
         if not video.frame_shape == self.overlay.shape:
             raise ValueError(
                 f"Mismatch of overlay shape `{self.overlay.shape}` with video shape: `{video.frame_shape}`!"
             )
+        elif not (0 <= 2 * self.fade_time <= video.total_seconds):
+            raise ValueError(f"Video is only {video.total_seconds}s long, but fade time is {self.fade_time}s!")
+
         print("Overlaying video...")
-        video.frames = np.array([self._overlay(frame) for frame in tqdm(video.frames)], dtype=np.uint8)
+        if self.fade_time == 0:
+            video.frames = np.array([self._overlay(frame) for frame in tqdm(video.frames)], dtype=np.uint8)
+        else:
+            num_video_frames = len(video.frames)
+            num_fade_frames = round(self.fade_time * video.fps)
+            new_frames = []
+            for i, frame in enumerate(tqdm(video.frames)):
+                frames_dist_from_end = min(i, num_video_frames - i)
+                if frames_dist_from_end >= num_fade_frames:
+                    fade_alpha = 1.0
+                else:
+                    fade_alpha = frames_dist_from_end / num_fade_frames
+                new_frames.append(self._overlay(frame, fade_alpha))
+            video.frames = np.array(new_frames, dtype=np.uint8)
         return video
 
 

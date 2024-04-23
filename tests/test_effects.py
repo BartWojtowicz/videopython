@@ -26,6 +26,14 @@ def test_full_image_overlay_rgb(black_frames_video):
     assert overlayed_video.video_shape == original_shape
 
 
+def test_full_image_overlay_with_fade(black_frames_video):
+    overlay = 255 * np.ones(shape=black_frames_video.frame_shape, dtype=np.uint8)
+    original_shape = black_frames_video.video_shape
+    overlayed_video = FullImageOverlay(overlay, alpha=0.5, fade_time=2.0).apply(black_frames_video)
+
+    assert overlayed_video.video_shape == original_shape
+
+
 def test_zoom_in_out(small_video):
     zoomed_in_video = Zoom(zoom_factor=2.0, mode="in").apply(small_video)
     zoomed_out_video = Zoom(zoom_factor=2.0, mode="out").apply(small_video)
