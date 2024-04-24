@@ -4,6 +4,7 @@ from typing import Literal, final
 import cv2
 import numpy as np
 from tqdm import tqdm
+from PIL import Image
 
 from videopython.base.video import Video
 
@@ -28,10 +29,21 @@ class Effect(ABC):
         effect_start_frame = round(start * video.fps)
         effect_end_frame = round(stop * video.fps)
         video_with_effect = self._apply(video[effect_start_frame:effect_end_frame])
-        video = video[:effect_start_frame] + video_with_effect + video[effect_end_frame:]
+        old_audio = video.audio
+        video = Video.from_frames(
+            np.r_[
+                "0,2",
+                video.frames[:effect_start_frame],
+                video_with_effect.frames,
+                video.frames[effect_end_frame:],
+            ],
+            fps=video.fps,
+        )
+        video.audio = old_audio
         # Check if dimensions didn't change
         if not video.video_shape == original_shape:
             raise RuntimeError("The effect must not change the number of frames and the shape of the frames!")
+
         return video
 
     @abstractmethod
@@ -50,18 +62,21 @@ class FullImageOverlay(Effect):
 
         if overlay_image.shape[-1] == 3:
             overlay_image = np.dstack([overlay_image, np.full(overlay_image.shape[:2], 255, dtype=np.uint8)])
-        overlay_image[:, :, 3] = overlay_image[:, :, 3] * alpha
 
-        self._overlay_transparency = (overlay_image[:, :, 3] / 255.0)[:, :, np.newaxis]
-        self.overlay = overlay_image[:, :, :3]
+        self.alpha = alpha
+        self.overlay = overlay_image.astype(np.uint8)
         self.fade_time = fade_time
 
     def _overlay(self, img: np.ndarray, alpha: float = 1.0) -> np.ndarray:
-        overlay_transparency = alpha * self._overlay_transparency
-        return self.overlay * overlay_transparency + (img * (1 - overlay_transparency))
+        img_pil = Image.fromarray(img)
+        overlay = self.overlay.copy()
+        overlay[:, :, 3] = overlay[:, :, 3] * (self.alpha * alpha)
+        overlay_pil = Image.fromarray(overlay)
+        img_pil.paste(overlay_pil, (0, 0), overlay_pil)
+        return np.array(img_pil)
 
     def _apply(self, video: Video) -> Video:
-        if not video.frame_shape == self.overlay.shape:
+        if not video.frame_shape == self.overlay[:, :, :3].shape:
             raise ValueError(
                 f"Mismatch of overlay shape `{self.overlay.shape}` with video shape: `{video.frame_shape}`!"
             )
