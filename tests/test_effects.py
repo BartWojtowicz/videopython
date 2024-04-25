@@ -20,10 +20,12 @@ def test_full_image_overlay_rgba(black_frames_video):
 def test_full_image_overlay_rgb(black_frames_video):
     overlay = 255 * np.ones(shape=black_frames_video.frame_shape, dtype=np.uint8)
     original_shape = black_frames_video.video_shape
+    original_audio_length = len(black_frames_video.audio)
     overlayed_video = FullImageOverlay(overlay, alpha=0.5).apply(black_frames_video)
 
     assert (overlayed_video.frames.flatten() == 127).all()
     assert overlayed_video.video_shape == original_shape
+    assert len(overlayed_video.audio) == original_audio_length
 
 
 def test_full_image_overlay_with_fade(black_frames_video):
@@ -65,4 +67,5 @@ def test_overlaying_video_with_text(place, small_video, test_font_path):
         xy=(0, 0),
     )
     overlay = FullImageOverlay(overlay_image=my_overlay.img)
-    overlay.apply(small_video)
+    overlayed_video = overlay.apply(small_video.copy())
+    assert overlayed_video.video_shape == small_video.video_shape

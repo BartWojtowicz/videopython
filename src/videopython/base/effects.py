@@ -3,8 +3,8 @@ from typing import Literal, final
 
 import cv2
 import numpy as np
-from tqdm import tqdm
 from PIL import Image
+from tqdm import tqdm
 
 from videopython.base.video import Video
 
