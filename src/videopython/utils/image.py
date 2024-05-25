@@ -203,6 +203,11 @@ class ImageText:
             xmax += x + background_color_padding
             ymin += y - background_color_padding
             ymax += y + background_color_padding
+            # Make sure we are inside image, cut to image if not
+            xmin = max(0, xmin)
+            ymin = max(0, ymin)
+            xmax = min(xmax, self.image_size[0])
+            ymax = min(ymax, self.image_size[1])
             # Slice the bounding box and find text mask 
             bbox_slice = img[ymin:ymax, xmin:xmax]
             bbox_text_mask = np.any(bbox_slice != 0, axis=2).astype(np.uint8)
@@ -220,7 +225,7 @@ class ImageText:
             self.image = Image.fromarray(img)
         return (x, current_text_height)
 
-    def _find_smallest_bounding_rect(self, mask: np.ndarray) -> tuple[tuple[int, int], tuple[int, int]]:
+    def _find_smallest_bounding_rect(self, mask: np.ndarray) -> tuple[int, int, int, int]:
         """Find the smallest bounding rectangle for the mask."""
         rows = np.any(mask, axis=1)
         cols = np.any(mask, axis=0)
