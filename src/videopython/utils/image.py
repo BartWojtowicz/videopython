@@ -198,22 +198,22 @@ class ImageText:
             text_mask = np.any(box_slice != 0, axis=2).astype(np.uint8)
             xmin, xmax, ymin, ymax = self._find_smallest_bounding_rect(text_mask)
             # Move to global position and add padding
-            xmin += (x - background_color_padding)
-            xmax += (x + background_color_padding)
-            ymin += (y - background_color_padding)
-            ymax += (y + background_color_padding)
-            # Mamy bounding box
+            xmin += x - background_color_padding
+            xmax += x + background_color_padding
+            ymin += y - background_color_padding
+            ymax += y + background_color_padding
+            # We have bounding box
             bbox_slice = img[ymin:ymax, xmin:xmax]
             bbox_text_mask = np.any(bbox_slice != 0, axis=2).astype(np.uint8)
             bbox_slice[~bbox_text_mask.astype(bool)] = text_background_color
-            # TODO: Blur nicely with semi-transparent pixels from the font
+            # Blur nicely with semi-transparent pixels from the font
             text_slice = bbox_slice[bbox_text_mask.astype(bool)]
-            text_background = (text_slice[:,:3] * (np.expand_dims(text_slice[:,-1], axis=1) / 255))
-            color_background = (1 - (np.expand_dims(text_slice[:,-1], axis=1) / 255)) * text_background_color
+            text_background = text_slice[:, :3] * (np.expand_dims(text_slice[:, -1], axis=1) / 255)
+            color_background = (1 - (np.expand_dims(text_slice[:, -1], axis=1) / 255)) * text_background_color
             faded_background = text_background[:, :3] + color_background[:, :3]
             text_slice[:, :3] = faded_background
             text_slice[:, -1] = 255
-            bbox_slice[bbox_text_mask.astype(bool)] = text_slice 
+            bbox_slice[bbox_text_mask.astype(bool)] = text_slice
             self.image = Image.fromarray(img)
         return (x, current_text_height)
 
