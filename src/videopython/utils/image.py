@@ -126,6 +126,7 @@ class ImageText:
         font_size: int = 11,
         text_color: tuple[int, int, int] = (0, 0, 0),
         text_background_color: None | tuple[int, int, int, int] = None,
+        background_color_padding: int = 0,
         place: Literal["left", "right", "center"] = "left",
     ) -> tuple[int, int]:
         """Write text in box described by upper-left corner and maxium width of the box.
@@ -138,6 +139,7 @@ class ImageText:
             font_size: Font size.
             text_color: RGB color of the text.
             text_background_color: If set, adds background color to the text box. Expects RGBA values.
+            background_color_padding: Number of padding pixels to add when adding text background color.
             place: Strategy for justifying the text inside the container box. Defaults to "left".
 
         Returns:
@@ -161,7 +163,7 @@ class ImageText:
                 self.write_text(
                     text=line,
                     font_filename=font_filename,
-                    xy=(0, current_text_height),
+                    xy=(x, current_text_height),
                     font_size=font_size,
                     color=text_color,
                 )
@@ -194,20 +196,34 @@ class ImageText:
             img = self.img_array
             box_slice = img[y:current_text_height, x : x + box_width]
             text_mask = np.any(box_slice != 0, axis=2).astype(np.uint8)
-            bounding_rect = self._find_smallest_bounding_rect(text_mask)
-            # TODO: Allow passing size of the padding to the bounding rectangle
+            xmin, xmax, ymin, ymax = self._find_smallest_bounding_rect(text_mask)
+            # Move to global position and add padding
+            xmin += (x - background_color_padding)
+            xmax += (x + background_color_padding)
+            ymin += (y - background_color_padding)
+            ymax += (y + background_color_padding)
+            # Mamy bounding box
+            bbox_slice = img[ymin:ymax, xmin:xmax]
+            bbox_text_mask = np.any(bbox_slice != 0, axis=2).astype(np.uint8)
+            bbox_slice[~bbox_text_mask.astype(bool)] = text_background_color
             # TODO: Blur nicely with semi-transparent pixels from the font
-            box_slice[bounding_rect][~text_mask[bounding_rect].astype(bool)] = text_background_color
+            text_slice = bbox_slice[bbox_text_mask.astype(bool)]
+            text_background = (text_slice[:,:3] * (np.expand_dims(text_slice[:,-1], axis=1) / 255))
+            color_background = (1 - (np.expand_dims(text_slice[:,-1], axis=1) / 255)) * text_background_color
+            faded_background = text_background[:, :3] + color_background[:, :3]
+            text_slice[:, :3] = faded_background
+            text_slice[:, -1] = 255
+            bbox_slice[bbox_text_mask.astype(bool)] = text_slice 
             self.image = Image.fromarray(img)
         return (x, current_text_height)
 
-    def _find_smallest_bounding_rect(self, mask: np.ndarray) -> tuple[slice, slice]:
+    def _find_smallest_bounding_rect(self, mask: np.ndarray) -> tuple[tuple[int, int], tuple[int, int]]:
         """Find the smallest bounding rectangle for the mask."""
         rows = np.any(mask, axis=1)
         cols = np.any(mask, axis=0)
         ymin, ymax = np.where(rows)[0][[0, -1]]
         xmin, xmax = np.where(cols)[0][[0, -1]]
-        return (slice(ymin, ymax + 1), slice(xmin, xmax + 1))
+        return xmin, xmax, ymin, ymax
 
 
 class SlideOverImage:
