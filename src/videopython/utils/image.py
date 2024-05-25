@@ -194,17 +194,19 @@ class ImageText:
             if len(text_background_color) != 4:
                 raise ValueError(f"Text background color {text_background_color} must be RGBA!")
             img = self.img_array
+            # Find bounding rectangle for written text
             box_slice = img[y:current_text_height, x : x + box_width]
             text_mask = np.any(box_slice != 0, axis=2).astype(np.uint8)
             xmin, xmax, ymin, ymax = self._find_smallest_bounding_rect(text_mask)
-            # Move to global position and add padding
+            # Get global bounding box position
             xmin += x - background_color_padding
             xmax += x + background_color_padding
             ymin += y - background_color_padding
             ymax += y + background_color_padding
-            # We have bounding box
+            # Slice the bounding box and find text mask 
             bbox_slice = img[ymin:ymax, xmin:xmax]
             bbox_text_mask = np.any(bbox_slice != 0, axis=2).astype(np.uint8)
+            # Add background color outside of text
             bbox_slice[~bbox_text_mask.astype(bool)] = text_background_color
             # Blur nicely with semi-transparent pixels from the font
             text_slice = bbox_slice[bbox_text_mask.astype(bool)]
@@ -214,6 +216,7 @@ class ImageText:
             text_slice[:, :3] = faded_background
             text_slice[:, -1] = 255
             bbox_slice[bbox_text_mask.astype(bool)] = text_slice
+            # Set image with the background color
             self.image = Image.fromarray(img)
         return (x, current_text_height)
 
