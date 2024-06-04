@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=66.1"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
@@ -16,7 +16,8 @@ description = "Minimal video generation and processing library."
 readme = "README.md"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}
-keywords = ["video", "python", "videopython", "video", "movie", "opencv", "generation", "editing"]
+keywords = ["python", "videopython", "video", "movie", "opencv", "generation", "editing"]
+dynamic = ["dependencies", "optional-dependencies"]
 
 authors = [
   {name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
@@ -32,18 +33,9 @@ classifiers = [
   "Operating System :: OS Independent",
 ]
 
-dependencies = [
-    "accelerate>=0.29.2",
-    "click>=8.1.7",
-    "diffusers>=0.26.3",
-    "numpy>=1.25.2",
-    "opencv-python>=4.9.0.80",
-    "pydub>=0.25.1",
-    "pytest>=7.4.0",
-    "transformers>=4.38.1",
-    "torch>=2.1.0",
-    "tqdm>=4.66.3",
-]
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+optional-dependencies = { dev = {file = ["requirements-dev.txt"]}, generation = {file = ["requirements-generation.txt"]} }
 
 [project.urls]
 "Homepage" = "https://github.com/bartwojtowicz/videopython/"
