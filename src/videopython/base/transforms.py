@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from enum import Enum
 from multiprocessing import Pool
 from typing import Literal
 
@@ -72,11 +73,11 @@ class CutSeconds(Transformation):
 
 
 class Resize(Transformation):
-    def __init__(self, new_width: int | None = None, new_height: int | None = None):
-        self.new_width = new_width
-        self.new_height = new_height
-        if new_height is None and new_width:
-            raise ValueError("You must provide either `new_width` or `new_height`!")
+    def __init__(self, width: int | None = None, height: int | None = None):
+        self.width = width
+        self.height = height
+        if width is None and height is None:
+            raise ValueError("You must provide either `width` or `height`!")
 
     def _resize_frame(self, frame: np.ndarray, new_width: int, new_height: int) -> np.ndarray:
         return cv2.resize(
@@ -86,20 +87,21 @@ class Resize(Transformation):
         )
 
     def apply(self, video: Video) -> Video:
-        if self.new_height is None:
+        if self.width and self.height:
+            new_height = self.height
+            new_width = self.width
+        elif self.height is None and self.width:
             video_height = video.video_shape[1]
             video_width = video.video_shape[2]
-            new_height = round(video_height * (self.new_width / video_width))
-            new_width = self.new_width
-        elif self.new_width is None:
+            new_height = round(video_height * (self.width / video_width))
+            new_width = self.width
+        elif self.width is None and self.height:
             video_height = video.video_shape[1]
             video_width = video.video_shape[2]
-            new_width = round(video_width * (self.new_height / video_height))
-            new_height = self.new_height
-        else:
-            new_height = self.new_height
-            new_width = self.new_width
+            new_width = round(video_width * (self.height / video_height))
+            new_height = self.height
 
+        print(f"Resizing video to: {new_width}x{new_height}!")
         with Pool() as pool:
             frames_copy = pool.starmap(
                 self._resize_frame,
@@ -147,15 +149,19 @@ class ResampleFPS(Transformation):
         return video
 
 
+class CropMode(Enum):
+    CENTER = "center"
+
+
 class Crop(Transformation):
 
-    def __init__(self, width: int, height: int, mode: Literal["center"] = "center"):
+    def __init__(self, width: int, height: int, mode: CropMode = CropMode.CENTER):
         self.width = width
         self.height = height
         self.mode = mode
 
     def apply(self, video: Video) -> Video:
-        if self.mode == "center":
+        if self.mode == CropMode.CENTER:
             current_shape = video.frame_shape[:2]
             center_height = current_shape[0] // 2
             center_width = current_shape[1] // 2

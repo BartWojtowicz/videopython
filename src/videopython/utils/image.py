@@ -125,8 +125,8 @@ class ImageText:
         box_width: int,
         font_size: int = 11,
         text_color: tuple[int, int, int] = (0, 0, 0),
-        text_background_color: None | tuple[int, int, int, int] = None,
-        background_color_padding: int = 0,
+        background_color: None | tuple[int, int, int, int] = None,
+        background_padding: int = 0,
         place: Literal["left", "right", "center"] = "left",
     ) -> tuple[int, int]:
         """Write text in box described by upper-left corner and maxium width of the box.
@@ -138,8 +138,8 @@ class ImageText:
             box_width: Pixel width of the box containing the text.
             font_size: Font size.
             text_color: RGB color of the text.
-            text_background_color: If set, adds background color to the text box. Expects RGBA values.
-            background_color_padding: Number of padding pixels to add when adding text background color.
+            background_color: If set, adds background color to the text box. Expects RGBA values.
+            background_padding: Number of padding pixels to add when adding text background color.
             place: Strategy for justifying the text inside the container box. Defaults to "left".
 
         Returns:
@@ -190,33 +190,33 @@ class ImageText:
             # Increment text height
             current_text_height += line_size[1]
         # Add background color for the text if set
-        if text_background_color is not None:
-            if len(text_background_color) != 4:
-                raise ValueError(f"Text background color {text_background_color} must be RGBA!")
+        if background_color is not None:
+            if len(background_color) != 4:
+                raise ValueError(f"Text background color {background_color} must be RGBA!")
             img = self.img_array
             # Find bounding rectangle for written text
             box_slice = img[y:current_text_height, x : x + box_width]
             text_mask = np.any(box_slice != 0, axis=2).astype(np.uint8)
             xmin, xmax, ymin, ymax = self._find_smallest_bounding_rect(text_mask)
             # Get global bounding box position
-            xmin += x - background_color_padding
-            xmax += x + background_color_padding
-            ymin += y - background_color_padding
-            ymax += y + background_color_padding
+            xmin += x - background_padding
+            xmax += x + background_padding
+            ymin += y - background_padding
+            ymax += y + background_padding
             # Make sure we are inside image, cut to image if not
             xmin = max(0, xmin)
             ymin = max(0, ymin)
             xmax = min(xmax, self.image_size[0])
             ymax = min(ymax, self.image_size[1])
-            # Slice the bounding box and find text mask 
+            # Slice the bounding box and find text mask
             bbox_slice = img[ymin:ymax, xmin:xmax]
             bbox_text_mask = np.any(bbox_slice != 0, axis=2).astype(np.uint8)
             # Add background color outside of text
-            bbox_slice[~bbox_text_mask.astype(bool)] = text_background_color
+            bbox_slice[~bbox_text_mask.astype(bool)] = background_color
             # Blur nicely with semi-transparent pixels from the font
             text_slice = bbox_slice[bbox_text_mask.astype(bool)]
             text_background = text_slice[:, :3] * (np.expand_dims(text_slice[:, -1], axis=1) / 255)
-            color_background = (1 - (np.expand_dims(text_slice[:, -1], axis=1) / 255)) * text_background_color
+            color_background = (1 - (np.expand_dims(text_slice[:, -1], axis=1) / 255)) * background_color
             faded_background = text_background[:, :3] + color_background[:, :3]
             text_slice[:, :3] = faded_background
             text_slice[:, -1] = 255

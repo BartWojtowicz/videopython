@@ -62,10 +62,10 @@ def test_overlaying_video_with_text(place, small_video, test_font_path):
         box_width=800,
         font_filename=test_font_path,
         font_size=100,
-        color=(255, 255, 255),
+        text_color=(255, 255, 255),
         place=place,
         xy=(0, 0),
     )
-    overlay = FullImageOverlay(overlay_image=my_overlay.img)
+    overlay = FullImageOverlay(overlay_image=my_overlay.img_array)
     overlayed_video = overlay.apply(small_video.copy())
     assert overlayed_video.video_shape == small_video.video_shape
