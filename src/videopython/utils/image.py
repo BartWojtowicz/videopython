@@ -4,8 +4,8 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from videopython.base.exceptions import OutOfBoundsError
 from videopython.base.video import Video
-from videopython.exceptions import OutOfBoundsError
 
 
 class ImageText:
