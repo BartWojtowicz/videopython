@@ -14,8 +14,10 @@ sudo apt-get install ffmpeg
 
 ### Install with pip
 ```bash
-pip install videopython
+pip install videopython[generation]
 ```
+> You can install without `[generation]` dependencies for basic video handling and processing. 
+> The funcionalities found in `videopython.generation` won't work.
 
 ## Basic Usage
 > Using Nvidia A40 or better is recommended for the `videopython.generation` module.
@@ -45,7 +47,7 @@ transformed_video = ResampleFPS(new_fps=30).apply(transformed_video)
 
 # Resize to 1000x1000
 from videopython.base.transforms import Resize
-transformed_video = Resize(new_width=1000, new_height=1000).apply(transformed_video)
+transformed_video = Resize(width=1000, height=1000).apply(transformed_video)
 
 filepath = transformed_video.save()
 ```
