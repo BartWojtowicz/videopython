@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
+from enum import Enum
 from multiprocessing import Pool
+from typing import Literal
 
 import cv2
 import numpy as np
@@ -71,9 +73,11 @@ class CutSeconds(Transformation):
 
 
 class Resize(Transformation):
-    def __init__(self, new_width: int, new_height: int):
-        self.new_width = new_width
-        self.new_height = new_height
+    def __init__(self, width: int | None = None, height: int | None = None):
+        self.width = width
+        self.height = height
+        if width is None and height is None:
+            raise ValueError("You must provide either `width` or `height`!")
 
     def _resize_frame(self, frame: np.ndarray, new_width: int, new_height: int) -> np.ndarray:
         return cv2.resize(
@@ -83,10 +87,25 @@ class Resize(Transformation):
         )
 
     def apply(self, video: Video) -> Video:
+        if self.width and self.height:
+            new_height = self.height
+            new_width = self.width
+        elif self.height is None and self.width:
+            video_height = video.video_shape[1]
+            video_width = video.video_shape[2]
+            new_height = round(video_height * (self.width / video_width))
+            new_width = self.width
+        elif self.width is None and self.height:
+            video_height = video.video_shape[1]
+            video_width = video.video_shape[2]
+            new_width = round(video_width * (self.height / video_height))
+            new_height = self.height
+
+        print(f"Resizing video to: {new_width}x{new_height}!")
         with Pool() as pool:
             frames_copy = pool.starmap(
                 self._resize_frame,
-                [(frame, self.new_width, self.new_height) for frame in video.frames],
+                [(frame, new_width, new_height) for frame in video.frames],
             )
         video.frames = np.array(frames_copy)
         return video
@@ -127,4 +146,33 @@ class ResampleFPS(Transformation):
         else:
             print(f"Upsampling video from {video.fps} to {self.new_fps} FPS.")
             video = self._upsample(video)
+        return video
+
+
+class CropMode(Enum):
+    CENTER = "center"
+
+
+class Crop(Transformation):
+
+    def __init__(self, width: int, height: int, mode: CropMode = CropMode.CENTER):
+        self.width = width
+        self.height = height
+        self.mode = mode
+
+    def apply(self, video: Video) -> Video:
+        if self.mode == CropMode.CENTER:
+            current_shape = video.frame_shape[:2]
+            center_height = current_shape[0] // 2
+            center_width = current_shape[1] // 2
+            width_offset = self.width // 2
+            height_offset = self.height // 2
+            video.frames = video.frames[
+                :,
+                center_height - height_offset : center_height + height_offset,
+                center_width - width_offset : center_width + width_offset,
+                :,
+            ]
+        else:
+            raise ValueError(f"Unknown mode: {self.mode}")
         return video

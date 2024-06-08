@@ -23,7 +23,7 @@ class VideoMetadata:
     total_seconds: float
 
     def __str__(self):
-        return f"{self.height}x{self.width} @ {self.fps}fps, {self.total_seconds} seconds"
+        return f"{self.width}x{self.height} @ {self.fps}fps, {self.total_seconds} seconds"
 
     def __repr__(self) -> str:
         return self.__str__()

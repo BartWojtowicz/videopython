@@ -20,7 +20,7 @@ class ImageText:
         self._draw = ImageDraw.Draw(self.image)
 
     @property
-    def img(self) -> np.ndarray:
+    def img_array(self) -> np.ndarray:
         return np.array(self.image)
 
     def save(self, filename: str) -> None:
@@ -124,7 +124,9 @@ class ImageText:
         xy: tuple[int, int],
         box_width: int,
         font_size: int = 11,
-        color: tuple[int, int, int] = (0, 0, 0),
+        text_color: tuple[int, int, int] = (0, 0, 0),
+        background_color: None | tuple[int, int, int, int] = None,
+        background_padding: int = 0,
         place: Literal["left", "right", "center"] = "left",
     ) -> tuple[int, int]:
         """Write text in box described by upper-left corner and maxium width of the box.
@@ -135,16 +137,19 @@ class ImageText:
             xy: X and Y coordinates describing upper-left of the box containing the text.
             box_width: Pixel width of the box containing the text.
             font_size: Font size.
-            color: RGB color of the text.
+            text_color: RGB color of the text.
+            background_color: If set, adds background color to the text box. Expects RGBA values.
+            background_padding: Number of padding pixels to add when adding text background color.
             place: Strategy for justifying the text inside the container box. Defaults to "left".
 
         Returns:
             Lower-left corner of the written text box.
         """
         x, y = xy
+        lines = self._split_lines_by_width(text, font_filename, font_size, box_width)
+        # Run checks to see if the text will fit
         if x + box_width > self.image_size[0]:
             raise OutOfBoundsError(f"Box width {box_width} is too big for the image width {self.image_size[0]}!")
-        lines = self._split_lines_by_width(text, font_filename, font_size, box_width)
         lines_height = sum([self.get_text_size(font_filename, font_size, line)[1] for line in lines])
         if y + lines_height > self.image_size[1]:
             available_space = self.image_size[1] - y
@@ -158,9 +163,9 @@ class ImageText:
                 self.write_text(
                     text=line,
                     font_filename=font_filename,
-                    xy=(0, current_text_height),
+                    xy=(x, current_text_height),
                     font_size=font_size,
-                    color=color,
+                    color=text_color,
                 )
             elif place == "right":
                 x_left = x + box_width - line_size[0]
@@ -169,7 +174,7 @@ class ImageText:
                     font_filename=font_filename,
                     xy=(x_left, current_text_height),
                     font_size=font_size,
-                    color=color,
+                    color=text_color,
                 )
             elif place == "center":
                 x_left = int(x + ((box_width - line_size[0]) / 2))
@@ -178,13 +183,55 @@ class ImageText:
                     font_filename=font_filename,
                     xy=(x_left, current_text_height),
                     font_size=font_size,
-                    color=color,
+                    color=text_color,
                 )
             else:
                 raise ValueError(f"Place {place} is not supported. Use one of: `left`, `right` or `center`!")
             # Increment text height
             current_text_height += line_size[1]
+        # Add background color for the text if set
+        if background_color is not None:
+            if len(background_color) != 4:
+                raise ValueError(f"Text background color {background_color} must be RGBA!")
+            img = self.img_array
+            # Find bounding rectangle for written text
+            box_slice = img[y:current_text_height, x : x + box_width]
+            text_mask = np.any(box_slice != 0, axis=2).astype(np.uint8)
+            xmin, xmax, ymin, ymax = self._find_smallest_bounding_rect(text_mask)
+            # Get global bounding box position
+            xmin += x - background_padding
+            xmax += x + background_padding
+            ymin += y - background_padding
+            ymax += y + background_padding
+            # Make sure we are inside image, cut to image if not
+            xmin = max(0, xmin)
+            ymin = max(0, ymin)
+            xmax = min(xmax, self.image_size[0])
+            ymax = min(ymax, self.image_size[1])
+            # Slice the bounding box and find text mask
+            bbox_slice = img[ymin:ymax, xmin:xmax]
+            bbox_text_mask = np.any(bbox_slice != 0, axis=2).astype(np.uint8)
+            # Add background color outside of text
+            bbox_slice[~bbox_text_mask.astype(bool)] = background_color
+            # Blur nicely with semi-transparent pixels from the font
+            text_slice = bbox_slice[bbox_text_mask.astype(bool)]
+            text_background = text_slice[:, :3] * (np.expand_dims(text_slice[:, -1], axis=1) / 255)
+            color_background = (1 - (np.expand_dims(text_slice[:, -1], axis=1) / 255)) * background_color
+            faded_background = text_background[:, :3] + color_background[:, :3]
+            text_slice[:, :3] = faded_background
+            text_slice[:, -1] = 255
+            bbox_slice[bbox_text_mask.astype(bool)] = text_slice
+            # Set image with the background color
+            self.image = Image.fromarray(img)
         return (x, current_text_height)
+
+    def _find_smallest_bounding_rect(self, mask: np.ndarray) -> tuple[int, int, int, int]:
+        """Find the smallest bounding rectangle for the mask."""
+        rows = np.any(mask, axis=1)
+        cols = np.any(mask, axis=0)
+        ymin, ymax = np.where(rows)[0][[0, -1]]
+        xmin, xmax = np.where(cols)[0][[0, -1]]
+        return xmin, xmax, ymin, ymax
 
 
 class SlideOverImage:

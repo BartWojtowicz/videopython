@@ -39,7 +39,7 @@ def test_cut_seconds(start, end, small_video):
 def test_video_resize(height, width, small_video):
     """Tests Video.resize."""
 
-    resample = Resize(new_height=height, new_width=width)
+    resample = Resize(height=height, width=width)
     video = resample.apply(small_video)
 
     assert video.frames.shape[1:3] == (height, width)
