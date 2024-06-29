@@ -20,8 +20,41 @@ pip install videopython[generation]
 > The funcionalities found in `videopython.generation` won't work.
 
 ## Basic Usage
-> Using Nvidia A40 or better is recommended for the `videopython.generation` module.
 
+### Video handling
+
+```python
+from videopython.base.video import Video
+
+# Load videos and print metadata
+video1 = Video.from_path("tests/test_data/fast_benchmark.mp4")
+print(video1)
+
+video2 = Video.from_path("tests/test_data/slow_benchmark.mp4")
+print(video2)
+
+# Define the transformations
+from videopython.base.transforms import CutSeconds, ResampleFPS, Resize, TransformationPipeline
+
+pipeline = TransformationPipeline(
+    [CutSeconds(start=1.5, end=6.5), ResampleFPS(fps=30), Resize(width=1000, height=1000)]
+)
+video1 = pipeline.run(video1)
+video2 = pipeline.run(video2)
+
+# Combine videos, add audio and save
+from videopython.base.transitions import FadeTransition
+
+fade = FadeTransition(effect_time_seconds=3.0)
+video = fade.apply(videos=(video1, video2))
+video.add_audio_from_file("tests/test_data/test_audio.mp3")
+
+savepath = video.save()
+```
+
+### Video Generation
+
+> Using Nvidia A40 or better is recommended for the `videopython.generation` module.
 ```python
 # Generate image and animate it
 from videopython.generation import ImageToVideo
