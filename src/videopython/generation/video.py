@@ -6,7 +6,7 @@ from PIL.Image import Image
 from videopython.base.video import Video
 
 TEXT_TO_VIDEO_MODEL = "cerspense/zeroscope_v2_576w"
-IMAGE_TO_VIDEO_MODEL = "stabilityai/stable-video-diffusion-img2vid-xt"
+IMAGE_TO_VIDEO_MODEL = "stabilityai/stable-video-diffusion-img2vid-xt-1-1"
 
 
 class TextToVideo:

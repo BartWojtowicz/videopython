@@ -53,22 +53,22 @@ class TransformationPipeline:
 
 
 class CutFrames(Transformation):
-    def __init__(self, start_frame: int, end_frame: int):
-        self.start_frame = start_frame
-        self.end_frame = end_frame
+    def __init__(self, start: int, end: int):
+        self.start = start
+        self.end = end
 
     def apply(self, video: Video) -> Video:
-        video = video[self.start_frame : self.end_frame]
+        video = video[self.start : self.end]
         return video
 
 
 class CutSeconds(Transformation):
-    def __init__(self, start_second: float | int, end_second: float | int):
-        self.start_second = start_second
-        self.end_second = end_second
+    def __init__(self, start: float | int, end: float | int):
+        self.start = start
+        self.end = end
 
     def apply(self, video: Video) -> Video:
-        video = video[round(self.start_second * video.fps) : round(self.end_second * video.fps)]
+        video = video[round(self.start * video.fps) : round(self.end * video.fps)]
         return video
 
 
@@ -112,18 +112,18 @@ class Resize(Transformation):
 
 
 class ResampleFPS(Transformation):
-    def __init__(self, new_fps: int | float):
-        self.new_fps = float(new_fps)
+    def __init__(self, fps: int | float):
+        self.fps = float(fps)
 
     def _downsample(self, video: Video) -> Video:
-        target_frame_count = int(len(video.frames) * (self.new_fps / video.fps))
+        target_frame_count = int(len(video.frames) * (self.fps / video.fps))
         new_frame_indices = np.round(np.linspace(0, len(video.frames) - 1, target_frame_count)).astype(int)
         video.frames = video.frames[new_frame_indices]
-        video.fps = self.new_fps
+        video.fps = self.fps
         return video
 
     def _upsample(self, video: Video) -> Video:
-        target_frame_count = int(len(video.frames) * (self.new_fps / video.fps))
+        target_frame_count = int(len(video.frames) * (self.fps / video.fps))
         new_frame_indices = np.linspace(0, len(video.frames) - 1, target_frame_count)
         new_frames = []
         for i in tqdm(range(len(new_frame_indices) - 1)):
@@ -134,17 +134,17 @@ class ResampleFPS(Transformation):
             ]
             new_frames.append(new_frame.astype(np.uint8))
         video.frames = np.array(new_frames, dtype=np.uint8)
-        video.fps = self.new_fps
+        video.fps = self.fps
         return video
 
     def apply(self, video: Video) -> Video:
-        if video.fps == self.new_fps:
+        if video.fps == self.fps:
             return video
-        elif video.fps > self.new_fps:
-            print(f"Downsampling video from {video.fps} to {self.new_fps} FPS.")
+        elif video.fps > self.fps:
+            print(f"Downsampling video from {video.fps} to {self.fps} FPS.")
             video = self._downsample(video)
         else:
-            print(f"Upsampling video from {video.fps} to {self.new_fps} FPS.")
+            print(f"Upsampling video from {video.fps} to {self.fps} FPS.")
             video = self._upsample(video)
         return video
 

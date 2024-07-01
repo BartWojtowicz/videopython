@@ -7,7 +7,7 @@ from videopython.base.transforms import CutFrames, CutSeconds, Resize
 
 @pytest.mark.parametrize("start, end", [(0, 100), (100, 101), (100, 120)])
 def test_cut_frames(start, end, small_video):
-    cut_frames = CutFrames(start_frame=start, end_frame=end)
+    cut_frames = CutFrames(start=start, end=end)
     start_frame = small_video.frames[start].copy()
     transformed = cut_frames.apply(small_video)
     assert len(transformed.frames) == (end - start)
@@ -16,7 +16,7 @@ def test_cut_frames(start, end, small_video):
 
 @pytest.mark.parametrize("start, end", [(0, 0.5), (0, 1), (0.5, 1.5)])
 def test_cut_seconds(start, end, small_video):
-    cut_seconds = CutSeconds(start_second=start, end_second=end)
+    cut_seconds = CutSeconds(start=start, end=end)
     start_frame = small_video.frames[round(start * small_video.fps)].copy()
     transformed = cut_seconds.apply(small_video)
     assert len(transformed.frames) == round((end - start) * small_video.fps)

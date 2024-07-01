@@ -247,7 +247,7 @@ class SlideOverImage:
         self.fps = fps
         self.length_seconds = length_seconds
 
-    def slide(self, image: np.ndarray) -> Video:
+    def apply(self, image: np.ndarray) -> Video:
         image = self._resize(image)
         max_offset = image.shape[1] - self.video_width
         frame_count = round(self.fps * self.length_seconds)
