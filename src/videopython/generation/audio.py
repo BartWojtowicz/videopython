@@ -45,10 +45,10 @@ class TextToMusic:
         )
         audio_values = self.model.generate(**inputs, max_new_tokens=max_new_tokens)
         sampling_rate = self.model.config.audio_encoder.sampling_rate
-        output = (audio_values[0, 0].T.float().numpy() * (2**31 - 1)).astype(np.int32)
+        output = (audio_values[0, 0].float().numpy() * (2**31 - 1)).astype(np.int32)
 
         audio = AudioSegment(
-            data=output,
+            data=output.tobytes(),
             frame_rate=sampling_rate,
             sample_width=4,
             channels=1,
