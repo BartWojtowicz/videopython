@@ -1,8 +1,12 @@
 import numpy as np
 import torch
 from pydub import AudioSegment
-from transformers import (AutoProcessor, AutoTokenizer,
-                          MusicgenForConditionalGeneration, VitsModel)
+from transformers import (
+    AutoProcessor,
+    AutoTokenizer,
+    MusicgenForConditionalGeneration,
+    VitsModel,
+)
 
 TEXT_TO_SPEECH_MODEL = "facebook/mms-tts-eng"
 MUSIC_GENERATION_MODEL_SMALL = "facebook/musicgen-small"
