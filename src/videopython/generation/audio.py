@@ -1,5 +1,4 @@
 import numpy as np
-import scipy
 import torch
 from pydub import AudioSegment
 from transformers import (AutoProcessor, AutoTokenizer,
