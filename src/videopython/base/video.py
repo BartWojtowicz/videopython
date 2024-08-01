@@ -215,21 +215,28 @@ class Video:
         print(f"Video saved into `{filename}`!")
         return filename
 
+    def add_audio(self, audio: AudioSegment, overlay: bool = True, overlay_gain: int = 0, loop: bool = False) -> None:
+        self.audio = self._process_audio(audio=audio, overlay=overlay, overlay_gain=overlay_gain, loop=loop)
+
     def add_audio_from_file(self, path: str, overlay: bool = True, overlay_gain: int = 0, loop: bool = False) -> None:
         new_audio = self._load_audio_from_path(path)
         if new_audio is None:
             print(f"Audio file `{path}` not found, skipping!")
             return
 
-        if (duration_diff := round(self.total_seconds - new_audio.duration_seconds)) > 0 and not loop:
-            new_audio = new_audio + AudioSegment.silent(duration_diff * 1000)
-        elif new_audio.duration_seconds > self.total_seconds:
-            new_audio = new_audio[: round(self.total_seconds * 1000)]
+        self.audio = self._process_audio(audio=new_audio, overlay=overlay, overlay_gain=overlay_gain, loop=loop)
+
+    def _process_audio(
+        self, audio: AudioSegment, overlay: bool = True, overlay_gain: int = 0, loop: bool = False
+    ) -> AudioSegment:
+        if (duration_diff := round(self.total_seconds - audio.duration_seconds)) > 0 and not loop:
+            audio = audio + AudioSegment.silent(duration_diff * 1000)
+        elif audio.duration_seconds > self.total_seconds:
+            audio = audio[: round(self.total_seconds * 1000)]
 
         if overlay:
-            self.audio = self.audio.overlay(new_audio, loop=loop, gain_during_overlay=overlay_gain)
-        else:
-            self.audio = new_audio
+            return self.audio.overlay(audio, loop=loop, gain_during_overlay=overlay_gain)
+        return audio
 
     def __add__(self, other: Video) -> Video:
         # TODO: Should it be class method? How to make it work with sum()?
