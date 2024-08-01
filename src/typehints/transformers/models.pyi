@@ -19,8 +19,7 @@ class PretrainedConfig:
 class EncodecConfig(PretrainedConfig):
     sampling_rate: int
 
-class MusicgenDecoderConfig(PretrainedConfig):
-    pass
+class MusicgenDecoderConfig(PretrainedConfig): ...
 
 class MusicgenConfig:
     @classmethod
