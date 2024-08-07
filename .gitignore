@@ -133,7 +133,6 @@ dmypy.json
 *.ipynb
 .vscode
 *.csv
-*.png
 
 # Data directories
 data/downloaded/*.mp4

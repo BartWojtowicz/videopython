@@ -1,69 +1,65 @@
 name: CI Pipeline
-
 on: [push]
-
 jobs:
   build:
     name: Unit tests
     runs-on: ubuntu-latest
-
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: 3.10.12
-
+    - name: Install Poetry
+      uses: snok/install-poetry@v1
+      with:
+        version: 1.5.1
     - name: Install FFmpeg
       run: |
         sudo apt-get update
         sudo apt-get install ffmpeg -y
-
     - name: Install dependencies
-      run: pip install -r requirements.txt -r requirements-dev.txt
-
+      run: poetry install --with dev
     - name: Run tests
-      run: PYTHONPATH=./src/ pytest
+      run: poetry run pytest src
 
   static_checks:
     name: Static code checks
     runs-on: ubuntu-latest
-    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: 3.10.12
-
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: 1.5.1
       - name: Install dev dependencies
-        run: pip install -r requirements-dev.txt
-
+        run: poetry install --only dev
       - name: Run black
-        run: black src -l 120 --check
-
+        run: poetry run black src -l 120 --check
       - name: Run isort
-        run: isort src --profile black --check
+        run: poetry run isort src --profile black --check
 
   mypy:
     name: Type tests
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: 3.10.12
-      
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: 1.5.1
       - name: Install all dependencies
-        run: pip install -r requirements.txt -r requirements-dev.txt -r requirements-generation.txt
-
+        run: poetry install --with dev,generation
       - name: Run mypy
-        run: mypy src
+        run: poetry run mypy src
