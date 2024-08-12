@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import shlex
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal, get_args
 
 import cv2
 import numpy as np
 from pydub import AudioSegment
 
-from videopython.utils.common import check_path, generate_random_name
+from videopython.utils.common import generate_random_name
+
+ALLOWED_VIDEO_FORMATS = Literal["mp4", "avi", "mov", "mkv", "webm"]
 
 
 @dataclass
@@ -166,54 +170,77 @@ class Video:
         split_videos[1].audio = self.audio[audio_midpoint:]
         return split_videos
 
-    def save(self, filename: str | None = None) -> str:
-        """Saves the video.
+    def save(self, filename: str | Path | None = None, format: ALLOWED_VIDEO_FORMATS = "mp4") -> Path:
+        """Saves the video with audio.
 
         Args:
-            filename: Name of the output video file. Generates random UUID name if not provided.
+            filename: Name of the output video file. Generates random name if not provided.
+            format: Output format (default is 'mp4').
+
+        Returns:
+            Path to the saved video file.
         """
         if not self.is_loaded():
-            raise RuntimeError(f"Video is not loaded, cannot save!")
+            raise RuntimeError("Video is not loaded, cannot save!")
+
+        # Check if the format is allowed
+        if format.lower() not in get_args(ALLOWED_VIDEO_FORMATS):
+            raise ValueError(
+                f"Unsupported format: {format}. Allowed formats are: {', '.join(get_args(ALLOWED_VIDEO_FORMATS))}"
+            )
 
         if filename is None:
-            filename = generate_random_name(suffix=".mp4")
-        filename = check_path(filename, dir_exists=True, suffix=".mp4")
+            filename = Path(generate_random_name(suffix=f".{format}"))
+        else:
+            filename = Path(filename).with_suffix(f".{format}")
+            filename.parent.mkdir(parents=True, exist_ok=True)
 
-        ffmpeg_video_command = (
-            f"ffmpeg -loglevel error -y -framerate {self.fps} -f rawvideo -pix_fmt rgb24"
-            f" -s {self.metadata.width}x{self.metadata.height} "
-            f"-i pipe:0 -c:v libx264 -pix_fmt yuv420p {filename}"
-        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_dir_path = Path(temp_dir)
 
-        ffmpeg_audio_command = (
-            f"ffmpeg -loglevel error -y -i {filename} -f s16le -acodec pcm_s16le "
-            f"-ar {self.audio.frame_rate} -ac {self.audio.channels} -i pipe:0 "
-            f"-c:v copy -c:a aac -strict experimental {filename}_temp.mp4"
-        )
+            # Save frames as images
+            for i, frame in enumerate(self.frames):
+                frame_path = temp_dir_path / f"frame_{i:04d}.png"
+                cv2.imwrite(str(frame_path), cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
 
-        try:
-            print("Saving frames to video...")
-            subprocess.run(
-                ffmpeg_video_command,
-                input=self.frames.tobytes(),
-                check=True,
-                shell=True,
-            )
-        except subprocess.CalledProcessError as e:
-            print("Error saving frames to video!")
-            raise e
+            # Save audio to a temporary file
+            temp_audio = temp_dir_path / "temp_audio.wav"
+            self.audio.export(str(temp_audio), format="wav")
 
-        try:
-            print("Adding audio track...")
-            subprocess.run(ffmpeg_audio_command, input=self.audio.raw_data, check=True, shell=True)
-            Path(filename).unlink()
-            Path(filename + "_temp.mp4").rename(filename)
-        except subprocess.CalledProcessError as e:
-            print(f"Error adding audio track!")
-            raise e
+            # Construct FFmpeg command
+            ffmpeg_command = [
+                "ffmpeg",
+                "-y",  # Overwrite output file if it exists
+                "-r",
+                str(self.fps),  # Set the frame rate
+                "-i",
+                str(temp_dir_path / "frame_%04d.png"),  # Input image sequence
+                "-i",
+                str(temp_audio),  # Input audio file
+                "-c:v",
+                "libx264",  # Video codec
+                "-preset",
+                "medium",  # Encoding preset (tradeoff between encoding speed and compression)
+                "-crf",
+                "23",  # Constant Rate Factor (lower means better quality, 23 is default)
+                "-c:a",
+                "aac",  # Audio codec
+                "-b:a",
+                "192k",  # Audio bitrate
+                "-pix_fmt",
+                "yuv420p",  # Pixel format
+                "-shortest",  # Finish encoding when the shortest input stream ends
+                str(filename),
+            ]
 
-        print(f"Video saved into `{filename}`!")
-        return filename
+            try:
+                subprocess.run(ffmpeg_command, check=True, capture_output=True, text=True)
+                print(f"Video saved successfully to: {filename}")
+                return filename
+            except subprocess.CalledProcessError as e:
+                print(f"Error saving video: {e}")
+                print(f"FFmpeg stderr: {e.stderr}")
+                raise
 
     def add_audio_from_file(self, path: str, overlay: bool = True, overlay_gain: int = 0, loop: bool = False) -> None:
         new_audio = self._load_audio_from_path(path)
@@ -282,17 +309,26 @@ class Video:
         Args:
             path: Path to video file.
         """
-        metadata = VideoMetadata.from_path(path)
-        ffmpeg_command = f"ffmpeg -i {path} -f rawvideo -pix_fmt rgb24 -loglevel quiet pipe:1"
+        cap = cv2.VideoCapture(path)
+        if not cap.isOpened():
+            raise ValueError(f"Unable to open video file: {path}")
 
-        # Run the ffmpeg command and capture the stdout
-        ffmpeg_process = subprocess.Popen(shlex.split(ffmpeg_command), stdout=subprocess.PIPE)
-        ffmpeg_out, _ = ffmpeg_process.communicate()
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        frames = []
 
-        # Convert the raw video data to a NumPy array
-        frames = np.frombuffer(ffmpeg_out, dtype=np.uint8).reshape([-1, metadata.height, metadata.width, 3])
-        fps = metadata.fps
-        return frames, fps
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frames.append(frame)
+
+        cap.release()
+
+        if not frames:
+            raise ValueError(f"No frames could be read from the video file: {path}")
+
+        return np.array(frames), fps
 
     @property
     def video_shape(self) -> tuple[int, int, int, int]:
