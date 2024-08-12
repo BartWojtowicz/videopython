@@ -1,10 +1,16 @@
 import builtins
 from typing import Any, TypeAlias
 
+import numpy as np
+import numpy.typing as npt
+
 retval: TypeAlias = Any
 
 class VideoCapture(builtins.object):
     def __init__(self, filename: str) -> None: ...
+    def isOpened(self) -> bool: ...
+    def read(self) -> tuple[bool, npt.NDArray[np.uint8]]: ...
+    def release(self) -> None: ...
     def get(self, propId) -> retval:
         """
         @brief Returns the specified VideoCapture property
