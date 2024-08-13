@@ -1,5 +1,6 @@
 name: CI Pipeline
 on: [push]
+
 jobs:
   build:
     name: Unit tests
@@ -10,19 +11,17 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: 3.10.12
-    - name: Install Poetry
-      uses: snok/install-poetry@v1
-      with:
-        version: 1.5.1
+        python-version: "3.11"
+    - name: Install the latest version of rye
+      uses: eifinger/setup-rye@v4
     - name: Install FFmpeg
       run: |
         sudo apt-get update
         sudo apt-get install ffmpeg -y
     - name: Install dependencies
-      run: poetry install --with dev
-    - name: Run tests
-      run: poetry run pytest src
+      run: rye sync --all-features
+    - name: Run unit tests
+      run: rye run test-unit
 
   static_checks:
     name: Static code checks
@@ -33,17 +32,13 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: 3.10.12
-      - name: Install Poetry
-        uses: snok/install-poetry@v1
-        with:
-          version: 1.5.1
+          python-version: "3.11"
+      - name: Install the latest version of rye
+        uses: eifinger/setup-rye@v4
       - name: Install dev dependencies
-        run: poetry install --only dev
-      - name: Run black
-        run: poetry run black src -l 120 --check
-      - name: Run isort
-        run: poetry run isort src --profile black --check
+        run: rye sync --only-dev
+      - name: Run static tests
+        run: rye run test-static
 
   mypy:
     name: Type tests
@@ -54,12 +49,10 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: 3.10.12
-      - name: Install Poetry
-        uses: snok/install-poetry@v1
-        with:
-          version: 1.5.1
+          python-version: "3.11"
+      - name: Install the latest version of rye
+        uses: eifinger/setup-rye@v4
       - name: Install all dependencies
-        run: poetry install --with dev,generation
-      - name: Run mypy
-        run: poetry run mypy src
+        run: rye sync --all-features
+      - name: Run type tests
+        run: rye run test-type

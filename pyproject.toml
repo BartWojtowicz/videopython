@@ -62,7 +62,12 @@ dev-dependencies = [
 ]
 
 [tool.rye.scripts]
-test = "pytest"
+test-unit = "pytest"
+test-type = "mypy src"
+test-static = { chain = [
+    "black src -l 120 --check",
+    "isort src --profile black --check"
+]}
 
 [build-system]
 requires = ["hatchling"]
@@ -78,3 +83,8 @@ include = [
 
 [tool.mypy]
 mypy_path = "stubs"
+
+[tool.pytest]
+testpaths = ["src/tests"]
+python_files = ["test_*.py"]
+addopts = "-v --tb=short"
