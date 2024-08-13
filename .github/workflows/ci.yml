@@ -1,69 +1,58 @@
 name: CI Pipeline
-
 on: [push]
 
 jobs:
   build:
     name: Unit tests
     runs-on: ubuntu-latest
-
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: 3.10.12
-
+        python-version: "3.11"
+    - name: Install the latest version of rye
+      uses: eifinger/setup-rye@v4
     - name: Install FFmpeg
       run: |
         sudo apt-get update
         sudo apt-get install ffmpeg -y
-
     - name: Install dependencies
-      run: pip install -r requirements.txt -r requirements-dev.txt
-
-    - name: Run tests
-      run: PYTHONPATH=./src/ pytest
+      run: rye sync --features dev
+    - name: Run unit tests
+      run: rye run test-unit
 
   static_checks:
-    name: Static code checks
+    name: Static tests
     runs-on: ubuntu-latest
-    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: 3.10.12
-
+          python-version: "3.11"
+      - name: Install the latest version of rye
+        uses: eifinger/setup-rye@v4
       - name: Install dev dependencies
-        run: pip install -r requirements-dev.txt
-
-      - name: Run black
-        run: black src -l 120 --check
-
-      - name: Run isort
-        run: isort src --profile black --check
+        run: rye sync --features dev
+      - name: Run static tests
+        run: rye run test-static
 
   mypy:
     name: Type tests
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: 3.10.12
-      
+          python-version: "3.11"
+      - name: Install the latest version of rye
+        uses: eifinger/setup-rye@v4
       - name: Install all dependencies
-        run: pip install -r requirements.txt -r requirements-dev.txt -r requirements-generation.txt
-
-      - name: Run mypy
-        run: mypy src
+        run: rye sync --all-features
+      - name: Run type tests
+        run: rye run test-type

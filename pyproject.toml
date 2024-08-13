@@ -1,43 +1,90 @@
-[build-system]
-requires = ["setuptools>=66.1"]
-build-backend = "setuptools.build_meta"
-
-[tool.setuptools.packages.find]
-where = ["src"]
-include = ["videopython.*"]
-
-[tool.setuptools.package-data]
-"videopython" = ["py.typed"]
-
 [project]
 name = "videopython"
 version = "0.2.0"
 description = "Minimal video generation and processing library."
-readme = "README.md"
-requires-python = ">=3.10"
-license = {file = "LICENSE"}
-keywords = ["python", "videopython", "video", "movie", "opencv", "generation", "editing"]
-dynamic = ["dependencies", "optional-dependencies"]
-
 authors = [
-  {name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
-  {name = "Bartosz Rudnikowicz", email = "bartoszrudnikowicz840@gmail.com" }, 
-  {name = "Piotr Pukisz", email = "piotr.pukisz@gmail.com" },
+    { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
+    { name = "Bartosz Rudnikowicz", email = "bartoszrudnikowicz840@gmail.com" },
+    { name = "Piotr Pukisz", email = "piotr.pukisz@gmail.com" }
 ]
-
+license = { text = "Apache-2.0" }
+readme = "README.md"
+requires-python = ">=3.10, <3.13"
+keywords = ["python", "videopython", "video", "movie", "opencv", "generation", "editing"]
 classifiers = [
-  "License :: OSI Approved :: Apache Software License",
-  "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.10",
-  "Programming Language :: Python :: 3.11",
-  "Operating System :: OS Independent",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Operating System :: OS Independent",
 ]
 
-[tool.setuptools.dynamic]
-dependencies = {file = ["requirements.txt"]}
-optional-dependencies = { dev = {file = ["requirements-dev.txt"]}, generation = {file = ["requirements-generation.txt"]} }
+dependencies = [
+    "numpy>=1.25.2",
+    "opencv-python>=4.9.0.80",
+    "pillow>=10.3.0",
+    "pydub>=0.25.1",
+    "tqdm>=4.66.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black==24.3.0",
+    "isort==5.12.0",
+    "mypy==1.8.0",
+    "pytest==7.4.0",
+    "types-Pillow==10.2.0.20240213",
+    "types-tqdm==4.66.0.20240106",
+    "pydub-stubs==0.25.1.1",
+]
+generation = [
+    "accelerate>=0.29.2",
+    "diffusers>=0.26.3",
+    "torch>=2.1.0",
+    "transformers>=4.38.1",
+]
 
 [project.urls]
-"Homepage" = "https://github.com/bartwojtowicz/videopython/"
-"Bug Reports" = "https://github.com/bartwojtowicz/videopython/issues"
-"Source" = "https://github.com/bartwojtowicz/videopython/"
+Homepage = "https://github.com/bartwojtowicz/videopython/"
+Repository = "https://github.com/bartwojtowicz/videopython/"
+Documentation = "https://github.com/bartwojtowicz/videopython/"
+
+[tool.rye]
+managed = true
+dev-dependencies = [
+    "black==24.3.0",
+    "isort==5.12.0",
+    "mypy==1.8.0",
+    "pytest==7.4.0",
+    "types-Pillow==10.2.0.20240213",
+    "types-tqdm==4.66.0.20240106",
+    "pydub-stubs==0.25.1.1",
+]
+
+[tool.rye.scripts]
+test-unit = "pytest"
+test-type = "mypy src"
+test-static = { chain = [
+    "black src -l 120 --check",
+    "isort src --profile black --check"
+]}
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/videopython"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/videopython/py.typed",
+]
+
+[tool.mypy]
+mypy_path = "stubs"
+
+[tool.pytest]
+testpaths = ["src/tests"]
+python_files = ["test_*.py"]
+addopts = "-v --tb=short"
