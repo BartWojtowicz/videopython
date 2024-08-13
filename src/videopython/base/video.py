@@ -205,7 +205,7 @@ class Video:
 
             # Save audio to a temporary file
             temp_audio = temp_dir_path / "temp_audio.wav"
-            self.audio.export(str(temp_audio), format="aac", bitrate="192k")
+            self.audio.export(str(temp_audio), format="adts", bitrate="192k")
 
             # Construct FFmpeg command
             ffmpeg_command = [
