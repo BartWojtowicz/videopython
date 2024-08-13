@@ -19,12 +19,12 @@ jobs:
         sudo apt-get update
         sudo apt-get install ffmpeg -y
     - name: Install dependencies
-      run: rye sync --all-features
+      run: rye sync --features dev
     - name: Run unit tests
       run: rye run test-unit
 
   static_checks:
-    name: Static code checks
+    name: Static tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -36,7 +36,7 @@ jobs:
       - name: Install the latest version of rye
         uses: eifinger/setup-rye@v4
       - name: Install dev dependencies
-        run: rye sync --only-dev
+        run: rye sync --features dev
       - name: Run static tests
         run: rye run test-static
 
