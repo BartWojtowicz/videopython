@@ -205,7 +205,7 @@ class Video:
 
             # Save audio to a temporary file
             temp_audio = temp_dir_path / "temp_audio.wav"
-            self.audio.export(str(temp_audio), format="wav")
+            self.audio.export(str(temp_audio), format="aac", bitrate="192k")
 
             # Construct FFmpeg command
             ffmpeg_command = [
@@ -224,7 +224,7 @@ class Video:
                 "-crf",
                 "23",  # Constant Rate Factor (lower means better quality, 23 is default)
                 "-c:a",
-                "aac",  # Audio codec
+                "copy",  # Audio codec
                 "-b:a",
                 "192k",  # Audio bitrate
                 "-pix_fmt",
