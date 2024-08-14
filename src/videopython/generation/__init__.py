@@ -1,4 +1,4 @@
-from .audio import TextToSpeech
+from .audio import TextToMusic, TextToSpeech
 from .image import TextToImage
 from .video import ImageToVideo, TextToVideo
 
@@ -7,4 +7,5 @@ __all__ = [
     "TextToSpeech",
     "TextToImage",
     "TextToVideo",
+    "TextToMusic",
 ]

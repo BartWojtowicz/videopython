@@ -59,6 +59,7 @@ savepath = video.save()
 # Generate image and animate it
 from videopython.generation import ImageToVideo
 from videopython.generation import TextToImage
+from videopython.generation import TextToMusic
 
 image = TextToImage().generate_image(prompt="Golden Retriever playing in the park")
 video = ImageToVideo().generate_video(image=image, fps=24)
@@ -81,6 +82,12 @@ transformed_video = ResampleFPS(new_fps=30).apply(transformed_video)
 # Resize to 1000x1000
 from videopython.base.transforms import Resize
 transformed_video = Resize(width=1000, height=1000).apply(transformed_video)
+
+# Add generated music
+# MusicGen cannot generate more than 1503 tokens (~30seconds of audio)
+text_to_music = TextToMusic()
+audio = text_to_music.generate_audio("Description of the music to generate", max_new_tokens=256)
+transformed_video.add_audio(audio=audio)
 
 filepath = transformed_video.save()
 ```
