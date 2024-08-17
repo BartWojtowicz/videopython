@@ -77,9 +77,7 @@ build-backend = "hatchling.build"
 packages = ["src/videopython"]
 
 [tool.hatch.build.targets.sdist]
-include = [
-    "src/videopython/py.typed",
-]
+include = ["src/videopython", "src/videopython/py.typed"]
 
 [tool.mypy]
 mypy_path = "stubs"
