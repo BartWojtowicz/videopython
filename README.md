@@ -86,7 +86,7 @@ transformed_video = Resize(width=1000, height=1000).apply(transformed_video)
 # Add generated music
 # MusicGen cannot generate more than 1503 tokens (~30seconds of audio)
 text_to_music = TextToMusic()
-audio = text_to_music.generate_audio("Description of the music to generate", max_new_tokens=256)
+audio = text_to_music.generate_audio("Happy dogs playing together in a park", max_new_tokens=256)
 transformed_video.add_audio(audio=audio)
 
 filepath = transformed_video.save()
