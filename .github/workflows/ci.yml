@@ -6,22 +6,20 @@ jobs:
     name: Unit tests
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.11"
-    - name: Install the latest version of rye
-      uses: eifinger/setup-rye@v4
-    - name: Install FFmpeg
-      run: |
-        sudo apt-get update
-        sudo apt-get install ffmpeg -y
-    - name: Install dependencies
-      run: rye sync --features dev
-    - name: Run unit tests
-      run: rye run test-unit
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install ffmpeg -y
+      - name: Set up Python
+        run: uv python install 312
+      - name: Install dependencies
+        run: uv sync --dev
+      - name: Run unit tests
+        run: uv run pytest
 
   static_checks:
     name: Static tests
@@ -29,16 +27,16 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
       - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Install the latest version of rye
-        uses: eifinger/setup-rye@v4
+        run: uv python install 312
       - name: Install dev dependencies
-        run: rye sync --features dev
+        run: uv sync --dev
       - name: Run static tests
-        run: rye run test-static
+        run: uv run black src -l 120 --check
+      - name: Run isort tests
+        run: uv run isort src --profile black --check
 
   mypy:
     name: Type tests
@@ -46,13 +44,11 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
       - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Install the latest version of rye
-        uses: eifinger/setup-rye@v4
+        run: uv python install 312
       - name: Install all dependencies
-        run: rye sync --all-features
+        run: uv sync --all-extras --group generation
       - name: Run type tests
-        run: rye run test-type
+        run: uv run mypy src

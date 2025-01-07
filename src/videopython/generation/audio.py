@@ -1,6 +1,5 @@
-import numpy as np
 import torch
-from pydub import AudioSegment
+from soundpython import Audio, AudioMetadata
 from transformers import (
     AutoProcessor,
     AutoTokenizer,
@@ -17,15 +16,24 @@ class TextToSpeech:
         self.pipeline = VitsModel.from_pretrained(TEXT_TO_SPEECH_MODEL)
         self.tokenizer = AutoTokenizer.from_pretrained(TEXT_TO_SPEECH_MODEL)
 
-    def generate_audio(self, text: str) -> AudioSegment:
+    def generate_audio(self, text: str) -> Audio:
         tokenized = self.tokenizer(text, return_tensors="pt")
 
         with torch.no_grad():
             output = self.pipeline(**tokenized).waveform
 
-        output = (output.T.float().numpy() * (2**31 - 1)).astype(np.int32)
-        audio = AudioSegment(data=output, frame_rate=self.pipeline.config.sampling_rate, sample_width=4, channels=1)
-        return audio
+        # Convert to float32 and normalize to [-1, 1]
+        audio_data = output.T.float().numpy()
+
+        metadata = AudioMetadata(
+            sample_rate=self.pipeline.config.sampling_rate,
+            channels=1,
+            sample_width=4,
+            duration_seconds=len(audio_data) / self.pipeline.config.sampling_rate,
+            frame_count=len(audio_data),
+        )
+
+        return Audio(audio_data, metadata)
 
 
 class TextToMusic:
@@ -37,7 +45,7 @@ class TextToMusic:
         self.processor = AutoProcessor.from_pretrained(MUSIC_GENERATION_MODEL_SMALL)
         self.model = MusicgenForConditionalGeneration.from_pretrained(MUSIC_GENERATION_MODEL_SMALL)
 
-    def generate_audio(self, text: str, max_new_tokens: int) -> AudioSegment:
+    def generate_audio(self, text: str, max_new_tokens: int) -> Audio:
         inputs = self.processor(
             text=[text],
             padding=True,
@@ -45,12 +53,16 @@ class TextToMusic:
         )
         audio_values = self.model.generate(**inputs, max_new_tokens=max_new_tokens)
         sampling_rate = self.model.config.audio_encoder.sampling_rate
-        output = (audio_values[0, 0].float().numpy() * (2**31 - 1)).astype(np.int32)
 
-        audio = AudioSegment(
-            data=output.tobytes(),
-            frame_rate=sampling_rate,
-            sample_width=4,
+        # Convert to float32 and normalize to [-1, 1]
+        audio_data = audio_values[0, 0].float().numpy()
+
+        metadata = AudioMetadata(
+            sample_rate=sampling_rate,
             channels=1,
+            sample_width=4,
+            duration_seconds=len(audio_data) / sampling_rate,
+            frame_count=len(audio_data),
         )
-        return audio
+
+        return Audio(audio_data, metadata)
