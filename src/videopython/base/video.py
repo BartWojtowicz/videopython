@@ -190,12 +190,33 @@ class Video:
                 frame_path = temp_dir_path / f"frame_{i:04d}.png"
                 cv2.imwrite(str(frame_path), cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
 
+            # Calculate exact video duration
+            video_duration = len(self.frames) / self.fps
+
+            # Ensure audio duration matches video duration
+            if (
+                abs(self.audio.metadata.duration_seconds - video_duration) > 0.001
+            ):  # Small threshold for float comparison
+                if self.audio.metadata.duration_seconds < video_duration:
+                    # Create silent audio for the remaining duration
+                    remaining_duration = video_duration - self.audio.metadata.duration_seconds
+                    silent_audio = Audio.create_silent(
+                        duration_seconds=remaining_duration,
+                        stereo=(self.audio.metadata.channels == 2),
+                        sample_rate=self.audio.metadata.sample_rate,
+                        sample_width=self.audio.metadata.sample_width,
+                    )
+                    # Concatenate original audio with silent padding
+                    padded_audio = self.audio.concat(silent_audio)
+                else:
+                    # Trim audio to match video duration
+                    padded_audio = self.audio.slice(end_seconds=video_duration)
+            else:
+                padded_audio = self.audio
+
             # Save audio to temporary WAV file
             temp_audio = temp_dir_path / "temp_audio.wav"
-            self.audio.save(str(temp_audio), format="wav")
-
-            # Calculate exact duration
-            duration = len(self.frames) / self.fps
+            padded_audio.save(str(temp_audio), format="wav")
 
             # Construct FFmpeg command with explicit duration
             ffmpeg_command = [
@@ -219,9 +240,10 @@ class Video:
                 "192k",
                 "-pix_fmt",
                 "yuv420p",
-                "-shortest",
-                "-t",
-                str(duration),  # Add explicit duration
+                "-map",
+                "0:v:0",  # Map video from first input
+                "-map",
+                "1:a:0",  # Map audio from second input
                 "-vsync",
                 "cfr",  # Force constant frame rate
                 str(filename),
