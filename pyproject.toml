@@ -24,7 +24,7 @@ dependencies = [
     "opencv-python>=4.9.0.80",
     "pillow>=10.3.0",
     "pydub>=0.25.1",
-    "soundpython>=0.1.7",
+    "soundpython>=0.1.9",
     "tqdm>=4.66.3",
 ]
 

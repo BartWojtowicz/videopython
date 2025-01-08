@@ -236,7 +236,9 @@ class Video:
                 raise
 
     def add_audio(self, audio: Audio, overlay: bool = True) -> None:
-        if overlay:
+        if self.audio.is_silent:
+            self.audio = audio
+        elif overlay:
             self.audio = self.audio.overlay(audio, position=0.0)
         else:
             self.audio = audio
