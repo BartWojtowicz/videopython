@@ -67,7 +67,7 @@ class FadeTransition(Transition):
             ],
             fps=video_fps,
         )
-        faded_videos.audio = videos[0].audio.append(videos[1].audio, crossfade=(effect_time_fps / video_fps) * 1000)
+        faded_videos.audio = videos[0].audio.concat(videos[1].audio, crossfade=(effect_time_fps / video_fps))
         return faded_videos
 
 
@@ -102,5 +102,5 @@ class BlurTransition(Transition):
             ],
             fps=video_fps,
         )
-        blurred_videos.audio = videos[0].audio.append(videos[1].audio)
+        blurred_videos.audio = videos[0].audio.concat(videos[1].audio)
         return blurred_videos

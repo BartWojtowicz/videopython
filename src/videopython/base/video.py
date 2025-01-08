@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shlex
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -9,7 +8,7 @@ from typing import Literal, get_args
 
 import cv2
 import numpy as np
-from pydub import AudioSegment
+from soundpython import Audio
 
 from videopython.utils.common import generate_random_name
 
@@ -42,11 +41,7 @@ class VideoMetadata:
 
     @classmethod
     def from_path(cls, video_path: str) -> VideoMetadata:
-        """Creates VideoMetadata object from video file.
-
-        Args:
-            video_path: Path to video file.
-        """
+        """Creates VideoMetadata object from video file."""
         video = cv2.VideoCapture(video_path)
         frame_count = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
         fps = round(video.get(cv2.CAP_PROP_FPS), 2)
@@ -64,13 +59,7 @@ class VideoMetadata:
 
     @classmethod
     def from_video(cls, video: Video) -> VideoMetadata:
-        """Creates VideoMetadata object from frames.
-
-        Args:
-            frames: Frames of the video.
-            fps: Frames per second of the video.
-        """
-
+        """Creates VideoMetadata object from Video instance."""
         frame_count, height, width, _ = video.frames.shape
         total_seconds = round(frame_count / video.fps, 2)
 
@@ -116,11 +105,14 @@ class Video:
     def from_path(cls, path: str) -> Video:
         new_vid = cls()
         new_vid.frames, new_vid.fps = cls._load_video_from_path(path)
-        audio = cls._load_audio_from_path(path)
-        if not audio:
+
+        try:
+            new_vid.audio = Audio.from_file(path)
+        except Exception as e:
             print(f"No audio found for `{path}`, adding silent track!")
-            audio = AudioSegment.silent(duration=round(new_vid.total_seconds * 1000))
-        new_vid.audio = audio
+            new_vid.audio = Audio.create_silent(
+                duration_seconds=round(new_vid.total_seconds, 2), stereo=True, sample_rate=44100
+            )
         return new_vid
 
     @classmethod
@@ -134,7 +126,9 @@ class Video:
             raise ValueError(f"Unsupported number of dimensions: {frames.shape}!")
         new_vid.frames = frames
         new_vid.fps = fps
-        new_vid.audio = AudioSegment.silent(duration=round(new_vid.total_seconds * 1000))
+        new_vid.audio = Audio.create_silent(
+            duration_seconds=round(new_vid.total_seconds, 2), stereo=True, sample_rate=44100
+        )
         return new_vid
 
     @classmethod
@@ -144,12 +138,12 @@ class Video:
             image = np.expand_dims(image, axis=0)
         new_vid.frames = np.repeat(image, round(length_seconds * fps), axis=0)
         new_vid.fps = fps
-        new_vid.audio = AudioSegment.silent(duration=round(new_vid.total_seconds * 1000))
+        new_vid.audio = Audio.create_silent(duration_seconds=length_seconds, stereo=True, sample_rate=44100)
         return new_vid
 
     def copy(self) -> Video:
         copied = Video().from_frames(self.frames.copy(), self.fps)
-        copied.audio = self.audio
+        copied.audio = self.audio  # Audio objects are immutable, no need to copy
         return copied
 
     def is_loaded(self) -> bool:
@@ -165,25 +159,18 @@ class Video:
             self.from_frames(self.frames[:frame_idx], self.fps),
             self.from_frames(self.frames[frame_idx:], self.fps),
         )
-        audio_midpoint = (frame_idx / self.fps) * 1000
-        split_videos[0].audio = self.audio[:audio_midpoint]
-        split_videos[1].audio = self.audio[audio_midpoint:]
+
+        # Split audio at the corresponding time point
+        split_time = frame_idx / self.fps
+        split_videos[0].audio = self.audio.slice(start_seconds=0, end_seconds=split_time)
+        split_videos[1].audio = self.audio.slice(start_seconds=split_time)
+
         return split_videos
 
     def save(self, filename: str | Path | None = None, format: ALLOWED_VIDEO_FORMATS = "mp4") -> Path:
-        """Saves the video with audio.
-
-        Args:
-            filename: Name of the output video file. Generates random name if not provided.
-            format: Output format (default is 'mp4').
-
-        Returns:
-            Path to the saved video file.
-        """
         if not self.is_loaded():
             raise RuntimeError("Video is not loaded, cannot save!")
 
-        # Check if the format is allowed
         if format.lower() not in get_args(ALLOWED_VIDEO_FORMATS):
             raise ValueError(
                 f"Unsupported format: {format}. Allowed formats are: {', '.join(get_args(ALLOWED_VIDEO_FORMATS))}"
@@ -203,79 +190,95 @@ class Video:
                 frame_path = temp_dir_path / f"frame_{i:04d}.png"
                 cv2.imwrite(str(frame_path), cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
 
-            # Save audio to a temporary file
-            temp_audio = temp_dir_path / "temp_audio.wav"
-            self.audio.export(str(temp_audio), format="adts", bitrate="192k")
+            # Calculate exact video duration
+            video_duration = len(self.frames) / self.fps
 
-            # Construct FFmpeg command
+            # Ensure audio duration matches video duration
+            if (
+                abs(self.audio.metadata.duration_seconds - video_duration) > 0.001
+            ):  # Small threshold for float comparison
+                if self.audio.metadata.duration_seconds < video_duration:
+                    # Create silent audio for the remaining duration
+                    remaining_duration = video_duration - self.audio.metadata.duration_seconds
+                    silent_audio = Audio.create_silent(
+                        duration_seconds=remaining_duration,
+                        stereo=(self.audio.metadata.channels == 2),
+                        sample_rate=self.audio.metadata.sample_rate,
+                        sample_width=self.audio.metadata.sample_width,
+                    )
+                    # Concatenate original audio with silent padding
+                    padded_audio = self.audio.concat(silent_audio)
+                else:
+                    # Trim audio to match video duration
+                    padded_audio = self.audio.slice(end_seconds=video_duration)
+            else:
+                padded_audio = self.audio
+
+            # Save audio to temporary WAV file
+            temp_audio = temp_dir_path / "temp_audio.wav"
+            padded_audio.save(str(temp_audio), format="wav")
+
+            # Construct FFmpeg command with explicit duration
             ffmpeg_command = [
                 "ffmpeg",
-                "-y",  # Overwrite output file if it exists
-                "-r",
-                str(self.fps),  # Set the frame rate
+                "-y",
+                "-framerate",
+                str(self.fps),  # Use -framerate instead of -r for input
                 "-i",
-                str(temp_dir_path / "frame_%04d.png"),  # Input image sequence
+                str(temp_dir_path / "frame_%04d.png"),
                 "-i",
-                str(temp_audio),  # Input audio file
+                str(temp_audio),
                 "-c:v",
-                "libx264",  # Video codec
+                "libx264",
                 "-preset",
-                "medium",  # Encoding preset (tradeoff between encoding speed and compression)
+                "medium",
                 "-crf",
-                "23",  # Constant Rate Factor (lower means better quality, 23 is default)
+                "23",
                 "-c:a",
-                "copy",  # Audio codec
+                "aac",  # Use AAC instead of copy for more reliable audio
                 "-b:a",
-                "192k",  # Audio bitrate
+                "192k",
                 "-pix_fmt",
-                "yuv420p",  # Pixel format
-                "-shortest",  # Finish encoding when the shortest input stream ends
+                "yuv420p",
+                "-map",
+                "0:v:0",  # Map video from first input
+                "-map",
+                "1:a:0",  # Map audio from second input
+                "-vsync",
+                "cfr",  # Force constant frame rate
                 str(filename),
             ]
 
             try:
                 subprocess.run(ffmpeg_command, check=True, capture_output=True, text=True)
-                print(f"Video saved successfully to: {filename}")
                 return filename
             except subprocess.CalledProcessError as e:
                 print(f"Error saving video: {e}")
                 print(f"FFmpeg stderr: {e.stderr}")
                 raise
 
-    def add_audio(self, audio: AudioSegment, overlay: bool = True, overlay_gain: int = 0, loop: bool = False) -> None:
-        self.audio = self._process_audio(audio=audio, overlay=overlay, overlay_gain=overlay_gain, loop=loop)
+    def add_audio(self, audio: Audio, overlay: bool = True) -> None:
+        if self.audio.is_silent:
+            self.audio = audio
+        elif overlay:
+            self.audio = self.audio.overlay(audio, position=0.0)
+        else:
+            self.audio = audio
 
-    def add_audio_from_file(self, path: str, overlay: bool = True, overlay_gain: int = 0, loop: bool = False) -> None:
-        new_audio = self._load_audio_from_path(path)
-        if new_audio is None:
-            print(f"Audio file `{path}` not found, skipping!")
-            return
-
-        self.audio = self._process_audio(audio=new_audio, overlay=overlay, overlay_gain=overlay_gain, loop=loop)
-
-    def _process_audio(
-        self, audio: AudioSegment, overlay: bool = True, overlay_gain: int = 0, loop: bool = False
-    ) -> AudioSegment:
-        if (duration_diff := round(self.total_seconds - audio.duration_seconds)) > 0 and not loop:
-            audio = audio + AudioSegment.silent(duration_diff * 1000)
-        elif audio.duration_seconds > self.total_seconds:
-            audio = audio[: round(self.total_seconds * 1000)]
-
-        if overlay:
-            return self.audio.overlay(audio, loop=loop, gain_during_overlay=overlay_gain)
-        return audio
+    def add_audio_from_file(self, path: str, overlay: bool = True) -> None:
+        try:
+            new_audio = Audio.from_file(path)
+            self.add_audio(new_audio, overlay)
+        except Exception as e:
+            print(f"Audio file `{path}` not found or invalid, skipping!")
 
     def __add__(self, other: Video) -> Video:
-        # TODO: Should it be class method? How to make it work with sum()?
         if self.fps != other.fps:
             raise ValueError("FPS of videos do not match!")
         elif self.frame_shape != other.frame_shape:
-            raise ValueError(
-                "Resolutions of the images do not match: "
-                f"{self.frame_shape} not compatible with {other.frame_shape}."
-            )
+            raise ValueError(f"Resolutions do not match: {self.frame_shape} vs {other.frame_shape}")
         new_video = self.from_frames(np.r_["0,2", self.frames, other.frames], fps=self.fps)
-        new_video.audio = self.audio + other.audio
+        new_video.audio = self.audio.concat(other.audio)
         return new_video
 
     def __str__(self) -> str:
@@ -285,37 +288,25 @@ class Video:
         if not isinstance(val, slice):
             raise ValueError("Only slices are supported for video indexing!")
 
-        # Sub-slice video if given a slice
+        # Sub-slice video frames
         sliced = self.from_frames(self.frames[val], fps=self.fps)
-        # Handle slicing without value for audio
+
+        # Handle slicing bounds for audio
         start = val.start if val.start else 0
         stop = val.stop if val.stop else len(self.frames)
-        # Handle negative values for audio slices
         if start < 0:
             start = len(self.frames) + start
         if stop < 0:
             stop = len(self.frames) + stop
-        # Append audio to the slice
-        audio_start = round(start / self.fps) * 1000
-        audio_end = round(stop / self.fps) * 1000
-        sliced.audio = self.audio[audio_start:audio_end]
+
+        # Slice audio to match video duration
+        audio_start = start / self.fps
+        audio_end = stop / self.fps
+        sliced.audio = self.audio.slice(start_seconds=audio_start, end_seconds=audio_end)
         return sliced
 
     @staticmethod
-    def _load_audio_from_path(path: str) -> AudioSegment | None:
-        try:
-            audio = AudioSegment.from_file(path)
-            return audio
-        except IndexError:
-            return None
-
-    @staticmethod
     def _load_video_from_path(path: str) -> tuple[np.ndarray, float]:
-        """Loads frames and fps information from video file.
-
-        Args:
-            path: Path to video file.
-        """
         cap = cv2.VideoCapture(path)
         if not cap.isOpened():
             raise ValueError(f"Unable to open video file: {path}")
@@ -339,20 +330,16 @@ class Video:
 
     @property
     def video_shape(self) -> tuple[int, int, int, int]:
-        """Returns 4D video shape."""
         return self.frames.shape
 
     @property
     def frame_shape(self) -> tuple[int, int, int]:
-        """Returns 3D frame shape."""
         return self.frames.shape[1:]
 
     @property
     def total_seconds(self) -> float:
-        """Returns total seconds of the video."""
         return round(self.frames.shape[0] / self.fps, 4)
 
     @property
     def metadata(self) -> VideoMetadata:
-        """Returns VideoMetadata object."""
         return VideoMetadata.from_video(self)

@@ -123,8 +123,16 @@ def test_load_video(video_path: str, target_metadata: VideoMetadata):
     assert (video.frames.shape == target_metadata.get_video_shape()).all()
 
 
+def test_save_and_load(black_frames_video):
+    with tempfile.TemporaryDirectory() as temp_dir:
+        saved_path = black_frames_video.save(Path(temp_dir) / "test_save_and_load.mp4")
+        black_frames_video.save(saved_path)
+        assert np.all(Video.from_path(saved_path).frames == black_frames_video.frames)
+        assert Path(saved_path).exists()
+
+
 def test_save_with_audio(black_frames_video):
-    black_frames_video.add_audio_from_file(_Configuration.AUDIO_PATH)
+    black_frames_video.add_audio_from_file(_Configuration.AUDIO_PATH, overlay=True)
     with tempfile.TemporaryDirectory() as temp_dir:
         saved_path = black_frames_video.save(Path(temp_dir) / "test_add_audio_from_file.mp4")
         black_frames_video.save(saved_path)

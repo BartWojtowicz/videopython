@@ -197,6 +197,10 @@ class ImageText:
             # Find bounding rectangle for written text
             box_slice = img[y:current_text_height, x : x + box_width]
             text_mask = np.any(box_slice != 0, axis=2).astype(np.uint8)
+            if not isinstance(text_mask, np.ndarray):
+                raise TypeError(
+                    f"The returned text mask is of type {type(text_mask)}, " "but it should be numpy array!"
+                )
             xmin, xmax, ymin, ymax = self._find_smallest_bounding_rect(text_mask)
             # Get global bounding box position
             xmin += x - background_padding
