@@ -168,6 +168,19 @@ class Video:
         return split_videos
 
     def save(self, filename: str | Path | None = None, format: ALLOWED_VIDEO_FORMATS = "mp4") -> Path:
+        """Save video to file with optimized performance.
+        
+        Args:
+            filename: Output filename. If None, generates random name
+            format: Output format (mp4, avi, mov, mkv, webm)
+            
+        Returns:
+            Path to saved video file
+            
+        Raises:
+            RuntimeError: If video is not loaded
+            ValueError: If format is not supported
+        """
         if not self.is_loaded():
             raise RuntimeError("Video is not loaded, cannot save!")
 
@@ -182,80 +195,60 @@ class Video:
             filename = Path(filename).with_suffix(f".{format}")
             filename.parent.mkdir(parents=True, exist_ok=True)
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_dir_path = Path(temp_dir)
-
-            # Save frames as images
-            for i, frame in enumerate(self.frames):
-                frame_path = temp_dir_path / f"frame_{i:04d}.png"
-                cv2.imwrite(str(frame_path), cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
-
-            # Calculate exact video duration
-            video_duration = len(self.frames) / self.fps
-
-            # Ensure audio duration matches video duration
-            if (
-                abs(self.audio.metadata.duration_seconds - video_duration) > 0.001
-            ):  # Small threshold for float comparison
-                if self.audio.metadata.duration_seconds < video_duration:
-                    # Create silent audio for the remaining duration
-                    remaining_duration = video_duration - self.audio.metadata.duration_seconds
-                    silent_audio = Audio.create_silent(
-                        duration_seconds=remaining_duration,
-                        stereo=(self.audio.metadata.channels == 2),
-                        sample_rate=self.audio.metadata.sample_rate,
-                        sample_width=self.audio.metadata.sample_width,
-                    )
-                    # Concatenate original audio with silent padding
-                    padded_audio = self.audio.concat(silent_audio)
-                else:
-                    # Trim audio to match video duration
-                    padded_audio = self.audio.slice(end_seconds=video_duration)
-            else:
-                padded_audio = self.audio
+        # Create a temporary raw video file
+        with tempfile.NamedTemporaryFile(suffix='.raw') as raw_video:
+            # Convert frames to raw video data
+            raw_data = self.frames.astype(np.uint8).tobytes()
+            raw_video.write(raw_data)
+            raw_video.flush()
 
             # Save audio to temporary WAV file
-            temp_audio = temp_dir_path / "temp_audio.wav"
-            padded_audio.save(str(temp_audio), format="wav")
+            with tempfile.NamedTemporaryFile(suffix='.wav') as temp_audio:
+                self.audio.save(temp_audio.name, format="wav")
+                
+                # Calculate exact duration
+                duration = len(self.frames) / self.fps
 
-            # Construct FFmpeg command with explicit duration
-            ffmpeg_command = [
-                "ffmpeg",
-                "-y",
-                "-framerate",
-                str(self.fps),  # Use -framerate instead of -r for input
-                "-i",
-                str(temp_dir_path / "frame_%04d.png"),
-                "-i",
-                str(temp_audio),
-                "-c:v",
-                "libx264",
-                "-preset",
-                "medium",
-                "-crf",
-                "23",
-                "-c:a",
-                "aac",  # Use AAC instead of copy for more reliable audio
-                "-b:a",
-                "192k",
-                "-pix_fmt",
-                "yuv420p",
-                "-map",
-                "0:v:0",  # Map video from first input
-                "-map",
-                "1:a:0",  # Map audio from second input
-                "-vsync",
-                "cfr",  # Force constant frame rate
-                str(filename),
-            ]
+                # Construct FFmpeg command for maximum performance
+                ffmpeg_command = [
+                    "ffmpeg",
+                    "-y",
+                    # Raw video input settings
+                    "-f", "rawvideo",
+                    "-pixel_format", "rgb24",
+                    "-video_size", f"{self.frame_shape[1]}x{self.frame_shape[0]}",
+                    "-framerate", str(self.fps),
+                    "-i", raw_video.name,
+                    # Audio input
+                    "-i", temp_audio.name,
+                    # Video encoding settings
+                    "-c:v", "libx264",
+                    "-preset", "ultrafast",  # Fastest encoding
+                    "-tune", "zerolatency",  # Reduce encoding latency
+                    "-crf", "23",           # Reasonable quality/size tradeoff
+                    # Audio settings  
+                    "-c:a", "aac",
+                    "-b:a", "192k",
+                    # Output settings
+                    "-pix_fmt", "yuv420p",
+                    "-movflags", "+faststart",  # Enable fast start for web playback
+                    "-t", str(duration),
+                    "-vsync", "cfr",
+                    str(filename)
+                ]
 
-            try:
-                subprocess.run(ffmpeg_command, check=True, capture_output=True, text=True)
-                return filename
-            except subprocess.CalledProcessError as e:
-                print(f"Error saving video: {e}")
-                print(f"FFmpeg stderr: {e.stderr}")
-                raise
+                try:
+                    result = subprocess.run(
+                        ffmpeg_command,
+                        check=True,
+                        capture_output=True,
+                        text=True
+                    )
+                    return filename
+                except subprocess.CalledProcessError as e:
+                    print(f"Error saving video: {e}")
+                    print(f"FFmpeg stderr: {e.stderr}")
+                    raise
 
     def add_audio(self, audio: Audio, overlay: bool = True) -> None:
         if self.audio.is_silent:
