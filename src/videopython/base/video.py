@@ -98,7 +98,7 @@ class VideoMetadata:
                 duration = float(probe_data["format"]["duration"])
                 frame_count = int(round(duration * fps))
 
-            total_seconds = frame_count / fps
+            total_seconds = round(frame_count / fps, 2)
 
             return cls(height=height, width=width, fps=fps, frame_count=frame_count, total_seconds=total_seconds)
 
@@ -205,7 +205,7 @@ class Video:
                 batch_size = batch_end - frame_idx
 
                 # Read batch of frames
-                raw_data = process.stdout.read(frame_size * batch_size)
+                raw_data = process.stdout.read(frame_size * batch_size)  # type: ignore
                 if not raw_data:
                     break
 
@@ -217,12 +217,12 @@ class Video:
                 frames[frame_idx:batch_end] = batch_frames
 
             # Clean up FFmpeg process
-            process.stdout.close()
-            process.stderr.close()
+            process.stdout.close()  # type: ignore
+            process.stderr.close()  # type: ignore
             process.wait()
 
             if process.returncode != 0:
-                raise ValueError(f"FFmpeg error: {process.stderr.read().decode()}")
+                raise ValueError(f"FFmpeg error: {process.stderr.read().decode()}")  # type: ignore
 
             new_vid.frames = frames
             new_vid.fps = fps
