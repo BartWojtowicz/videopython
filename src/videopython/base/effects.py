@@ -156,13 +156,13 @@ class Zoom(Effect):
 
         width = video.metadata.width
         height = video.metadata.height
-        crop_sizes_w, crop_sizes_h = np.linspace(width // self.zoom_factor, width, n_frames), np.linspace(
-            height // self.zoom_factor, height, n_frames
+        crop_sizes_w, crop_sizes_h = (
+            np.linspace(width // self.zoom_factor, width, n_frames),
+            np.linspace(height // self.zoom_factor, height, n_frames),
         )
 
         if self.mode == "in":
             for frame, w, h in tqdm(zip(video.frames, reversed(crop_sizes_w), reversed(crop_sizes_h))):
-
                 x = width / 2 - w / 2
                 y = height / 2 - h / 2
 

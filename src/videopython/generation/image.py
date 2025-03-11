@@ -1,6 +1,3 @@
-import io
-import os
-
 import torch
 from diffusers import DiffusionPipeline
 from PIL import Image

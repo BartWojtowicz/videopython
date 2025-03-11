@@ -78,7 +78,7 @@ class ImageText:
     ) -> tuple[int, int]:
         x, y = xy
         if font_size is None and (max_width is None or max_height is None):
-            raise ValueError(f"Must set either `font_size`, or both `max_width` and `max_height`!")
+            raise ValueError("Must set either `font_size`, or both `max_width` and `max_height`!")
         elif font_size is None:
             font_size = self._get_font_size(text, font_filename, max_width, max_height)
         text_size = self.get_text_size(font_filename, font_size, text)
@@ -198,9 +198,7 @@ class ImageText:
             box_slice = img[y:current_text_height, x : x + box_width]
             text_mask = np.any(box_slice != 0, axis=2).astype(np.uint8)
             if not isinstance(text_mask, np.ndarray):
-                raise TypeError(
-                    f"The returned text mask is of type {type(text_mask)}, " "but it should be numpy array!"
-                )
+                raise TypeError(f"The returned text mask is of type {type(text_mask)}, but it should be numpy array!")
             xmin, xmax, ymin, ymax = self._find_smallest_bounding_rect(text_mask)
             # Get global bounding box position
             xmin += x - background_padding

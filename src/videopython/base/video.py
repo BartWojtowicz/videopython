@@ -108,7 +108,7 @@ class Video:
 
         try:
             new_vid.audio = Audio.from_file(path)
-        except Exception as e:
+        except Exception:
             print(f"No audio found for `{path}`, adding silent track!")
             new_vid.audio = Audio.create_silent(
                 duration_seconds=round(new_vid.total_seconds, 2), stereo=True, sample_rate=44100
@@ -269,7 +269,7 @@ class Video:
         try:
             new_audio = Audio.from_file(path)
             self.add_audio(new_audio, overlay)
-        except Exception as e:
+        except Exception:
             print(f"Audio file `{path}` not found or invalid, skipping!")
 
     def __add__(self, other: Video) -> Video:

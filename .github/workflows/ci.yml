@@ -22,7 +22,7 @@ jobs:
         run: uv run pytest
 
   static_checks:
-    name: Static tests
+    name: Linting and formatting
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -33,10 +33,10 @@ jobs:
         run: uv python install 312
       - name: Install dev dependencies
         run: uv sync --dev
-      - name: Run static tests
-        run: uv run black src -l 120 --check
-      - name: Run isort tests
-        run: uv run isort src --profile black --check
+      - name: Run Ruff linting and formatting
+        run: uv run ruff check src
+      - name: Run Ruff format check
+        run: uv run ruff format --check src
 
   mypy:
     name: Type tests
