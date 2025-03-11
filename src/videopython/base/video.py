@@ -108,7 +108,7 @@ class VideoMetadata:
             raise VideoMetadataError(f"Error extracting video metadata: {e}")
 
     @classmethod
-    def from_video(cls, video: Any) -> VideoMetadata:
+    def from_video(cls, video: Video) -> VideoMetadata:
         """Creates VideoMetadata object from Video instance."""
         frame_count, height, width, _ = video.frames.shape
         total_seconds = round(frame_count / video.fps, 2)
@@ -143,32 +143,14 @@ class Video:
     def from_path(cls, path: str) -> Video:
         new_vid = cls()
 
-        # Get video info using ffprobe
-        probe_cmd = [
-            "ffprobe",
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=width,height,r_frame_rate,nb_frames",
-            "-print_format",
-            "json",
-            path,
-        ]
-
         try:
-            probe_output = subprocess.check_output(probe_cmd, text=True)
-            info = json.loads(probe_output)
-            stream_info = info["streams"][0]
+            # Get video metadata using VideoMetadata.from_path
+            metadata = VideoMetadata.from_path(path)
 
-            # Parse frame rate (comes as fraction string like '24000/1001')
-            fps_num, fps_den = map(int, stream_info["r_frame_rate"].split("/"))
-            fps = fps_num / fps_den
-
-            width = int(stream_info["width"])
-            height = int(stream_info["height"])
-            total_frames = int(stream_info["nb_frames"])
+            width = metadata.width
+            height = metadata.height
+            fps = metadata.fps
+            total_frames = metadata.frame_count
 
             # Set up FFmpeg command for raw video extraction
             ffmpeg_cmd = [
@@ -238,10 +220,10 @@ class Video:
 
             return new_vid
 
+        except VideoMetadataError as e:
+            raise ValueError(f"Error getting video metadata: {e}")
         except subprocess.CalledProcessError as e:
-            raise ValueError(f"Error probing video file: {e}")
-        except json.JSONDecodeError:
-            raise ValueError("Invalid video file format")
+            raise ValueError(f"Error processing video file: {e}")
         except Exception as e:
             raise ValueError(f"Error loading video: {e}")
 
