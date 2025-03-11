@@ -33,9 +33,9 @@ jobs:
         run: uv python install 312
       - name: Install dev dependencies
         run: uv sync --dev
-      - name: Run Ruff linting and formatting
+      - name: Run Ruff lint chceks
         run: uv run ruff check src
-      - name: Run Ruff format check
+      - name: Run Ruff format checks
         run: uv run ruff format --check src
 
   mypy:
