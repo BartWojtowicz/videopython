@@ -1,18 +1,25 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import tempfile
 from dataclasses import dataclass
+from fractions import Fraction
 from pathlib import Path
 from typing import Literal, get_args
 
-import cv2
 import numpy as np
 from soundpython import Audio
 
 from videopython.utils.common import generate_random_name
 
 ALLOWED_VIDEO_FORMATS = Literal["mp4", "avi", "mov", "mkv", "webm"]
+
+
+class VideoMetadataError(Exception):
+    """Raised when there's an error getting video metadata"""
+
+    pass
 
 
 @dataclass
@@ -25,37 +32,80 @@ class VideoMetadata:
     frame_count: int
     total_seconds: float
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{self.width}x{self.height} @ {self.fps}fps, {self.total_seconds} seconds"
 
     def __repr__(self) -> str:
         return self.__str__()
 
-    def get_frame_shape(self):
+    def get_frame_shape(self) -> np.ndarray:
         """Returns frame shape."""
         return np.array((self.height, self.width, 3))
 
-    def get_video_shape(self):
+    def get_video_shape(self) -> np.ndarray:
         """Returns video shape."""
         return np.array((self.frame_count, self.height, self.width, 3))
 
-    @classmethod
-    def from_path(cls, video_path: str) -> VideoMetadata:
-        """Creates VideoMetadata object from video file."""
-        video = cv2.VideoCapture(video_path)
-        frame_count = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
-        fps = round(video.get(cv2.CAP_PROP_FPS), 2)
-        height = round(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        width = round(video.get(cv2.CAP_PROP_FRAME_WIDTH))
-        total_seconds = round(frame_count / fps, 2)
+    @staticmethod
+    def _run_ffprobe(video_path: str | Path) -> dict:
+        """Run ffprobe and return parsed JSON output."""
+        cmd = [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height,r_frame_rate,nb_frames",
+            "-show_entries",
+            "format=duration",
+            "-print_format",
+            "json",
+            str(video_path),
+        ]
 
-        return cls(
-            height=height,
-            width=width,
-            fps=fps,
-            frame_count=frame_count,
-            total_seconds=total_seconds,
-        )
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            return json.loads(result.stdout)
+        except subprocess.CalledProcessError as e:
+            raise VideoMetadataError(f"FFprobe error: {e.stderr}")
+        except json.JSONDecodeError as e:
+            raise VideoMetadataError(f"Error parsing FFprobe output: {e}")
+
+    @classmethod
+    def from_path(cls, video_path: str | Path) -> VideoMetadata:
+        """Creates VideoMetadata object from video file using ffprobe."""
+        if not Path(video_path).exists():
+            raise FileNotFoundError(f"Video file not found: {video_path}")
+
+        probe_data = cls._run_ffprobe(video_path)
+
+        try:
+            stream_info = probe_data["streams"][0]
+
+            width = int(stream_info["width"])
+            height = int(stream_info["height"])
+
+            try:
+                fps_fraction = Fraction(stream_info["r_frame_rate"])
+                fps = float(fps_fraction)
+            except (ValueError, ZeroDivisionError):
+                raise VideoMetadataError(f"Invalid frame rate: {stream_info['r_frame_rate']}")
+
+            if "nb_frames" in stream_info and stream_info["nb_frames"].isdigit():
+                frame_count = int(stream_info["nb_frames"])
+            else:
+                duration = float(probe_data["format"]["duration"])
+                frame_count = int(round(duration * fps))
+
+            total_seconds = round(frame_count / fps, 2)
+
+            return cls(height=height, width=width, fps=fps, frame_count=frame_count, total_seconds=total_seconds)
+
+        except KeyError as e:
+            raise VideoMetadataError(f"Missing required metadata field: {e}")
+        except Exception as e:
+            raise VideoMetadataError(f"Error extracting video metadata: {e}")
 
     @classmethod
     def from_video(cls, video: Video) -> VideoMetadata:
@@ -63,15 +113,10 @@ class VideoMetadata:
         frame_count, height, width, _ = video.frames.shape
         total_seconds = round(frame_count / video.fps, 2)
 
-        return cls(
-            height=height,
-            width=width,
-            fps=video.fps,
-            frame_count=frame_count,
-            total_seconds=total_seconds,
-        )
+        return cls(height=height, width=width, fps=video.fps, frame_count=frame_count, total_seconds=total_seconds)
 
     def can_be_merged_with(self, other_format: VideoMetadata) -> bool:
+        """Check if videos can be merged."""
         return (
             self.height == other_format.height
             and self.width == other_format.width
@@ -79,14 +124,7 @@ class VideoMetadata:
         )
 
     def can_be_downsampled_to(self, target_format: VideoMetadata) -> bool:
-        """Checks if video can be downsampled to `target_format`.
-
-        Args:
-            target_format: Desired video format.
-
-        Returns:
-            True if video can be downsampled to `target_format`, False otherwise.
-        """
+        """Checks if video can be downsampled to target_format."""
         return (
             self.height >= target_format.height
             and self.width >= target_format.width
@@ -102,18 +140,94 @@ class Video:
         self.audio = None
 
     @classmethod
-    def from_path(cls, path: str) -> Video:
+    def from_path(cls, path: str, read_batch_size: int = 100) -> Video:
         new_vid = cls()
-        new_vid.frames, new_vid.fps = cls._load_video_from_path(path)
 
         try:
-            new_vid.audio = Audio.from_file(path)
-        except Exception:
-            print(f"No audio found for `{path}`, adding silent track!")
-            new_vid.audio = Audio.create_silent(
-                duration_seconds=round(new_vid.total_seconds, 2), stereo=True, sample_rate=44100
+            # Get video metadata using VideoMetadata.from_path
+            metadata = VideoMetadata.from_path(path)
+
+            width = metadata.width
+            height = metadata.height
+            fps = metadata.fps
+            total_frames = metadata.frame_count
+
+            # Set up FFmpeg command for raw video extraction
+            ffmpeg_cmd = [
+                "ffmpeg",
+                "-i",
+                path,
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgb24",
+                "-vsync",
+                "0",
+                "-vcodec",
+                "rawvideo",
+                "-y",
+                "pipe:1",
+            ]
+
+            # Start FFmpeg process
+            process = subprocess.Popen(
+                ffmpeg_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                bufsize=10**8,  # Use large buffer
             )
-        return new_vid
+
+            # Calculate frame size in bytes
+            frame_size = width * height * 3  # 3 bytes per pixel for RGB
+
+            # Pre-allocate numpy array for all frames
+            frames = np.empty((total_frames, height, width, 3), dtype=np.uint8)
+
+            # Read frames in batches
+            for frame_idx in range(0, total_frames, read_batch_size):
+                batch_end = min(frame_idx + read_batch_size, total_frames)
+                batch_size = batch_end - frame_idx
+
+                # Read batch of frames
+                raw_data = process.stdout.read(frame_size * batch_size)  # type: ignore
+                if not raw_data:
+                    break
+
+                # Convert raw bytes to numpy array and reshape
+                batch_frames = np.frombuffer(raw_data, dtype=np.uint8)
+                batch_frames = batch_frames.reshape(-1, height, width, 3)
+
+                # Store batch in pre-allocated array
+                frames[frame_idx:batch_end] = batch_frames
+
+            # Clean up FFmpeg process
+            process.stdout.close()  # type: ignore
+            process.stderr.close()  # type: ignore
+            process.wait()
+
+            if process.returncode != 0:
+                raise ValueError(f"FFmpeg error: {process.stderr.read().decode()}")  # type: ignore
+
+            new_vid.frames = frames
+            new_vid.fps = fps
+
+            # Load audio
+            try:
+                new_vid.audio = Audio.from_file(path)
+            except Exception:
+                print(f"No audio found for `{path}`, adding silent track!")
+                new_vid.audio = Audio.create_silent(
+                    duration_seconds=round(new_vid.total_seconds, 2), stereo=True, sample_rate=44100
+                )
+
+            return new_vid
+
+        except VideoMetadataError as e:
+            raise ValueError(f"Error getting video metadata: {e}")
+        except subprocess.CalledProcessError as e:
+            raise ValueError(f"Error processing video file: {e}")
+        except Exception as e:
+            raise ValueError(f"Error loading video: {e}")
 
     @classmethod
     def from_frames(cls, frames: np.ndarray, fps: float) -> Video:
@@ -168,6 +282,19 @@ class Video:
         return split_videos
 
     def save(self, filename: str | Path | None = None, format: ALLOWED_VIDEO_FORMATS = "mp4") -> Path:
+        """Save video to file with optimized performance.
+
+        Args:
+            filename: Output filename. If None, generates random name
+            format: Output format (mp4, avi, mov, mkv, webm)
+
+        Returns:
+            Path to saved video file
+
+        Raises:
+            RuntimeError: If video is not loaded
+            ValueError: If format is not supported
+        """
         if not self.is_loaded():
             raise RuntimeError("Video is not loaded, cannot save!")
 
@@ -182,80 +309,71 @@ class Video:
             filename = Path(filename).with_suffix(f".{format}")
             filename.parent.mkdir(parents=True, exist_ok=True)
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_dir_path = Path(temp_dir)
-
-            # Save frames as images
-            for i, frame in enumerate(self.frames):
-                frame_path = temp_dir_path / f"frame_{i:04d}.png"
-                cv2.imwrite(str(frame_path), cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
-
-            # Calculate exact video duration
-            video_duration = len(self.frames) / self.fps
-
-            # Ensure audio duration matches video duration
-            if (
-                abs(self.audio.metadata.duration_seconds - video_duration) > 0.001
-            ):  # Small threshold for float comparison
-                if self.audio.metadata.duration_seconds < video_duration:
-                    # Create silent audio for the remaining duration
-                    remaining_duration = video_duration - self.audio.metadata.duration_seconds
-                    silent_audio = Audio.create_silent(
-                        duration_seconds=remaining_duration,
-                        stereo=(self.audio.metadata.channels == 2),
-                        sample_rate=self.audio.metadata.sample_rate,
-                        sample_width=self.audio.metadata.sample_width,
-                    )
-                    # Concatenate original audio with silent padding
-                    padded_audio = self.audio.concat(silent_audio)
-                else:
-                    # Trim audio to match video duration
-                    padded_audio = self.audio.slice(end_seconds=video_duration)
-            else:
-                padded_audio = self.audio
+        # Create a temporary raw video file
+        with tempfile.NamedTemporaryFile(suffix=".raw") as raw_video:
+            # Convert frames to raw video data
+            raw_data = self.frames.astype(np.uint8).tobytes()
+            raw_video.write(raw_data)
+            raw_video.flush()
 
             # Save audio to temporary WAV file
-            temp_audio = temp_dir_path / "temp_audio.wav"
-            padded_audio.save(str(temp_audio), format="wav")
+            with tempfile.NamedTemporaryFile(suffix=".wav") as temp_audio:
+                self.audio.save(temp_audio.name, format="wav")
 
-            # Construct FFmpeg command with explicit duration
-            ffmpeg_command = [
-                "ffmpeg",
-                "-y",
-                "-framerate",
-                str(self.fps),  # Use -framerate instead of -r for input
-                "-i",
-                str(temp_dir_path / "frame_%04d.png"),
-                "-i",
-                str(temp_audio),
-                "-c:v",
-                "libx264",
-                "-preset",
-                "medium",
-                "-crf",
-                "23",
-                "-c:a",
-                "aac",  # Use AAC instead of copy for more reliable audio
-                "-b:a",
-                "192k",
-                "-pix_fmt",
-                "yuv420p",
-                "-map",
-                "0:v:0",  # Map video from first input
-                "-map",
-                "1:a:0",  # Map audio from second input
-                "-vsync",
-                "cfr",  # Force constant frame rate
-                str(filename),
-            ]
+                # Calculate exact duration
+                duration = len(self.frames) / self.fps
 
-            try:
-                subprocess.run(ffmpeg_command, check=True, capture_output=True, text=True)
-                return filename
-            except subprocess.CalledProcessError as e:
-                print(f"Error saving video: {e}")
-                print(f"FFmpeg stderr: {e.stderr}")
-                raise
+                # Construct FFmpeg command for maximum performance
+                ffmpeg_command = [
+                    "ffmpeg",
+                    "-y",
+                    # Raw video input settings
+                    "-f",
+                    "rawvideo",
+                    "-pixel_format",
+                    "rgb24",
+                    "-video_size",
+                    f"{self.frame_shape[1]}x{self.frame_shape[0]}",
+                    "-framerate",
+                    str(self.fps),
+                    "-i",
+                    raw_video.name,
+                    # Audio input
+                    "-i",
+                    temp_audio.name,
+                    # Video encoding settings
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "ultrafast",  # Fastest encoding
+                    "-tune",
+                    "zerolatency",  # Reduce encoding latency
+                    "-crf",
+                    "23",  # Reasonable quality/size tradeoff
+                    # Audio settings
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "192k",
+                    # Output settings
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-movflags",
+                    "+faststart",  # Enable fast start for web playback
+                    "-t",
+                    str(duration),
+                    "-vsync",
+                    "cfr",
+                    str(filename),
+                ]
+
+                try:
+                    subprocess.run(ffmpeg_command, check=True, capture_output=True, text=True)
+                    return filename
+                except subprocess.CalledProcessError as e:
+                    print(f"Error saving video: {e}")
+                    print(f"FFmpeg stderr: {e.stderr}")
+                    raise
 
     def add_audio(self, audio: Audio, overlay: bool = True) -> None:
         if self.audio.is_silent:
@@ -304,29 +422,6 @@ class Video:
         audio_end = stop / self.fps
         sliced.audio = self.audio.slice(start_seconds=audio_start, end_seconds=audio_end)
         return sliced
-
-    @staticmethod
-    def _load_video_from_path(path: str) -> tuple[np.ndarray, float]:
-        cap = cv2.VideoCapture(path)
-        if not cap.isOpened():
-            raise ValueError(f"Unable to open video file: {path}")
-
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        frames = []
-
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            frames.append(frame)
-
-        cap.release()
-
-        if not frames:
-            raise ValueError(f"No frames could be read from the video file: {path}")
-
-        return np.array(frames), fps
 
     @property
     def video_shape(self) -> tuple[int, int, int, int]:
