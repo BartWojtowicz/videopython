@@ -6,7 +6,7 @@ import tempfile
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
-from typing import Any, Literal, get_args
+from typing import Literal, get_args
 
 import numpy as np
 from soundpython import Audio
@@ -89,7 +89,7 @@ class VideoMetadata:
             try:
                 fps_fraction = Fraction(stream_info["r_frame_rate"])
                 fps = float(fps_fraction)
-            except (ValueError, ZeroDivisionError) as e:
+            except (ValueError, ZeroDivisionError):
                 raise VideoMetadataError(f"Invalid frame rate: {stream_info['r_frame_rate']}")
 
             if "nb_frames" in stream_info and stream_info["nb_frames"].isdigit():
@@ -140,7 +140,7 @@ class Video:
         self.audio = None
 
     @classmethod
-    def from_path(cls, path: str, batch_size: int = 100) -> Video:
+    def from_path(cls, path: str, read_batch_size: int = 100) -> Video:
         new_vid = cls()
 
         try:
@@ -171,7 +171,10 @@ class Video:
 
             # Start FFmpeg process
             process = subprocess.Popen(
-                ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=10**8  # Use large buffer
+                ffmpeg_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                bufsize=10**8,  # Use large buffer
             )
 
             # Calculate frame size in bytes
@@ -181,8 +184,8 @@ class Video:
             frames = np.empty((total_frames, height, width, 3), dtype=np.uint8)
 
             # Read frames in batches
-            for frame_idx in range(0, total_frames, batch_size):
-                batch_end = min(frame_idx + BATCH_SIZE, total_frames)
+            for frame_idx in range(0, total_frames, read_batch_size):
+                batch_end = min(frame_idx + read_batch_size, total_frames)
                 batch_size = batch_end - frame_idx
 
                 # Read batch of frames
@@ -211,7 +214,7 @@ class Video:
             # Load audio
             try:
                 new_vid.audio = Audio.from_file(path)
-            except Exception as e:
+            except Exception:
                 print(f"No audio found for `{path}`, adding silent track!")
                 new_vid.audio = Audio.create_silent(
                     duration_seconds=round(new_vid.total_seconds, 2), stereo=True, sample_rate=44100
@@ -365,7 +368,7 @@ class Video:
                 ]
 
                 try:
-                    result = subprocess.run(ffmpeg_command, check=True, capture_output=True, text=True)
+                    subprocess.run(ffmpeg_command, check=True, capture_output=True, text=True)
                     return filename
                 except subprocess.CalledProcessError as e:
                     print(f"Error saving video: {e}")
