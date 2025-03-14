@@ -3,7 +3,7 @@ from typing import TypeVar, overload
 import numpy as np
 import numpy.typing as npt
 
-from .constants import *
+from .constants import INTER_LINEAR
 
 _TImg = TypeVar("_TImg", np.uint8, np.float64)
 _TSize = tuple[int, int]

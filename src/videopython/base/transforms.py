@@ -1,7 +1,6 @@
 from abc import ABC, abstractmethod
 from enum import Enum
 from multiprocessing import Pool
-from typing import Literal
 
 import cv2
 import numpy as np
@@ -154,7 +153,6 @@ class CropMode(Enum):
 
 
 class Crop(Transformation):
-
     def __init__(self, width: int, height: int, mode: CropMode = CropMode.CENTER):
         self.width = width
         self.height = height
