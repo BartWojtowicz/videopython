@@ -140,7 +140,7 @@ class Video:
         self.audio = None
 
     @classmethod
-    def from_path(cls, path: str) -> Video:
+    def from_path(cls, path: str, batch_size: int = 100) -> Video:
         new_vid = cls()
 
         try:
@@ -181,8 +181,7 @@ class Video:
             frames = np.empty((total_frames, height, width, 3), dtype=np.uint8)
 
             # Read frames in batches
-            BATCH_SIZE = 100
-            for frame_idx in range(0, total_frames, BATCH_SIZE):
+            for frame_idx in range(0, total_frames, batch_size):
                 batch_end = min(frame_idx + BATCH_SIZE, total_frames)
                 batch_size = batch_end - frame_idx
 
