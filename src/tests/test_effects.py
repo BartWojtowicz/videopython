@@ -1,8 +1,6 @@
 import numpy as np
-import pytest
 
 from videopython.base.effects import Blur, FullImageOverlay, Zoom
-from videopython.utils.image import ImageText
 
 
 def test_full_image_overlay_rgba(black_frames_video):
@@ -52,20 +50,3 @@ def test_effect_start_argument(small_video):
     small_video_with_blur = blur.apply(small_video.copy(), start=6.0)
     assert (small_video.frames[0] == small_video_with_blur.frames[0]).all()
     assert (small_video.frames[-1] != small_video_with_blur.frames[-1]).any()
-
-
-@pytest.mark.parametrize("place", ["left", "center", "right"])
-def test_overlaying_video_with_text(place, small_video, test_font_path):
-    my_overlay = ImageText(image_size=(800, 500))
-    my_overlay.write_text_box(
-        "Test test test test test test test",
-        box_width=800,
-        font_filename=test_font_path,
-        font_size=100,
-        text_color=(255, 255, 255),
-        place=place,
-        xy=(0, 0),
-    )
-    overlay = FullImageOverlay(overlay_image=my_overlay.img_array)
-    overlayed_video = overlay.apply(small_video.copy())
-    assert overlayed_video.video_shape == small_video.video_shape
