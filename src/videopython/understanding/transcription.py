@@ -1,6 +1,5 @@
 from typing import Literal
 
-import numpy as np
 import whisper
 
 from videopython.base.video import Video
@@ -17,7 +16,7 @@ class Transcription:
             video: Video to transcribe.
 
         Returns:
-            Transcribed text.
+            List of dictionaries with segments of text and their start and end times.
         """
         if video.audio.is_silent():
             return []
