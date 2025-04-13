@@ -25,7 +25,7 @@ class Transcription:
         audio = audio.resample(whisper.audio.SAMPLE_RATE)
         audio_data = audio.data
 
-        transcription = self.model.transcribe(audio_data, word_timestamps=True)
+        transcription = self.model.transcribe(audio=audio_data, word_timestamps=True)
 
         result = [
             {"start": segment["start"], "end": segment["end"], "text": segment["text"]}
