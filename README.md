@@ -57,15 +57,15 @@ savepath = video.save()
 > Using Nvidia A40 or better is recommended for the `videopython.generation` module.
 ```python
 # Generate image and animate it
-from videopython.generation import ImageToVideo
-from videopython.generation import TextToImage
-from videopython.generation import TextToMusic
+from videopython.ai.generation import ImageToVideo
+from videopython.ai.generation import TextToImage
+from videopython.ai.generation import TextToMusic
 
 image = TextToImage().generate_image(prompt="Golden Retriever playing in the park")
 video = ImageToVideo().generate_video(image=image, fps=24)
 
 # Video generation directly from prompt
-from videopython.generation import TextToVideo
+from videopython.ai.generation import TextToVideo
 video_gen = TextToVideo()
 video = video_gen.generate_video("Dogs playing in the snow")
 for _ in range(10):
