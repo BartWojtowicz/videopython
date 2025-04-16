@@ -14,10 +14,10 @@ sudo apt-get install ffmpeg
 
 ### Install with pip
 ```bash
-pip install videopython[generation]
+pip install videopython[ai]
 ```
-> You can install without `[generation]` dependencies for basic video handling and processing. 
-> The funcionalities found in `videopython.generation` won't work.
+> You can install without `[ai]` dependencies for basic video handling and processing. 
+> The funcionalities found in `videopython.ai` won't work.
 
 ## Basic Usage
 
@@ -54,7 +54,7 @@ savepath = video.save()
 
 ### Video Generation
 
-> Using Nvidia A40 or better is recommended for the `videopython.generation` module.
+> Using Nvidia A40 or better is recommended for the `videopython.ai` module.
 ```python
 # Generate image and animate it
 from videopython.ai.generation import ImageToVideo
