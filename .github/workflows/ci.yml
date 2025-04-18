@@ -49,6 +49,6 @@ jobs:
       - name: Set up Python
         run: uv python install 312
       - name: Install all dependencies
-        run: uv sync --all-extras --group generation
+        run: uv sync --all-extras --group ai
       - name: Run type tests
         run: uv run mypy src
