@@ -1,82 +1,76 @@
 import tempfile
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import pytest
-from conftest import TEST_DATA_DIR
 from PIL import Image
 
 from videopython.base.video import Video, VideoMetadata
 
-
-@dataclass
-class _Configuration:
-    # Paths
-    SMALL_IMG_PATH = str(TEST_DATA_DIR / "small_image.png")
-    SMALL_VIDEO_PATH = str(TEST_DATA_DIR / "fast_benchmark.mp4")
-    BIG_VIDEO_PATH = str(TEST_DATA_DIR / "slow_benchmark.mp4")
-    AUDIO_PATH = str(TEST_DATA_DIR / "test_audio.mp3")
-
-    # Original metadata
-    ORIGINAL_SMALL_METADATA = VideoMetadata(height=500, width=800, fps=24, frame_count=288, total_seconds=12)
-    ORIGINAL_BIG_METADATA = VideoMetadata(height=1920, width=1080, fps=30, frame_count=401, total_seconds=13.37)
-
-    # Target metadata
-    TARGET_SMALL_METADATA = VideoMetadata(
-        height=400,
-        width=600,
-        fps=24,
-        frame_count=5 * 24,
-        total_seconds=5,
-    )
-    TARGET_BIG_METADATA = VideoMetadata(
-        height=1800,
-        width=1000,
-        fps=30,
-        frame_count=10 * 30,
-        total_seconds=10,
-    )
+from .test_config import (
+    BIG_VIDEO_METADATA,
+    BIG_VIDEO_PATH,
+    SMALL_VIDEO_METADATA,
+    SMALL_VIDEO_PATH,
+    TEST_AUDIO_PATH,
+    TEST_IMAGE_PATH,
+)
 
 
 @pytest.mark.parametrize(
-    "video_path, target_metadata",
+    "video_path, original_metadata",
     [
         (
-            _Configuration.SMALL_VIDEO_PATH,
-            _Configuration.ORIGINAL_SMALL_METADATA,
+            SMALL_VIDEO_PATH,
+            SMALL_VIDEO_METADATA,
         ),
-        (_Configuration.BIG_VIDEO_PATH, _Configuration.ORIGINAL_BIG_METADATA),
+        (BIG_VIDEO_PATH, BIG_VIDEO_METADATA),
     ],
 )
-def test_from_video(video_path: str, target_metadata: VideoMetadata):
+def test_from_video(video_path: str, original_metadata: VideoMetadata):
     """Tests VideoMetadata.from_video."""
     metadata = VideoMetadata.from_path(video_path)
-    assert metadata == target_metadata
+    assert metadata == original_metadata
+
+
+_TARGET_SMALL_METADATA = VideoMetadata(
+    height=400,
+    width=600,
+    fps=24,
+    frame_count=5 * 24,
+    total_seconds=5,
+)
+_TARGET_BIG_METADATA = VideoMetadata(
+    height=1800,
+    width=1000,
+    fps=30,
+    frame_count=10 * 30,
+    total_seconds=10,
+)
 
 
 @pytest.mark.parametrize(
     "video_path, target_metadata, expected",
     [
         (
-            _Configuration.SMALL_VIDEO_PATH,
-            _Configuration.TARGET_SMALL_METADATA,
+            SMALL_VIDEO_PATH,
+            _TARGET_SMALL_METADATA,
             True,
         ),
         (
-            _Configuration.BIG_VIDEO_PATH,
-            _Configuration.TARGET_BIG_METADATA,
+            BIG_VIDEO_PATH,
+            _TARGET_BIG_METADATA,
             True,
         ),
         (
-            _Configuration.SMALL_VIDEO_PATH,
-            _Configuration.TARGET_BIG_METADATA,
+            SMALL_VIDEO_PATH,
+            _TARGET_BIG_METADATA,
             False,
             # Cannot be downsampled, because target video is longer.
         ),
         (
-            _Configuration.BIG_VIDEO_PATH,
-            _Configuration.TARGET_SMALL_METADATA,
+            BIG_VIDEO_PATH,
+            _TARGET_SMALL_METADATA,
             True,
             # FPS differs, but can be downsampled
         ),
@@ -93,7 +87,7 @@ def test_can_be_downsampled_to(
 
 
 def test_video_from_image():
-    with Image.open(_Configuration.SMALL_IMG_PATH) as img:
+    with Image.open(TEST_IMAGE_PATH) as img:
         img = np.array(img.convert("RGB"))  # Otherwise we get a 4 channel image for .png
 
     video = Video.from_image(img, fps=30, length_seconds=0.5)
@@ -105,39 +99,41 @@ def test_video_from_image():
 
 
 @pytest.mark.parametrize(
-    "video_path, target_metadata",
+    "video_path, original_metadata",
     [
         (
-            _Configuration.SMALL_VIDEO_PATH,
-            _Configuration.ORIGINAL_SMALL_METADATA,
+            SMALL_VIDEO_PATH,
+            SMALL_VIDEO_METADATA,
         ),
         (
-            _Configuration.BIG_VIDEO_PATH,
-            _Configuration.ORIGINAL_BIG_METADATA,
+            BIG_VIDEO_PATH,
+            BIG_VIDEO_METADATA,
         ),
     ],
 )
-def test_load_video(video_path: str, target_metadata: VideoMetadata):
+def test_load_video_shape(video_path: str, original_metadata: VideoMetadata):
     """Tests Video.load_video."""
     video = Video.from_path(video_path)
-    assert (video.frames.shape == target_metadata.get_video_shape()).all()
+    assert (video.frames.shape == original_metadata.get_video_shape()).all()
 
 
-def test_save_and_load(black_frames_video):
+def test_save_and_load():
+    test_video = Video.from_image(np.zeros((100, 100, 3), dtype=np.uint8), fps=24, length_seconds=5.0)
     with tempfile.TemporaryDirectory() as temp_dir:
-        saved_path = black_frames_video.save(Path(temp_dir) / "test_save_and_load.mp4")
-        black_frames_video.save(saved_path)
-        assert np.all(Video.from_path(saved_path).frames == black_frames_video.frames)
+        saved_path = test_video.save(Path(temp_dir) / "test_save_and_load.mp4")
+        test_video.save(saved_path)
+        assert np.all(Video.from_path(saved_path).frames == test_video.frames)
         assert Path(saved_path).exists()
 
 
-def test_save_with_audio(black_frames_video):
-    black_frames_video.add_audio_from_file(_Configuration.AUDIO_PATH, overlay=True)
+def test_save_with_audio():
+    test_video = Video.from_image(np.zeros((100, 100, 3), dtype=np.uint8), fps=24, length_seconds=5.0)
+    test_video.add_audio_from_file(TEST_AUDIO_PATH, overlay=True)
     with tempfile.TemporaryDirectory() as temp_dir:
-        saved_path = black_frames_video.save(Path(temp_dir) / "test_add_audio_from_file.mp4")
-        black_frames_video.save(saved_path)
+        saved_path = test_video.save(Path(temp_dir) / "test_add_audio_from_file.mp4")
+        test_video.save(saved_path)
 
-        assert np.all(Video.from_path(saved_path).frames == black_frames_video.frames)
+        assert np.all(Video.from_path(saved_path).frames == test_video.frames)
         assert Path(saved_path).exists()
 
-    assert black_frames_video.audio is not None
+    assert test_video.audio is not None

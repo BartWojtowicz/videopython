@@ -4,8 +4,10 @@ import pytest
 from videopython.base.effects import FullImageOverlay
 from videopython.utils.text import AnchorPoint, ImageText
 
+from .test_config import TEST_FONT_PATH
 
-def test_text_is_rendered_correctly(test_font_path):
+
+def test_text_is_rendered_correctly():
     """Test that text is actually rendered and visible in the image."""
     # Create a black background image
     img_size = (400, 200)
@@ -17,7 +19,7 @@ def test_text_is_rendered_correctly(test_font_path):
     # Write text in the center
     my_overlay.write_text(
         text=test_text,
-        font_filename=test_font_path,
+        font_filename=TEST_FONT_PATH,
         font_size=30,
         color=text_color,
         xy=(200, 100),
@@ -40,12 +42,12 @@ def test_text_is_rendered_correctly(test_font_path):
 
 
 @pytest.mark.parametrize("place", ["left", "center", "right"])
-def test_overlaying_video_with_text(place, small_video, test_font_path):
+def test_overlaying_video_with_text(place, small_video):
     my_overlay = ImageText(image_size=(800, 500))
     my_overlay.write_text_box(
         "Test test test test test test test",
         box_width=800,
-        font_filename=test_font_path,
+        font_filename=TEST_FONT_PATH,
         font_size=100,
         text_color=(255, 255, 255),
         place=place,
@@ -86,7 +88,7 @@ def test_overlaying_video_with_text(place, small_video, test_font_path):
         AnchorPoint.BOTTOM_RIGHT,
     ],
 )
-def test_text_anchor_positioning(anchor_point, test_font_path):
+def test_text_anchor_positioning(anchor_point):
     """Test that text is positioned correctly based on anchor point."""
     # Create a black background image
     img_size = (500, 500)
@@ -101,7 +103,7 @@ def test_text_anchor_positioning(anchor_point, test_font_path):
     # Render text with specified anchor point
     my_overlay.write_text(
         text=text,
-        font_filename=test_font_path,
+        font_filename=TEST_FONT_PATH,
         font_size=font_size,
         color=text_color,
         xy=(center_x, center_y),
@@ -174,7 +176,7 @@ def test_text_anchor_positioning(anchor_point, test_font_path):
         assert abs(text_bbox["max_y"] - center_y) < 10, "Text not aligned to bottom right"
 
 
-def test_relative_positioning(test_font_path):
+def test_relative_positioning():
     """Test that relative positioning works correctly."""
     img_size = (500, 300)
     my_overlay = ImageText(image_size=img_size, background=(0, 0, 0, 255))
@@ -194,7 +196,7 @@ def test_relative_positioning(test_font_path):
     # Write text using relative positioning and width
     my_overlay.write_text_box(
         text=text,
-        font_filename=test_font_path,
+        font_filename=TEST_FONT_PATH,
         font_size=24,
         text_color=text_color,
         xy=(rel_x, rel_y),  # Relative position
@@ -229,7 +231,7 @@ def test_relative_positioning(test_font_path):
     assert text_width <= expected_width + 10, f"Text width {text_width} exceeds expected width {expected_width}"
 
 
-def test_margin_handling(test_font_path):
+def test_margin_handling():
     """Test that margins are respected in text positioning."""
     img_size = (400, 300)
     my_overlay = ImageText(image_size=img_size, background=(0, 0, 0, 255))
@@ -246,7 +248,7 @@ def test_margin_handling(test_font_path):
     # Write text in top-left corner with margin
     my_overlay.write_text(
         text=text,
-        font_filename=test_font_path,
+        font_filename=TEST_FONT_PATH,
         font_size=24,
         color=text_color,
         xy=(0, 0),  # Top-left relative to available area
