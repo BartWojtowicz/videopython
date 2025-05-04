@@ -1,35 +1,24 @@
-from pathlib import Path
-
 import numpy as np
 import pytest
-from PIL import Image
 
 from videopython.base.video import Video
 
-TEST_ROOT_DIR: Path = Path(__file__).parent
-TEST_DATA_DIR: Path = TEST_ROOT_DIR / "test_data"
+from .test_config import (
+    BIG_VIDEO_PATH,
+    SMALL_VIDEO_PATH,
+)
 
 
-@pytest.fixture
-def small_video():
-    return Video.from_path(str(TEST_DATA_DIR / "fast_benchmark.mp4"))
-
-
-@pytest.fixture
+@pytest.fixture(scope="session")
 def big_video():
-    return Video.from_path(str(TEST_DATA_DIR / "slow_benchmark.mp4"))
+    return Video.from_path(BIG_VIDEO_PATH)
 
 
-@pytest.fixture
-def small_image():
-    return np.array(Image.open(TEST_DATA_DIR / "small_image.png"))
+@pytest.fixture(scope="session")
+def small_video():
+    return Video.from_path(SMALL_VIDEO_PATH)
 
 
-@pytest.fixture
-def black_frames_video():
+@pytest.fixture(scope="session")
+def black_frames_test_video():
     return Video.from_image(np.zeros((100, 100, 3), dtype=np.uint8), fps=24, length_seconds=5.0)
-
-
-@pytest.fixture
-def test_font_path():
-    return str(TEST_DATA_DIR / "test_font.ttf")

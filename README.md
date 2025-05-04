@@ -27,10 +27,10 @@ pip install videopython[ai]
 from videopython.base.video import Video
 
 # Load videos and print metadata
-video1 = Video.from_path("tests/test_data/fast_benchmark.mp4")
+video1 = Video.from_path("tests/test_data/small_video.mp4")
 print(video1)
 
-video2 = Video.from_path("tests/test_data/slow_benchmark.mp4")
+video2 = Video.from_path("tests/test_data/big_video.mp4")
 print(video2)
 
 # Define the transformations
