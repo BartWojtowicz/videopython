@@ -134,15 +134,18 @@ class VideoMetadata:
 
 
 class Video:
-    def __init__(self):
-        self.fps = None
-        self.frames = None
-        self.audio = None
+    def __init__(self, frames: np.ndarray, fps: int | float, audio: Audio | None = None):
+        self.frames = frames
+        self.fps = fps
+        if audio:
+            self.audio = audio
+        else:
+            self.audio = Audio.create_silent(
+                duration_seconds=round(self.total_seconds, 2), stereo=True, sample_rate=44100
+            )
 
     @classmethod
     def from_path(cls, path: str, read_batch_size: int = 100) -> Video:
-        new_vid = cls()
-
         try:
             # Get video metadata using VideoMetadata.from_path
             metadata = VideoMetadata.from_path(path)
@@ -208,19 +211,14 @@ class Video:
             if process.returncode != 0:
                 raise ValueError(f"FFmpeg error: {process.stderr.read().decode()}")  # type: ignore
 
-            new_vid.frames = frames
-            new_vid.fps = fps
-
             # Load audio
             try:
-                new_vid.audio = Audio.from_file(path)
+                audio = Audio.from_file(path)
             except Exception:
                 print(f"No audio found for `{path}`, adding silent track!")
-                new_vid.audio = Audio.create_silent(
-                    duration_seconds=round(new_vid.total_seconds, 2), stereo=True, sample_rate=44100
-                )
+                audio = None
 
-            return new_vid
+            return cls(frames=frames, fps=fps, audio=audio)
 
         except VideoMetadataError as e:
             raise ValueError(f"Error getting video metadata: {e}")
@@ -231,32 +229,23 @@ class Video:
 
     @classmethod
     def from_frames(cls, frames: np.ndarray, fps: float) -> Video:
-        new_vid = cls()
         if frames.ndim != 4:
             raise ValueError(f"Unsupported number of dimensions: {frames.shape}!")
         elif frames.shape[-1] == 4:
             frames = frames[:, :, :, :3]
         elif frames.shape[-1] != 3:
             raise ValueError(f"Unsupported number of dimensions: {frames.shape}!")
-        new_vid.frames = frames
-        new_vid.fps = fps
-        new_vid.audio = Audio.create_silent(
-            duration_seconds=round(new_vid.total_seconds, 2), stereo=True, sample_rate=44100
-        )
-        return new_vid
+        return cls(frames=frames, fps=fps)
 
     @classmethod
     def from_image(cls, image: np.ndarray, fps: float = 24.0, length_seconds: float = 1.0) -> Video:
-        new_vid = cls()
         if len(image.shape) == 3:
             image = np.expand_dims(image, axis=0)
-        new_vid.frames = np.repeat(image, round(length_seconds * fps), axis=0)
-        new_vid.fps = fps
-        new_vid.audio = Audio.create_silent(duration_seconds=length_seconds, stereo=True, sample_rate=44100)
-        return new_vid
+        frames = np.repeat(image, round(length_seconds * fps), axis=0)
+        return cls(frames=frames, fps=fps)
 
     def copy(self) -> Video:
-        copied = Video().from_frames(self.frames.copy(), self.fps)
+        copied = Video.from_frames(self.frames.copy(), self.fps)
         copied.audio = self.audio  # Audio objects are immutable, no need to copy
         return copied
 
