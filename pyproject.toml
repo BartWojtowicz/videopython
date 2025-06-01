@@ -1,6 +1,6 @@
 [project]
 name = "videopython"
-version = "0.4.0"
+version = "0.4.1"
 description = "Minimal video generation and processing library."
 authors = [
     { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
@@ -53,6 +53,7 @@ ai = [
     "numba>=0.61.0",
 ]
 
+# We have to keep it to make PIP use those dependency groups, not only UV
 [project.optional-dependencies]
 dev = [
     "ruff>=0.1.14",
