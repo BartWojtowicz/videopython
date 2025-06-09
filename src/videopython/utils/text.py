@@ -423,6 +423,46 @@ class ImageText:
         except Exception as e:
             raise ValueError(f"Error measuring text: {str(e)}")
 
+    def _get_font_baseline_offset(
+        self, base_font_filename: str, base_font_size: int, highlight_font_filename: str, highlight_font_size: int
+    ) -> int:
+        """
+        Calculate the vertical offset needed to align baselines of different fonts and sizes.
+
+        Args:
+            base_font_filename: Path to the base font file
+            base_font_size: Font size of normal text
+            highlight_font_filename: Path to the highlight font file
+            highlight_font_size: Font size of highlighted text
+
+        Returns:
+            Vertical offset in pixels to align highlighted text baseline with normal text baseline
+        """
+        base_font = self._get_font(base_font_filename, base_font_size)
+        highlight_font = self._get_font(highlight_font_filename, highlight_font_size)
+
+        # Use a reference character to get baseline metrics
+        # We use 'A' as it's a good reference for ascender height
+        ref_char = "A"
+
+        # Get bounding boxes for the reference character
+        base_bbox = base_font.getbbox(ref_char)
+        highlight_bbox = highlight_font.getbbox(ref_char)
+
+        if base_bbox is None or highlight_bbox is None:
+            return 0  # Fallback if bbox calculation fails
+
+        # The baseline offset is the difference in the top of the bounding box
+        # since getbbox returns (left, top, right, bottom) where top is negative for ascenders
+        base_ascent = -base_bbox[1]  # Distance from baseline to top of character
+        highlight_ascent = -highlight_bbox[1]  # Distance from baseline to top of character
+
+        # Calculate the offset needed to align baselines
+        # If highlighted text has a larger ascent, we need to move it down
+        baseline_offset = highlight_ascent - base_ascent
+
+        return baseline_offset
+
     def _split_lines_by_width(
         self,
         text: str,
@@ -508,6 +548,7 @@ class ImageText:
         highlight_word_index: int | None = None,
         highlight_color: RGBColor | None = None,
         highlight_size_multiplier: float = 1.5,
+        highlight_bold_font: str | None = None,
     ) -> tuple[int, int]:
         """
         Write text in a box with advanced positioning and alignment options.
@@ -527,6 +568,7 @@ class ImageText:
             highlight_word_index: Index of word to highlight (0-based, None to disable highlighting)
             highlight_color: RGB color for the highlighted word (defaults to text_color if None)
             highlight_size_multiplier: Font size multiplier for highlighted word
+            highlight_bold_font: Path to bold font file for highlighted word (defaults to font_filename if None)
 
         Returns:
             Coordinates of the lower-right corner of the written text box (x, y)
@@ -551,11 +593,13 @@ class ImageText:
         if highlight_word_index is not None:
             words = text.split()
             if highlight_word_index < 0 or highlight_word_index >= len(words):
-                raise ValueError(f"highlight_word_index {highlight_word_index} out of range for text with {len(words)} words")
-            
+                raise ValueError(
+                    f"highlight_word_index {highlight_word_index} out of range for text with {len(words)} words"
+                )
+
         if highlight_size_multiplier <= 0:
             raise ValueError("highlight_size_multiplier must be positive")
-            
+
         # Set default highlight color if not provided
         if highlight_word_index is not None and highlight_color is None:
             highlight_color = text_color
@@ -609,9 +653,7 @@ class ImageText:
 
         # Write lines
         current_text_height = y_pos
-        all_words = text.split()
         word_index_offset = 0  # Track global word index across lines
-        
         for line in lines:
             line_dimensions = self.get_text_dimensions(font_filename, font_size, line)
 
@@ -631,7 +673,7 @@ class ImageText:
                 line_words = line.split()
                 line_start_word_index = word_index_offset
                 line_end_word_index = word_index_offset + len(line_words) - 1
-                
+
                 # Check if the highlighted word is in this line
                 if line_start_word_index <= highlight_word_index <= line_end_word_index:
                     self._write_line_with_highlight(
@@ -642,6 +684,7 @@ class ImageText:
                         highlight_color=highlight_color,
                         highlight_size_multiplier=highlight_size_multiplier,
                         highlight_word_local_index=highlight_word_index - line_start_word_index,
+                        highlight_bold_font=highlight_bold_font,
                         x_left=x_left,
                         y_top=current_text_height,
                     )
@@ -654,7 +697,7 @@ class ImageText:
                         font_size=font_size,
                         color=text_color,
                     )
-                
+
                 word_index_offset += len(line_words)
             else:
                 # Write normal line without highlighting
@@ -752,12 +795,13 @@ class ImageText:
         highlight_color: RGBColor,
         highlight_size_multiplier: float,
         highlight_word_local_index: int,
+        highlight_bold_font: str | None,
         x_left: int,
         y_top: int,
     ) -> None:
         """
-        Write a line of text with one word highlighted.
-        
+        Write a line of text with one word highlighted using word-by-word rendering with baseline alignment.
+
         Args:
             line: The text line to render
             font_filename: Path to the font file
@@ -766,51 +810,60 @@ class ImageText:
             highlight_color: RGB color for highlighted word
             highlight_size_multiplier: Font size multiplier for highlighted word
             highlight_word_local_index: Index of word to highlight within this line (0-based)
+            highlight_bold_font: Path to bold font file for highlighted word (defaults to font_filename if None)
             x_left: Left x position for the line
             y_top: Top y position for the line
         """
-        # First, render the entire line normally
-        self.write_text(
-            text=line,
-            font_filename=font_filename,
-            xy=(x_left, y_top),
-            font_size=font_size,
-            color=text_color,
-        )
-        
-        # Split line into words to find the highlighted word position
+        # Split line into words
         words = line.split()
         if highlight_word_local_index >= len(words):
             return  # Safety check
-        
-        # Calculate position of the highlighted word
-        words_before = words[:highlight_word_local_index]
-        highlight_word = words[highlight_word_local_index]
-        
-        # Calculate x position of highlighted word
-        text_before = " ".join(words_before)
-        if text_before:
-            text_before += " "  # Add space before highlighted word
-            
-        # Get width of text before highlighted word
-        text_before_width = self.get_text_dimensions(font_filename, font_size, text_before)[0] if text_before else 0
-        highlight_x = x_left + text_before_width
-        
-        # Calculate highlighted font size and y position adjustment
+
+        # Calculate highlighted font size and determine font files
         highlight_font_size = int(font_size * highlight_size_multiplier)
-        
-        # Calculate y position to align baselines properly
-        # For now, use the same y position as the base text for simplicity
-        highlight_y = y_top
-        
-        # Render the highlighted word on top
-        self.write_text(
-            text=highlight_word,
-            font_filename=font_filename,
-            xy=(highlight_x, highlight_y),
-            font_size=highlight_font_size,
-            color=highlight_color,
+        highlight_font_file = highlight_bold_font if highlight_bold_font is not None else font_filename
+
+        # Calculate baseline offset for highlighted words (using the appropriate font files)
+        baseline_offset = self._get_font_baseline_offset(
+            font_filename, font_size, highlight_font_file, highlight_font_size
         )
+
+        # Render words one by one with proper spacing
+        current_x = x_left
+
+        for i, word in enumerate(words):
+            # Determine if this is the highlighted word
+            is_highlighted = i == highlight_word_local_index
+
+            # Choose font file, size, and color based on highlighting
+            word_font_file = highlight_font_file if is_highlighted else font_filename
+            word_font_size = highlight_font_size if is_highlighted else font_size
+            word_color = highlight_color if is_highlighted else text_color
+
+            # Calculate y position with baseline alignment
+            word_y = y_top
+            if is_highlighted:
+                word_y += baseline_offset
+
+            # Render the word
+            self.write_text(
+                text=word,
+                font_filename=word_font_file,
+                xy=(current_x, word_y),
+                font_size=word_font_size,
+                color=word_color,
+            )
+
+            # Calculate the width of this word for spacing
+            word_width = self.get_text_dimensions(word_font_file, word_font_size, word)[0]
+
+            # Update current_x for next word (add word width plus space)
+            current_x += word_width
+
+            # Add space between words (except after the last word)
+            if i < len(words) - 1:
+                space_width = self.get_text_dimensions(font_filename, font_size, " ")[0]
+                current_x += space_width
 
     def _find_smallest_bounding_rect(self, mask: np.ndarray) -> tuple[int, int, int, int]:
         """
