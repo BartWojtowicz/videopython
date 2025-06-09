@@ -275,3 +275,228 @@ def test_margin_handling():
     # Text should not exceed the available area
     assert max_x <= img_size[0] - margin, f"Text exceeds right margin: {max_x} > {img_size[0] - margin}"
     assert max_y <= img_size[1] - margin, f"Text exceeds bottom margin: {max_y} > {img_size[1] - margin}"
+
+
+def test_text_highlighting_basic():
+    """Test basic word highlighting functionality."""
+    img_size = (600, 300)
+    my_overlay = ImageText(image_size=img_size, background=(0, 0, 0, 255))
+    
+    text = "Hello world test"
+    base_color = (255, 255, 255)  # White
+    highlight_color = (255, 0, 0)  # Red
+    
+    # Highlight the second word (index 1)
+    my_overlay.write_text_box(
+        text=text,
+        font_filename=TEST_FONT_PATH,
+        font_size=50,
+        text_color=base_color,
+        xy=(50, 50),
+        box_width=500,  # Specify box width to avoid out of bounds
+        highlight_word_index=1,  # "world"
+        highlight_color=highlight_color,
+        highlight_size_multiplier=1.5,
+    )
+    
+    # Get the image array
+    img_array = my_overlay.img_array
+    
+    # Check that we have both white and red pixels
+    white_pixels = np.sum(img_array[:, :, 0:3] == [255, 255, 255], axis=2) == 3
+    red_pixels = np.sum(img_array[:, :, 0:3] == [255, 0, 0], axis=2) == 3
+    
+    assert np.any(white_pixels), "No white pixels found - base text not rendered"
+    assert np.any(red_pixels), "No red pixels found - highlighted text not rendered"
+    
+    # Count pixels to ensure we have reasonable amounts
+    white_count = np.sum(white_pixels)
+    red_count = np.sum(red_pixels)
+    
+    assert white_count > 100, f"Too few white pixels: {white_count}"
+    assert red_count > 50, f"Too few red pixels: {red_count}"
+
+
+def test_text_highlighting_different_multipliers():
+    """Test highlighting with different size multipliers."""
+    img_size = (500, 400)
+    my_overlay = ImageText(image_size=img_size, background=(0, 0, 0, 255))
+    
+    text = "Small big text"
+    base_color = (100, 100, 100)  # Gray
+    highlight_color = (0, 255, 0)  # Green
+    
+    # Test with size multiplier of 2.0
+    my_overlay.write_text_box(
+        text=text,
+        font_filename=TEST_FONT_PATH,
+        font_size=30,
+        text_color=base_color,
+        xy=(30, 30),
+        box_width=400,
+        highlight_word_index=1,  # "big"
+        highlight_color=highlight_color,
+        highlight_size_multiplier=2.0,
+    )
+    
+    # Get the image array
+    img_array = my_overlay.img_array
+    
+    # Check that we have both gray and green pixels
+    gray_pixels = np.sum(img_array[:, :, 0:3] == [100, 100, 100], axis=2) == 3
+    green_pixels = np.sum(img_array[:, :, 0:3] == [0, 255, 0], axis=2) == 3
+    
+    assert np.any(gray_pixels), "No gray pixels found"
+    assert np.any(green_pixels), "No green pixels found"
+
+
+def test_text_highlighting_edge_cases():
+    """Test highlighting edge cases and error conditions."""
+    img_size = (400, 200)
+    my_overlay = ImageText(image_size=img_size, background=(0, 0, 0, 255))
+    
+    text = "One two three"
+    base_color = (255, 255, 255)
+    highlight_color = (255, 0, 0)
+    
+    # Test invalid word index - should raise ValueError
+    with pytest.raises(ValueError, match="highlight_word_index.*out of range"):
+        my_overlay.write_text_box(
+            text=text,
+            font_filename=TEST_FONT_PATH,
+            font_size=20,
+            text_color=base_color,
+            xy=(50, 50),
+            highlight_word_index=5,  # Out of range
+            highlight_color=highlight_color,
+        )
+    
+    # Test negative word index - should raise ValueError
+    with pytest.raises(ValueError, match="highlight_word_index.*out of range"):
+        my_overlay.write_text_box(
+            text=text,
+            font_filename=TEST_FONT_PATH,
+            font_size=20,
+            text_color=base_color,
+            xy=(50, 50),
+            highlight_word_index=-1,
+            highlight_color=highlight_color,
+        )
+    
+    # Test invalid size multiplier - should raise ValueError
+    with pytest.raises(ValueError, match="highlight_size_multiplier must be positive"):
+        my_overlay.write_text_box(
+            text=text,
+            font_filename=TEST_FONT_PATH,
+            font_size=20,
+            text_color=base_color,
+            xy=(50, 50),
+            highlight_word_index=1,
+            highlight_color=highlight_color,
+            highlight_size_multiplier=0,
+        )
+
+
+def test_text_highlighting_default_color():
+    """Test that highlight_color defaults to text_color when not specified."""
+    img_size = (400, 200)
+    my_overlay = ImageText(image_size=img_size, background=(0, 0, 0, 255))
+    
+    text = "Default color test"
+    base_color = (200, 100, 50)  # Custom color
+    
+    # Don't specify highlight_color - should default to base_color
+    my_overlay.write_text_box(
+        text=text,
+        font_filename=TEST_FONT_PATH,
+        font_size=30,
+        text_color=base_color,
+        xy=(30, 30),
+        box_width=300,
+        highlight_word_index=1,  # "color"
+        highlight_size_multiplier=1.8,
+    )
+    
+    # Get the image array
+    img_array = my_overlay.img_array
+    
+    # Check that we have pixels with the base color (both normal and highlighted text)
+    base_color_pixels = np.sum(img_array[:, :, 0:3] == base_color, axis=2) == 3
+    assert np.any(base_color_pixels), "No pixels found with base color"
+
+
+def test_text_highlighting_multiline():
+    """Test highlighting words across multiple lines."""
+    img_size = (300, 400)
+    my_overlay = ImageText(image_size=img_size, background=(0, 0, 0, 255))
+    
+    # Long text that will wrap to multiple lines
+    text = "This is a very long text that should wrap across multiple lines when rendered"
+    base_color = (255, 255, 255)
+    highlight_color = (0, 0, 255)  # Blue
+    
+    # Highlight a word that should be on the second line
+    my_overlay.write_text_box(
+        text=text,
+        font_filename=TEST_FONT_PATH,
+        font_size=25,
+        text_color=base_color,
+        xy=(20, 20),
+        box_width=250,  # Force wrapping
+        highlight_word_index=8,  # "wrap" (approximate position after wrapping)
+        highlight_color=highlight_color,
+        highlight_size_multiplier=1.4,
+    )
+    
+    # Get the image array
+    img_array = my_overlay.img_array
+    
+    # Check that we have both white and blue pixels
+    white_pixels = np.sum(img_array[:, :, 0:3] == [255, 255, 255], axis=2) == 3
+    blue_pixels = np.sum(img_array[:, :, 0:3] == [0, 0, 255], axis=2) == 3
+    
+    assert np.any(white_pixels), "No white pixels found"
+    assert np.any(blue_pixels), "No blue pixels found - multiline highlighting failed"
+
+
+def test_text_highlighting_first_and_last_word():
+    """Test highlighting the first and last words."""
+    img_size = (500, 200)
+    
+    text = "First middle last"
+    base_color = (255, 255, 255)
+    highlight_color = (255, 255, 0)  # Yellow
+    
+    # Test highlighting first word
+    my_overlay1 = ImageText(image_size=img_size, background=(0, 0, 0, 255))
+    my_overlay1.write_text_box(
+        text=text,
+        font_filename=TEST_FONT_PATH,
+        font_size=40,
+        text_color=base_color,
+        xy=(30, 30),
+        box_width=400,
+        highlight_word_index=0,  # "First"
+        highlight_color=highlight_color,
+    )
+    
+    img_array1 = my_overlay1.img_array
+    yellow_pixels1 = np.sum(img_array1[:, :, 0:3] == [255, 255, 0], axis=2) == 3
+    assert np.any(yellow_pixels1), "First word highlighting failed"
+    
+    # Test highlighting last word
+    my_overlay2 = ImageText(image_size=img_size, background=(0, 0, 0, 255))
+    my_overlay2.write_text_box(
+        text=text,
+        font_filename=TEST_FONT_PATH,
+        font_size=40,
+        text_color=base_color,
+        xy=(30, 30),
+        box_width=400,
+        highlight_word_index=2,  # "last"
+        highlight_color=highlight_color,
+    )
+    
+    img_array2 = my_overlay2.img_array
+    yellow_pixels2 = np.sum(img_array2[:, :, 0:3] == [255, 255, 0], axis=2) == 3
+    assert np.any(yellow_pixels2), "Last word highlighting failed"

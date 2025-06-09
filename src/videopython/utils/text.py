@@ -505,6 +505,9 @@ class ImageText:
         place: TextAlign = TextAlign.LEFT,
         anchor: AnchorPoint = AnchorPoint.TOP_LEFT,
         margin: MarginType = 0,
+        highlight_word_index: int | None = None,
+        highlight_color: RGBColor | None = None,
+        highlight_size_multiplier: float = 1.5,
     ) -> tuple[int, int]:
         """
         Write text in a box with advanced positioning and alignment options.
@@ -521,6 +524,9 @@ class ImageText:
             place: Text alignment within the box (TextAlign.LEFT, TextAlign.RIGHT, TextAlign.CENTER)
             anchor: Which part of the text box to anchor at the position
             margin: Margin in pixels (single value or [top, right, bottom, left])
+            highlight_word_index: Index of word to highlight (0-based, None to disable highlighting)
+            highlight_color: RGB color for the highlighted word (defaults to text_color if None)
+            highlight_size_multiplier: Font size multiplier for highlighted word
 
         Returns:
             Coordinates of the lower-right corner of the written text box (x, y)
@@ -540,6 +546,19 @@ class ImageText:
 
         if background_padding < 0:
             raise ValueError("Background padding cannot be negative")
+
+        # Validate highlighting parameters
+        if highlight_word_index is not None:
+            words = text.split()
+            if highlight_word_index < 0 or highlight_word_index >= len(words):
+                raise ValueError(f"highlight_word_index {highlight_word_index} out of range for text with {len(words)} words")
+            
+        if highlight_size_multiplier <= 0:
+            raise ValueError("highlight_size_multiplier must be positive")
+            
+        # Set default highlight color if not provided
+        if highlight_word_index is not None and highlight_color is None:
+            highlight_color = text_color
 
         # Process margins to determine available area
         margin_top, margin_right, margin_bottom, margin_left = self._process_margin(margin)
@@ -590,6 +609,9 @@ class ImageText:
 
         # Write lines
         current_text_height = y_pos
+        all_words = text.split()
+        word_index_offset = 0  # Track global word index across lines
+        
         for line in lines:
             line_dimensions = self.get_text_dimensions(font_filename, font_size, line)
 
@@ -604,14 +626,45 @@ class ImageText:
                 valid_places = [e.value for e in TextAlign]
                 raise ValueError(f"Place '{place}' is not supported. Must be one of: {', '.join(valid_places)}")
 
-            # Write the line
-            self.write_text(
-                text=line,
-                font_filename=font_filename,
-                xy=(x_left, current_text_height),
-                font_size=font_size,
-                color=text_color,
-            )
+            # Check if highlighting is needed for this line
+            if highlight_word_index is not None:
+                line_words = line.split()
+                line_start_word_index = word_index_offset
+                line_end_word_index = word_index_offset + len(line_words) - 1
+                
+                # Check if the highlighted word is in this line
+                if line_start_word_index <= highlight_word_index <= line_end_word_index:
+                    self._write_line_with_highlight(
+                        line=line,
+                        font_filename=font_filename,
+                        font_size=font_size,
+                        text_color=text_color,
+                        highlight_color=highlight_color,
+                        highlight_size_multiplier=highlight_size_multiplier,
+                        highlight_word_local_index=highlight_word_index - line_start_word_index,
+                        x_left=x_left,
+                        y_top=current_text_height,
+                    )
+                else:
+                    # Write normal line without highlighting
+                    self.write_text(
+                        text=line,
+                        font_filename=font_filename,
+                        xy=(x_left, current_text_height),
+                        font_size=font_size,
+                        color=text_color,
+                    )
+                
+                word_index_offset += len(line_words)
+            else:
+                # Write normal line without highlighting
+                self.write_text(
+                    text=line,
+                    font_filename=font_filename,
+                    xy=(x_left, current_text_height),
+                    font_size=font_size,
+                    color=text_color,
+                )
 
             # Increment vertical position for next line
             current_text_height += line_dimensions[1]
@@ -689,6 +742,75 @@ class ImageText:
             self.image = Image.fromarray(img)
 
         return (int(x_pos + box_width), int(current_text_height))
+
+    def _write_line_with_highlight(
+        self,
+        line: str,
+        font_filename: str,
+        font_size: int,
+        text_color: RGBColor,
+        highlight_color: RGBColor,
+        highlight_size_multiplier: float,
+        highlight_word_local_index: int,
+        x_left: int,
+        y_top: int,
+    ) -> None:
+        """
+        Write a line of text with one word highlighted.
+        
+        Args:
+            line: The text line to render
+            font_filename: Path to the font file
+            font_size: Base font size in points
+            text_color: RGB color for normal text
+            highlight_color: RGB color for highlighted word
+            highlight_size_multiplier: Font size multiplier for highlighted word
+            highlight_word_local_index: Index of word to highlight within this line (0-based)
+            x_left: Left x position for the line
+            y_top: Top y position for the line
+        """
+        # First, render the entire line normally
+        self.write_text(
+            text=line,
+            font_filename=font_filename,
+            xy=(x_left, y_top),
+            font_size=font_size,
+            color=text_color,
+        )
+        
+        # Split line into words to find the highlighted word position
+        words = line.split()
+        if highlight_word_local_index >= len(words):
+            return  # Safety check
+        
+        # Calculate position of the highlighted word
+        words_before = words[:highlight_word_local_index]
+        highlight_word = words[highlight_word_local_index]
+        
+        # Calculate x position of highlighted word
+        text_before = " ".join(words_before)
+        if text_before:
+            text_before += " "  # Add space before highlighted word
+            
+        # Get width of text before highlighted word
+        text_before_width = self.get_text_dimensions(font_filename, font_size, text_before)[0] if text_before else 0
+        highlight_x = x_left + text_before_width
+        
+        # Calculate highlighted font size and y position adjustment
+        highlight_font_size = int(font_size * highlight_size_multiplier)
+        
+        # Calculate y position to align baselines properly
+        # For now, use the same y position as the base text for simplicity
+        highlight_y = y_top
+        
+        # Render the highlighted word on top
+        self.write_text(
+            text=highlight_word,
+            font_filename=font_filename,
+            xy=(highlight_x, highlight_y),
+            font_size=highlight_font_size,
+            color=highlight_color,
+        )
 
     def _find_smallest_bounding_rect(self, mask: np.ndarray) -> tuple[int, int, int, int]:
         """
