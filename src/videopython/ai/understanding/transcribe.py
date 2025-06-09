@@ -2,7 +2,7 @@ from typing import Literal
 
 import whisper
 
-from videopython.base.transcription import Transcription, TranscriptionSegment
+from videopython.base.transcription import Transcription, TranscriptionSegment, TranscriptionWord
 from videopython.base.video import Video
 
 
@@ -28,10 +28,16 @@ class VideoTranscription:
 
         transcription = self.model.transcribe(audio=audio_data, word_timestamps=True)
 
-        transcription_segments = [
-            TranscriptionSegment(start=segment["start"], end=segment["end"], text=segment["text"])
-            for segment in transcription["segments"]
-        ]
-        result = Transcription(segments=transcription_segments)
+        transcription_segments = []
+        for segment in transcription["segments"]:
+            transcription_words = [
+                TranscriptionWord(word=word["word"], start=float(word["start"]), end=float(word["end"]))
+                for word in segment["words"]
+            ]
+            transcription_segment = TranscriptionSegment(
+                start=segment["start"], end=segment["end"], text=segment["text"], words=transcription_words
+            )
+            transcription_segments.append(transcription_segment)
 
+        result = Transcription(segments=transcription_segments)
         return result

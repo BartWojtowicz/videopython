@@ -736,15 +736,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pydub"
-version = "0.25.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/fe/9a/e6bca0eed82db26562c73b5076539a4a08d3cffd19c3cc5913a3e61145fd/pydub-0.25.1.tar.gz", hash = "sha256:980a33ce9949cab2a569606b65674d748ecbca4f0796887fd6f46173a7b0d30f", size = 38326 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a6/53/d78dc063216e62fc55f6b2eebb447f6a4b0a59f55c8406376f76bf959b08/pydub-0.25.1-py2.py3-none-any.whl", hash = "sha256:65617e33033874b59d87db603aa1ed450633288aefead953b30bded59cb599a6", size = 32327 },
-]
-
-[[package]]
 name = "pytest"
 version = "8.3.5"
 source = { registry = "https://pypi.org/simple" }
@@ -1184,15 +1175,32 @@ wheels = [
 
 [[package]]
 name = "videopython"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },
     { name = "opencv-python" },
     { name = "pillow" },
-    { name = "pydub" },
     { name = "soundpython" },
     { name = "tqdm" },
+]
+
+[package.optional-dependencies]
+ai = [
+    { name = "accelerate" },
+    { name = "diffusers" },
+    { name = "numba" },
+    { name = "openai-whisper" },
+    { name = "torch" },
+    { name = "transformers" },
+]
+dev = [
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "ruff" },
+    { name = "types-pillow" },
+    { name = "types-tqdm" },
 ]
 
 [package.dev-dependencies]
@@ -1215,12 +1223,23 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "accelerate", marker = "extra == 'ai'", specifier = ">=0.29.2" },
+    { name = "diffusers", marker = "extra == 'ai'", specifier = ">=0.26.3" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.8.0" },
+    { name = "numba", marker = "extra == 'ai'", specifier = ">=0.61.0" },
     { name = "numpy", specifier = ">=1.25.2" },
+    { name = "openai-whisper", marker = "extra == 'ai'", specifier = ">=20240930" },
     { name = "opencv-python", specifier = ">=4.9.0.80" },
     { name = "pillow", specifier = ">=10.3.0" },
-    { name = "pydub", specifier = ">=0.25.1" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4.0" },
+    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6.1.1" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.14" },
     { name = "soundpython", specifier = ">=0.1.11" },
+    { name = "torch", marker = "extra == 'ai'", specifier = ">=2.1.0" },
     { name = "tqdm", specifier = ">=4.66.3" },
+    { name = "transformers", marker = "extra == 'ai'", specifier = ">=4.38.1" },
+    { name = "types-pillow", marker = "extra == 'dev'", specifier = ">=10.2.0.20240213" },
+    { name = "types-tqdm", marker = "extra == 'dev'", specifier = ">=4.66.0.20240106" },
 ]
 
 [package.metadata.requires-dev]
