@@ -145,7 +145,9 @@ class Video:
             )
 
     @classmethod
-    def from_path(cls, path: str, read_batch_size: int = 100) -> Video:
+    def from_path(
+        cls, path: str, read_batch_size: int = 100, start_second: float | None = None, end_second: float | None = None
+    ) -> Video:
         try:
             # Get video metadata using VideoMetadata.from_path
             metadata = VideoMetadata.from_path(path)
@@ -154,23 +156,55 @@ class Video:
             height = metadata.height
             fps = metadata.fps
             total_frames = metadata.frame_count
+            total_duration = metadata.total_seconds
 
-            # Set up FFmpeg command for raw video extraction
+            # Validate time bounds
+            if start_second is not None and start_second < 0:
+                raise ValueError("start_second must be non-negative")
+            if end_second is not None and end_second > total_duration:
+                raise ValueError(f"end_second ({end_second}) exceeds video duration ({total_duration})")
+            if start_second is not None and end_second is not None and start_second >= end_second:
+                raise ValueError("start_second must be less than end_second")
+
+            # Calculate frame indices for the desired segment
+            start_frame = int(start_second * fps) if start_second is not None else 0
+            end_frame = int(end_second * fps) if end_second is not None else total_frames
+
+            # Ensure we don't exceed bounds
+            start_frame = max(0, start_frame)
+            end_frame = min(total_frames, end_frame)
+            segment_frames = end_frame - start_frame
+
+            # Set up FFmpeg command for raw video extraction with time bounds
             ffmpeg_cmd = [
                 "ffmpeg",
                 "-i",
                 path,
-                "-f",
-                "rawvideo",
-                "-pix_fmt",
-                "rgb24",
-                "-vsync",
-                "0",
-                "-vcodec",
-                "rawvideo",
-                "-y",
-                "pipe:1",
             ]
+
+            # Add seek and duration options if specified
+            if start_second is not None:
+                ffmpeg_cmd.extend(["-ss", str(start_second)])
+            if end_second is not None and start_second is not None:
+                duration = end_second - start_second
+                ffmpeg_cmd.extend(["-t", str(duration)])
+            elif end_second is not None:
+                ffmpeg_cmd.extend(["-t", str(end_second)])
+
+            ffmpeg_cmd.extend(
+                [
+                    "-f",
+                    "rawvideo",
+                    "-pix_fmt",
+                    "rgb24",
+                    "-vsync",
+                    "0",
+                    "-vcodec",
+                    "rawvideo",
+                    "-y",
+                    "pipe:1",
+                ]
+            )
 
             # Start FFmpeg process
             process = subprocess.Popen(
@@ -183,12 +217,13 @@ class Video:
             # Calculate frame size in bytes
             frame_size = width * height * 3  # 3 bytes per pixel for RGB
 
-            # Pre-allocate numpy array for all frames
-            frames = np.empty((total_frames, height, width, 3), dtype=np.uint8)
+            # Pre-allocate numpy array for segment frames
+            frames = np.empty((segment_frames, height, width, 3), dtype=np.uint8)
 
             # Read frames in batches
-            for frame_idx in range(0, total_frames, read_batch_size):
-                batch_end = min(frame_idx + read_batch_size, total_frames)
+            frames_read = 0
+            for frame_idx in range(0, segment_frames, read_batch_size):
+                batch_end = min(frame_idx + read_batch_size, segment_frames)
                 batch_size = batch_end - frame_idx
 
                 # Read batch of frames
@@ -198,10 +233,19 @@ class Video:
 
                 # Convert raw bytes to numpy array and reshape
                 batch_frames = np.frombuffer(raw_data, dtype=np.uint8)
-                batch_frames = batch_frames.reshape(-1, height, width, 3)
 
-                # Store batch in pre-allocated array
-                frames[frame_idx:batch_end] = batch_frames
+                # Handle case where we might get fewer frames than expected
+                actual_frames = len(batch_frames) // (height * width * 3)
+                if actual_frames > 0:
+                    batch_frames = batch_frames[: actual_frames * height * width * 3]
+                    batch_frames = batch_frames.reshape(-1, height, width, 3)
+
+                    # Store batch in pre-allocated array
+                    end_idx = frame_idx + actual_frames
+                    frames[frame_idx:end_idx] = batch_frames
+                    frames_read += actual_frames
+                else:
+                    break
 
             # Clean up FFmpeg process
             process.stdout.close()  # type: ignore
@@ -209,14 +253,26 @@ class Video:
             process.wait()
 
             if process.returncode != 0:
-                raise ValueError(f"FFmpeg error: {process.stderr.read().decode()}")  # type: ignore
+                stderr_output = process.stderr.read().decode() if process.stderr else "Unknown error"
+                raise ValueError(f"FFmpeg error: {stderr_output}")
 
-            # Load audio
+            # Trim frames array if we read fewer frames than expected
+            if frames_read < segment_frames:
+                frames = frames[:frames_read]  # type: ignore[assignment]
+
+            # Load audio for the specified segment
             try:
                 audio = Audio.from_file(path)
+                # Slice audio to match the video segment
+                if start_second is not None or end_second is not None:
+                    audio_start = start_second if start_second is not None else 0
+                    audio_end = end_second if end_second is not None else audio.metadata.duration_seconds
+                    audio = audio.slice(start_seconds=audio_start, end_seconds=audio_end)
             except Exception:
                 print(f"No audio found for `{path}`, adding silent track!")
-                audio = None
+                # Create silent audio for the segment duration
+                segment_duration = len(frames) / fps
+                audio = Audio.create_silent(duration_seconds=round(segment_duration, 2), stereo=True, sample_rate=44100)
 
             return cls(frames=frames, fps=fps, audio=audio)
 
