@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Union
 
 import numpy as np
+from PIL import Image
 from tqdm import tqdm
 
 from videopython.base.video import Video
@@ -81,7 +82,7 @@ class TranscriptionOverlay:
         self.highlight_bold_font = highlight_bold_font
 
         # Cache for text overlays to avoid regenerating identical frames
-        self._overlay_cache = {}
+        self._overlay_cache: dict[tuple[str, int | None], np.ndarray] = {}
 
     def _get_active_segment(self, timestamp: float) -> TranscriptionSegment | None:
         """Get the transcription segment active at the given timestamp."""
@@ -174,7 +175,6 @@ class TranscriptionOverlay:
 
     def _apply_overlay_to_frame(self, frame: np.ndarray, overlay: np.ndarray) -> np.ndarray:
         """Apply a text overlay to a single frame."""
-        from PIL import Image
 
         # Convert frame to PIL Image
         frame_pil = Image.fromarray(frame)

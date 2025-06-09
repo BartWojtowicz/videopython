@@ -681,12 +681,12 @@ class ImageText:
                         font_filename=font_filename,
                         font_size=font_size,
                         text_color=text_color,
-                        highlight_color=highlight_color,
+                        highlight_color=highlight_color or (255, 255, 255),
                         highlight_size_multiplier=highlight_size_multiplier,
                         highlight_word_local_index=highlight_word_index - line_start_word_index,
                         highlight_bold_font=highlight_bold_font,
-                        x_left=x_left,
-                        y_top=current_text_height,
+                        x_left=int(x_left),
+                        y_top=int(current_text_height),
                     )
                 else:
                     # Write normal line without highlighting
