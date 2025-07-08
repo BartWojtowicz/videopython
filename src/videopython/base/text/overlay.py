@@ -1,10 +1,21 @@
+"""
+Beware, the code below was heavily "vibe-coded".
+
+The main purpose of this file are 2 classes:
+1. `ImageText` class for creating RGBA image with rendered subtitles
+2. `TranscriptionOverlay` class, which takes the `Transcription` and `Video` objects and overlays subtitles on `Video`.
+"""
+
 from enum import Enum
 from typing import TypeAlias, Union
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+from tqdm import tqdm
 
 from videopython.base.exceptions import OutOfBoundsError
+from videopython.base.text.transcription import Transcription, TranscriptionSegment
+from videopython.base.video import Video
 
 # Type aliases for clarity
 MarginType: TypeAlias = Union[int, tuple[int, int, int, int]]
@@ -319,6 +330,7 @@ class ImageText:
         font_filename: str,
         xy: PositionType,
         font_size: int | None = 11,
+        font_border_size: int = 0,
         color: RGBColor = (0, 0, 0),
         max_width: int | None = None,
         max_height: int | None = None,
@@ -333,6 +345,7 @@ class ImageText:
             font_filename: Path to the font file
             xy: Position (x,y) either as absolute pixels (int) or relative to frame (float 0-1)
             font_size: Size of the font in points, or None to auto-calculate
+            font_border_size: Size of border around text in pixels (0 for no border)
             color: RGB color of the text
             max_width: Maximum width for auto font sizing
             max_height: Maximum height for auto font sizing
@@ -355,6 +368,9 @@ class ImageText:
         if font_size is not None and font_size <= 0:
             raise ValueError("Font size must be positive")
 
+        if font_border_size < 0:
+            raise ValueError("Font border size cannot be negative")
+
         if font_size is None and (max_width is None or max_height is None):
             raise ValueError("Must set either `font_size`, or both `max_width` and `max_height`!")
         elif font_size is None:
@@ -371,6 +387,15 @@ class ImageText:
         if x < 0 or y < 0 or x + text_dimensions[0] > self.image_size[0] or y + text_dimensions[1] > self.image_size[1]:
             raise OutOfBoundsError(f"Text with size {text_dimensions} at position ({x}, {y}) is out of bounds!")
 
+        # Draw border if requested
+        if font_border_size > 0:
+            # Draw text border by drawing text in multiple positions around the main text
+            for border_x in range(-font_border_size, font_border_size + 1):
+                for border_y in range(-font_border_size, font_border_size + 1):
+                    if border_x != 0 or border_y != 0:  # Skip the center position
+                        self._draw.text((x + border_x, y + border_y), text, font=font, fill=(0, 0, 0))
+
+        # Draw the main text on top
         self._draw.text((x, y), text, font=font, fill=color)
         return text_dimensions
 
@@ -539,12 +564,14 @@ class ImageText:
         xy: PositionType,
         box_width: Union[int, float] | None = None,
         font_size: int = 11,
+        font_border_size: int = 0,
         text_color: RGBColor = (0, 0, 0),
         background_color: RGBAColor | None = None,
         background_padding: int = 0,
         place: TextAlign = TextAlign.LEFT,
         anchor: AnchorPoint = AnchorPoint.TOP_LEFT,
         margin: MarginType = 0,
+        words: list[str] | None = None,
         highlight_word_index: int | None = None,
         highlight_color: RGBColor | None = None,
         highlight_size_multiplier: float = 1.5,
@@ -559,12 +586,14 @@ class ImageText:
             xy: Position (x,y) either as absolute pixels (int) or relative to frame (float 0-1)
             box_width: Width of the box in pixels (int) or relative to frame width (float 0-1)
             font_size: Font size in points
+            font_border_size: Size of border around text in pixels (0 for no border)
             text_color: RGB color of the text
             background_color: If set, adds background color to the text box. Expects RGBA values.
             background_padding: Number of padding pixels to add when adding text background color
             place: Text alignment within the box (TextAlign.LEFT, TextAlign.RIGHT, TextAlign.CENTER)
             anchor: Which part of the text box to anchor at the position
             margin: Margin in pixels (single value or [top, right, bottom, left])
+            words: All words occuring in text, helpful for highlighting.
             highlight_word_index: Index of word to highlight (0-based, None to disable highlighting)
             highlight_color: RGB color for the highlighted word (defaults to text_color if None)
             highlight_size_multiplier: Font size multiplier for highlighted word
@@ -589,9 +618,13 @@ class ImageText:
         if background_padding < 0:
             raise ValueError("Background padding cannot be negative")
 
+        if font_border_size < 0:
+            raise ValueError("Font border size cannot be negative")
+
         # Validate highlighting parameters
         if highlight_word_index is not None:
-            words = text.split()
+            if not words:
+                words = text.split()
             if highlight_word_index < 0 or highlight_word_index >= len(words):
                 raise ValueError(
                     f"highlight_word_index {highlight_word_index} out of range for text with {len(words)} words"
@@ -680,6 +713,7 @@ class ImageText:
                         line=line,
                         font_filename=font_filename,
                         font_size=font_size,
+                        font_border_size=font_border_size,
                         text_color=text_color,
                         highlight_color=highlight_color or (255, 255, 255),
                         highlight_size_multiplier=highlight_size_multiplier,
@@ -695,6 +729,7 @@ class ImageText:
                         font_filename=font_filename,
                         xy=(x_left, current_text_height),
                         font_size=font_size,
+                        font_border_size=font_border_size,
                         color=text_color,
                     )
 
@@ -706,6 +741,7 @@ class ImageText:
                     font_filename=font_filename,
                     xy=(x_left, current_text_height),
                     font_size=font_size,
+                    font_border_size=font_border_size,
                     color=text_color,
                 )
 
@@ -791,6 +827,7 @@ class ImageText:
         line: str,
         font_filename: str,
         font_size: int,
+        font_border_size: int,
         text_color: RGBColor,
         highlight_color: RGBColor,
         highlight_size_multiplier: float,
@@ -806,6 +843,7 @@ class ImageText:
             line: The text line to render
             font_filename: Path to the font file
             font_size: Base font size in points
+            font_border_size: Size of border around text in pixels (0 for no border)
             text_color: RGB color for normal text
             highlight_color: RGB color for highlighted word
             highlight_size_multiplier: Font size multiplier for highlighted word
@@ -851,6 +889,7 @@ class ImageText:
                 font_filename=word_font_file,
                 xy=(current_x, word_y),
                 font_size=word_font_size,
+                font_border_size=font_border_size,
                 color=word_color,
             )
 
@@ -900,3 +939,164 @@ class ImageText:
         xmin, xmax = col_indices[[0, -1]]
 
         return xmin, xmax, ymin, ymax
+
+
+class TranscriptionOverlay:
+    def __init__(
+        self,
+        font_filename: str,
+        font_size: int = 40,
+        font_border_size: int = 2,
+        text_color: RGBColor = (255, 235, 59),
+        background_color: RGBAColor | None = (0, 0, 0, 100),
+        background_padding: int = 15,
+        position: PositionType = (0.5, 0.7),
+        box_width: Union[int, float] = 0.6,
+        text_align: TextAlign = TextAlign.CENTER,
+        anchor: AnchorPoint = AnchorPoint.CENTER,
+        margin: MarginType = 20,
+        highlight_color: RGBColor = (76, 175, 80),
+        highlight_size_multiplier: float = 1.2,
+        highlight_bold_font: str | None = None,
+    ):
+        """
+        Initialize TranscriptionOverlay effect.
+
+        Args:
+            font_filename: Path to font file for text rendering
+            font_size: Base font size for text
+            text_color: RGB color for normal text
+            font_border_size: Size of border around text in pixels (0 for no border)
+            background_color: RGBA background color (None for no background)
+            background_padding: Padding around text background
+            position: Position of text box (relative 0-1 or absolute pixels)
+            box_width: Width of text box (relative 0-1 or absolute pixels)
+            text_align: Text alignment within box
+            anchor: Anchor point for text positioning
+            margin: Margin around text box
+            highlight_color: RGB color for highlighted words
+            highlight_size_multiplier: Size multiplier for highlighted words
+            highlight_bold_font: Optional bold font for highlighting
+        """
+        self.font_filename = font_filename
+        self.font_size = font_size
+        self.text_color = text_color
+        self.font_border_size = font_border_size
+        self.background_color = background_color
+        self.background_padding = background_padding
+        self.position = position
+        self.box_width = box_width
+        self.text_align = text_align
+        self.anchor = anchor
+        self.margin = margin
+        self.highlight_color = highlight_color
+        self.highlight_size_multiplier = highlight_size_multiplier
+        self.highlight_bold_font = highlight_bold_font
+
+        # Cache for text overlays to avoid regenerating identical frames
+        self._overlay_cache: dict[tuple[str, int | None], np.ndarray] = {}
+
+    def _get_active_segment(self, transcription: Transcription, timestamp: float) -> TranscriptionSegment | None:
+        """Get the transcription segment active at the given timestamp."""
+        for segment in transcription.segments:
+            if segment.start <= timestamp <= segment.end:
+                return segment
+        return None
+
+    def _get_active_word_index(self, segment: TranscriptionSegment, timestamp: float) -> int | None:
+        """Get the index of the word being spoken at the given timestamp within a segment."""
+        for i, word in enumerate(segment.words):
+            if word.start <= timestamp <= word.end:
+                return i
+        return None
+
+    def _create_text_overlay(
+        self, video_shape: tuple[int, int, int], segment: TranscriptionSegment, highlight_word_index: int | None
+    ) -> np.ndarray:
+        """Create a text overlay image for the given segment and highlight."""
+        # Use video frame dimensions for overlay
+        height, width = video_shape[:2]
+
+        # Create cache key based on segment text and highlight
+        cache_key = (segment.text, highlight_word_index)
+        if cache_key in self._overlay_cache:
+            return self._overlay_cache[cache_key]
+
+        # Create ImageText with video dimensions
+        img_text = ImageText(image_size=(width, height), background=(0, 0, 0, 0))
+
+        # Write text with highlighting
+        img_text.write_text_box(
+            text=segment.text,
+            font_filename=self.font_filename,
+            xy=self.position,
+            box_width=self.box_width,
+            font_size=self.font_size,
+            font_border_size=self.font_border_size,
+            text_color=self.text_color,
+            background_color=self.background_color,
+            background_padding=self.background_padding,
+            place=self.text_align,
+            anchor=self.anchor,
+            margin=self.margin,
+            words=[w.word for w in segment.words],
+            highlight_word_index=highlight_word_index,
+            highlight_color=self.highlight_color,
+            highlight_size_multiplier=self.highlight_size_multiplier,
+            highlight_bold_font=self.highlight_bold_font,
+        )
+
+        overlay_image = img_text.img_array
+
+        # Cache the overlay
+        self._overlay_cache[cache_key] = overlay_image
+
+        return overlay_image
+
+    def apply(self, video: Video, transcription: Transcription) -> Video:
+        """Apply transcription overlay to video frames."""
+        print("Applying transcription overlay...")
+
+        new_frames = []
+
+        for frame_idx, frame in enumerate(tqdm(video.frames)):
+            # Calculate timestamp for this frame
+            timestamp = frame_idx / video.fps
+
+            # Get active segment at this timestamp
+            active_segment = self._get_active_segment(transcription, timestamp)
+
+            if active_segment is None:
+                # No active transcription, keep original frame
+                new_frames.append(frame)
+                continue
+
+            # Get active word index for highlighting
+            highlight_word_index = self._get_active_word_index(active_segment, timestamp)
+
+            # Create text overlay
+            text_overlay = self._create_text_overlay(video.frame_shape, active_segment, highlight_word_index)
+
+            # Apply overlay to frame
+            overlaid_frame = self._apply_overlay_to_frame(frame, text_overlay)
+            new_frames.append(overlaid_frame)
+
+        # Create new video with overlaid frames
+        new_video = Video.from_frames(np.array(new_frames), fps=video.fps)
+        new_video.audio = video.audio  # Preserve audio
+
+        return new_video
+
+    def _apply_overlay_to_frame(self, frame: np.ndarray, overlay: np.ndarray) -> np.ndarray:
+        """Apply a text overlay to a single frame."""
+
+        # Convert frame to PIL Image
+        frame_pil = Image.fromarray(frame)
+
+        # Convert overlay to PIL Image
+        overlay_pil = Image.fromarray(overlay)
+
+        # Paste overlay onto frame using alpha channel
+        frame_pil.paste(overlay_pil, (0, 0), overlay_pil)
+
+        return np.array(frame_pil)

@@ -11,7 +11,7 @@ from typing import Literal, get_args
 import numpy as np
 from soundpython import Audio
 
-from videopython.utils.common import generate_random_name
+from videopython.base.utils import generate_random_name
 
 ALLOWED_VIDEO_FORMATS = Literal["mp4", "avi", "mov", "mkv", "webm"]
 
@@ -155,7 +155,6 @@ class Video:
             width = metadata.width
             height = metadata.height
             fps = metadata.fps
-            total_frames = metadata.frame_count
             total_duration = metadata.total_seconds
 
             # Validate time bounds
@@ -166,99 +165,128 @@ class Video:
             if start_second is not None and end_second is not None and start_second >= end_second:
                 raise ValueError("start_second must be less than end_second")
 
-            # Calculate frame indices for the desired segment
-            start_frame = int(start_second * fps) if start_second is not None else 0
-            end_frame = int(end_second * fps) if end_second is not None else total_frames
+            # Build FFmpeg command with improved segment handling
+            ffmpeg_cmd = ["ffmpeg"]
 
-            # Ensure we don't exceed bounds
-            start_frame = max(0, start_frame)
-            end_frame = min(total_frames, end_frame)
-            segment_frames = end_frame - start_frame
-
-            # Set up FFmpeg command for raw video extraction with time bounds
-            ffmpeg_cmd = [
-                "ffmpeg",
-                "-i",
-                path,
-            ]
-
-            # Add seek and duration options if specified
+            # Add seek option BEFORE input for more efficient seeking
             if start_second is not None:
                 ffmpeg_cmd.extend(["-ss", str(start_second)])
+
+            ffmpeg_cmd.extend(["-i", path])
+
+            # Add duration AFTER input for more precise timing
             if end_second is not None and start_second is not None:
                 duration = end_second - start_second
                 ffmpeg_cmd.extend(["-t", str(duration)])
             elif end_second is not None:
                 ffmpeg_cmd.extend(["-t", str(end_second)])
 
+            # Output format settings - removed problematic -vsync 0
             ffmpeg_cmd.extend(
                 [
                     "-f",
                     "rawvideo",
                     "-pix_fmt",
                     "rgb24",
-                    "-vsync",
-                    "0",
                     "-vcodec",
                     "rawvideo",
+                    "-avoid_negative_ts",
+                    "make_zero",  # Handle timing issues
                     "-y",
                     "pipe:1",
                 ]
             )
 
-            # Start FFmpeg process
+            # Start FFmpeg process with stderr redirected to avoid deadlock
             process = subprocess.Popen(
                 ffmpeg_cmd,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                bufsize=10**8,  # Use large buffer
+                stderr=subprocess.DEVNULL,  # Redirect stderr to avoid deadlock
+                bufsize=10**8,  # Use large buffer for efficient I/O
             )
 
             # Calculate frame size in bytes
             frame_size = width * height * 3  # 3 bytes per pixel for RGB
 
-            # Pre-allocate numpy array for segment frames
-            frames = np.empty((segment_frames, height, width, 3), dtype=np.uint8)
+            # Estimate frame count for pre-allocation
+            if start_second is not None and end_second is not None:
+                estimated_duration = end_second - start_second
+            elif end_second is not None:
+                estimated_duration = end_second
+            elif start_second is not None:
+                estimated_duration = total_duration - start_second
+            else:
+                estimated_duration = total_duration
 
-            # Read frames in batches
+            # Add 10% buffer to handle frame rate variations and rounding
+            estimated_frames = int(estimated_duration * fps * 1.1) + 10
+
+            # Pre-allocate numpy array
+            frames = np.empty((estimated_frames, height, width, 3), dtype=np.uint8)
             frames_read = 0
-            for frame_idx in range(0, segment_frames, read_batch_size):
-                batch_end = min(frame_idx + read_batch_size, segment_frames)
-                batch_size = batch_end - frame_idx
 
-                # Read batch of frames
-                raw_data = process.stdout.read(frame_size * batch_size)  # type: ignore
-                if not raw_data:
-                    break
+            try:
+                while frames_read < estimated_frames:
+                    # Calculate remaining frames to read
+                    remaining_frames = estimated_frames - frames_read
+                    batch_size = min(read_batch_size, remaining_frames)
 
-                # Convert raw bytes to numpy array and reshape
-                batch_frames = np.frombuffer(raw_data, dtype=np.uint8)
+                    # Read batch of data
+                    batch_data = process.stdout.read(frame_size * batch_size)  # type: ignore
 
-                # Handle case where we might get fewer frames than expected
-                actual_frames = len(batch_frames) // (height * width * 3)
-                if actual_frames > 0:
-                    batch_frames = batch_frames[: actual_frames * height * width * 3]
-                    batch_frames = batch_frames.reshape(-1, height, width, 3)
+                    if not batch_data:
+                        break
+
+                    # Convert to numpy array
+                    batch_frames = np.frombuffer(batch_data, dtype=np.uint8)
+
+                    # Calculate how many complete frames we got
+                    complete_frames = len(batch_frames) // (height * width * 3)
+
+                    if complete_frames == 0:
+                        break
+
+                    # Only keep complete frames
+                    complete_data = batch_frames[: complete_frames * height * width * 3]
+                    batch_frames_array = complete_data.reshape(complete_frames, height, width, 3)
+
+                    # Check if we have room in pre-allocated array
+                    if frames_read + complete_frames > estimated_frames:
+                        # Need to expand array - this should be rare with our buffer
+                        new_size = max(estimated_frames * 2, frames_read + complete_frames + 100)
+                        new_frames = np.empty((new_size, height, width, 3), dtype=np.uint8)
+                        new_frames[:frames_read] = frames[:frames_read]
+                        frames = new_frames
+                        estimated_frames = new_size
 
                     # Store batch in pre-allocated array
-                    end_idx = frame_idx + actual_frames
-                    frames[frame_idx:end_idx] = batch_frames
-                    frames_read += actual_frames
-                else:
-                    break
+                    end_idx = frames_read + complete_frames
+                    frames[frames_read:end_idx] = batch_frames_array
+                    frames_read += complete_frames
 
-            # Clean up FFmpeg process
-            process.stdout.close()  # type: ignore
-            process.stderr.close()  # type: ignore
-            process.wait()
+            finally:
+                # Ensure process is properly terminated
+                if process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
 
-            if process.returncode != 0:
-                stderr_output = process.stderr.read().decode() if process.stderr else "Unknown error"
-                raise ValueError(f"FFmpeg error: {stderr_output}")
+                # Clean up pipes
+                if process.stdout:
+                    process.stdout.close()
 
-            # Trim frames array if we read fewer frames than expected
-            if frames_read < segment_frames:
-                frames = frames[:frames_read]  # type: ignore[assignment]
+            # Check if FFmpeg had an error (non-zero return code)
+            if process.returncode not in (0, None) and frames_read == 0:
+                raise ValueError(f"FFmpeg failed to process video (return code: {process.returncode})")
+
+            if frames_read == 0:
+                raise ValueError("No frames were read from the video")
+
+            # Trim the pre-allocated array to actual frames read
+            frames = frames[:frames_read]  # type: ignore
 
             # Load audio for the specified segment
             try:
@@ -270,8 +298,8 @@ class Video:
                     audio = audio.slice(start_seconds=audio_start, end_seconds=audio_end)
             except Exception:
                 print(f"No audio found for `{path}`, adding silent track!")
-                # Create silent audio for the segment duration
-                segment_duration = len(frames) / fps
+                # Create silent audio based on actual frames read
+                segment_duration = frames_read / fps
                 audio = Audio.create_silent(duration_seconds=round(segment_duration, 2), stereo=True, sample_rate=44100)
 
             return cls(frames=frames, fps=fps, audio=audio)
@@ -421,6 +449,20 @@ class Video:
                     raise
 
     def add_audio(self, audio: Audio, overlay: bool = True) -> None:
+        video_duration = self.total_seconds
+        audio_duration = audio.metadata.duration_seconds
+
+        if audio_duration > video_duration:
+            audio = audio.slice(start_seconds=0, end_seconds=video_duration)
+        elif audio_duration < video_duration:
+            silence_duration = video_duration - audio_duration
+            silence = Audio.create_silent(
+                duration_seconds=silence_duration,
+                stereo=audio.metadata.channels == 2,
+                sample_rate=audio.metadata.sample_rate,
+            )
+            audio = audio.concat(silence)
+
         if self.audio.is_silent:
             self.audio = audio
         elif overlay:
