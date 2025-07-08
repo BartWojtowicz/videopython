@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from videopython.base.effects import FullImageOverlay
-from videopython.utils.text import AnchorPoint, ImageText
+from videopython.base.text.overlay import AnchorPoint, ImageText, TextAlign
 
 from .test_config import TEST_FONT_PATH
 
@@ -202,7 +202,7 @@ def test_relative_positioning():
         xy=(rel_x, rel_y),  # Relative position
         box_width=rel_width,  # Relative width
         anchor=AnchorPoint.CENTER,
-        place="center",
+        place=TextAlign.CENTER,
         margin=10,
     )
 
