@@ -19,7 +19,7 @@ sudo apt-get install ffmpeg
 uv add videopython --extra ai
 
 # pip install works as well :)
-pip install videopython[ai]
+pip install "videopython[ai]"
 ```
 
 > You can install without `[ai]` dependencies for basic video handling and processing.
