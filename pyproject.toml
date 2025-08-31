@@ -49,11 +49,12 @@ dev = [
 ]
 ai = [
     "accelerate>=0.29.2",
-    "diffusers>=0.26.3",
+    "diffusers>=0.35.1",
     "torch>=2.1.0",
     "transformers>=4.38.1",
     "openai-whisper>=20240930",
     "numba>=0.61.0",
+    "modelscope>=1.11.0",
 ]
 
 # We have to keep it to make PIP use those dependency groups, not only UV
@@ -68,11 +69,12 @@ dev = [
 ]
 ai = [
     "accelerate>=0.29.2",
-    "diffusers>=0.26.3",
+    "diffusers>=0.35.1",
     "torch>=2.1.0",
     "transformers>=4.38.1",
     "openai-whisper>=20240930",
     "numba>=0.61.0",
+    "modelscope>=1.11.0",
 ]
 
 [project.urls]
