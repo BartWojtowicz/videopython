@@ -45,31 +45,22 @@ class SceneDetector:
         hsv1 = cv2.cvtColor(frame1, cv2.COLOR_RGB2HSV)
         hsv2 = cv2.cvtColor(frame2, cv2.COLOR_RGB2HSV)
 
-        # Calculate histogram for each channel
-        hist1_h = cv2.calcHist([hsv1], [0], None, [50], [0, 180])
-        hist1_s = cv2.calcHist([hsv1], [1], None, [60], [0, 256])
-        hist1_v = cv2.calcHist([hsv1], [2], None, [60], [0, 256])
+        # Calculate and normalize histograms for each channel (H, S, V)
+        # Channel configs: (channel_index, num_bins, range)
+        channels = [(0, 50, [0, 180]), (1, 60, [0, 256]), (2, 60, [0, 256])]
+        histograms = []
 
-        hist2_h = cv2.calcHist([hsv2], [0], None, [50], [0, 180])
-        hist2_s = cv2.calcHist([hsv2], [1], None, [60], [0, 256])
-        hist2_v = cv2.calcHist([hsv2], [2], None, [60], [0, 256])
-
-        # Normalize histograms
-        cv2.normalize(hist1_h, hist1_h, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
-        cv2.normalize(hist1_s, hist1_s, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
-        cv2.normalize(hist1_v, hist1_v, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
-        cv2.normalize(hist2_h, hist2_h, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
-        cv2.normalize(hist2_s, hist2_s, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
-        cv2.normalize(hist2_v, hist2_v, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
+        for channel, bins, range_vals in channels:
+            hist1 = cv2.calcHist([hsv1], [channel], None, [bins], range_vals)
+            hist2 = cv2.calcHist([hsv2], [channel], None, [bins], range_vals)
+            cv2.normalize(hist1, hist1, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
+            cv2.normalize(hist2, hist2, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
+            histograms.append((hist1, hist2))
 
         # Compare histograms using correlation (returns value between -1 and 1)
         # We use correlation because it's robust to lighting changes
-        corr_h = cv2.compareHist(hist1_h, hist2_h, cv2.HISTCMP_CORREL)
-        corr_s = cv2.compareHist(hist1_s, hist2_s, cv2.HISTCMP_CORREL)
-        corr_v = cv2.compareHist(hist1_v, hist2_v, cv2.HISTCMP_CORREL)
-
-        # Average correlation across channels
-        avg_correlation = (corr_h + corr_s + corr_v) / 3
+        correlations = [cv2.compareHist(h1, h2, cv2.HISTCMP_CORREL) for h1, h2 in histograms]
+        avg_correlation = sum(correlations) / len(correlations)
 
         # Convert correlation (1.0 = similar) to difference (0.0 = similar)
         difference = 1.0 - avg_correlation

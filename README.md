@@ -113,7 +113,7 @@ video = transcription_overlay.apply(video, transcription)
 video.save()
 ```
 
-### Scene detection and frame sampling
+### Scene detection and frame understanding
 ```python
 from videopython.base.video import Video
 video = Video.from_path("<PATH_TO_VIDEO>")
@@ -123,13 +123,18 @@ from videopython.ai.understanding.scenes import SceneDetector
 detector = SceneDetector(threshold=0.3, min_scene_length=0.5)
 scenes = detector.detect(video)
 
-# Print detected scenes
-for i, scene in enumerate(scenes):
-    print(f"Scene {i+1}: {scene.start:.2f}s - {scene.end:.2f}s ({scene.duration:.2f}s)")
+# Describe frames from each scene using AI
+from videopython.ai.understanding.frames import ImageToText
+image_to_text = ImageToText()  # Uses CPU by default, pass device="cuda" for GPU
 
-    # Get evenly distributed frames from each scene
-    frame_indices = scene.get_frame_indices(num_samples=3)
-    print(f"  Sample frames: {frame_indices}")
+for i, scene in enumerate(scenes):
+    print(f"Scene {i+1}: {scene.start:.2f}s - {scene.end:.2f}s")
+
+    # Get descriptions of frames sampled at 1 fps
+    frame_descriptions = image_to_text.describe_scene(video, scene, frames_per_second=1.0)
+
+    for fd in frame_descriptions:
+        print(f"  Frame {fd.frame_index} ({fd.timestamp:.2f}s): {fd.description}")
 ```
 
 # Development notes
