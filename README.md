@@ -113,6 +113,25 @@ video = transcription_overlay.apply(video, transcription)
 video.save()
 ```
 
+### Scene detection and frame sampling
+```python
+from videopython.base.video import Video
+video = Video.from_path("<PATH_TO_VIDEO>")
+
+# Detect scene changes in the video
+from videopython.ai.understanding.scenes import SceneDetector
+detector = SceneDetector(threshold=0.3, min_scene_length=0.5)
+scenes = detector.detect(video)
+
+# Print detected scenes
+for i, scene in enumerate(scenes):
+    print(f"Scene {i+1}: {scene.start:.2f}s - {scene.end:.2f}s ({scene.duration:.2f}s)")
+
+    # Get evenly distributed frames from each scene
+    frame_indices = scene.get_frame_indices(num_samples=3)
+    print(f"  Sample frames: {frame_indices}")
+```
+
 # Development notes
 
 ## Project structure
