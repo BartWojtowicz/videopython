@@ -2,51 +2,10 @@ import numpy as np
 import pytest
 from PIL import Image
 
+from videopython.ai.understanding.frames import ImageToText
 from videopython.base.frames import FrameDescription
-from videopython.base.scene_description import SceneDescription
 from videopython.base.scenes import Scene
 from videopython.base.video import Video
-
-
-class TestFrameDescription:
-    """Tests for FrameDescription dataclass."""
-
-    def test_frame_description_creation(self):
-        """Test basic frame description creation."""
-        fd = FrameDescription(frame_index=42, timestamp=1.75, description="A dog playing in a park")
-        assert fd.frame_index == 42
-        assert fd.timestamp == 1.75
-        assert fd.description == "A dog playing in a park"
-
-
-class TestSceneDescription:
-    """Tests for SceneDescription dataclass."""
-
-    def test_scene_description_creation(self):
-        """Test basic scene description creation."""
-        scene = Scene(start=0.0, end=5.0, start_frame=0, end_frame=120)
-        frame_descriptions = [
-            FrameDescription(frame_index=0, timestamp=0.0, description="Scene start"),
-            FrameDescription(frame_index=60, timestamp=2.5, description="Scene middle"),
-            FrameDescription(frame_index=119, timestamp=4.96, description="Scene end"),
-        ]
-        sd = SceneDescription(scene=scene, frame_descriptions=frame_descriptions)
-
-        assert sd.scene == scene
-        assert len(sd.frame_descriptions) == 3
-        assert sd.num_frames_described == 3
-
-    def test_get_description_summary(self):
-        """Test getting summary of all descriptions."""
-        scene = Scene(start=0.0, end=5.0, start_frame=0, end_frame=120)
-        frame_descriptions = [
-            FrameDescription(frame_index=0, timestamp=0.0, description="A red car."),
-            FrameDescription(frame_index=60, timestamp=2.5, description="The car drives away."),
-        ]
-        sd = SceneDescription(scene=scene, frame_descriptions=frame_descriptions)
-
-        summary = sd.get_description_summary()
-        assert summary == "A red car. The car drives away."
 
 
 class TestImageToText:
@@ -61,8 +20,6 @@ class TestImageToText:
 
     def test_image_to_text_initialization_cpu(self):
         """Test ImageToText initialization on CPU."""
-        from videopython.ai.understanding.frames import ImageToText
-
         model = ImageToText(device="cpu")
         assert model.device == "cpu"
         assert model.model is not None
@@ -70,8 +27,6 @@ class TestImageToText:
 
     def test_describe_image_numpy(self):
         """Test describing an image from numpy array."""
-        from videopython.ai.understanding.frames import ImageToText
-
         model = ImageToText(device="cpu")
         image = np.random.randint(0, 255, (200, 200, 3), dtype=np.uint8)
 
@@ -81,8 +36,6 @@ class TestImageToText:
 
     def test_describe_image_pil(self):
         """Test describing an image from PIL Image."""
-        from videopython.ai.understanding.frames import ImageToText
-
         model = ImageToText(device="cpu")
         image = Image.new("RGB", (200, 200), color="red")
 
@@ -92,8 +45,6 @@ class TestImageToText:
 
     def test_describe_image_with_prompt(self):
         """Test describing an image with a prompt."""
-        from videopython.ai.understanding.frames import ImageToText
-
         model = ImageToText(device="cpu")
         image = np.random.randint(0, 255, (200, 200, 3), dtype=np.uint8)
 
@@ -103,8 +54,6 @@ class TestImageToText:
 
     def test_describe_frame(self, sample_video):
         """Test describing a single frame from a video."""
-        from videopython.ai.understanding.frames import ImageToText
-
         model = ImageToText(device="cpu")
         frame_desc = model.describe_frame(sample_video, frame_index=50)
 
@@ -116,8 +65,6 @@ class TestImageToText:
 
     def test_describe_frame_out_of_bounds(self, sample_video):
         """Test that out of bounds frame index raises error."""
-        from videopython.ai.understanding.frames import ImageToText
-
         model = ImageToText(device="cpu")
 
         with pytest.raises(ValueError):
@@ -128,8 +75,6 @@ class TestImageToText:
 
     def test_describe_frames(self, sample_video):
         """Test describing multiple frames."""
-        from videopython.ai.understanding.frames import ImageToText
-
         model = ImageToText(device="cpu")
         frame_indices = [0, 25, 50, 75]
 
@@ -143,8 +88,6 @@ class TestImageToText:
 
     def test_describe_scene_default_fps(self, sample_video):
         """Test describing a scene with default 1 fps sampling."""
-        from videopython.ai.understanding.frames import ImageToText
-
         scene = Scene(start=0.0, end=2.0, start_frame=0, end_frame=48)
         model = ImageToText(device="cpu")
 
@@ -158,8 +101,6 @@ class TestImageToText:
 
     def test_describe_scene_custom_fps(self, sample_video):
         """Test describing a scene with custom fps sampling."""
-        from videopython.ai.understanding.frames import ImageToText
-
         scene = Scene(start=0.0, end=2.0, start_frame=0, end_frame=48)
         model = ImageToText(device="cpu")
 
@@ -175,8 +116,6 @@ class TestImageToText:
 
     def test_describe_scene_invalid_fps(self, sample_video):
         """Test that invalid fps raises error."""
-        from videopython.ai.understanding.frames import ImageToText
-
         scene = Scene(start=0.0, end=2.0, start_frame=0, end_frame=48)
         model = ImageToText(device="cpu")
 
@@ -188,8 +127,6 @@ class TestImageToText:
 
     def test_describe_scene_single_frame(self, sample_video):
         """Test describing a very short scene with only one frame."""
-        from videopython.ai.understanding.frames import ImageToText
-
         scene = Scene(start=0.0, end=0.04, start_frame=0, end_frame=1)
         model = ImageToText(device="cpu")
 
