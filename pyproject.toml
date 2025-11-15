@@ -54,6 +54,7 @@ ai = [
     "transformers>=4.38.1",
     "openai-whisper>=20240930",
     "numba>=0.61.0",
+    "ollama>=0.4.5",
 ]
 
 # We have to keep it to make PIP use those dependency groups, not only UV
@@ -73,6 +74,7 @@ ai = [
     "transformers>=4.38.1",
     "openai-whisper>=20240930",
     "numba>=0.61.0",
+    "ollama>=0.4.5",
 ]
 
 [project.urls]
@@ -81,7 +83,7 @@ Repository = "https://github.com/bartwojtowicz/videopython/"
 Documentation = "https://github.com/bartwojtowicz/videopython/"
 
 [tool.mypy]
-mypy_path = "stubs"
+mypy_path = "src/stubs"
 
 [build-system]
 requires = ["hatchling"]

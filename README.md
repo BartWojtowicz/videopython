@@ -165,6 +165,40 @@ for i, scene_desc in enumerate(understanding.scene_descriptions):
     print(f"Visual: {scene_desc.get_description_summary()}")
 ```
 
+### LLM-powered video summarization
+
+Generate coherent summaries using LLMs via Ollama (requires Ollama to be running locally):
+
+```python
+from videopython.base.video import Video
+from videopython.ai.understanding.video import VideoAnalyzer
+from videopython.ai.understanding.summarize import LLMSummarizer
+
+# Analyze the video
+video = Video.from_path("<PATH_TO_VIDEO>")
+analyzer = VideoAnalyzer(device="cpu")
+video_description = analyzer.analyze(video, frames_per_second=1.0)
+
+# Create LLM summarizer (requires Ollama running locally)
+summarizer = LLMSummarizer(model="llama3.2")
+
+# Generate coherent scene summaries
+for i, scene_desc in enumerate(video_description.scene_descriptions):
+    # Simple concatenation (default)
+    basic_summary = scene_desc.get_description_summary()
+    print(f"Basic: {basic_summary}")
+
+    # LLM-generated coherent summary
+    llm_summary = summarizer.summarize_scene_description(scene_desc)
+    print(f"LLM: {llm_summary}")
+
+# Generate overall video summary
+video_summary = summarizer.summarize_video_description(video_description)
+print(f"\nVideo Summary: {video_summary}")
+```
+
+Note: Install Ollama from https://ollama.ai and run `ollama pull llama3.2` before using LLM summarization.
+
 # Development notes
 
 ## Project structure

@@ -16,3 +16,10 @@ INTER_LANCZOS4: Final[int]
 # Color properties
 COLOR_RGB2BGR: Final[int]
 COLOR_BGR2RGB: Final[int]
+COLOR_RGB2HSV: Final[int]
+
+# Histogram comparison methods
+HISTCMP_CORREL: Final[int]
+
+# Normalization types
+NORM_MINMAX: Final[int]
