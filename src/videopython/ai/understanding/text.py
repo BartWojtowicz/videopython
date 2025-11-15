@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import ollama
 
-if TYPE_CHECKING:
-    from videopython.base.description import SceneDescription, VideoDescription
+from videopython.base.description import SceneDescription, VideoDescription
 
 
 class LLMSummarizer:
