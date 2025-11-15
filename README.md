@@ -113,91 +113,28 @@ video = transcription_overlay.apply(video, transcription)
 video.save()
 ```
 
-### Scene detection and frame understanding
-```python
-from videopython.base.video import Video
-video = Video.from_path("<PATH_TO_VIDEO>")
-
-# Detect scene changes in the video
-from videopython.ai.understanding.video import SceneDetector
-detector = SceneDetector(threshold=0.3, min_scene_length=0.5)
-scenes = detector.detect(video)
-
-# Describe frames from each scene using AI
-from videopython.ai.understanding.image import ImageToText
-image_to_text = ImageToText()  # Uses CPU by default, pass device="cuda" for GPU
-
-for i, scene in enumerate(scenes):
-    print(f"Scene {i+1}: {scene.start:.2f}s - {scene.end:.2f}s")
-
-    # Get descriptions of frames sampled at 1 fps
-    frame_descriptions = image_to_text.describe_scene(video, scene, frames_per_second=1.0)
-
-    for fd in frame_descriptions:
-        print(f"  Frame {fd.frame_index} ({fd.timestamp:.2f}s): {fd.description}")
-```
-
-### Complete video analysis (scenes + frames + transcription)
+### AI Video Understanding
 ```python
 from videopython.base.video import Video
 from videopython.ai.understanding.video import VideoAnalyzer
 
 video = Video.from_path("<PATH_TO_VIDEO>")
 
-# Analyze video with scene detection, frame descriptions, and optional transcription
-analyzer = VideoAnalyzer(scene_threshold=0.3, min_scene_length=0.5, device="cpu")
-understanding = analyzer.analyze(
-    video,
-    frames_per_second=1.0,  # Sample frames at 1 fps
-    transcribe=True,         # Include audio transcription
-    transcription_model="base"  # Whisper model
-)
-
-# Print complete summary
-print(understanding.get_full_summary())
-
-# Or access individual components
-print(f"Detected {understanding.num_scenes} scenes")
-print(f"Analyzed {understanding.total_frames_analyzed} frames")
-
-for i, scene_desc in enumerate(understanding.scene_descriptions):
-    print(f"\nScene {i+1}: {scene_desc.scene.start:.2f}s - {scene_desc.scene.end:.2f}s")
-    print(f"Visual: {scene_desc.get_description_summary()}")
-```
-
-### LLM-powered video summarization
-
-Generate coherent summaries using LLMs via Ollama (requires Ollama to be running locally):
-
-```python
-from videopython.base.video import Video
-from videopython.ai.understanding.video import VideoAnalyzer
-from videopython.ai.understanding.text import LLMSummarizer
-
-# Analyze the video
-video = Video.from_path("<PATH_TO_VIDEO>")
+# Analyze video: detect scenes and describe visual content
 analyzer = VideoAnalyzer(device="cpu")
 video_description = analyzer.analyze(video, frames_per_second=1.0)
 
-# Create LLM summarizer (requires Ollama running locally)
-summarizer = LLMSummarizer(model="llama3.2")
-
-# Generate coherent scene summaries
+# Access scenes
 for i, scene_desc in enumerate(video_description.scene_descriptions):
-    # Simple concatenation (default)
-    basic_summary = scene_desc.get_description_summary()
-    print(f"Basic: {basic_summary}")
+    scene = scene_desc.scene
+    print(f"Scene {i+1}: {scene.start:.2f}s - {scene.end:.2f}s ({scene.duration:.2f}s)")
 
-    # LLM-generated coherent summary
-    llm_summary = summarizer.summarize_scene_description(scene_desc)
-    print(f"LLM: {llm_summary}")
+    # Scene description from frame analysis
+    print(f"  {scene_desc.get_description_summary()}")
 
-# Generate overall video summary
-video_summary = summarizer.summarize_video_description(video_description)
-print(f"\nVideo Summary: {video_summary}")
+# Get complete video summary
+print(video_description.get_full_summary())
 ```
-
-Note: Install Ollama from https://ollama.ai and run `ollama pull llama3.2` before using LLM summarization.
 
 # Development notes
 
