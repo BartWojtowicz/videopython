@@ -62,7 +62,9 @@ savepath = video.save()
 
 ### Video Generation
 
-> Using Nvidia A40 or better is recommended for the `videopython.ai` module.
+> **GPU Requirements:**
+> - **TextToVideo**: Requires 80GB VRAM minimum (Nvidia A100 80GB or H100 recommended)
+> - **ImageToVideo**: Nvidia A40 or better is recommended
 ```python
 # Generate image and animate it
 from videopython.ai.generation import ImageToVideo
