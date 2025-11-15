@@ -148,4 +148,16 @@ class SceneDetector:
             else:
                 merged.append(scene)
 
+        # Handle edge case: if the final scene is too short, merge it backward
+        if len(merged) > 1 and merged[-1].duration < self.min_scene_length:
+            second_last = merged[-2]
+            last = merged[-1]
+            merged[-2] = Scene(
+                start=second_last.start,
+                end=last.end,
+                start_frame=second_last.start_frame,
+                end_frame=last.end_frame,
+            )
+            merged.pop()
+
         return merged

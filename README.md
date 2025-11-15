@@ -137,6 +137,34 @@ for i, scene in enumerate(scenes):
         print(f"  Frame {fd.frame_index} ({fd.timestamp:.2f}s): {fd.description}")
 ```
 
+### Complete video analysis (scenes + frames + transcription)
+```python
+from videopython.base.video import Video
+from videopython.ai.understanding.video import VideoAnalyzer
+
+video = Video.from_path("<PATH_TO_VIDEO>")
+
+# Analyze video with scene detection, frame descriptions, and optional transcription
+analyzer = VideoAnalyzer(scene_threshold=0.3, min_scene_length=0.5, device="cpu")
+understanding = analyzer.analyze(
+    video,
+    frames_per_second=1.0,  # Sample frames at 1 fps
+    transcribe=True,         # Include audio transcription
+    transcription_model="base"  # Whisper model
+)
+
+# Print complete summary
+print(understanding.get_full_summary())
+
+# Or access individual components
+print(f"Detected {understanding.num_scenes} scenes")
+print(f"Analyzed {understanding.total_frames_analyzed} frames")
+
+for i, scene_desc in enumerate(understanding.scene_descriptions):
+    print(f"\nScene {i+1}: {scene_desc.scene.start:.2f}s - {scene_desc.scene.end:.2f}s")
+    print(f"Visual: {scene_desc.get_description_summary()}")
+```
+
 # Development notes
 
 ## Project structure
