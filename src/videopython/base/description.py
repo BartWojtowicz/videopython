@@ -1,5 +1,3 @@
-"""Video description data structures for representing analyzed video content."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
