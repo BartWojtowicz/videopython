@@ -1,6 +1,6 @@
 import pytest
 
-from videopython.base.scenes import Scene
+from videopython.base.description import Scene
 
 
 class TestScene:

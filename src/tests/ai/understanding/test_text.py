@@ -2,11 +2,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from videopython.ai.understanding.summarize import LLMSummarizer
-from videopython.base.frames import FrameDescription
-from videopython.base.scene_description import SceneDescription
-from videopython.base.scenes import Scene
-from videopython.base.video_description import VideoDescription
+from videopython.ai.understanding.text import LLMSummarizer
+from videopython.base.description import FrameDescription, Scene, SceneDescription, VideoDescription
 
 
 class TestLLMSummarizer:
@@ -22,7 +19,7 @@ class TestLLMSummarizer:
         assert summarizer.model == "llama3.2"
         assert summarizer.timeout == 30.0
 
-    @patch("videopython.ai.understanding.summarize.ollama.generate")
+    @patch("videopython.ai.understanding.text.ollama.generate")
     def test_summarize_scene_success(self, mock_generate):
         """Test scene summarization with successful LLM response."""
         mock_generate.return_value = {"response": "A dog runs and plays in the park."}
@@ -38,7 +35,7 @@ class TestLLMSummarizer:
         assert summary == "A dog runs and plays in the park."
         mock_generate.assert_called_once()
 
-    @patch("videopython.ai.understanding.summarize.ollama.generate")
+    @patch("videopython.ai.understanding.text.ollama.generate")
     def test_summarize_scene_fallback(self, mock_generate):
         """Test scene summarization falls back to concatenation on error."""
         mock_generate.side_effect = Exception("Ollama not available")
@@ -58,7 +55,7 @@ class TestLLMSummarizer:
         summary = summarizer.summarize_scene([])
         assert summary == "Empty scene with no frames."
 
-    @patch("videopython.ai.understanding.summarize.ollama.generate")
+    @patch("videopython.ai.understanding.text.ollama.generate")
     def test_summarize_video_success(self, mock_generate):
         """Test video summarization with successful LLM response."""
         mock_generate.return_value = {"response": "The video shows a person's daily routine from morning to evening."}
@@ -74,7 +71,7 @@ class TestLLMSummarizer:
         assert summary == "The video shows a person's daily routine from morning to evening."
         mock_generate.assert_called_once()
 
-    @patch("videopython.ai.understanding.summarize.ollama.generate")
+    @patch("videopython.ai.understanding.text.ollama.generate")
     def test_summarize_video_fallback(self, mock_generate):
         """Test video summarization falls back to concatenation on error."""
         mock_generate.side_effect = Exception("Ollama not available")
@@ -94,7 +91,7 @@ class TestLLMSummarizer:
         summary = summarizer.summarize_video([])
         assert summary == "Empty video with no scenes."
 
-    @patch("videopython.ai.understanding.summarize.ollama.generate")
+    @patch("videopython.ai.understanding.text.ollama.generate")
     def test_summarize_scene_description(self, mock_generate):
         """Test summarizing a SceneDescription object."""
         mock_generate.return_value = {"response": "A red and blue scene."}
@@ -110,7 +107,7 @@ class TestLLMSummarizer:
         assert summary == "A red and blue scene."
         mock_generate.assert_called_once()
 
-    @patch("videopython.ai.understanding.summarize.ollama.generate")
+    @patch("videopython.ai.understanding.text.ollama.generate")
     def test_summarize_video_description(self, mock_generate):
         """Test summarizing a VideoDescription object."""
         mock_generate.return_value = {"response": "A complete video analysis."}
@@ -131,7 +128,7 @@ class TestLLMSummarizer:
         assert summary == "A complete video analysis."
         mock_generate.assert_called_once()
 
-    @patch("videopython.ai.understanding.summarize.ollama.generate")
+    @patch("videopython.ai.understanding.text.ollama.generate")
     def test_temperature_setting(self, mock_generate):
         """Test that temperature is set correctly in LLM options."""
         mock_generate.return_value = {"response": "Summary"}
@@ -142,7 +139,7 @@ class TestLLMSummarizer:
         call_args = mock_generate.call_args
         assert call_args[1]["options"]["temperature"] == 0.3
 
-    @patch("videopython.ai.understanding.summarize.ollama.generate")
+    @patch("videopython.ai.understanding.text.ollama.generate")
     def test_custom_model(self, mock_generate):
         """Test using a custom model."""
         mock_generate.return_value = {"response": "Summary"}

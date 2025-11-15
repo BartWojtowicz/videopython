@@ -5,8 +5,7 @@ import torch
 from PIL import Image
 from transformers import BlipForConditionalGeneration, BlipProcessor
 
-from videopython.base.frames import FrameDescription
-from videopython.base.scenes import Scene
+from videopython.base.description import FrameDescription, Scene
 from videopython.base.video import Video
 
 IMAGE_TO_TEXT_MODEL = "Salesforce/blip-image-captioning-large"

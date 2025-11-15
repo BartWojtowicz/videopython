@@ -1,6 +1,4 @@
-from videopython.base.frames import FrameDescription
-from videopython.base.scene_description import SceneDescription
-from videopython.base.scenes import Scene
+from videopython.base.description import FrameDescription, Scene, SceneDescription
 
 
 class TestFrameDescription:

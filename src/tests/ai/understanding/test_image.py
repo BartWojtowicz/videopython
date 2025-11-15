@@ -2,9 +2,8 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from videopython.ai.understanding.frames import ImageToText
-from videopython.base.frames import FrameDescription
-from videopython.base.scenes import Scene
+from videopython.ai.understanding.image import ImageToText
+from videopython.base.description import FrameDescription, Scene
 from videopython.base.video import Video
 
 

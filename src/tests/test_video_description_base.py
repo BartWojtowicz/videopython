@@ -1,10 +1,7 @@
 import pytest
 
-from videopython.base.frames import FrameDescription
-from videopython.base.scene_description import SceneDescription
-from videopython.base.scenes import Scene
+from videopython.base.description import FrameDescription, Scene, SceneDescription, VideoDescription
 from videopython.base.text.transcription import Transcription, TranscriptionSegment, TranscriptionWord
-from videopython.base.video_description import VideoDescription
 
 
 def test_video_description_creation():

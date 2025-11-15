@@ -5,8 +5,7 @@ from typing import TYPE_CHECKING
 import ollama
 
 if TYPE_CHECKING:
-    from videopython.base.scene_description import SceneDescription
-    from videopython.base.video_description import VideoDescription
+    from videopython.base.description import SceneDescription, VideoDescription
 
 
 class LLMSummarizer:

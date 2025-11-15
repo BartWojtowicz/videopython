@@ -103,8 +103,8 @@ from videopython.base.video import Video
 video = Video.from_path("<PATH_TO_VIDEO>")
 
 # Generate transcription with timestamps
-from videopython.ai.understanding.transcribe import CreateTranscription
-transcription = CreateTranscription("base").transcribe(video)
+from videopython.ai.understanding.audio import AudioToText
+transcription = AudioToText("base").transcribe(video)
 # Initialise object for overlaying. See `TranscriptionOverlay` to see detailed configuration options.
 from videopython.base.text.overlay import TranscriptionOverlay
 transcription_overlay = TranscriptionOverlay(font_filename="src/tests/test_data/test_font.ttf")
@@ -119,12 +119,12 @@ from videopython.base.video import Video
 video = Video.from_path("<PATH_TO_VIDEO>")
 
 # Detect scene changes in the video
-from videopython.ai.understanding.scenes import SceneDetector
+from videopython.ai.understanding.video import SceneDetector
 detector = SceneDetector(threshold=0.3, min_scene_length=0.5)
 scenes = detector.detect(video)
 
 # Describe frames from each scene using AI
-from videopython.ai.understanding.frames import ImageToText
+from videopython.ai.understanding.image import ImageToText
 image_to_text = ImageToText()  # Uses CPU by default, pass device="cuda" for GPU
 
 for i, scene in enumerate(scenes):
@@ -172,7 +172,7 @@ Generate coherent summaries using LLMs via Ollama (requires Ollama to be running
 ```python
 from videopython.base.video import Video
 from videopython.ai.understanding.video import VideoAnalyzer
-from videopython.ai.understanding.summarize import LLMSummarizer
+from videopython.ai.understanding.text import LLMSummarizer
 
 # Analyze the video
 video = Video.from_path("<PATH_TO_VIDEO>")
