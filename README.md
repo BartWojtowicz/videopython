@@ -103,14 +103,37 @@ from videopython.base.video import Video
 video = Video.from_path("<PATH_TO_VIDEO>")
 
 # Generate transcription with timestamps
-from videopython.ai.understanding.transcribe import CreateTranscription
-transcription = CreateTranscription("base").transcribe(video)
+from videopython.ai.understanding.audio import AudioToText
+transcription = AudioToText("base").transcribe(video)
 # Initialise object for overlaying. See `TranscriptionOverlay` to see detailed configuration options.
 from videopython.base.text.overlay import TranscriptionOverlay
 transcription_overlay = TranscriptionOverlay(font_filename="src/tests/test_data/test_font.ttf")
 
 video = transcription_overlay.apply(video, transcription)
 video.save()
+```
+
+### AI Video Understanding
+```python
+from videopython.base.video import Video
+from videopython.ai.understanding.video import VideoAnalyzer
+
+video = Video.from_path("<PATH_TO_VIDEO>")
+
+# Analyze video: detect scenes and describe visual content
+analyzer = VideoAnalyzer(device="cpu")
+video_description = analyzer.analyze(video, frames_per_second=1.0)
+
+# Access scenes
+for i, scene_desc in enumerate(video_description.scene_descriptions):
+    scene = scene_desc.scene
+    print(f"Scene {i+1}: {scene.start:.2f}s - {scene.end:.2f}s ({scene.duration:.2f}s)")
+
+    # Scene description from frame analysis
+    print(f"  {scene_desc.get_description_summary()}")
+
+# Get complete video summary
+print(video_description.get_full_summary())
 ```
 
 # Development notes

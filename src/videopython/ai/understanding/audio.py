@@ -7,10 +7,15 @@ from videopython.base.text.transcription import Transcription, TranscriptionSegm
 from videopython.base.video import Video
 
 
-class CreateTranscription:
+class AudioToText:
     """Unified transcription service for both audio and video."""
 
     def __init__(self, model_name: Literal["tiny", "base", "small", "medium", "large", "turbo"] = "small") -> None:
+        """Initialize the audio-to-text transcriber.
+
+        Args:
+            model_name: Whisper model to use for transcription (default: "small")
+        """
         self.model = whisper.load_model(name=model_name)
 
     def _process_transcription_result(self, transcription_result: dict) -> Transcription:
