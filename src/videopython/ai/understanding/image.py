@@ -3,16 +3,16 @@ from __future__ import annotations
 import numpy as np
 import torch
 from PIL import Image
-from transformers import BlipForConditionalGeneration, BlipProcessor
+from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
 
 from videopython.base.description import FrameDescription, Scene
 from videopython.base.video import Video
 
-IMAGE_TO_TEXT_MODEL = "Salesforce/blip-image-captioning-large"
+IMAGE_TO_TEXT_MODEL = "Qwen/Qwen2.5-VL-7B-Instruct"
 
 
 class ImageToText:
-    """Generates text descriptions of images using BLIP image captioning model."""
+    """Generates text descriptions of images using Qwen2.5-VL vision-language model."""
 
     def __init__(self, device: str | None = None):
         """Initialize the image-to-text model.
@@ -24,9 +24,12 @@ class ImageToText:
             device = "cuda" if torch.cuda.is_available() else "cpu"
 
         self.device = device
-        self.processor = BlipProcessor.from_pretrained(IMAGE_TO_TEXT_MODEL)
-        self.model = BlipForConditionalGeneration.from_pretrained(IMAGE_TO_TEXT_MODEL)
-        self.model.to(self.device)
+        self.processor = AutoProcessor.from_pretrained(IMAGE_TO_TEXT_MODEL)
+        self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+            IMAGE_TO_TEXT_MODEL, torch_dtype="auto", device_map="auto" if device == "cuda" else None
+        )
+        if device == "cpu":
+            self.model.to(self.device)
 
     def describe_image(self, image: np.ndarray | Image.Image, prompt: str | None = None) -> str:
         """Generate a text description of an image.
@@ -42,12 +45,31 @@ class ImageToText:
         if isinstance(image, np.ndarray):
             image = Image.fromarray(image)
 
-        # Process the image
-        inputs = self.processor(image, prompt, return_tensors="pt").to(self.device)
+        # Prepare message in chat format
+        text_prompt = prompt if prompt else "Describe this image in detail."
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": image},
+                    {"type": "text", "text": text_prompt},
+                ],
+            }
+        ]
+
+        # Apply chat template
+        text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+
+        # Process inputs
+        inputs = self.processor(text=[text], images=[image], return_tensors="pt")
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
         # Generate description
-        output = self.model.generate(**inputs, max_new_tokens=50)
-        description = self.processor.decode(output[0], skip_special_tokens=True)
+        output = self.model.generate(**inputs, max_new_tokens=128)
+        generated_ids_trimmed = [out[len(inp) :] for inp, out in zip(inputs["input_ids"], output)]
+        description = self.processor.batch_decode(
+            generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+        )[0]
 
         return description
 

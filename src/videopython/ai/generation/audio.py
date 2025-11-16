@@ -1,35 +1,50 @@
-import torch
+from kokoro import KPipeline
 from soundpython import Audio, AudioMetadata
-from transformers import (
-    AutoProcessor,
-    AutoTokenizer,
-    MusicgenForConditionalGeneration,
-    VitsModel,
-)
+from transformers import AutoProcessor, MusicgenForConditionalGeneration
 
-TEXT_TO_SPEECH_MODEL = "facebook/mms-tts-eng"
+TEXT_TO_SPEECH_LANG = "a"
+TEXT_TO_SPEECH_VOICE = "af_heart"
+TEXT_TO_SPEECH_SAMPLE_RATE = 24000
 MUSIC_GENERATION_MODEL_SMALL = "facebook/musicgen-small"
 
 
 class TextToSpeech:
-    def __init__(self):
-        self.pipeline = VitsModel.from_pretrained(TEXT_TO_SPEECH_MODEL)
-        self.tokenizer = AutoTokenizer.from_pretrained(TEXT_TO_SPEECH_MODEL)
+    def __init__(self, lang_code: str = TEXT_TO_SPEECH_LANG, voice: str = TEXT_TO_SPEECH_VOICE):
+        """Initialize Kokoro text-to-speech model.
+
+        Args:
+            lang_code: Language code (default: 'a' for English American)
+            voice: Voice preset (default: 'af_heart')
+        """
+        self.pipeline = KPipeline(lang_code=lang_code)
+        self.voice = voice
+        self.sample_rate = TEXT_TO_SPEECH_SAMPLE_RATE
 
     def generate_audio(self, text: str) -> Audio:
-        tokenized = self.tokenizer(text, return_tensors="pt")
+        """Generate speech audio from text.
 
-        with torch.no_grad():
-            output = self.pipeline(**tokenized).waveform
+        Args:
+            text: Input text to convert to speech
 
-        # Convert to float32 and normalize to [-1, 1]
-        audio_data = output.T.float().numpy()
+        Returns:
+            Audio object containing the generated speech
+        """
+        # Generate audio using Kokoro pipeline
+        generator = self.pipeline(text, voice=self.voice)
+
+        # Kokoro returns a generator, we take the last (complete) output
+        audio_data = None
+        for _, _, audio in generator:
+            audio_data = audio
+
+        if audio_data is None:
+            raise RuntimeError("Failed to generate audio from text")
 
         metadata = AudioMetadata(
-            sample_rate=self.pipeline.config.sampling_rate,
+            sample_rate=self.sample_rate,
             channels=1,
             sample_width=4,
-            duration_seconds=len(audio_data) / self.pipeline.config.sampling_rate,
+            duration_seconds=len(audio_data) / self.sample_rate,
             frame_count=len(audio_data),
         )
 

@@ -4,6 +4,7 @@ from .models import (
     BlipForConditionalGeneration,
     BlipProcessor,
     MusicgenForConditionalGeneration,
+    Qwen2_5_VLForConditionalGeneration,
     VitsModel,
 )
 
@@ -14,4 +15,5 @@ __all__ = [
     "MusicgenForConditionalGeneration",
     "BlipForConditionalGeneration",
     "BlipProcessor",
+    "Qwen2_5_VLForConditionalGeneration",
 ]

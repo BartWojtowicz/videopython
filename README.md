@@ -63,8 +63,11 @@ savepath = video.save()
 ### Video Generation
 
 > **GPU Requirements:**
-> - **TextToVideo**: Requires 80GB VRAM minimum (Nvidia A100 80GB or H100 recommended)
-> - **ImageToVideo**: Nvidia A40 or better is recommended
+> - **TextToVideo** (Wan2.2-T2V-A14B): Requires 80GB VRAM minimum (Nvidia A100 80GB or H100 recommended)
+> - **TextToImage** (FLUX.1-dev): Requires 24GB+ VRAM (RTX 3090/4090, A5000, or better)
+> - **ImageToVideo** (Stable Video Diffusion): Nvidia A40 or better recommended
+> - **ImageToText** (Qwen2.5-VL-7B): Requires 16GB+ VRAM (can run on RTX 4080 or better)
+> - **TextToSpeech** (Kokoro-82M): Lightweight, can run on CPU
 ```python
 # Generate image and animate it
 from videopython.ai.generation import ImageToVideo
