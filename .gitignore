@@ -139,5 +139,5 @@ data/downloaded/*.mp4
 data/exported/*.mp4
 !data/exported/example.mp4
 
-# Mac 
+# Mac
 *.DS_Store
