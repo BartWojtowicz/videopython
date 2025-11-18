@@ -11,7 +11,7 @@
 set -e
 
 REPO_URL="https://github.com/bartwojtowicz/videopython.git"
-WORKSPACE_DIR="${WORKSPACE:-/workspace/videopython}"
+WORKSPACE_DIR="/workspace/videopython}"
 BRANCH="${1:-update/refresh-text-to-video-model}"
 
 echo "======================================"
@@ -45,20 +45,10 @@ export PATH="$HOME/.cargo/bin:${PATH}"
 
 # Clone or update repository
 echo "[4/5] Setting up repository..."
-if [ -d "$WORKSPACE_DIR" ]; then
-    echo "Repository exists at $WORKSPACE_DIR"
-    cd "$WORKSPACE_DIR"
-    echo "Fetching latest changes..."
-    git fetch
-    echo "Checking out branch: $BRANCH"
-    git checkout "$BRANCH"
-    git pull origin "$BRANCH"
-else
-    echo "Cloning repository..."
-    mkdir -p "$(dirname "$WORKSPACE_DIR")"
-    git clone -b "$BRANCH" "$REPO_URL" "$WORKSPACE_DIR"
-    cd "$WORKSPACE_DIR"
-fi
+echo "Cloning repository..."
+mkdir -p "$(dirname "$WORKSPACE_DIR")"
+git clone -b "$BRANCH" "$REPO_URL" "$WORKSPACE_DIR"
+cd "$WORKSPACE_DIR"
 
 # Install dependencies
 echo "[5/5] Installing Python dependencies (this may take a few minutes)..."
