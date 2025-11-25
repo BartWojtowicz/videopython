@@ -306,3 +306,149 @@ def test_standardize_segments_preserves_word_timing(dummy_transcription):
         assert orig_word.start == result_word.start
         assert orig_word.end == result_word.end
         assert orig_word.word == result_word.word
+
+
+def test_transcription_initialization_with_words():
+    """Test Transcription initialization with words parameter for speaker diarization."""
+    words = [
+        TranscriptionWord(start=0.0, end=0.5, word="Hello", speaker="SPEAKER_00"),
+        TranscriptionWord(start=0.5, end=1.0, word="world", speaker="SPEAKER_00"),
+        TranscriptionWord(start=1.0, end=1.5, word="Hi", speaker="SPEAKER_01"),
+        TranscriptionWord(start=1.5, end=2.0, word="there", speaker="SPEAKER_01"),
+        TranscriptionWord(start=2.0, end=2.5, word="Back", speaker="SPEAKER_00"),
+        TranscriptionWord(start=2.5, end=3.0, word="again", speaker="SPEAKER_00"),
+    ]
+
+    transcription = Transcription(words=words)
+
+    # Should have 3 segments (SPEAKER_00, SPEAKER_01, SPEAKER_00)
+    assert len(transcription.segments) == 3
+
+    # First segment: SPEAKER_00 says "Hello world"
+    assert transcription.segments[0].speaker == "SPEAKER_00"
+    assert transcription.segments[0].text == "Hello world"
+    assert transcription.segments[0].start == 0.0
+    assert transcription.segments[0].end == 1.0
+    assert len(transcription.segments[0].words) == 2
+
+    # Second segment: SPEAKER_01 says "Hi there"
+    assert transcription.segments[1].speaker == "SPEAKER_01"
+    assert transcription.segments[1].text == "Hi there"
+    assert transcription.segments[1].start == 1.0
+    assert transcription.segments[1].end == 2.0
+    assert len(transcription.segments[1].words) == 2
+
+    # Third segment: SPEAKER_00 says "Back again"
+    assert transcription.segments[2].speaker == "SPEAKER_00"
+    assert transcription.segments[2].text == "Back again"
+    assert transcription.segments[2].start == 2.0
+    assert transcription.segments[2].end == 3.0
+    assert len(transcription.segments[2].words) == 2
+
+    # Check speakers set
+    assert transcription.speakers == {"SPEAKER_00", "SPEAKER_01"}
+
+
+def test_transcription_initialization_invalid_parameters():
+    """Test that Transcription raises error when given both or neither parameters."""
+    words = [TranscriptionWord(start=0.0, end=1.0, word="test", speaker="SPEAKER_00")]
+    segments = [TranscriptionSegment(start=0.0, end=1.0, text="test", words=words, speaker="SPEAKER_00")]
+
+    # Test providing both parameters
+    with pytest.raises(ValueError, match="Exactly one of 'segments' or 'words' must be provided"):
+        Transcription(segments=segments, words=words)
+
+    # Test providing neither parameter
+    with pytest.raises(ValueError, match="Exactly one of 'segments' or 'words' must be provided"):
+        Transcription()
+
+
+def test_speaker_stats():
+    """Test speaker_stats method calculates speaking time percentages correctly."""
+    words = [
+        TranscriptionWord(start=0.0, end=1.0, word="Hello", speaker="SPEAKER_00"),  # 1.0s
+        TranscriptionWord(start=1.0, end=2.0, word="world", speaker="SPEAKER_00"),  # 1.0s
+        TranscriptionWord(start=2.0, end=2.5, word="Hi", speaker="SPEAKER_01"),  # 0.5s
+        TranscriptionWord(start=2.5, end=3.0, word="there", speaker="SPEAKER_01"),  # 0.5s
+    ]
+
+    transcription = Transcription(words=words)
+    stats = transcription.speaker_stats()
+
+    # SPEAKER_00: 2.0s out of 3.0s total = 66.67%
+    # SPEAKER_01: 1.0s out of 3.0s total = 33.33%
+    assert len(stats) == 2
+    assert abs(stats["SPEAKER_00"] - 2.0 / 3.0) < 0.001
+    assert abs(stats["SPEAKER_01"] - 1.0 / 3.0) < 0.001
+
+
+def test_speaker_stats_equal_distribution():
+    """Test speaker_stats with equal speaking time."""
+    words = [
+        TranscriptionWord(start=0.0, end=1.0, word="First", speaker="SPEAKER_00"),
+        TranscriptionWord(start=1.0, end=2.0, word="Second", speaker="SPEAKER_01"),
+    ]
+
+    transcription = Transcription(words=words)
+    stats = transcription.speaker_stats()
+
+    assert stats["SPEAKER_00"] == 0.5
+    assert stats["SPEAKER_01"] == 0.5
+
+
+def test_speaker_stats_empty_transcription():
+    """Test speaker_stats with empty transcription."""
+    transcription = Transcription(segments=[])
+    stats = transcription.speaker_stats()
+
+    assert stats == {}
+
+
+def test_offset_preserves_speaker_information():
+    """Test that offset method preserves speaker information."""
+    words = [
+        TranscriptionWord(start=0.0, end=0.5, word="Hello", speaker="SPEAKER_00"),
+        TranscriptionWord(start=0.5, end=1.0, word="world", speaker="SPEAKER_00"),
+        TranscriptionWord(start=1.0, end=1.5, word="Hi", speaker="SPEAKER_01"),
+    ]
+
+    transcription = Transcription(words=words)
+    offset_time = 2.0
+    offset_transcription = transcription.offset(offset_time)
+
+    # Check that speakers are preserved
+    assert offset_transcription.speakers == transcription.speakers
+
+    # Check that segment speaker information is preserved
+    for orig_seg, offset_seg in zip(transcription.segments, offset_transcription.segments):
+        assert offset_seg.speaker == orig_seg.speaker
+        assert offset_seg.start == orig_seg.start + offset_time
+        assert offset_seg.end == orig_seg.end + offset_time
+
+        # Check that word speaker information is preserved
+        for orig_word, offset_word in zip(orig_seg.words, offset_seg.words):
+            assert offset_word.speaker == orig_word.speaker
+            assert offset_word.start == orig_word.start + offset_time
+            assert offset_word.end == orig_word.end + offset_time
+
+
+def test_transcription_with_none_speakers():
+    """Test Transcription with words that have None as speaker (no diarization)."""
+    words = [
+        TranscriptionWord(start=0.0, end=0.5, word="Hello", speaker=None),
+        TranscriptionWord(start=0.5, end=1.0, word="world", speaker=None),
+    ]
+
+    transcription = Transcription(words=words)
+
+    # Should have 1 segment since all words have the same speaker (None)
+    assert len(transcription.segments) == 1
+    assert transcription.segments[0].speaker is None
+    assert transcription.segments[0].text == "Hello world"
+
+    # Speakers set should be empty (None is filtered out)
+    assert transcription.speakers == set()
+
+    # speaker_stats should return empty dict
+    stats = transcription.speaker_stats()
+    assert stats == {}

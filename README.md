@@ -105,6 +105,12 @@ video = Video.from_path("<PATH_TO_VIDEO>")
 # Generate transcription with timestamps
 from videopython.ai.understanding.audio import AudioToText
 transcription = AudioToText("base").transcribe(video)
+
+# Or enable speaker diarization to identify different speakers
+transcription = AudioToText("base", enable_diarization=True).transcribe(video)
+print(f"Detected speakers: {transcription.speakers}")
+print(f"Speaking time distribution: {transcription.speaker_stats()}")
+
 # Initialise object for overlaying. See `TranscriptionOverlay` to see detailed configuration options.
 from videopython.base.text.overlay import TranscriptionOverlay
 transcription_overlay = TranscriptionOverlay(font_filename="src/tests/test_data/test_font.ttf")
