@@ -42,16 +42,16 @@ class TextToSpeech:
         tokenized = self.tokenizer(text, return_tensors="pt")
 
         with torch.no_grad():
-            output = self.pipeline(**tokenized).waveform
+            output = self.pipeline(**tokenized).waveform  # type: ignore[arg-type]
 
         # Convert to float32 and normalize to [-1, 1]
         audio_data = output.T.float().numpy()
 
         metadata = AudioMetadata(
-            sample_rate=self.pipeline.config.sampling_rate,
+            sample_rate=self.pipeline.config.sampling_rate,  # type: ignore[attr-defined]
             channels=1,
             sample_width=4,
-            duration_seconds=len(audio_data) / self.pipeline.config.sampling_rate,
+            duration_seconds=len(audio_data) / self.pipeline.config.sampling_rate,  # type: ignore[attr-defined]
             frame_count=len(audio_data),
         )
 
