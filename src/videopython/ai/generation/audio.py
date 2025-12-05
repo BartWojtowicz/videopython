@@ -7,14 +7,36 @@ from transformers import (
     VitsModel,
 )
 
-TEXT_TO_SPEECH_MODEL = "facebook/mms-tts-eng"
 MUSIC_GENERATION_MODEL_SMALL = "facebook/musicgen-small"
+
+SUPPORTED_TTS_LANGUAGES = {
+    "eng": "facebook/mms-tts-eng",
+    "deu": "facebook/mms-tts-deu",
+    "pol": "facebook/mms-tts-pol",
+}
 
 
 class TextToSpeech:
-    def __init__(self):
-        self.pipeline = VitsModel.from_pretrained(TEXT_TO_SPEECH_MODEL)
-        self.tokenizer = AutoTokenizer.from_pretrained(TEXT_TO_SPEECH_MODEL)
+    def __init__(self, language: str = "eng"):
+        """
+        Initialize TextToSpeech with support for multiple languages.
+
+        Args:
+            language: ISO 639-3 language code. Supported languages: 'eng' (English),
+                     'deu' (German), 'pol' (Polish). Defaults to 'eng'.
+
+        Raises:
+            ValueError: If the specified language is not supported.
+        """
+        if language not in SUPPORTED_TTS_LANGUAGES:
+            raise ValueError(
+                f"Language '{language}' is not supported. Supported languages: {list(SUPPORTED_TTS_LANGUAGES.keys())}"
+            )
+
+        self.language = language
+        model_name = SUPPORTED_TTS_LANGUAGES[language]
+        self.pipeline = VitsModel.from_pretrained(model_name)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
 
     def generate_audio(self, text: str) -> Audio:
         tokenized = self.tokenizer(text, return_tensors="pt")
