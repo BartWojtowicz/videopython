@@ -1,5 +1,7 @@
 name: CI Pipeline
-on: [push]
+on:
+  push:
+  workflow_call:
 
 jobs:
   base_tests:
