@@ -50,7 +50,7 @@ class TextToSpeech:
         metadata = AudioMetadata(
             sample_rate=self.pipeline.config.sampling_rate,
             channels=1,
-            sample_width=4,
+            sample_width=2,
             duration_seconds=len(audio_data) / self.pipeline.config.sampling_rate,
             frame_count=len(audio_data),
         )
@@ -82,7 +82,7 @@ class TextToMusic:
         metadata = AudioMetadata(
             sample_rate=sampling_rate,
             channels=1,
-            sample_width=4,
+            sample_width=2,
             duration_seconds=len(audio_data) / sampling_rate,
             frame_count=len(audio_data),
         )
