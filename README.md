@@ -92,7 +92,7 @@ video.add_audio(audio=audio)
 
 # Add TTS on top of video
 from videopython.ai.generation import TextToSpeech
-text_to_speech = TextToSpeech()
+text_to_speech = TextToSpeech(language="eng")
 audio = text_to_speech.generate_audio("Woof woof woof! Woooooof!")
 video.add_audio(audio=audio)
 ```
