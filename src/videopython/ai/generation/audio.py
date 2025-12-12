@@ -1,6 +1,5 @@
 from typing import Optional
 
-import numpy as np
 import torch
 from soundpython import Audio, AudioMetadata
 from transformers import AutoModel, AutoProcessor, MusicgenForConditionalGeneration

@@ -1,4 +1,5 @@
 from .models import (
+    AutoModel,
     AutoProcessor,
     AutoTokenizer,
     BlipForConditionalGeneration,
@@ -8,10 +9,11 @@ from .models import (
 )
 
 __all__ = [
-    "AutoTokenizer",
-    "VitsModel",
+    "AutoModel",
     "AutoProcessor",
-    "MusicgenForConditionalGeneration",
+    "AutoTokenizer",
     "BlipForConditionalGeneration",
     "BlipProcessor",
+    "MusicgenForConditionalGeneration",
+    "VitsModel",
 ]

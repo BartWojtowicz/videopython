@@ -6,6 +6,10 @@ from videopython.ai.understanding.image import ImageToText
 from videopython.base.description import FrameDescription, Scene
 from videopython.base.video import Video
 
+pytestmark = pytest.mark.skip(
+    reason="Image understanding tests require significant memory/resources not available in CI"
+)
+
 
 class TestImageToText:
     """Tests for ImageToText class."""

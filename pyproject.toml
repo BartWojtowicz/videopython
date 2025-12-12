@@ -89,6 +89,10 @@ Documentation = "https://github.com/bartwojtowicz/videopython/"
 [tool.mypy]
 mypy_path = "src/stubs"
 
+[[tool.mypy.overrides]]
+module = ["torch", "torch.*", "diffusers", "diffusers.*", "ollama", "ollama.*"]
+ignore_missing_imports = true
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

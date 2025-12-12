@@ -3,6 +3,8 @@ from soundpython import Audio
 
 from videopython.ai.generation.audio import TextToSpeech
 
+pytestmark = pytest.mark.skip(reason="TTS tests require significant memory/resources not available in CI")
+
 
 class TestTextToSpeech:
     def test_default_initialization(self):
