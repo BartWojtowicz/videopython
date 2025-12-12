@@ -90,10 +90,15 @@ text_to_music = TextToMusic()
 audio = text_to_music.generate_audio("Happy dogs playing together in a park", max_new_tokens=256)
 video.add_audio(audio=audio)
 
-# Add TTS on top of video
+# Add TTS on top of video (uses Bark for realistic speech)
 from videopython.ai.generation import TextToSpeech
-text_to_speech = TextToSpeech(language="eng")
+
+text_to_speech = TextToSpeech()
 audio = text_to_speech.generate_audio("Woof woof woof! Woooooof!")
+video.add_audio(audio=audio)
+
+# With emotion markers for more expressive speech
+audio = text_to_speech.generate_audio("This is amazing! [laughs]")
 video.add_audio(audio=audio)
 ```
 

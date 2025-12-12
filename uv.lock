@@ -2910,7 +2910,7 @@ wheels = [
 
 [[package]]
 name = "videopython"
-version = "0.5.4"
+version = "0.5.5"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },
@@ -2927,6 +2927,7 @@ ai = [
     { name = "numba" },
     { name = "ollama" },
     { name = "openai-whisper" },
+    { name = "scipy" },
     { name = "torch" },
     { name = "transformers" },
     { name = "whisperx" },
@@ -2947,6 +2948,7 @@ ai = [
     { name = "numba" },
     { name = "ollama" },
     { name = "openai-whisper" },
+    { name = "scipy" },
     { name = "torch" },
     { name = "transformers" },
     { name = "whisperx" },
@@ -2974,6 +2976,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6.1.1" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.14" },
+    { name = "scipy", marker = "extra == 'ai'", specifier = ">=1.10.0" },
     { name = "soundpython", specifier = ">=0.1.11" },
     { name = "torch", marker = "extra == 'ai'", specifier = ">=2.1.0" },
     { name = "tqdm", specifier = ">=4.66.3" },
@@ -2991,6 +2994,7 @@ ai = [
     { name = "numba", specifier = ">=0.61.0" },
     { name = "ollama", specifier = ">=0.4.5" },
     { name = "openai-whisper", specifier = ">=20240930" },
+    { name = "scipy", specifier = ">=1.10.0" },
     { name = "torch", specifier = ">=2.1.0" },
     { name = "transformers", specifier = ">=4.38.1" },
     { name = "whisperx", specifier = ">=3.4.2" },
