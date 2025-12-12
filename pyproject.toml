@@ -1,6 +1,6 @@
 [project]
 name = "videopython"
-version = "0.5.4"
+version = "0.5.5"
 description = "Minimal video generation and processing library."
 authors = [
     { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
@@ -56,6 +56,7 @@ ai = [
     "whisperx>=3.4.2",
     "numba>=0.61.0",
     "ollama>=0.4.5",
+    "scipy>=1.10.0",
 ]
 
 # We have to keep it to make PIP use those dependency groups, not only UV
@@ -77,6 +78,7 @@ ai = [
     "whisperx>=3.4.2",
     "numba>=0.61.0",
     "ollama>=0.4.5",
+    "scipy>=1.10.0",
 ]
 
 [project.urls]
@@ -86,6 +88,10 @@ Documentation = "https://github.com/bartwojtowicz/videopython/"
 
 [tool.mypy]
 mypy_path = "src/stubs"
+
+[[tool.mypy.overrides]]
+module = ["torch", "torch.*", "diffusers", "diffusers.*", "ollama", "ollama.*"]
+ignore_missing_imports = true
 
 [build-system]
 requires = ["hatchling"]

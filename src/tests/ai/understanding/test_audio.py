@@ -1,4 +1,10 @@
+import pytest
+
 from videopython.ai.understanding.audio import AudioToText
+
+pytestmark = pytest.mark.skip(
+    reason="Audio understanding tests require significant memory/resources not available in CI"
+)
 
 
 class TestAudioToText:

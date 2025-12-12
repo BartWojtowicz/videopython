@@ -51,7 +51,23 @@ class MusicgenForConditionalGeneration:
 class AutoProcessor:
     @classmethod
     def from_pretrained(cls, model_type: str) -> AutoProcessor: ...
-    def __call__(self, text: list, padding: bool, return_tensors: str) -> dict: ...
+    def __call__(
+        self,
+        text: list | None = None,
+        padding: bool | None = None,
+        return_tensors: str | None = None,
+        voice_preset: str | None = None,
+    ) -> dict: ...
+
+class GenerationConfig:
+    sample_rate: int
+
+class AutoModel:
+    generation_config: GenerationConfig
+    @classmethod
+    def from_pretrained(cls, model_type: str) -> AutoModel: ...
+    def to(self, device: str) -> AutoModel: ...
+    def generate(self, **kwargs: Any) -> torch.Tensor: ...
 
 class BlipProcessorOutput:
     def to(self, device: str) -> BlipProcessorOutput: ...
