@@ -2,20 +2,12 @@ from __future__ import annotations
 
 from typing import Literal
 
-import cv2
 import numpy as np
 
+from videopython.ai.understanding.color import ColorAnalyzer
 from videopython.ai.understanding.image import ImageToText
 from videopython.base.description import Scene, SceneDescription, VideoDescription
 from videopython.base.video import Video
-
-# Histogram configuration for HSV-based scene detection
-# HSV histograms provide better perceptual color comparison than RGB
-HISTOGRAM_BINS_H = 50  # Hue channel bins (fewer bins since hue wraps around)
-HISTOGRAM_BINS_S = 60  # Saturation channel bins
-HISTOGRAM_BINS_V = 60  # Value channel bins
-HUE_RANGE_MAX = 180  # OpenCV uses 0-180 range for hue
-HSV_RANGE_MAX = 256  # Standard 0-255 range for saturation and value
 
 
 class SceneDetector:
@@ -41,6 +33,7 @@ class SceneDetector:
 
         self.threshold = threshold
         self.min_scene_length = min_scene_length
+        self.color_analyzer = ColorAnalyzer()
 
     def _calculate_histogram_difference(self, frame1: np.ndarray, frame2: np.ndarray) -> float:
         """Calculate histogram difference between two frames.
@@ -52,35 +45,7 @@ class SceneDetector:
         Returns:
             Difference score between 0.0 (identical) and 1.0 (completely different)
         """
-        # Convert RGB to HSV for better color comparison
-        hsv1 = cv2.cvtColor(frame1, cv2.COLOR_RGB2HSV)
-        hsv2 = cv2.cvtColor(frame2, cv2.COLOR_RGB2HSV)
-
-        # Calculate and normalize histograms for each channel (H, S, V)
-        # Channel configs: (channel_index, num_bins, range)
-        channels = [
-            (0, HISTOGRAM_BINS_H, [0, HUE_RANGE_MAX]),
-            (1, HISTOGRAM_BINS_S, [0, HSV_RANGE_MAX]),
-            (2, HISTOGRAM_BINS_V, [0, HSV_RANGE_MAX]),
-        ]
-        histograms = []
-
-        for channel, bins, range_vals in channels:
-            hist1 = cv2.calcHist([hsv1], [channel], None, [bins], range_vals)
-            hist2 = cv2.calcHist([hsv2], [channel], None, [bins], range_vals)
-            cv2.normalize(hist1, hist1, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
-            cv2.normalize(hist2, hist2, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
-            histograms.append((hist1, hist2))
-
-        # Compare histograms using correlation (returns value between -1 and 1)
-        # We use correlation because it's robust to lighting changes
-        correlations = [cv2.compareHist(h1, h2, cv2.HISTCMP_CORREL) for h1, h2 in histograms]
-        avg_correlation = sum(correlations) / len(correlations)
-
-        # Convert correlation (1.0 = similar) to difference (0.0 = similar)
-        difference = 1.0 - avg_correlation
-
-        return difference
+        return self.color_analyzer.calculate_histogram_difference(frame1, frame2)
 
     def detect(self, video: Video) -> list[Scene]:
         """Detect scenes in a video.
@@ -204,6 +169,8 @@ class VideoAnalyzer:
         transcribe: bool = False,
         transcription_model: Literal["tiny", "base", "small", "medium", "large", "turbo"] = "base",
         description_prompt: str | None = None,
+        extract_colors: bool = False,
+        include_full_histogram: bool = False,
     ) -> VideoDescription:
         """Perform comprehensive video analysis.
 
@@ -213,6 +180,8 @@ class VideoAnalyzer:
             transcribe: Whether to generate audio transcription (default: False)
             transcription_model: Whisper model to use if transcribe=True (default: "base")
             description_prompt: Optional prompt to guide frame descriptions
+            extract_colors: Whether to extract color features from frames (default: False)
+            include_full_histogram: Whether to include full HSV histogram in color features (default: False)
 
         Returns:
             VideoDescription object with complete analysis
@@ -224,7 +193,12 @@ class VideoAnalyzer:
         scene_descriptions = []
         for scene in scenes:
             frame_descriptions = self.image_to_text.describe_scene(
-                video, scene, frames_per_second=frames_per_second, prompt=description_prompt
+                video,
+                scene,
+                frames_per_second=frames_per_second,
+                prompt=description_prompt,
+                extract_colors=extract_colors,
+                include_full_histogram=include_full_histogram,
             )
             scene_descriptions.append(SceneDescription(scene=scene, frame_descriptions=frame_descriptions))
 

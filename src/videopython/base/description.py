@@ -2,7 +2,28 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
+
 from videopython.base.text.transcription import Transcription
+
+
+@dataclass
+class ColorHistogram:
+    """Color features extracted from a video frame.
+
+    Attributes:
+        dominant_colors: Top N dominant colors in RGB format (0-255)
+        avg_hue: Average hue value (0-180 in OpenCV HSV)
+        avg_saturation: Average saturation value (0-255)
+        avg_value: Average value/brightness (0-255)
+        hsv_histogram: Optional full HSV histogram for advanced analysis
+    """
+
+    dominant_colors: list[tuple[int, int, int]]
+    avg_hue: float
+    avg_saturation: float
+    avg_value: float
+    hsv_histogram: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
 
 
 @dataclass
@@ -63,11 +84,13 @@ class FrameDescription:
         frame_index: Index of the frame in the video
         timestamp: Time in seconds when this frame appears
         description: Text description of what's in the frame
+        color_histogram: Optional color features extracted from the frame
     """
 
     frame_index: int
     timestamp: float
     description: str
+    color_histogram: ColorHistogram | None = None
 
 
 @dataclass
