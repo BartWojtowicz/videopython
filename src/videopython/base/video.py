@@ -15,6 +15,11 @@ from videopython.base.utils import generate_random_name
 
 ALLOWED_VIDEO_FORMATS = Literal["mp4", "avi", "mov", "mkv", "webm"]
 
+# Frame buffer constants for video loading
+# Used to pre-allocate frame array with safety margin for frame rate variations
+FRAME_BUFFER_MULTIPLIER = 1.1  # 10% buffer for frame rate estimation errors
+FRAME_BUFFER_PADDING = 10  # Additional fixed frame padding
+
 
 class VideoMetadataError(Exception):
     """Raised when there's an error getting video metadata"""
@@ -218,8 +223,8 @@ class Video:
             else:
                 estimated_duration = total_duration
 
-            # Add 10% buffer to handle frame rate variations and rounding
-            estimated_frames = int(estimated_duration * fps * 1.1) + 10
+            # Add buffer to handle frame rate variations and rounding
+            estimated_frames = int(estimated_duration * fps * FRAME_BUFFER_MULTIPLIER) + FRAME_BUFFER_PADDING
 
             # Pre-allocate numpy array
             frames = np.empty((estimated_frames, height, width, 3), dtype=np.uint8)

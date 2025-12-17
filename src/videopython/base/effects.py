@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from multiprocessing import Pool
 from typing import Literal, final
 
 import cv2
@@ -132,32 +133,51 @@ class Blur(Effect):
         self.iterations = iterations
         self.kernel_size = kernel_size
 
+    def _blur_frame(self, frame: np.ndarray, sigma: float) -> np.ndarray:
+        """Apply Gaussian blur to a single frame.
+
+        Args:
+            frame: Frame to blur.
+            sigma: Gaussian sigma value.
+
+        Returns:
+            Blurred frame.
+        """
+        return cv2.GaussianBlur(frame, self.kernel_size, sigma)
+
     def _apply(self, video: Video) -> Video:
         n_frames = len(video.frames)
-        new_frames = []
+
+        # Calculate base sigma from kernel size (OpenCV formula)
+        base_sigma = 0.3 * ((self.kernel_size[0] - 1) * 0.5 - 1) + 0.8
+
+        # Multiple blur iterations with sigma S approximate single blur with sigma S*sqrt(iterations)
+        # This is much faster than iterative application
+        max_sigma = base_sigma * np.sqrt(self.iterations)
+
+        # Calculate sigma for each frame based on mode
         if self.mode == "constant":
-            for frame in video.frames:
-                blurred_frame = frame
-                for _ in range(self.iterations):
-                    blurred_frame = cv2.GaussianBlur(blurred_frame, self.kernel_size, 0)
-                new_frames.append(blurred_frame)
+            sigmas = np.full(n_frames, max_sigma)
         elif self.mode == "ascending":
-            for i, frame in tqdm(enumerate(video.frames)):
-                frame_iterations = max(1, round((i / n_frames) * self.iterations))
-                blurred_frame = frame
-                for _ in range(frame_iterations):
-                    blurred_frame = cv2.GaussianBlur(blurred_frame, self.kernel_size, 0)
-                new_frames.append(blurred_frame)
+            # Linearly increase blur intensity from start to end
+            iteration_ratios = np.linspace(1 / n_frames, 1.0, n_frames)
+            sigmas = base_sigma * np.sqrt(np.maximum(1, np.round(iteration_ratios * self.iterations)))
         elif self.mode == "descending":
-            for i, frame in tqdm(enumerate(video.frames)):
-                frame_iterations = max(round(((n_frames - i) / n_frames) * self.iterations), 1)
-                blurred_frame = frame
-                for _ in range(frame_iterations):
-                    blurred_frame = cv2.GaussianBlur(blurred_frame, self.kernel_size, 0)
-                new_frames.append(blurred_frame)
+            # Linearly decrease blur intensity from start to end
+            iteration_ratios = np.linspace(1.0, 1 / n_frames, n_frames)
+            sigmas = base_sigma * np.sqrt(np.maximum(1, np.round(iteration_ratios * self.iterations)))
         else:
             raise ValueError(f"Unknown mode: `{self.mode}`.")
-        video.frames = np.asarray(new_frames)
+
+        print(f"Applying {self.mode} blur...")
+        # Use multiprocessing to blur frames in parallel
+        with Pool() as pool:
+            new_frames = pool.starmap(
+                self._blur_frame,
+                [(frame, sigma) for frame, sigma in zip(video.frames, sigmas)],
+            )
+
+        video.frames = np.array(new_frames, dtype=np.uint8)
         return video
 
 

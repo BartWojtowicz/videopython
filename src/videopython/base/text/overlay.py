@@ -23,6 +23,9 @@ RGBColor: TypeAlias = tuple[int, int, int]
 RGBAColor: TypeAlias = tuple[int, int, int, int]
 PositionType: TypeAlias = tuple[int, int] | tuple[float, float]
 
+# Text highlight styling constants
+DEFAULT_HIGHLIGHT_SIZE_MULTIPLIER = 1.5  # Make highlighted words 50% larger
+
 
 # Text alignment enum
 class TextAlign(str, Enum):
@@ -574,7 +577,7 @@ class ImageText:
         words: list[str] | None = None,
         highlight_word_index: int | None = None,
         highlight_color: RGBColor | None = None,
-        highlight_size_multiplier: float = 1.5,
+        highlight_size_multiplier: float = DEFAULT_HIGHLIGHT_SIZE_MULTIPLIER,
         highlight_bold_font: str | None = None,
     ) -> tuple[int, int]:
         """
