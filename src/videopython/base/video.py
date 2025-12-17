@@ -338,7 +338,8 @@ class Video:
 
     def split(self, frame_idx: int | None = None) -> tuple[Video, Video]:
         if frame_idx:
-            assert 0 <= frame_idx <= len(self.frames)
+            if not (0 <= frame_idx <= len(self.frames)):
+                raise ValueError(f"frame_idx must be between 0 and {len(self.frames)}, got {frame_idx}")
         else:
             frame_idx = len(self.frames) // 2
 

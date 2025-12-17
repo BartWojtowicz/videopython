@@ -7,7 +7,7 @@ The main purpose of this file are 2 classes:
 """
 
 from enum import Enum
-from typing import TypeAlias, Union
+from typing import TypeAlias
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -18,10 +18,10 @@ from videopython.base.text.transcription import Transcription, TranscriptionSegm
 from videopython.base.video import Video
 
 # Type aliases for clarity
-MarginType: TypeAlias = Union[int, tuple[int, int, int, int]]
+MarginType: TypeAlias = int | tuple[int, int, int, int]
 RGBColor: TypeAlias = tuple[int, int, int]
 RGBAColor: TypeAlias = tuple[int, int, int, int]
-PositionType: TypeAlias = Union[tuple[int, int], tuple[float, float]]
+PositionType: TypeAlias = tuple[int, int] | tuple[float, float]
 
 
 # Text alignment enum
@@ -562,7 +562,7 @@ class ImageText:
         text: str,
         font_filename: str,
         xy: PositionType,
-        box_width: Union[int, float] | None = None,
+        box_width: int | float | None = None,
         font_size: int = 11,
         font_border_size: int = 0,
         text_color: RGBColor = (0, 0, 0),
@@ -951,7 +951,7 @@ class TranscriptionOverlay:
         background_color: RGBAColor | None = (0, 0, 0, 100),
         background_padding: int = 15,
         position: PositionType = (0.5, 0.7),
-        box_width: Union[int, float] = 0.6,
+        box_width: int | float = 0.6,
         text_align: TextAlign = TextAlign.CENTER,
         anchor: AnchorPoint = AnchorPoint.CENTER,
         margin: MarginType = 20,

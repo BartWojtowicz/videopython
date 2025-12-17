@@ -1,7 +1,7 @@
-from typing import Any, Dict, Literal
+from typing import Any, Literal
 
 class Whisper:
-    def transcribe(self, audio: Any, word_timestamps: bool) -> Dict[str, Any]: ...
+    def transcribe(self, audio: Any, word_timestamps: bool) -> dict[str, Any]: ...
 
 def load_model(name: Literal["tiny", "base", "small", "medium", "large", "turbo"]) -> Whisper: ...
 

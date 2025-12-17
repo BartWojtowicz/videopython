@@ -52,7 +52,16 @@ class Effect(ABC):
 
 
 class FullImageOverlay(Effect):
+    """Overlays an image on top of video frames with optional transparency and fade."""
+
     def __init__(self, overlay_image: np.ndarray, alpha: float | None = None, fade_time: float = 0.0):
+        """Initialize image overlay effect.
+
+        Args:
+            overlay_image: RGB or RGBA image to overlay, must match video dimensions.
+            alpha: Overall opacity from 0 (transparent) to 1 (opaque), defaults to 1.0.
+            fade_time: Duration in seconds for fade in/out at start and end.
+        """
         if alpha is not None and not 0 <= alpha <= 1:
             raise ValueError("Alpha must be in range [0, 1]!")
         elif not (overlay_image.ndim == 3 and overlay_image.shape[-1] in [3, 4]):
@@ -102,12 +111,21 @@ class FullImageOverlay(Effect):
 
 
 class Blur(Effect):
+    """Applies Gaussian blur with constant, ascending, or descending intensity."""
+
     def __init__(
         self,
         mode: Literal["constant", "ascending", "descending"],
         iterations: int,
         kernel_size: tuple[int, int] = (5, 5),
     ):
+        """Initialize blur effect.
+
+        Args:
+            mode: Blur mode - "constant" (same blur), "ascending" (increasing blur), or "descending" (decreasing blur).
+            iterations: Number of blur iterations to apply.
+            kernel_size: Gaussian kernel size for blur operation.
+        """
         if iterations < 1:
             raise ValueError("Iterations must be at least 1!")
         self.mode = mode
@@ -144,7 +162,15 @@ class Blur(Effect):
 
 
 class Zoom(Effect):
+    """Applies zoom in or out effect by cropping and scaling frames progressively."""
+
     def __init__(self, zoom_factor: float, mode: Literal["in", "out"]):
+        """Initialize zoom effect.
+
+        Args:
+            zoom_factor: Maximum zoom level, must be greater than 1.
+            mode: Zoom direction - "in" for zoom in effect, "out" for zoom out effect.
+        """
         if zoom_factor <= 1:
             raise ValueError("Zoom factor must be greater than 1!")
         self.zoom_factor = zoom_factor
