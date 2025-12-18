@@ -21,26 +21,7 @@ jobs:
       - name: Install dependencies
         run: uv sync --dev
       - name: Run base tests
-        run: uv run pytest src/tests --ignore=src/tests/ai --cov=src/videopython/base --cov-report=term --cov-report=term-missing
-
-  ai_tests:
-    name: AI tests
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-      - name: Install FFmpeg
-        run: |
-          sudo apt-get update
-          sudo apt-get install ffmpeg -y
-      - name: Set up Python
-        run: uv python install 312
-      - name: Install all dependencies including AI
-        run: uv sync --all-extras
-      - name: Run AI tests
-        run: uv run pytest src/tests/ai --cov=src/videopython/ai --cov-report=term --cov-report=term-missing
+        run: uv run pytest src/tests --cov=src/videopython/base --cov-report=term --cov-report=term-missing
 
   static_checks:
     name: Linting and formatting
