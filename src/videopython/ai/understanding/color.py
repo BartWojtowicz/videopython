@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import cv2
 import numpy as np
-from sklearn.cluster import KMeans
+from sklearn.cluster import KMeans  # type: ignore[import-untyped]
 
 from videopython.base.description import ColorHistogram
 
@@ -62,7 +62,7 @@ class ColorAnalyzer:
             List of dominant colors as RGB tuples (0-255)
         """
         # Reshape frame to list of pixels
-        pixels = frame.reshape(-1, 3)
+        pixels: np.ndarray = frame.reshape(-1, 3)
 
         # Sample pixels if image is very large (for performance)
         if len(pixels) > 10000:
@@ -80,7 +80,9 @@ class ColorAnalyzer:
 
         # Sort colors by frequency (most common first)
         sorted_indices = np.argsort(-label_counts)
-        dominant_colors = [tuple(colors[i].tolist()) for i in sorted_indices]
+        dominant_colors: list[tuple[int, int, int]] = [
+            (int(colors[i][0]), int(colors[i][1]), int(colors[i][2])) for i in sorted_indices
+        ]
 
         return dominant_colors
 
@@ -93,16 +95,15 @@ class ColorAnalyzer:
         Returns:
             Tuple of (hue_hist, saturation_hist, value_hist)
         """
-        # Channel configs: (channel_index, num_bins, range)
-        channels = [(0, 50, [0, 180]), (1, 60, [0, 256]), (2, 60, [0, 256])]
-        histograms = []
+        h_hist = cv2.calcHist([hsv], [0], None, [50], [0, 180])
+        s_hist = cv2.calcHist([hsv], [1], None, [60], [0, 256])
+        v_hist = cv2.calcHist([hsv], [2], None, [60], [0, 256])
 
-        for channel, bins, range_vals in channels:
-            hist = cv2.calcHist([hsv], [channel], None, [bins], range_vals)
-            cv2.normalize(hist, hist, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
-            histograms.append(hist)
+        cv2.normalize(h_hist, h_hist, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
+        cv2.normalize(s_hist, s_hist, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
+        cv2.normalize(v_hist, v_hist, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
 
-        return tuple(histograms)
+        return (h_hist, s_hist, v_hist)
 
     def calculate_histogram_difference(self, frame1: np.ndarray, frame2: np.ndarray) -> float:
         """Calculate histogram difference between two frames.
