@@ -341,20 +341,20 @@ class Video:
     def is_loaded(self) -> bool:
         return self.fps is not None and self.frames is not None and self.audio is not None
 
-    def split(self, frame_idx: int | None = None) -> tuple[Video, Video]:
-        if frame_idx:
-            if not (0 <= frame_idx <= len(self.frames)):
-                raise ValueError(f"frame_idx must be between 0 and {len(self.frames)}, got {frame_idx}")
+    def split(self, frame_index: int | None = None) -> tuple[Video, Video]:
+        if frame_index:
+            if not (0 <= frame_index <= len(self.frames)):
+                raise ValueError(f"frame_idx must be between 0 and {len(self.frames)}, got {frame_index}")
         else:
-            frame_idx = len(self.frames) // 2
+            frame_index = len(self.frames) // 2
 
         split_videos = (
-            self.from_frames(self.frames[:frame_idx], self.fps),
-            self.from_frames(self.frames[frame_idx:], self.fps),
+            self.from_frames(self.frames[:frame_index], self.fps),
+            self.from_frames(self.frames[frame_index:], self.fps),
         )
 
         # Split audio at the corresponding time point
-        split_time = frame_idx / self.fps
+        split_time = frame_index / self.fps
         split_videos[0].audio = self.audio.slice(start_seconds=0, end_seconds=split_time)
         split_videos[1].audio = self.audio.slice(start_seconds=split_time)
 

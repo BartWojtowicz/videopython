@@ -79,7 +79,7 @@ class AnchorPoint(str, Enum):
 class ImageText:
     def __init__(
         self,
-        image_size: tuple[int, int] = (1080, 1920),  # (width, height)
+        image_size: tuple[int, int] = (1920, 1080),  # (height, width) - NumPy convention
         mode: str = "RGBA",
         background: RGBAColor = (0, 0, 0, 0),  # Transparent background
     ):
@@ -87,7 +87,7 @@ class ImageText:
         Initialize an image for text rendering.
 
         Args:
-            image_size: Dimensions of the image (width, height)
+            image_size: Dimensions of the image (height, width) - NumPy convention
             mode: Image mode (RGB, RGBA, etc.)
             background: Background color with alpha channel
 
@@ -100,8 +100,9 @@ class ImageText:
         if len(background) != 4:
             raise ValueError("Background color must be RGBA (4 values)")
 
-        self.image_size = image_size
-        self.image = Image.new(mode, image_size, color=background)
+        self.image_size = image_size  # Stored as (height, width)
+        # PIL uses (width, height), so we reverse for Image.new
+        self.image = Image.new(mode, (image_size[1], image_size[0]), color=background)
         self._draw = ImageDraw.Draw(self.image)
         self._font_cache: dict[tuple[str, int], ImageFont.FreeTypeFont] = {}  # Cache for font objects
 
@@ -302,8 +303,8 @@ class ImageText:
         margin_top, margin_right, margin_bottom, margin_left = self._process_margin(margin)
 
         # Calculate available area considering margins
-        available_width = self.image_size[0] - margin_left - margin_right
-        available_height = self.image_size[1] - margin_top - margin_bottom
+        available_width = self.image_size[1] - margin_left - margin_right
+        available_height = self.image_size[0] - margin_top - margin_bottom
 
         # Convert relative position to absolute if needed
         x_pos, y_pos = self._convert_position(position, margin_top, margin_left, available_width, available_height)
@@ -387,7 +388,7 @@ class ImageText:
         x, y = self._calculate_position(text_dimensions, xy, anchor, margin)
 
         # Verify text will fit within bounds
-        if x < 0 or y < 0 or x + text_dimensions[0] > self.image_size[0] or y + text_dimensions[1] > self.image_size[1]:
+        if x < 0 or y < 0 or x + text_dimensions[0] > self.image_size[1] or y + text_dimensions[1] > self.image_size[0]:
             raise OutOfBoundsError(f"Text with size {text_dimensions} at position ({x}, {y}) is out of bounds!")
 
         # Draw border if requested
@@ -642,8 +643,8 @@ class ImageText:
 
         # Process margins to determine available area
         margin_top, margin_right, margin_bottom, margin_left = self._process_margin(margin)
-        available_width = self.image_size[0] - margin_left - margin_right
-        available_height = self.image_size[1] - margin_top - margin_bottom
+        available_width = self.image_size[1] - margin_left - margin_right
+        available_height = self.image_size[0] - margin_top - margin_bottom
 
         # Handle relative box width
         if box_width is None:
@@ -680,8 +681,8 @@ class ImageText:
         if (
             x_pos < 0
             or y_pos < 0
-            or x_pos + box_width > self.image_size[0]
-            or y_pos + lines_height > self.image_size[1]
+            or x_pos + box_width > self.image_size[1]
+            or y_pos + lines_height > self.image_size[0]
         ):
             raise OutOfBoundsError(
                 f"Text box with size ({box_width}x{lines_height}) at position ({x_pos}, {y_pos}) is out of bounds!"
@@ -793,8 +794,8 @@ class ImageText:
             # Make sure we are inside image bounds
             xmin = max(0, xmin)
             ymin = max(0, ymin)
-            xmax = min(xmax, self.image_size[0])
-            ymax = min(ymax, self.image_size[1])
+            xmax = min(xmax, self.image_size[1])
+            ymax = min(ymax, self.image_size[0])
 
             # Skip if bounding box is invalid
             if xmin >= xmax or ymin >= ymax:
@@ -1026,7 +1027,7 @@ class TranscriptionOverlay:
             return self._overlay_cache[cache_key]
 
         # Create ImageText with video dimensions
-        img_text = ImageText(image_size=(width, height), background=(0, 0, 0, 0))
+        img_text = ImageText(image_size=(height, width), background=(0, 0, 0, 0))
 
         # Write text with highlighting
         img_text.write_text_box(
@@ -1062,9 +1063,9 @@ class TranscriptionOverlay:
 
         new_frames = []
 
-        for frame_idx, frame in enumerate(tqdm(video.frames)):
+        for frame_index, frame in enumerate(tqdm(video.frames)):
             # Calculate timestamp for this frame
-            timestamp = frame_idx / video.fps
+            timestamp = frame_index / video.fps
 
             # Get active segment at this timestamp
             active_segment = self._get_active_segment(transcription, timestamp)

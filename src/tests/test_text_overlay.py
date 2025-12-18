@@ -9,8 +9,8 @@ from .test_config import TEST_FONT_PATH
 
 def test_text_is_rendered_correctly():
     """Test that text is actually rendered and visible in the image."""
-    # Create a black background image
-    img_size = (400, 200)
+    # Create a black background image (height, width)
+    img_size = (200, 400)
     my_overlay = ImageText(image_size=img_size, background=(0, 0, 0, 255))
 
     test_text = "Hello World"
@@ -38,12 +38,13 @@ def test_text_is_rendered_correctly():
     assert white_pixel_count > 100, f"Only {white_pixel_count} white pixels found, expected more"
 
     # Verify image is not all white (which would indicate a rendering error)
-    assert white_pixel_count < (img_size[0] * img_size[1]), "Too many white pixels found"
+    height, width = img_size
+    assert white_pixel_count < (height * width), "Too many white pixels found"
 
 
 @pytest.mark.parametrize("place", ["left", "center", "right"])
 def test_overlaying_video_with_text(place, small_video):
-    my_overlay = ImageText(image_size=(800, 500))
+    my_overlay = ImageText(image_size=(500, 800))
     my_overlay.write_text_box(
         "Test test test test test test test",
         box_width=800,
@@ -90,7 +91,7 @@ def test_overlaying_video_with_text(place, small_video):
 )
 def test_text_anchor_positioning(anchor_point):
     """Test that text is positioned correctly based on anchor point."""
-    # Create a black background image
+    # Create a black background image (height, width)
     img_size = (500, 500)
     my_overlay = ImageText(image_size=img_size, background=(0, 0, 0, 255))
     text = "Anchor"
@@ -178,7 +179,7 @@ def test_text_anchor_positioning(anchor_point):
 
 def test_relative_positioning():
     """Test that relative positioning works correctly."""
-    img_size = (500, 300)
+    img_size = (300, 500)  # (height, width)
     my_overlay = ImageText(image_size=img_size, background=(0, 0, 0, 255))
 
     # Define text and styling
@@ -186,12 +187,13 @@ def test_relative_positioning():
     text_color = (255, 255, 255)
 
     # Use relative positioning (0.5, 0.5 should be center of image)
+    height, width = img_size
     rel_x, rel_y = 0.5, 0.5
-    expected_x, expected_y = int(img_size[0] * rel_x), int(img_size[1] * rel_y)
+    expected_x, expected_y = int(width * rel_x), int(height * rel_y)
 
     # Add relative width (50% of image width)
     rel_width = 0.5
-    expected_width = int(img_size[0] * rel_width)
+    expected_width = int(width * rel_width)
 
     # Write text using relative positioning and width
     my_overlay.write_text_box(
@@ -233,7 +235,7 @@ def test_relative_positioning():
 
 def test_margin_handling():
     """Test that margins are respected in text positioning."""
-    img_size = (400, 300)
+    img_size = (300, 400)  # (height, width)
     my_overlay = ImageText(image_size=img_size, background=(0, 0, 0, 255))
 
     text = "Margin Test"
@@ -241,9 +243,10 @@ def test_margin_handling():
     margin = 50  # 50px margin on all sides
 
     # Expected available area
+    height, width = img_size
     # These variables are kept for documentation purposes
-    _ = img_size[0] - (2 * margin)  # available_width
-    _ = img_size[1] - (2 * margin)  # available_height
+    _ = width - (2 * margin)  # available_width
+    _ = height - (2 * margin)  # available_height
 
     # Write text in top-left corner with margin
     my_overlay.write_text(
@@ -273,13 +276,13 @@ def test_margin_handling():
     assert abs(min_y - margin) < 10, f"Text y position {min_y} too far from margin {margin}"
 
     # Text should not exceed the available area
-    assert max_x <= img_size[0] - margin, f"Text exceeds right margin: {max_x} > {img_size[0] - margin}"
-    assert max_y <= img_size[1] - margin, f"Text exceeds bottom margin: {max_y} > {img_size[1] - margin}"
+    assert max_x <= width - margin, f"Text exceeds right margin: {max_x} > {width - margin}"
+    assert max_y <= height - margin, f"Text exceeds bottom margin: {max_y} > {height - margin}"
 
 
 def test_text_highlighting_basic():
     """Test basic word highlighting functionality."""
-    img_size = (600, 300)
+    img_size = (300, 600)  # (height, width)
     my_overlay = ImageText(image_size=img_size, background=(0, 0, 0, 255))
 
     text = "Hello world test"
@@ -319,7 +322,7 @@ def test_text_highlighting_basic():
 
 def test_text_highlighting_different_multipliers():
     """Test highlighting with different size multipliers."""
-    img_size = (500, 400)
+    img_size = (400, 500)  # (height, width)
     my_overlay = ImageText(image_size=img_size, background=(0, 0, 0, 255))
 
     text = "Small big text"
@@ -352,7 +355,7 @@ def test_text_highlighting_different_multipliers():
 
 def test_text_highlighting_edge_cases():
     """Test highlighting edge cases and error conditions."""
-    img_size = (400, 200)
+    img_size = (200, 400)  # (height, width)
     my_overlay = ImageText(image_size=img_size, background=(0, 0, 0, 255))
 
     text = "One two three"
@@ -399,7 +402,7 @@ def test_text_highlighting_edge_cases():
 
 def test_text_highlighting_default_color():
     """Test that highlight_color defaults to text_color when not specified."""
-    img_size = (400, 200)
+    img_size = (200, 400)  # (height, width)
     my_overlay = ImageText(image_size=img_size, background=(0, 0, 0, 255))
 
     text = "Default color test"
@@ -427,7 +430,7 @@ def test_text_highlighting_default_color():
 
 def test_text_highlighting_multiline():
     """Test highlighting words across multiple lines."""
-    img_size = (300, 400)
+    img_size = (400, 300)  # (height, width)
     my_overlay = ImageText(image_size=img_size, background=(0, 0, 0, 255))
 
     # Long text that will wrap to multiple lines
@@ -461,7 +464,7 @@ def test_text_highlighting_multiline():
 
 def test_text_highlighting_first_and_last_word():
     """Test highlighting the first and last words."""
-    img_size = (500, 200)
+    img_size = (200, 500)  # (height, width)
 
     text = "First middle last"
     base_color = (255, 255, 255)
