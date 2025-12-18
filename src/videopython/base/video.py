@@ -15,6 +15,11 @@ from videopython.base.utils import generate_random_name
 
 ALLOWED_VIDEO_FORMATS = Literal["mp4", "avi", "mov", "mkv", "webm"]
 
+# Frame buffer constants for video loading
+# Used to pre-allocate frame array with safety margin for frame rate variations
+FRAME_BUFFER_MULTIPLIER = 1.1  # 10% buffer for frame rate estimation errors
+FRAME_BUFFER_PADDING = 10  # Additional fixed frame padding
+
 
 class VideoMetadataError(Exception):
     """Raised when there's an error getting video metadata"""
@@ -218,8 +223,8 @@ class Video:
             else:
                 estimated_duration = total_duration
 
-            # Add 10% buffer to handle frame rate variations and rounding
-            estimated_frames = int(estimated_duration * fps * 1.1) + 10
+            # Add buffer to handle frame rate variations and rounding
+            estimated_frames = int(estimated_duration * fps * FRAME_BUFFER_MULTIPLIER) + FRAME_BUFFER_PADDING
 
             # Pre-allocate numpy array
             frames = np.empty((estimated_frames, height, width, 3), dtype=np.uint8)
@@ -336,19 +341,20 @@ class Video:
     def is_loaded(self) -> bool:
         return self.fps is not None and self.frames is not None and self.audio is not None
 
-    def split(self, frame_idx: int | None = None) -> tuple[Video, Video]:
-        if frame_idx:
-            assert 0 <= frame_idx <= len(self.frames)
+    def split(self, frame_index: int | None = None) -> tuple[Video, Video]:
+        if frame_index:
+            if not (0 <= frame_index <= len(self.frames)):
+                raise ValueError(f"frame_idx must be between 0 and {len(self.frames)}, got {frame_index}")
         else:
-            frame_idx = len(self.frames) // 2
+            frame_index = len(self.frames) // 2
 
         split_videos = (
-            self.from_frames(self.frames[:frame_idx], self.fps),
-            self.from_frames(self.frames[frame_idx:], self.fps),
+            self.from_frames(self.frames[:frame_index], self.fps),
+            self.from_frames(self.frames[frame_index:], self.fps),
         )
 
         # Split audio at the corresponding time point
-        split_time = frame_idx / self.fps
+        split_time = frame_index / self.fps
         split_videos[0].audio = self.audio.slice(start_seconds=0, end_seconds=split_time)
         split_videos[1].audio = self.audio.slice(start_seconds=split_time)
 

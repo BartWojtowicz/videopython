@@ -17,7 +17,8 @@ class Transition(ABC):
 
     @final
     def apply(self, videos: tuple[Video, Video]) -> Video:
-        assert videos[0].metadata.can_be_merged_with(videos[1].metadata)
+        if not videos[0].metadata.can_be_merged_with(videos[1].metadata):
+            raise ValueError("Videos have incompatible metadata and cannot be merged")
         return self._apply(videos)
 
     @abstractmethod
@@ -39,7 +40,8 @@ class FadeTransition(Transition):
         self.effect_time_seconds = effect_time_seconds
 
     def fade(self, frames1, frames2):
-        assert len(frames1) == len(frames2)
+        if len(frames1) != len(frames2):
+            raise ValueError(f"Frame sequences must have equal length, got {len(frames1)} and {len(frames2)}")
         t = len(frames1)
         # Calculate transitioned frames using weighted average
         transitioned_frames = (

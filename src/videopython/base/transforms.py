@@ -52,27 +52,67 @@ class TransformationPipeline:
 
 
 class CutFrames(Transformation):
+    """Cuts video to a specific frame range."""
+
     def __init__(self, start: int, end: int):
+        """Initialize frame cutter.
+
+        Args:
+            start: Start frame index (inclusive).
+            end: End frame index (exclusive).
+        """
         self.start = start
         self.end = end
 
     def apply(self, video: Video) -> Video:
+        """Apply frame cut to video.
+
+        Args:
+            video: Input video.
+
+        Returns:
+            Video with frames from start to end.
+        """
         video = video[self.start : self.end]
         return video
 
 
 class CutSeconds(Transformation):
+    """Cuts video to a specific time range in seconds."""
+
     def __init__(self, start: float | int, end: float | int):
+        """Initialize time-based cutter.
+
+        Args:
+            start: Start time in seconds.
+            end: End time in seconds.
+        """
         self.start = start
         self.end = end
 
     def apply(self, video: Video) -> Video:
+        """Apply time-based cut to video.
+
+        Args:
+            video: Input video.
+
+        Returns:
+            Video cut from start to end seconds.
+        """
         video = video[round(self.start * video.fps) : round(self.end * video.fps)]
         return video
 
 
 class Resize(Transformation):
+    """Resizes video to specified dimensions, maintaining aspect ratio if only one dimension is provided."""
+
     def __init__(self, width: int | None = None, height: int | None = None):
+        """Initialize resizer.
+
+        Args:
+            width: Target width in pixels, or None to maintain aspect ratio.
+            height: Target height in pixels, or None to maintain aspect ratio.
+        """
         self.width = width
         self.height = height
         if width is None and height is None:
@@ -86,6 +126,14 @@ class Resize(Transformation):
         )
 
     def apply(self, video: Video) -> Video:
+        """Resize video frames to target dimensions.
+
+        Args:
+            video: Input video.
+
+        Returns:
+            Resized video.
+        """
         if self.width and self.height:
             new_height = self.height
             new_width = self.width
@@ -111,7 +159,14 @@ class Resize(Transformation):
 
 
 class ResampleFPS(Transformation):
+    """Resamples video to a different frame rate, upsampling or downsampling as needed."""
+
     def __init__(self, fps: int | float):
+        """Initialize FPS resampler.
+
+        Args:
+            fps: Target frames per second.
+        """
         self.fps = float(fps)
 
     def _downsample(self, video: Video) -> Video:
@@ -137,6 +192,14 @@ class ResampleFPS(Transformation):
         return video
 
     def apply(self, video: Video) -> Video:
+        """Resample video to target FPS.
+
+        Args:
+            video: Input video.
+
+        Returns:
+            Video with target frame rate.
+        """
         if video.fps == self.fps:
             return video
         elif video.fps > self.fps:
@@ -153,12 +216,29 @@ class CropMode(Enum):
 
 
 class Crop(Transformation):
+    """Crops video to specified dimensions."""
+
     def __init__(self, width: int, height: int, mode: CropMode = CropMode.CENTER):
+        """Initialize cropper.
+
+        Args:
+            width: Target crop width in pixels.
+            height: Target crop height in pixels.
+            mode: Crop mode, defaults to center crop.
+        """
         self.width = width
         self.height = height
         self.mode = mode
 
     def apply(self, video: Video) -> Video:
+        """Crop video to target dimensions.
+
+        Args:
+            video: Input video.
+
+        Returns:
+            Cropped video.
+        """
         if self.mode == CropMode.CENTER:
             current_shape = video.frame_shape[:2]
             center_height = current_shape[0] // 2

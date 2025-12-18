@@ -7,7 +7,14 @@ from videopython.base.video import Video
 
 
 class StackVideos:
+    """Stacks two videos together horizontally or vertically."""
+
     def __init__(self, mode: Literal["horizontal", "vertical"]) -> None:
+        """Initialize video stacker.
+
+        Args:
+            mode: Stack direction, either "horizontal" or "vertical".
+        """
         self.mode = mode
 
     def _validate(self, video1: Video, video2: Video) -> tuple[Video, Video]:
@@ -38,6 +45,14 @@ class StackVideos:
         return (video1, video2)
 
     def apply(self, videos: tuple[Video, Video]) -> Video:
+        """Stack two videos together, aligning FPS, dimensions, and duration.
+
+        Args:
+            videos: Tuple of two videos to stack.
+
+        Returns:
+            Stacked video with overlaid audio.
+        """
         videos = self._validate(*videos)
         axis = 1 if self.mode == "vertical" else 2
         new_frames = np.concatenate((videos[0].frames, videos[1].frames), axis=axis)

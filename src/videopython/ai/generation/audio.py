@@ -1,5 +1,3 @@
-from typing import Optional
-
 import torch
 from soundpython import Audio, AudioMetadata
 from transformers import AutoModel, AutoProcessor, MusicgenForConditionalGeneration
@@ -11,27 +9,14 @@ TTS_MODEL = "suno/bark"
 class TextToSpeech:
     def __init__(
         self,
-        device: Optional[str] = None,
+        device: str | None = None,
         model_size: str = "base",
     ):
-        """
-        Initialize TextToSpeech with Bark model from Suno AI.
-
-        Bark generates highly realistic, multilingual speech with emotions, laughter,
-        and other audio effects. It doesn't require voice cloning files.
+        """Initialize text-to-speech model using Bark.
 
         Args:
-            device: Device to run the model on ('cuda' or 'cpu'). If None, automatically
-                   selects cuda if available.
-            model_size: Model size to use. Options: 'base' (suno/bark) or 'small' (suno/bark-small).
-                       'base' offers better quality, 'small' is faster. Defaults to 'base'.
-
-        Example:
-            tts = TextToSpeech()
-            audio = tts.generate_audio("Hello world!")
-
-            # With emotion
-            audio = tts.generate_audio("Hello world! [laughs]")
+            device: Device to run on ('cuda' or 'cpu'), defaults to auto-detect.
+            model_size: Model size - 'base' (better quality) or 'small' (faster).
         """
         if model_size not in ["base", "small"]:
             raise ValueError(f"model_size must be 'base' or 'small', got '{model_size}'")
@@ -48,40 +33,18 @@ class TextToSpeech:
     def generate_audio(
         self,
         text: str,
-        voice_preset: Optional[str] = None,
+        voice_preset: str | None = None,
         do_sample: bool = True,
     ) -> Audio:
-        """
-        Generate speech audio from text.
-
-        Bark supports special markup for effects:
-        - [laughs], [sighs], [gasps], [clears throat]
-        - CAPITALIZATION for emphasis
-        - ... for hesitation
-        - MAN/WOMAN for speaker change
+        """Generate speech audio from text with support for emotion markers like [laughs], [sighs].
 
         Args:
-            text: The text to synthesize into speech. Can include emotion markers
-                 like [laughs], [sighs], etc.
-            voice_preset: Optional voice preset (e.g., "v2/en_speaker_0" through "v2/en_speaker_9").
-                         If None, uses default voice. See Bark docs for available presets.
-            do_sample: Whether to use sampling for generation. True gives more natural,
-                      varied speech. False is more deterministic. Defaults to True.
+            text: Text to synthesize, can include emotion markers.
+            voice_preset: Voice preset ID (e.g., "v2/en_speaker_0"), defaults to None.
+            do_sample: Use sampling for more natural speech, defaults to True.
 
         Returns:
-            Audio object containing the generated speech at 24 kHz.
-
-        Example:
-            tts = TextToSpeech()
-
-            # Simple text
-            audio = tts.generate_audio("Hello, how are you?")
-
-            # With emotion
-            audio = tts.generate_audio("That's hilarious! [laughs]")
-
-            # With voice preset
-            audio = tts.generate_audio("Hello!", voice_preset="v2/en_speaker_6")
+            Generated speech audio at 24 kHz.
         """
         inputs = self.processor(text=[text], return_tensors="pt", voice_preset=voice_preset)
 
@@ -107,15 +70,23 @@ class TextToSpeech:
 
 
 class TextToMusic:
+    """Generates music from text using the Musicgen model."""
+
     def __init__(self) -> None:
-        """
-        Generates music from text using the Musicgen model.
-        Check the license for the model before using it.
-        """
+        """Initialize text-to-music generator with Musicgen small model."""
         self.processor = AutoProcessor.from_pretrained(MUSIC_GENERATION_MODEL_SMALL)
         self.model = MusicgenForConditionalGeneration.from_pretrained(MUSIC_GENERATION_MODEL_SMALL)
 
     def generate_audio(self, text: str, max_new_tokens: int) -> Audio:
+        """Generate music audio from text description.
+
+        Args:
+            text: Text description of desired music.
+            max_new_tokens: Maximum length of generated audio in tokens.
+
+        Returns:
+            Generated music audio.
+        """
         inputs = self.processor(
             text=[text],
             padding=True,

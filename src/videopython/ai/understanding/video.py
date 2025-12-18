@@ -9,6 +9,14 @@ from videopython.ai.understanding.image import ImageToText
 from videopython.base.description import Scene, SceneDescription, VideoDescription
 from videopython.base.video import Video
 
+# Histogram configuration for HSV-based scene detection
+# HSV histograms provide better perceptual color comparison than RGB
+HISTOGRAM_BINS_H = 50  # Hue channel bins (fewer bins since hue wraps around)
+HISTOGRAM_BINS_S = 60  # Saturation channel bins
+HISTOGRAM_BINS_V = 60  # Value channel bins
+HUE_RANGE_MAX = 180  # OpenCV uses 0-180 range for hue
+HSV_RANGE_MAX = 256  # Standard 0-255 range for saturation and value
+
 
 class SceneDetector:
     """Detects scene changes in videos using histogram comparison.
@@ -50,7 +58,11 @@ class SceneDetector:
 
         # Calculate and normalize histograms for each channel (H, S, V)
         # Channel configs: (channel_index, num_bins, range)
-        channels = [(0, 50, [0, 180]), (1, 60, [0, 256]), (2, 60, [0, 256])]
+        channels = [
+            (0, HISTOGRAM_BINS_H, [0, HUE_RANGE_MAX]),
+            (1, HISTOGRAM_BINS_S, [0, HSV_RANGE_MAX]),
+            (2, HISTOGRAM_BINS_V, [0, HSV_RANGE_MAX]),
+        ]
         histograms = []
 
         for channel, bins, range_vals in channels:

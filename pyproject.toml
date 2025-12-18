@@ -104,7 +104,7 @@ packages = ["src/videopython"]
 include = ["src/videopython", "src/videopython/py.typed"]
 
 [tool.pytest]
-pythonpath = [".src/"]
+pythonpath = ["src/"]
 testpaths = ["src/tests"]
 python_files = ["test_*.py"]
 addopts = "-v --tb=short"
@@ -118,6 +118,8 @@ select = [
     "E", # pycodestyle errors
     "F", # pyflakes
     "I", # isort
+    "UP006", # Use PEP 604 annotation (e.g., `list[str]` instead of `typing.List[str]`)
+    "UP007", # Use `X | Y` for type annotations (instead of `Optional[X]` and `Union[X, Y]`)
 ]
 isort.known-first-party = ["videopython"]
 

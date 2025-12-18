@@ -1,4 +1,4 @@
-from typing import Literal, Union
+from typing import Literal
 
 import whisper
 from soundpython import Audio
@@ -96,7 +96,7 @@ class AudioToText:
 
         return Transcription(words=words)
 
-    def transcribe(self, media: Union[Audio, Video]) -> Transcription:
+    def transcribe(self, media: Audio | Video) -> Transcription:
         """Transcribe audio or video to text.
 
         Args:

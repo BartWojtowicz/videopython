@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from multiprocessing import Pool
 from typing import Literal, final
 
 import cv2
@@ -52,7 +53,16 @@ class Effect(ABC):
 
 
 class FullImageOverlay(Effect):
+    """Overlays an image on top of video frames with optional transparency and fade."""
+
     def __init__(self, overlay_image: np.ndarray, alpha: float | None = None, fade_time: float = 0.0):
+        """Initialize image overlay effect.
+
+        Args:
+            overlay_image: RGB or RGBA image to overlay, must match video dimensions.
+            alpha: Overall opacity from 0 (transparent) to 1 (opaque), defaults to 1.0.
+            fade_time: Duration in seconds for fade in/out at start and end.
+        """
         if alpha is not None and not 0 <= alpha <= 1:
             raise ValueError("Alpha must be in range [0, 1]!")
         elif not (overlay_image.ndim == 3 and overlay_image.shape[-1] in [3, 4]):
@@ -102,49 +112,85 @@ class FullImageOverlay(Effect):
 
 
 class Blur(Effect):
+    """Applies Gaussian blur with constant, ascending, or descending intensity."""
+
     def __init__(
         self,
         mode: Literal["constant", "ascending", "descending"],
         iterations: int,
         kernel_size: tuple[int, int] = (5, 5),
     ):
+        """Initialize blur effect.
+
+        Args:
+            mode: Blur mode - "constant" (same blur), "ascending" (increasing blur), or "descending" (decreasing blur).
+            iterations: Number of blur iterations to apply.
+            kernel_size: Gaussian kernel size for blur operation.
+        """
         if iterations < 1:
             raise ValueError("Iterations must be at least 1!")
         self.mode = mode
         self.iterations = iterations
         self.kernel_size = kernel_size
 
+    def _blur_frame(self, frame: np.ndarray, sigma: float) -> np.ndarray:
+        """Apply Gaussian blur to a single frame.
+
+        Args:
+            frame: Frame to blur.
+            sigma: Gaussian sigma value.
+
+        Returns:
+            Blurred frame.
+        """
+        return cv2.GaussianBlur(frame, self.kernel_size, sigma)
+
     def _apply(self, video: Video) -> Video:
         n_frames = len(video.frames)
-        new_frames = []
+
+        # Calculate base sigma from kernel size (OpenCV formula)
+        base_sigma = 0.3 * ((self.kernel_size[0] - 1) * 0.5 - 1) + 0.8
+
+        # Multiple blur iterations with sigma S approximate single blur with sigma S*sqrt(iterations)
+        # This is much faster than iterative application
+        max_sigma = base_sigma * np.sqrt(self.iterations)
+
+        # Calculate sigma for each frame based on mode
         if self.mode == "constant":
-            for frame in video.frames:
-                blurred_frame = frame
-                for _ in range(self.iterations):
-                    blurred_frame = cv2.GaussianBlur(blurred_frame, self.kernel_size, 0)
-                new_frames.append(blurred_frame)
+            sigmas = np.full(n_frames, max_sigma)
         elif self.mode == "ascending":
-            for i, frame in tqdm(enumerate(video.frames)):
-                frame_iterations = max(1, round((i / n_frames) * self.iterations))
-                blurred_frame = frame
-                for _ in range(frame_iterations):
-                    blurred_frame = cv2.GaussianBlur(blurred_frame, self.kernel_size, 0)
-                new_frames.append(blurred_frame)
+            # Linearly increase blur intensity from start to end
+            iteration_ratios = np.linspace(1 / n_frames, 1.0, n_frames)
+            sigmas = base_sigma * np.sqrt(np.maximum(1, np.round(iteration_ratios * self.iterations)))
         elif self.mode == "descending":
-            for i, frame in tqdm(enumerate(video.frames)):
-                frame_iterations = max(round(((n_frames - i) / n_frames) * self.iterations), 1)
-                blurred_frame = frame
-                for _ in range(frame_iterations):
-                    blurred_frame = cv2.GaussianBlur(blurred_frame, self.kernel_size, 0)
-                new_frames.append(blurred_frame)
+            # Linearly decrease blur intensity from start to end
+            iteration_ratios = np.linspace(1.0, 1 / n_frames, n_frames)
+            sigmas = base_sigma * np.sqrt(np.maximum(1, np.round(iteration_ratios * self.iterations)))
         else:
             raise ValueError(f"Unknown mode: `{self.mode}`.")
-        video.frames = np.asarray(new_frames)
+
+        print(f"Applying {self.mode} blur...")
+        # Use multiprocessing to blur frames in parallel
+        with Pool() as pool:
+            new_frames = pool.starmap(
+                self._blur_frame,
+                [(frame, sigma) for frame, sigma in zip(video.frames, sigmas)],
+            )
+
+        video.frames = np.array(new_frames, dtype=np.uint8)
         return video
 
 
 class Zoom(Effect):
+    """Applies zoom in or out effect by cropping and scaling frames progressively."""
+
     def __init__(self, zoom_factor: float, mode: Literal["in", "out"]):
+        """Initialize zoom effect.
+
+        Args:
+            zoom_factor: Maximum zoom level, must be greater than 1.
+            mode: Zoom direction - "in" for zoom in effect, "out" for zoom out effect.
+        """
         if zoom_factor <= 1:
             raise ValueError("Zoom factor must be greater than 1!")
         self.zoom_factor = zoom_factor
