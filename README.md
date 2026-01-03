@@ -60,63 +60,81 @@ savepath = video.save()
 
 ## AI powered examples
 
+The `videopython.ai` module supports multiple backends - local models and cloud APIs.
+
+### Backend Support
+
+| Class | local | openai | gemini | elevenlabs |
+|-------|-------|--------|--------|------------|
+| TextToVideo | Zeroscope | - | - | - |
+| ImageToVideo | SVD | - | - | - |
+| TextToSpeech | Bark | TTS | - | Multilingual v2 |
+| TextToMusic | MusicGen | - | - | - |
+| TextToImage | SDXL | DALL-E 3 | - | - |
+| ImageToText | BLIP | GPT-4o | Gemini | - |
+| AudioToText | Whisper | Whisper API | Gemini | - |
+| LLMSummarizer | Ollama | GPT-4o | Gemini | - |
+
+Cloud backends require API keys via environment variables:
+- `OPENAI_API_KEY` for OpenAI
+- `GOOGLE_API_KEY` for Gemini
+- `ELEVENLABS_API_KEY` for ElevenLabs
+
 ### Video Generation
 
-> Using Nvidia A40 or better is recommended for the `videopython.ai` module.
+> Using Nvidia A40 or better is recommended for local video generation.
 ```python
-# Generate image and animate it
-from videopython.ai.generation import ImageToVideo
-from videopython.ai.generation import TextToImage
+import asyncio
+from videopython.ai.generation import ImageToVideo, TextToImage, TextToVideo
 
-image = TextToImage().generate_image(prompt="Golden Retriever playing in the park")
-video = ImageToVideo().generate_video(image=image, fps=24)
+# Generate image with OpenAI DALL-E 3 and animate locally
+image = asyncio.run(TextToImage(backend="openai").generate_image("Golden Retriever playing in the park"))
+video = asyncio.run(ImageToVideo().generate_video(image=image, fps=24))
 
-# Video generation directly from prompt
-from videopython.ai.generation import TextToVideo
+# Video generation directly from prompt (local only, requires CUDA)
 video_gen = TextToVideo()
-video = video_gen.generate_video("Dogs playing in the park")
-for _ in range(10):
-    video += video_gen.generate_video("Dogs playing in the park")
+video = asyncio.run(video_gen.generate_video("Dogs playing in the park"))
 ```
 
 ### Audio generation
 ```python
+import asyncio
 from videopython.base.video import Video
+from videopython.ai.generation import TextToMusic, TextToSpeech
+
 video = Video.from_path("<PATH_TO_VIDEO>")
 
-# Generate music on top of video
-from videopython.ai.generation import TextToMusic
-text_to_music = TextToMusic()
-audio = text_to_music.generate_audio("Happy dogs playing together in a park", max_new_tokens=256)
+# Generate music (local MusicGen)
+audio = asyncio.run(TextToMusic().generate_audio("Happy dogs playing together in a park", max_new_tokens=256))
 video.add_audio(audio=audio)
 
-# Add TTS on top of video (uses Bark for realistic speech)
-from videopython.ai.generation import TextToSpeech
-
-text_to_speech = TextToSpeech()
-audio = text_to_speech.generate_audio("Woof woof woof! Woooooof!")
+# TTS with OpenAI
+audio = asyncio.run(TextToSpeech(backend="openai").generate_audio("Welcome to our video!"))
 video.add_audio(audio=audio)
 
-# With emotion markers for more expressive speech
-audio = text_to_speech.generate_audio("This is amazing! [laughs]")
+# TTS with ElevenLabs for high-quality voices
+audio = asyncio.run(TextToSpeech(backend="elevenlabs", voice="Rachel").generate_audio("This sounds amazing!"))
 video.add_audio(audio=audio)
 ```
 
 ### Generate and overlay subtitles
 ```python
+import asyncio
 from videopython.base.video import Video
+from videopython.ai.understanding import AudioToText
+
 video = Video.from_path("<PATH_TO_VIDEO>")
 
-# Generate transcription with timestamps
-from videopython.ai.understanding.audio import AudioToText
-transcription = AudioToText("base").transcribe(video)
+# Transcribe with OpenAI Whisper API
+transcriber = AudioToText(backend="openai")
+transcription = asyncio.run(transcriber.transcribe(video))
 
-# Or enable speaker diarization to identify different speakers
-transcription = AudioToText("base", enable_diarization=True).transcribe(video)
+# Or use local Whisper with speaker diarization
+transcriber = AudioToText(backend="local", model_name="base", enable_diarization=True)
+transcription = asyncio.run(transcriber.transcribe(video))
 print(f"Detected speakers: {transcription.speakers}")
-print(f"Speaking time distribution: {transcription.speaker_stats()}")
 
-# Initialise object for overlaying. See `TranscriptionOverlay` to see detailed configuration options.
+# Overlay subtitles on video
 from videopython.base.text.overlay import TranscriptionOverlay
 transcription_overlay = TranscriptionOverlay(font_filename="src/tests/test_data/test_font.ttf")
 
@@ -126,25 +144,28 @@ video.save()
 
 ### AI Video Understanding
 ```python
+import asyncio
 from videopython.base.video import Video
-from videopython.ai.understanding.video import VideoAnalyzer
+from videopython.ai.understanding import ImageToText, LLMSummarizer
+from videopython.ai.understanding.video import SceneDetector
 
 video = Video.from_path("<PATH_TO_VIDEO>")
 
-# Analyze video: detect scenes and describe visual content
-analyzer = VideoAnalyzer(device="cpu")
-video_description = analyzer.analyze(video, frames_per_second=1.0)
+# Detect scenes
+detector = SceneDetector()
+scenes = detector.detect_scenes(video)
 
-# Access scenes
-for i, scene_desc in enumerate(video_description.scene_descriptions):
-    scene = scene_desc.scene
-    print(f"Scene {i+1}: {scene.start:.2f}s - {scene.end:.2f}s ({scene.duration:.2f}s)")
+# Describe frames with OpenAI GPT-4o Vision
+analyzer = ImageToText(backend="openai")
+for scene in scenes:
+    frame = video.frames[scene.start_frame]
+    description = asyncio.run(analyzer.describe_image(frame))
+    print(f"Scene {scene.start:.1f}s-{scene.end:.1f}s: {description}")
 
-    # Scene description from frame analysis
-    print(f"  {scene_desc.get_description_summary()}")
-
-# Get complete video summary
-print(video_description.get_full_summary())
+# Summarize with Gemini
+summarizer = LLMSummarizer(backend="gemini")
+frame_descriptions = [(0.0, "A dog playing"), (2.0, "The dog runs")]
+summary = asyncio.run(summarizer.summarize_scene(frame_descriptions))
 ```
 
 # Development notes

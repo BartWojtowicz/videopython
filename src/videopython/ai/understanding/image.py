@@ -1,60 +1,185 @@
+"""Image understanding with multi-backend support."""
+
 from __future__ import annotations
 
-import numpy as np
-import torch
-from PIL import Image
-from transformers import BlipForConditionalGeneration, BlipProcessor
+import asyncio
+import base64
+import io
+from typing import Any
 
+import numpy as np
+from PIL import Image
+
+from videopython.ai.backends import ImageToTextBackend, UnsupportedBackendError, get_api_key
+from videopython.ai.config import get_default_backend
 from videopython.ai.understanding.color import ColorAnalyzer
 from videopython.base.description import FrameDescription, Scene
 from videopython.base.video import Video
 
-IMAGE_TO_TEXT_MODEL = "Salesforce/blip-image-captioning-large"
-
 
 class ImageToText:
-    """Generates text descriptions of images using BLIP image captioning model."""
+    """Generates text descriptions of images."""
 
-    def __init__(self, device: str | None = None, num_dominant_colors: int = 5):
-        """Initialize the image-to-text model.
+    SUPPORTED_BACKENDS: list[str] = ["local", "openai", "gemini"]
+
+    def __init__(
+        self,
+        backend: ImageToTextBackend | None = None,
+        device: str | None = None,
+        num_dominant_colors: int = 5,
+        api_key: str | None = None,
+    ):
+        """Initialize image-to-text model.
 
         Args:
-            device: Device to run the model on ('cuda', 'cpu', or None for auto-detection)
-            num_dominant_colors: Number of dominant colors to extract when color analysis is enabled
+            backend: Backend to use. If None, uses config default or 'local'.
+            device: Device for local backend ('cuda' or 'cpu').
+            num_dominant_colors: Number of dominant colors for color analysis.
+            api_key: API key for cloud backends. If None, reads from environment.
         """
+        resolved_backend: str = backend if backend is not None else get_default_backend("image_to_text")
+        if resolved_backend not in self.SUPPORTED_BACKENDS:
+            raise UnsupportedBackendError(resolved_backend, self.SUPPORTED_BACKENDS)
+
+        self.backend: ImageToTextBackend = resolved_backend  # type: ignore[assignment]
+        self.device = device
+        self.api_key = api_key
+        self.color_analyzer = ColorAnalyzer(num_dominant_colors=num_dominant_colors)
+
+        self._processor: Any = None
+        self._model: Any = None
+
+    def _init_local(self) -> None:
+        """Initialize local BLIP model."""
+        import torch
+        from transformers import BlipForConditionalGeneration, BlipProcessor
+
+        device = self.device
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
 
+        model_name = "Salesforce/blip-image-captioning-large"
+        self._processor = BlipProcessor.from_pretrained(model_name)
+        self._model = BlipForConditionalGeneration.from_pretrained(model_name)
+        self._model.to(device)
         self.device = device
-        self.processor = BlipProcessor.from_pretrained(IMAGE_TO_TEXT_MODEL)
-        self.model = BlipForConditionalGeneration.from_pretrained(IMAGE_TO_TEXT_MODEL)
-        self.model.to(self.device)
-        self.color_analyzer = ColorAnalyzer(num_dominant_colors=num_dominant_colors)
 
-    def describe_image(self, image: np.ndarray | Image.Image, prompt: str | None = None) -> str:
-        """Generate a text description of an image.
+    def _image_to_base64(self, image: Image.Image) -> str:
+        """Convert PIL Image to base64 string."""
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        return base64.b64encode(buffer.getvalue()).decode()
 
-        Args:
-            image: Image as numpy array (H, W, 3) in RGB format or PIL Image
-            prompt: Optional text prompt to guide the description
+    async def _describe_local(
+        self,
+        image: np.ndarray | Image.Image,
+        prompt: str | None,
+    ) -> str:
+        """Generate description using local BLIP model."""
+        if self._model is None:
+            await asyncio.to_thread(self._init_local)
 
-        Returns:
-            Text description of the image
-        """
-        # Convert numpy array to PIL Image if needed
+        def _run_model() -> str:
+            # Convert numpy array to PIL Image if needed
+            pil_image = image
+            if isinstance(image, np.ndarray):
+                pil_image = Image.fromarray(image)
+
+            inputs = self._processor(pil_image, prompt, return_tensors="pt").to(self.device)
+            output = self._model.generate(**inputs, max_new_tokens=50)
+            return self._processor.decode(output[0], skip_special_tokens=True)
+
+        return await asyncio.to_thread(_run_model)
+
+    async def _describe_openai(
+        self,
+        image: np.ndarray | Image.Image,
+        prompt: str | None,
+    ) -> str:
+        """Generate description using OpenAI GPT-4o."""
+        from openai import AsyncOpenAI
+
+        api_key = get_api_key("openai", self.api_key)
+        client = AsyncOpenAI(api_key=api_key)
+
+        # Convert to PIL Image if needed
         if isinstance(image, np.ndarray):
             image = Image.fromarray(image)
 
-        # Process the image
-        inputs = self.processor(image, prompt, return_tensors="pt").to(self.device)
+        image_base64 = self._image_to_base64(image)
 
-        # Generate description
-        output = self.model.generate(**inputs, max_new_tokens=50)
-        description = self.processor.decode(output[0], skip_special_tokens=True)
+        system_prompt = "You are an image analysis assistant. Describe images concisely."
+        user_prompt = prompt or "Describe this image in 1-2 sentences."
 
-        return description
+        response = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": user_prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{image_base64}"},
+                        },
+                    ],
+                },
+            ],
+            max_tokens=100,
+        )
 
-    def describe_frame(
+        return response.choices[0].message.content or ""
+
+    async def _describe_gemini(
+        self,
+        image: np.ndarray | Image.Image,
+        prompt: str | None,
+    ) -> str:
+        """Generate description using Google Gemini."""
+        import google.generativeai as genai
+
+        api_key = get_api_key("gemini", self.api_key)
+        genai.configure(api_key=api_key)
+
+        # Convert to PIL Image if needed
+        if isinstance(image, np.ndarray):
+            image = Image.fromarray(image)
+
+        model = genai.GenerativeModel("gemini-2.0-flash")
+        user_prompt = prompt or "Describe this image in 1-2 sentences."
+
+        # Gemini's generate_content is sync, wrap in thread
+        def _run_gemini() -> str:
+            response = model.generate_content([user_prompt, image])
+            return response.text
+
+        return await asyncio.to_thread(_run_gemini)
+
+    async def describe_image(
+        self,
+        image: np.ndarray | Image.Image,
+        prompt: str | None = None,
+    ) -> str:
+        """Generate a text description of an image.
+
+        Args:
+            image: Image as numpy array (H, W, 3) in RGB format or PIL Image.
+            prompt: Optional text prompt to guide the description.
+
+        Returns:
+            Text description of the image.
+        """
+        if self.backend == "local":
+            return await self._describe_local(image, prompt)
+        elif self.backend == "openai":
+            return await self._describe_openai(image, prompt)
+        elif self.backend == "gemini":
+            return await self._describe_gemini(image, prompt)
+        else:
+            raise UnsupportedBackendError(self.backend, self.SUPPORTED_BACKENDS)
+
+    async def describe_frame(
         self,
         video: Video,
         frame_index: int,
@@ -65,32 +190,34 @@ class ImageToText:
         """Describe a specific frame from a video.
 
         Args:
-            video: Video object
-            frame_index: Index of the frame to describe
-            prompt: Optional text prompt to guide the description
-            extract_colors: Whether to extract color features from the frame
-            include_full_histogram: Whether to include full HSV histogram (only if extract_colors=True)
+            video: Video object.
+            frame_index: Index of the frame to describe.
+            prompt: Optional text prompt to guide the description.
+            extract_colors: Whether to extract color features from the frame.
+            include_full_histogram: Whether to include full HSV histogram.
 
         Returns:
-            FrameDescription object with the frame description and optional color features
+            FrameDescription object with the frame description.
         """
         if frame_index < 0 or frame_index >= len(video.frames):
             raise ValueError(f"frame_index {frame_index} out of bounds for video with {len(video.frames)} frames")
 
         frame = video.frames[frame_index]
-        description = self.describe_image(frame, prompt)
+        description = await self.describe_image(frame, prompt)
         timestamp = frame_index / video.fps
 
-        # Extract color features if requested
         color_histogram = None
         if extract_colors:
             color_histogram = self.color_analyzer.extract_color_features(frame, include_full_histogram)
 
         return FrameDescription(
-            frame_index=frame_index, timestamp=timestamp, description=description, color_histogram=color_histogram
+            frame_index=frame_index,
+            timestamp=timestamp,
+            description=description,
+            color_histogram=color_histogram,
         )
 
-    def describe_frames(
+    async def describe_frames(
         self,
         video: Video,
         frame_indices: list[int],
@@ -101,23 +228,22 @@ class ImageToText:
         """Describe multiple frames from a video.
 
         Args:
-            video: Video object
-            frame_indices: List of frame indices to describe
-            prompt: Optional text prompt to guide the descriptions
-            extract_colors: Whether to extract color features from the frames
-            include_full_histogram: Whether to include full HSV histogram (only if extract_colors=True)
+            video: Video object.
+            frame_indices: List of frame indices to describe.
+            prompt: Optional text prompt to guide the descriptions.
+            extract_colors: Whether to extract color features.
+            include_full_histogram: Whether to include full HSV histogram.
 
         Returns:
-            List of FrameDescription objects
+            List of FrameDescription objects.
         """
-        descriptions = []
-        for frame_index in frame_indices:
-            description = self.describe_frame(video, frame_index, prompt, extract_colors, include_full_histogram)
-            descriptions.append(description)
+        # Process frames concurrently
+        tasks = [
+            self.describe_frame(video, idx, prompt, extract_colors, include_full_histogram) for idx in frame_indices
+        ]
+        return await asyncio.gather(*tasks)
 
-        return descriptions
-
-    def describe_scene(
+    async def describe_scene(
         self,
         video: Video,
         scene: Scene,
@@ -129,27 +255,23 @@ class ImageToText:
         """Describe frames from a scene, sampling at the specified rate.
 
         Args:
-            video: Video object
-            scene: Scene to analyze
-            frames_per_second: Frame sampling rate (default: 1.0 fps)
-            prompt: Optional text prompt to guide the descriptions
-            extract_colors: Whether to extract color features from the frames
-            include_full_histogram: Whether to include full HSV histogram (only if extract_colors=True)
+            video: Video object.
+            scene: Scene to analyze.
+            frames_per_second: Frame sampling rate.
+            prompt: Optional text prompt to guide the descriptions.
+            extract_colors: Whether to extract color features.
+            include_full_histogram: Whether to include full HSV histogram.
 
         Returns:
-            List of FrameDescription objects for the sampled frames
+            List of FrameDescription objects for the sampled frames.
         """
         if frames_per_second <= 0:
             raise ValueError("frames_per_second must be positive")
 
-        # Calculate frame interval based on desired fps
         frame_interval = max(1, int(video.fps / frames_per_second))
-
-        # Sample frames from the scene
         frame_indices = list(range(scene.start_frame, scene.end_frame, frame_interval))
 
-        # Ensure we don't have an empty list
         if not frame_indices:
             frame_indices = [scene.start_frame]
 
-        return self.describe_frames(video, frame_indices, prompt, extract_colors, include_full_histogram)
+        return await self.describe_frames(video, frame_indices, prompt, extract_colors, include_full_histogram)

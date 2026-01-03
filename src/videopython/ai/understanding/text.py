@@ -1,36 +1,136 @@
+"""Text/LLM understanding with multi-backend support."""
+
 from __future__ import annotations
 
-import ollama
+import asyncio
 
+from videopython.ai.backends import LLMBackend, UnsupportedBackendError, get_api_key
+from videopython.ai.config import get_default_backend
 from videopython.base.description import SceneDescription, VideoDescription
 
 
 class LLMSummarizer:
-    """Generates coherent summaries of video content using LLMs via Ollama."""
+    """Generates coherent summaries of video content using LLMs."""
 
-    def __init__(self, model: str = "llama3.2", timeout: float = 30.0):
+    SUPPORTED_BACKENDS: list[str] = ["local", "openai", "gemini"]
+
+    def __init__(
+        self,
+        backend: LLMBackend | None = None,
+        model: str | None = None,
+        api_key: str | None = None,
+        timeout: float = 30.0,
+    ):
         """Initialize the LLM summarizer.
 
         Args:
-            model: Ollama model name to use (default: "llama3.2")
-            timeout: Request timeout in seconds (default: 30.0)
+            backend: Backend to use. If None, uses config default or 'local'.
+            model: Model name (backend-specific). If None, uses default per backend.
+            api_key: API key for cloud backends. If None, reads from environment.
+            timeout: Request timeout in seconds.
         """
+        resolved_backend: str = backend if backend is not None else get_default_backend("llm_summarizer")
+        if resolved_backend not in self.SUPPORTED_BACKENDS:
+            raise UnsupportedBackendError(resolved_backend, self.SUPPORTED_BACKENDS)
+
+        self.backend: LLMBackend = resolved_backend  # type: ignore[assignment]
         self.model = model
+        self.api_key = api_key
         self.timeout = timeout
 
-    def summarize_scene(self, frame_descriptions: list[tuple[float, str]]) -> str:
+    def _get_model_name(self) -> str:
+        """Get the model name for the current backend."""
+        if self.model:
+            return self.model
+
+        if self.backend == "local":
+            return "llama3.2"
+        elif self.backend == "openai":
+            return "gpt-4o"
+        elif self.backend == "gemini":
+            return "gemini-2.0-flash"
+        else:
+            return "llama3.2"
+
+    async def _generate_local(self, prompt: str) -> str:
+        """Generate text using local Ollama."""
+        import ollama
+
+        model = self._get_model_name()
+
+        def _run_ollama() -> str:
+            response = ollama.generate(
+                model=model,
+                prompt=prompt,
+                options={"temperature": 0.3, "num_predict": 150},
+            )
+            return response["response"].strip()
+
+        return await asyncio.to_thread(_run_ollama)
+
+    async def _generate_openai(self, prompt: str) -> str:
+        """Generate text using OpenAI."""
+        from openai import AsyncOpenAI
+
+        api_key = get_api_key("openai", self.api_key)
+        client = AsyncOpenAI(api_key=api_key)
+
+        model = self._get_model_name()
+
+        response = await client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=150,
+            temperature=0.3,
+        )
+
+        return response.choices[0].message.content or ""
+
+    async def _generate_gemini(self, prompt: str) -> str:
+        """Generate text using Google Gemini."""
+        import google.generativeai as genai
+
+        api_key = get_api_key("gemini", self.api_key)
+        genai.configure(api_key=api_key)
+
+        model_name = self._get_model_name()
+        model = genai.GenerativeModel(model_name)
+
+        def _run_gemini() -> str:
+            response = model.generate_content(
+                prompt,
+                generation_config=genai.GenerationConfig(
+                    temperature=0.3,
+                    max_output_tokens=150,
+                ),
+            )
+            return response.text
+
+        return await asyncio.to_thread(_run_gemini)
+
+    async def _generate(self, prompt: str) -> str:
+        """Generate text using the configured backend."""
+        if self.backend == "local":
+            return await self._generate_local(prompt)
+        elif self.backend == "openai":
+            return await self._generate_openai(prompt)
+        elif self.backend == "gemini":
+            return await self._generate_gemini(prompt)
+        else:
+            raise UnsupportedBackendError(self.backend, self.SUPPORTED_BACKENDS)
+
+    async def summarize_scene(self, frame_descriptions: list[tuple[float, str]]) -> str:
         """Generate a coherent summary of a scene from frame descriptions.
 
         Args:
-            frame_descriptions: List of (timestamp, description) tuples for frames in the scene
+            frame_descriptions: List of (timestamp, description) tuples for frames.
 
         Returns:
-            2-3 sentence coherent summary of the scene
+            2-3 sentence coherent summary of the scene.
         """
         if not frame_descriptions:
             return "Empty scene with no frames."
 
-        # Build the frame descriptions text
         frames_text = "\n".join([f"- At {ts:.2f}s: {desc}" for ts, desc in frame_descriptions])
 
         prompt = f"""You are analyzing a video scene. Below are descriptions of individual frames sampled from \
@@ -48,30 +148,23 @@ Remove redundancy and synthesize the information into a flowing narrative. Be co
 Summary:"""
 
         try:
-            response = ollama.generate(
-                model=self.model,
-                prompt=prompt,
-                options={"temperature": 0.3, "num_predict": 100},
-            )
-            summary = response["response"].strip()
-            return summary
+            return await self._generate(prompt)
         except Exception:
             # Fallback: return concatenated descriptions
             return " ".join([desc for _, desc in frame_descriptions])
 
-    def summarize_video(self, scene_summaries: list[tuple[float, float, str]]) -> str:
+    async def summarize_video(self, scene_summaries: list[tuple[float, float, str]]) -> str:
         """Generate a high-level summary of the entire video from scene summaries.
 
         Args:
-            scene_summaries: List of (start_time, end_time, summary) tuples for each scene
+            scene_summaries: List of (start_time, end_time, summary) tuples for each scene.
 
         Returns:
-            Paragraph describing the entire video narrative
+            Paragraph describing the entire video narrative.
         """
         if not scene_summaries:
             return "Empty video with no scenes."
 
-        # Build the scene summaries text
         scenes_text = "\n".join(
             [f"- Scene at {start:.2f}s-{end:.2f}s: {summary}" for start, end, summary in scene_summaries]
         )
@@ -91,39 +184,33 @@ Synthesize the scenes into a high-level overview that captures the video's essen
 Summary:"""
 
         try:
-            response = ollama.generate(
-                model=self.model,
-                prompt=prompt,
-                options={"temperature": 0.3, "num_predict": 150},
-            )
-            summary = response["response"].strip()
-            return summary
+            return await self._generate(prompt)
         except Exception:
             # Fallback: return concatenated scene summaries
             return " ".join([summary for _, _, summary in scene_summaries])
 
-    def summarize_scene_description(self, scene_description: SceneDescription) -> str:
+    async def summarize_scene_description(self, scene_description: SceneDescription) -> str:
         """Generate summary from a SceneDescription object.
 
         Args:
-            scene_description: SceneDescription object with frame descriptions
+            scene_description: SceneDescription object with frame descriptions.
 
         Returns:
-            Coherent summary of the scene
+            Coherent summary of the scene.
         """
         frame_descriptions = [(fd.timestamp, fd.description) for fd in scene_description.frame_descriptions]
-        return self.summarize_scene(frame_descriptions)
+        return await self.summarize_scene(frame_descriptions)
 
-    def summarize_video_description(self, video_description: VideoDescription) -> str:
+    async def summarize_video_description(self, video_description: VideoDescription) -> str:
         """Generate summary from a VideoDescription object.
 
         Args:
-            video_description: VideoDescription object with scene descriptions
+            video_description: VideoDescription object with scene descriptions.
 
         Returns:
-            High-level summary of the entire video
+            High-level summary of the entire video.
         """
         scene_summaries = [
             (sd.scene.start, sd.scene.end, sd.get_description_summary()) for sd in video_description.scene_descriptions
         ]
-        return self.summarize_video(scene_summaries)
+        return await self.summarize_video(scene_summaries)

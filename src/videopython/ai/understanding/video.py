@@ -162,7 +162,7 @@ class VideoAnalyzer:
         self.scene_detector = SceneDetector(threshold=scene_threshold, min_scene_length=min_scene_length)
         self.image_to_text = ImageToText(device=device)
 
-    def analyze(
+    async def analyze(
         self,
         video: Video,
         frames_per_second: float = 1.0,
@@ -192,7 +192,7 @@ class VideoAnalyzer:
         # Step 2: Analyze frames from each scene
         scene_descriptions = []
         for scene in scenes:
-            frame_descriptions = self.image_to_text.describe_scene(
+            frame_descriptions = await self.image_to_text.describe_scene(
                 video,
                 scene,
                 frames_per_second=frames_per_second,
@@ -208,11 +208,11 @@ class VideoAnalyzer:
             from videopython.ai.understanding.audio import AudioToText
 
             transcriber = AudioToText(model_name=transcription_model)
-            transcription = transcriber.transcribe(video)
+            transcription = await transcriber.transcribe(video)
 
         return VideoDescription(scene_descriptions=scene_descriptions, transcription=transcription)
 
-    def analyze_scenes_only(self, video: Video) -> list[SceneDescription]:
+    async def analyze_scenes_only(self, video: Video) -> list[SceneDescription]:
         """Analyze video scenes without transcription (convenience method).
 
         Args:
@@ -221,5 +221,5 @@ class VideoAnalyzer:
         Returns:
             List of SceneDescription objects
         """
-        understanding = self.analyze(video, transcribe=False)
+        understanding = await self.analyze(video, transcribe=False)
         return understanding.scene_descriptions
