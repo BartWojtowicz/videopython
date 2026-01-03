@@ -58,6 +58,11 @@ ai = [
     "ollama>=0.4.5",
     "scipy>=1.10.0",
     "scikit-learn>=1.3.0",
+    # Cloud backend SDKs
+    "openai>=1.0.0",
+    "google-generativeai>=0.8.0",
+    "elevenlabs>=1.0.0",
+    "httpx>=0.27.0",
 ]
 
 # We have to keep it to make PIP use those dependency groups, not only UV
@@ -81,6 +86,11 @@ ai = [
     "ollama>=0.4.5",
     "scipy>=1.10.0",
     "scikit-learn>=1.3.0",
+    # Cloud backend SDKs
+    "openai>=1.0.0",
+    "google-generativeai>=0.8.0",
+    "elevenlabs>=1.0.0",
+    "httpx>=0.27.0",
 ]
 
 [project.urls]
@@ -92,7 +102,13 @@ Documentation = "https://github.com/bartwojtowicz/videopython/"
 mypy_path = "src/stubs"
 
 [[tool.mypy.overrides]]
-module = ["torch", "torch.*", "diffusers", "diffusers.*", "ollama", "ollama.*"]
+module = [
+    "torch", "torch.*",
+    "diffusers", "diffusers.*",
+    "ollama", "ollama.*",
+    "elevenlabs", "elevenlabs.*",
+    "google.generativeai", "google.generativeai.*",
+]
 ignore_missing_imports = true
 
 [build-system]
