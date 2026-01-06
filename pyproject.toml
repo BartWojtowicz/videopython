@@ -71,6 +71,10 @@ ai = [
     # Detection backends
     "ultralytics>=8.0.0",
     "easyocr>=1.7.0",
+    # Video upscaling
+    "mmagic>=1.2.0",
+    "mmcv>=2.0.0",
+    "mmengine>=0.10.0",
 ]
 
 # We have to keep it to make PIP use those dependency groups, not only UV
@@ -103,6 +107,10 @@ ai = [
     # Detection backends
     "ultralytics>=8.0.0",
     "easyocr>=1.7.0",
+    # Video upscaling
+    "mmagic>=1.2.0",
+    "mmcv>=2.0.0",
+    "mmengine>=0.10.0",
 ]
 
 [project.urls]
@@ -122,6 +130,9 @@ module = [
     "google.generativeai", "google.generativeai.*",
     "ultralytics", "ultralytics.*",
     "easyocr", "easyocr.*",
+    "mmagic", "mmagic.*",
+    "mmcv", "mmcv.*",
+    "mmengine", "mmengine.*",
 ]
 ignore_missing_imports = true
 
