@@ -217,3 +217,71 @@ class Transcription:
                 )
 
         return Transcription(segments=standardized_segments)
+
+    def slice(self, start: float, end: float) -> Transcription | None:
+        """Return a new Transcription containing only words within the time range.
+
+        Slices at word-level granularity: words that overlap with the time range
+        are included, and new segments are reconstructed from the included words.
+
+        Args:
+            start: Start time in seconds (inclusive)
+            end: End time in seconds (exclusive)
+
+        Returns:
+            New Transcription with words/segments in the time range, or None if no words overlap
+        """
+        if start >= end:
+            return None
+
+        # Collect all words that overlap with the time range
+        overlapping_words: list[TranscriptionWord] = []
+        for segment in self.segments:
+            for word in segment.words:
+                # Include word if it overlaps with our time range
+                if word.end > start and word.start < end:
+                    overlapping_words.append(word)
+
+        if not overlapping_words:
+            return None
+
+        # Reconstruct segments from the overlapping words
+        # Group consecutive words by speaker to form segments
+        sliced_segments: list[TranscriptionSegment] = []
+        current_speaker = overlapping_words[0].speaker
+        current_words: list[TranscriptionWord] = []
+
+        for word in overlapping_words:
+            if word.speaker == current_speaker:
+                current_words.append(word)
+            else:
+                # Finish current segment
+                if current_words:
+                    segment_text = " ".join(w.word for w in current_words)
+                    sliced_segments.append(
+                        TranscriptionSegment(
+                            start=current_words[0].start,
+                            end=current_words[-1].end,
+                            text=segment_text,
+                            words=current_words.copy(),
+                            speaker=current_speaker,
+                        )
+                    )
+                # Start new segment
+                current_speaker = word.speaker
+                current_words = [word]
+
+        # Add final segment
+        if current_words:
+            segment_text = " ".join(w.word for w in current_words)
+            sliced_segments.append(
+                TranscriptionSegment(
+                    start=current_words[0].start,
+                    end=current_words[-1].end,
+                    text=segment_text,
+                    words=current_words.copy(),
+                    speaker=current_speaker,
+                )
+            )
+
+        return Transcription(segments=sliced_segments)

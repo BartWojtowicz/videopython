@@ -13,7 +13,7 @@ from PIL import Image
 from videopython.ai.backends import ImageToTextBackend, UnsupportedBackendError, get_api_key
 from videopython.ai.config import get_default_backend
 from videopython.ai.understanding.color import ColorAnalyzer
-from videopython.base.description import FrameDescription, Scene
+from videopython.base.description import FrameDescription, SceneDescription
 from videopython.base.video import Video
 
 
@@ -246,7 +246,7 @@ class ImageToText:
     async def describe_scene(
         self,
         video: Video,
-        scene: Scene,
+        scene: SceneDescription,
         frames_per_second: float = 1.0,
         prompt: str | None = None,
         extract_colors: bool = False,
@@ -256,7 +256,7 @@ class ImageToText:
 
         Args:
             video: Video object.
-            scene: Scene to analyze.
+            scene: SceneDescription to analyze.
             frames_per_second: Frame sampling rate.
             prompt: Optional text prompt to guide the descriptions.
             extract_colors: Whether to extract color features.

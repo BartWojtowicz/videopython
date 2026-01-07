@@ -1,14 +1,13 @@
 import pytest
 
-from videopython.base.description import FrameDescription, Scene, SceneDescription, VideoDescription
+from videopython.base.description import FrameDescription, SceneDescription, VideoDescription
 from videopython.base.text.transcription import Transcription, TranscriptionSegment, TranscriptionWord
 
 
 def test_video_description_creation():
     """Test basic VideoDescription creation."""
-    scene = Scene(start=0.0, end=5.0, start_frame=0, end_frame=120)
     frame_desc = FrameDescription(frame_index=0, timestamp=0.0, description="Test scene")
-    scene_desc = SceneDescription(scene=scene, frame_descriptions=[frame_desc])
+    scene_desc = SceneDescription(start=0.0, end=5.0, start_frame=0, end_frame=120, frame_descriptions=[frame_desc])
 
     understanding = VideoDescription(scene_descriptions=[scene_desc], transcription=None)
 
@@ -19,9 +18,8 @@ def test_video_description_creation():
 
 def test_video_description_with_transcription():
     """Test VideoDescription with transcription."""
-    scene = Scene(start=0.0, end=5.0, start_frame=0, end_frame=120)
     frame_desc = FrameDescription(frame_index=0, timestamp=0.0, description="Test scene")
-    scene_desc = SceneDescription(scene=scene, frame_descriptions=[frame_desc])
+    scene_desc = SceneDescription(start=0.0, end=5.0, start_frame=0, end_frame=120, frame_descriptions=[frame_desc])
 
     word = TranscriptionWord(start=0.0, end=1.0, word="test")
     segment = TranscriptionSegment(start=0.0, end=1.0, text="test", words=[word])
@@ -36,13 +34,11 @@ def test_video_description_with_transcription():
 
 def test_video_description_multiple_scenes():
     """Test VideoDescription with multiple scenes."""
-    scene1 = Scene(start=0.0, end=2.0, start_frame=0, end_frame=48)
     frame_desc1 = FrameDescription(frame_index=0, timestamp=0.0, description="Scene 1")
-    scene_desc1 = SceneDescription(scene=scene1, frame_descriptions=[frame_desc1])
+    scene_desc1 = SceneDescription(start=0.0, end=2.0, start_frame=0, end_frame=48, frame_descriptions=[frame_desc1])
 
-    scene2 = Scene(start=2.0, end=4.0, start_frame=48, end_frame=96)
     frame_desc2 = FrameDescription(frame_index=48, timestamp=2.0, description="Scene 2")
-    scene_desc2 = SceneDescription(scene=scene2, frame_descriptions=[frame_desc2])
+    scene_desc2 = SceneDescription(start=2.0, end=4.0, start_frame=48, end_frame=96, frame_descriptions=[frame_desc2])
 
     understanding = VideoDescription(scene_descriptions=[scene_desc1, scene_desc2])
 
@@ -52,9 +48,8 @@ def test_video_description_multiple_scenes():
 
 def test_get_scene_summary():
     """Test getting summary of a specific scene."""
-    scene = Scene(start=1.5, end=3.0, start_frame=36, end_frame=72)
     frame_desc = FrameDescription(frame_index=36, timestamp=1.5, description="A red car drives by.")
-    scene_desc = SceneDescription(scene=scene, frame_descriptions=[frame_desc])
+    scene_desc = SceneDescription(start=1.5, end=3.0, start_frame=36, end_frame=72, frame_descriptions=[frame_desc])
 
     understanding = VideoDescription(scene_descriptions=[scene_desc])
 
@@ -67,9 +62,8 @@ def test_get_scene_summary():
 
 def test_get_scene_summary_invalid_index():
     """Test that invalid scene index raises error."""
-    scene = Scene(start=0.0, end=5.0, start_frame=0, end_frame=120)
     frame_desc = FrameDescription(frame_index=0, timestamp=0.0, description="Test")
-    scene_desc = SceneDescription(scene=scene, frame_descriptions=[frame_desc])
+    scene_desc = SceneDescription(start=0.0, end=5.0, start_frame=0, end_frame=120, frame_descriptions=[frame_desc])
 
     understanding = VideoDescription(scene_descriptions=[scene_desc])
 
@@ -82,9 +76,8 @@ def test_get_scene_summary_invalid_index():
 
 def test_get_full_summary_without_transcription():
     """Test getting full summary without transcription."""
-    scene = Scene(start=0.0, end=5.0, start_frame=0, end_frame=120)
     frame_desc = FrameDescription(frame_index=0, timestamp=0.0, description="Test scene")
-    scene_desc = SceneDescription(scene=scene, frame_descriptions=[frame_desc])
+    scene_desc = SceneDescription(start=0.0, end=5.0, start_frame=0, end_frame=120, frame_descriptions=[frame_desc])
 
     understanding = VideoDescription(scene_descriptions=[scene_desc])
 
@@ -98,9 +91,8 @@ def test_get_full_summary_without_transcription():
 
 def test_get_full_summary_with_transcription():
     """Test getting full summary with transcription."""
-    scene = Scene(start=0.0, end=5.0, start_frame=0, end_frame=120)
     frame_desc = FrameDescription(frame_index=0, timestamp=0.0, description="Test scene")
-    scene_desc = SceneDescription(scene=scene, frame_descriptions=[frame_desc])
+    scene_desc = SceneDescription(start=0.0, end=5.0, start_frame=0, end_frame=120, frame_descriptions=[frame_desc])
 
     word = TranscriptionWord(start=0.0, end=1.0, word="hello")
     segment = TranscriptionSegment(start=0.0, end=1.0, text="hello", words=[word])
@@ -110,5 +102,65 @@ def test_get_full_summary_with_transcription():
 
     summary = understanding.get_full_summary()
     assert "Video Analysis" in summary
-    assert "Transcription:" in summary
+    assert "Full Transcription:" in summary
     assert "hello" in summary
+
+
+def test_distribute_transcription():
+    """Test distributing transcription to scenes."""
+    # Create two scenes
+    frame_desc1 = FrameDescription(frame_index=0, timestamp=0.0, description="Scene 1")
+    scene_desc1 = SceneDescription(start=0.0, end=2.0, start_frame=0, end_frame=48, frame_descriptions=[frame_desc1])
+
+    frame_desc2 = FrameDescription(frame_index=48, timestamp=2.0, description="Scene 2")
+    scene_desc2 = SceneDescription(start=2.0, end=4.0, start_frame=48, end_frame=96, frame_descriptions=[frame_desc2])
+
+    # Create transcription with segments in different time ranges
+    word1 = TranscriptionWord(start=0.5, end=1.0, word="first")
+    segment1 = TranscriptionSegment(start=0.5, end=1.0, text="first", words=[word1])
+
+    word2 = TranscriptionWord(start=2.5, end=3.0, word="second")
+    segment2 = TranscriptionSegment(start=2.5, end=3.0, text="second", words=[word2])
+
+    transcription = Transcription(segments=[segment1, segment2])
+
+    understanding = VideoDescription(scene_descriptions=[scene_desc1, scene_desc2], transcription=transcription)
+
+    # Initially, scenes have no transcription
+    assert scene_desc1.transcription is None
+    assert scene_desc2.transcription is None
+
+    # Distribute transcription
+    understanding.distribute_transcription()
+
+    # Now each scene should have its relevant transcription
+    assert scene_desc1.transcription is not None
+    assert len(scene_desc1.transcription.segments) == 1
+    assert scene_desc1.transcription.segments[0].text == "first"
+
+    assert scene_desc2.transcription is not None
+    assert len(scene_desc2.transcription.segments) == 1
+    assert scene_desc2.transcription.segments[0].text == "second"
+
+
+def test_get_scene_summary_with_scene_transcription():
+    """Test that scene summary includes scene-level transcription."""
+    word = TranscriptionWord(start=1.5, end=2.0, word="hello")
+    segment = TranscriptionSegment(start=1.5, end=2.0, text="hello", words=[word])
+    scene_transcription = Transcription(segments=[segment])
+
+    frame_desc = FrameDescription(frame_index=36, timestamp=1.5, description="A person speaking.")
+    scene_desc = SceneDescription(
+        start=1.5,
+        end=3.0,
+        start_frame=36,
+        end_frame=72,
+        frame_descriptions=[frame_desc],
+        transcription=scene_transcription,
+    )
+
+    understanding = VideoDescription(scene_descriptions=[scene_desc])
+
+    summary = understanding.get_scene_summary(0)
+    assert "A person speaking." in summary
+    assert "[Speech: hello]" in summary

@@ -211,6 +211,6 @@ Summary:"""
             High-level summary of the entire video.
         """
         scene_summaries = [
-            (sd.scene.start, sd.scene.end, sd.get_description_summary()) for sd in video_description.scene_descriptions
+            (sd.start, sd.end, sd.get_description_summary()) for sd in video_description.scene_descriptions
         ]
         return await self.summarize_video(scene_summaries)

@@ -21,7 +21,7 @@ jobs:
       - name: Install dependencies
         run: uv sync --dev
       - name: Run base tests
-        run: uv run pytest src/tests --cov=src/videopython/base --cov-report=term --cov-report=term-missing
+        run: uv run pytest src/tests/base --cov=src/videopython/base --cov-report=term --cov-report=term-missing
 
   static_checks:
     name: Linting and formatting
