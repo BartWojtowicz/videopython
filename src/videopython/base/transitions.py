@@ -7,6 +7,13 @@ import numpy as np
 from videopython.base.effects import Blur
 from videopython.base.video import Video
 
+__all__ = [
+    "Transition",
+    "InstantTransition",
+    "FadeTransition",
+    "BlurTransition",
+]
+
 
 class Transition(ABC):
     """Abstract class for Transitions on Videos.

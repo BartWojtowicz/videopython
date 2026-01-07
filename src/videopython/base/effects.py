@@ -9,6 +9,8 @@ from tqdm import tqdm
 
 from videopython.base.video import Video
 
+__all__ = ["Effect", "FullImageOverlay", "Blur", "Zoom"]
+
 
 class Effect(ABC):
     """Abstract class for effect on frames of video.

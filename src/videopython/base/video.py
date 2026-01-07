@@ -13,6 +13,8 @@ from soundpython import Audio
 
 from videopython.base.utils import generate_random_name
 
+__all__ = ["Video", "VideoMetadata"]
+
 ALLOWED_VIDEO_FORMATS = Literal["mp4", "avi", "mov", "mkv", "webm"]
 
 # Frame buffer constants for video loading

@@ -1,0 +1,76 @@
+site_name: VideoPython
+site_url: https://videopython.com
+site_description: Minimal video generation and processing library for Python
+repo_url: https://github.com/bartwojtowicz/videopython
+repo_name: bartwojtowicz/videopython
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+
+plugins:
+  - search
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          paths: [src]
+          options:
+            show_source: true
+            show_root_heading: true
+            show_root_full_path: false
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            docstring_style: google
+            members_order: source
+            show_signature_annotations: true
+            separate_signature: true
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - admonition
+  - pymdownx.details
+  - attr_list
+  - md_in_html
+  - tables
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation: getting-started/installation.md
+      - Quick Start: getting-started/quickstart.md
+  - API Reference:
+      - Overview: api/index.md
+      - Core:
+          - Video: api/core/video.md
+      - Transforms: api/transforms.md
+      - Transitions: api/transitions.md
+      - Effects: api/effects.md
+      - Text & Transcription: api/text.md
+      - AI Generation: api/ai/generation.md
+      - AI Understanding: api/ai/understanding.md

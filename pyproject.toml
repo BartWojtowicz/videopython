@@ -47,6 +47,10 @@ dev = [
     "types-Pillow>=10.2.0.20240213",
     "types-tqdm>=4.66.0.20240106",
     "pytest-cov>=6.1.1",
+    "mkdocs>=1.6.1",
+    "mkdocs-material>=9.7.1",
+    "mkdocstrings>=1.0.0",
+    "mkdocstrings-python>=2.0.1",
 ]
 ai = [
     "accelerate>=0.29.2",
@@ -102,9 +106,9 @@ ai = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/bartwojtowicz/videopython/"
+Homepage = "https://videopython.com"
 Repository = "https://github.com/bartwojtowicz/videopython/"
-Documentation = "https://github.com/bartwojtowicz/videopython/"
+Documentation = "https://videopython.com"
 
 [tool.mypy]
 mypy_path = "src/stubs"
@@ -135,7 +139,7 @@ include = ["src/videopython", "src/videopython/py.typed"]
 pythonpath = ["src/"]
 testpaths = ["src/tests"]
 python_files = ["test_*.py"]
-addopts = "-v --tb=short"
+addopts = ["-v", "--tb=short"]
 
 [tool.ruff]
 line-length = 120

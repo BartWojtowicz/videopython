@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from enum import Enum
 from multiprocessing import Pool
@@ -7,6 +9,17 @@ import numpy as np
 from tqdm import tqdm
 
 from videopython.base.video import Video
+
+__all__ = [
+    "Transformation",
+    "TransformationPipeline",
+    "CutFrames",
+    "CutSeconds",
+    "Resize",
+    "ResampleFPS",
+    "Crop",
+    "CropMode",
+]
 
 
 class Transformation(ABC):
@@ -22,7 +35,7 @@ class TransformationPipeline:
         """Initializes pipeline."""
         self.transformations = transformations if transformations else []
 
-    def add(self, transformation: Transformation):
+    def add(self, transformation: Transformation) -> TransformationPipeline:
         """Adds transformation to the pipeline.
 
         Args:
