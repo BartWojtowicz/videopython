@@ -43,6 +43,7 @@ dev = [
     "ruff>=0.1.14",
     "mypy>=1.8.0",
     "pytest>=7.4.0",
+    "pytest-asyncio>=0.23.0",
     "types-Pillow>=10.2.0.20240213",
     "types-tqdm>=4.66.0.20240106",
     "pytest-cov>=6.1.1",
@@ -63,6 +64,9 @@ ai = [
     "google-generativeai>=0.8.0",
     "elevenlabs>=1.0.0",
     "httpx>=0.27.0",
+    # Detection backends
+    "ultralytics>=8.0.0",
+    "easyocr>=1.7.0",
 ]
 
 # We have to keep it to make PIP use those dependency groups, not only UV
@@ -71,6 +75,7 @@ dev = [
     "ruff>=0.1.14",
     "mypy>=1.8.0",
     "pytest>=7.4.0",
+    "pytest-asyncio>=0.23.0",
     "types-Pillow>=10.2.0.20240213",
     "types-tqdm>=4.66.0.20240106",
     "pytest-cov>=6.1.1",
@@ -91,6 +96,9 @@ ai = [
     "google-generativeai>=0.8.0",
     "elevenlabs>=1.0.0",
     "httpx>=0.27.0",
+    # Detection backends
+    "ultralytics>=8.0.0",
+    "easyocr>=1.7.0",
 ]
 
 [project.urls]
@@ -108,6 +116,8 @@ module = [
     "ollama", "ollama.*",
     "elevenlabs", "elevenlabs.*",
     "google.generativeai", "google.generativeai.*",
+    "ultralytics", "ultralytics.*",
+    "easyocr", "easyocr.*",
 ]
 ignore_missing_imports = true
 

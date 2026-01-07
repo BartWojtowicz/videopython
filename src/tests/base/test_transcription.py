@@ -1,11 +1,10 @@
 import numpy as np
 import pytest
 
+from tests.test_config import TEST_FONT_PATH
 from videopython.base.text.overlay import TranscriptionOverlay
 from videopython.base.text.transcription import Transcription, TranscriptionSegment, TranscriptionWord
 from videopython.base.video import Video
-
-from .test_config import TEST_FONT_PATH
 
 
 @pytest.fixture(scope="session")
@@ -452,3 +451,117 @@ def test_transcription_with_none_speakers():
     # speaker_stats should return empty dict
     stats = transcription.speaker_stats()
     assert stats == {}
+
+
+def test_slice_basic(dummy_transcription):
+    """Test basic slicing of transcription by time range."""
+    # Slice to get only the second segment (2.0-3.5)
+    sliced = dummy_transcription.slice(1.9, 4.0)
+
+    assert sliced is not None
+    assert len(sliced.segments) == 1
+    assert sliced.segments[0].text == "Second segment of transcription"
+
+
+def test_slice_word_level_granularity():
+    """Test that slicing works at word-level granularity."""
+    words = [
+        TranscriptionWord(start=0.0, end=1.0, word="first"),
+        TranscriptionWord(start=1.0, end=2.0, word="second"),
+        TranscriptionWord(start=2.0, end=3.0, word="third"),
+        TranscriptionWord(start=3.0, end=4.0, word="fourth"),
+    ]
+    segment = TranscriptionSegment(start=0.0, end=4.0, text="first second third fourth", words=words)
+    transcription = Transcription(segments=[segment])
+
+    # Slice to get only "second" and "third" (1.0-3.0)
+    sliced = transcription.slice(1.0, 3.0)
+
+    assert sliced is not None
+    assert len(sliced.segments) == 1
+    assert sliced.segments[0].text == "second third"
+    assert len(sliced.segments[0].words) == 2
+    assert sliced.segments[0].words[0].word == "second"
+    assert sliced.segments[0].words[1].word == "third"
+
+
+def test_slice_partial_word_overlap():
+    """Test that words partially overlapping with time range are included."""
+    words = [
+        TranscriptionWord(start=0.0, end=2.0, word="first"),  # Partially overlaps with 1.0-3.0
+        TranscriptionWord(start=2.0, end=4.0, word="second"),  # Partially overlaps with 1.0-3.0
+    ]
+    segment = TranscriptionSegment(start=0.0, end=4.0, text="first second", words=words)
+    transcription = Transcription(segments=[segment])
+
+    # Both words overlap with 1.0-3.0
+    sliced = transcription.slice(1.0, 3.0)
+
+    assert sliced is not None
+    assert len(sliced.segments) == 1
+    assert sliced.segments[0].text == "first second"
+    assert len(sliced.segments[0].words) == 2
+
+
+def test_slice_no_overlap():
+    """Test slicing when no words overlap with time range."""
+    words = [
+        TranscriptionWord(start=0.0, end=1.0, word="first"),
+        TranscriptionWord(start=1.0, end=2.0, word="second"),
+    ]
+    segment = TranscriptionSegment(start=0.0, end=2.0, text="first second", words=words)
+    transcription = Transcription(segments=[segment])
+
+    # No words in 5.0-10.0 range
+    sliced = transcription.slice(5.0, 10.0)
+
+    assert sliced is None
+
+
+def test_slice_invalid_range():
+    """Test slicing with invalid time range."""
+    words = [TranscriptionWord(start=0.0, end=1.0, word="test")]
+    segment = TranscriptionSegment(start=0.0, end=1.0, text="test", words=words)
+    transcription = Transcription(segments=[segment])
+
+    # start >= end should return None
+    assert transcription.slice(5.0, 5.0) is None
+    assert transcription.slice(5.0, 3.0) is None
+
+
+def test_slice_preserves_speaker_info():
+    """Test that slicing preserves speaker information."""
+    words = [
+        TranscriptionWord(start=0.0, end=1.0, word="hello", speaker="SPEAKER_00"),
+        TranscriptionWord(start=1.0, end=2.0, word="world", speaker="SPEAKER_00"),
+        TranscriptionWord(start=2.0, end=3.0, word="hi", speaker="SPEAKER_01"),
+        TranscriptionWord(start=3.0, end=4.0, word="there", speaker="SPEAKER_01"),
+    ]
+    transcription = Transcription(words=words)
+
+    # Slice to get words from both speakers
+    sliced = transcription.slice(0.5, 3.5)
+
+    assert sliced is not None
+    assert len(sliced.segments) == 2  # Should have 2 segments (one per speaker)
+    assert sliced.segments[0].speaker == "SPEAKER_00"
+    assert sliced.segments[0].text == "hello world"
+    assert sliced.segments[1].speaker == "SPEAKER_01"
+    assert sliced.segments[1].text == "hi there"
+
+
+def test_slice_across_multiple_segments(dummy_transcription):
+    """Test slicing across multiple original segments."""
+    # Slice from 0.5 to 6.0 should include parts of all three segments
+    sliced = dummy_transcription.slice(0.5, 6.0)
+
+    assert sliced is not None
+    # All words from 0.5 to 6.0 should be included
+    all_words = []
+    for seg in sliced.segments:
+        all_words.extend([w.word for w in seg.words])
+
+    # Should include words from all three original segments that overlap
+    assert "world" in all_words  # From first segment
+    assert "Second" in all_words  # From second segment
+    assert "Final" in all_words  # From third segment

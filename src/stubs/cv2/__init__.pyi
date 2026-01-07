@@ -1,5 +1,8 @@
 __all__ = [
     "VideoCapture",
+    "CascadeClassifier",
+    "data",
+    "dnn",
     # Constants
     "CAP_PROP_FRAME_COUNT",
     "CAP_PROP_FPS",
@@ -13,6 +16,8 @@ __all__ = [
     "COLOR_RGB2BGR",
     "COLOR_BGR2RGB",
     "COLOR_RGB2HSV",
+    "COLOR_BGR2GRAY",
+    "COLOR_RGB2GRAY",
     "HISTCMP_CORREL",
     "NORM_MINMAX",
     # Functions
@@ -23,16 +28,19 @@ __all__ = [
     "calcHist",
     "normalize",
     "compareHist",
+    "calcOpticalFlowFarneback",
 ]
 
-from .classes import VideoCapture
+from .classes import CascadeClassifier, VideoCapture, data, dnn
 from .constants import (
     CAP_PROP_FPS,
     CAP_PROP_FRAME_COUNT,
     CAP_PROP_FRAME_HEIGHT,
     CAP_PROP_FRAME_WIDTH,
+    COLOR_BGR2GRAY,
     COLOR_BGR2RGB,
     COLOR_RGB2BGR,
+    COLOR_RGB2GRAY,
     COLOR_RGB2HSV,
     HISTCMP_CORREL,
     INTER_AREA,
@@ -42,4 +50,13 @@ from .constants import (
     INTER_NEAREST,
     NORM_MINMAX,
 )
-from .functions import GaussianBlur, calcHist, compareHist, cvtColor, imwrite, normalize, resize
+from .functions import (
+    GaussianBlur,
+    calcHist,
+    calcOpticalFlowFarneback,
+    compareHist,
+    cvtColor,
+    imwrite,
+    normalize,
+    resize,
+)

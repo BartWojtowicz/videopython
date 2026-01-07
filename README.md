@@ -74,6 +74,11 @@ The `videopython.ai` module supports multiple backends - local models and cloud 
 | ImageToText | BLIP | GPT-4o | Gemini | - |
 | AudioToText | Whisper | Whisper API | Gemini | - |
 | LLMSummarizer | Ollama | GPT-4o | Gemini | - |
+| ObjectDetector | YOLO | GPT-4o | Gemini | - |
+| TextDetector | EasyOCR | GPT-4o | Gemini | - |
+| FaceDetector | OpenCV | - | - | - |
+| ShotTypeClassifier | - | GPT-4o | Gemini | - |
+| CameraMotionDetector | OpenCV | - | - | - |
 
 Cloud backends require API keys via environment variables:
 - `OPENAI_API_KEY` for OpenAI
@@ -146,26 +151,21 @@ video.save()
 ```python
 import asyncio
 from videopython.base.video import Video
-from videopython.ai.understanding import ImageToText, LLMSummarizer
-from videopython.ai.understanding.video import SceneDetector
+from videopython.ai.understanding.video import VideoAnalyzer
 
 video = Video.from_path("<PATH_TO_VIDEO>")
 
-# Detect scenes
-detector = SceneDetector()
-scenes = detector.detect_scenes(video)
+# Comprehensive video analysis
+analyzer = VideoAnalyzer(detection_backend="local")  # or "openai", "gemini"
+result = asyncio.run(analyzer.analyze(
+    video,
+    detect_objects=True,  # YOLO (local) or vision API (cloud)
+    detect_faces=True,    # OpenCV
+    extract_colors=True,
+))
 
-# Describe frames with OpenAI GPT-4o Vision
-analyzer = ImageToText(backend="openai")
-for scene in scenes:
-    frame = video.frames[scene.start_frame]
-    description = asyncio.run(analyzer.describe_image(frame))
-    print(f"Scene {scene.start:.1f}s-{scene.end:.1f}s: {description}")
-
-# Summarize with Gemini
-summarizer = LLMSummarizer(backend="gemini")
-frame_descriptions = [(0.0, "A dog playing"), (2.0, "The dog runs")]
-summary = asyncio.run(summarizer.summarize_scene(frame_descriptions))
+for scene in result.scene_descriptions:
+    print(f"Scene {scene.start:.1f}s-{scene.end:.1f}s: {scene.detected_entities}")
 ```
 
 # Development notes
@@ -194,9 +194,10 @@ We are using [uv](https://docs.astral.sh/uv/) as project and package manager. On
 uv sync --all-extras
 ```
 
-To run the unit tests, you can simply run:
+To run the unit tests:
 ```bash
-uv run pytest
+uv run pytest src/tests/base  # Base tests (no AI, runs in CI)
+uv run pytest src/tests/ai    # AI tests (requires ai extras, excluded from CI)
 ```
 
 We also use [Ruff](https://docs.astral.sh/ruff/) for linting/formatting and [mypy](https://github.com/python/mypy) as type checker.

@@ -17,6 +17,8 @@ INTER_LANCZOS4: Final[int]
 COLOR_RGB2BGR: Final[int]
 COLOR_BGR2RGB: Final[int]
 COLOR_RGB2HSV: Final[int]
+COLOR_BGR2GRAY: Final[int]
+COLOR_RGB2GRAY: Final[int]
 
 # Histogram comparison methods
 HISTCMP_CORREL: Final[int]

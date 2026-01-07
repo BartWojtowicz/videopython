@@ -5,9 +5,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from videopython.base.video import Video, VideoMetadata
-
-from .test_config import (
+from tests.test_config import (
     BIG_VIDEO_METADATA,
     BIG_VIDEO_PATH,
     SMALL_VIDEO_METADATA,
@@ -15,6 +13,7 @@ from .test_config import (
     TEST_AUDIO_PATH,
     TEST_IMAGE_PATH,
 )
+from videopython.base.video import Video, VideoMetadata
 
 
 @pytest.mark.parametrize(

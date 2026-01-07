@@ -49,3 +49,15 @@ def compareHist(
     H2: npt.NDArray[np.float32],
     method: int,
 ) -> float: ...
+def calcOpticalFlowFarneback(
+    prev: npt.NDArray[np.uint8],
+    next: npt.NDArray[np.uint8],
+    flow: npt.NDArray[np.float32] | None,
+    pyr_scale: float,
+    levels: int,
+    winsize: int,
+    iterations: int,
+    poly_n: int,
+    poly_sigma: float,
+    flags: int,
+) -> npt.NDArray[np.float32]: ...

@@ -1,12 +1,37 @@
+"""Pytest configuration.
+
+Test structure:
+- tests/base/ - No AI dependencies, runs in CI
+- tests/ai/ - Requires AI extras, excluded from CI
+"""
+
 import numpy as np
 import pytest
 
-from videopython.base.video import Video
-
-from .test_config import (
+from tests.test_config import (
     BIG_VIDEO_PATH,
     SMALL_VIDEO_PATH,
 )
+from videopython.base.video import Video
+
+
+def pytest_collection_modifyitems(config, items):
+    """Enforce that base tests don't import from videopython.ai."""
+    for item in items:
+        # Only check tests in the base/ subdirectory
+        if "/base/" not in str(item.fspath):
+            continue
+
+        module = item.module
+        if module is None:
+            continue
+
+        for name, obj in vars(module).items():
+            if hasattr(obj, "__module__") and obj.__module__ and obj.__module__.startswith("videopython.ai"):
+                pytest.fail(
+                    f"Test {item.nodeid} imports from videopython.ai ({obj.__module__}). "
+                    f"Move this test to tests/ai/ or remove the import."
+                )
 
 
 @pytest.fixture(scope="session")
