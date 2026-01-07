@@ -113,7 +113,7 @@ def test_video_from_image():
 def test_load_video_shape(video_path: str, original_metadata: VideoMetadata):
     """Tests Video.load_video."""
     video = Video.from_path(video_path)
-    assert (video.frames.shape == original_metadata.get_video_shape()).all()
+    assert video.frames.shape == tuple(original_metadata.get_video_shape())
 
 
 def test_save_and_load():

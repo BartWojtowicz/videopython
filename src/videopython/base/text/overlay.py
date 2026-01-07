@@ -17,6 +17,8 @@ from videopython.base.exceptions import OutOfBoundsError
 from videopython.base.text.transcription import Transcription, TranscriptionSegment
 from videopython.base.video import Video
 
+__all__ = ["TranscriptionOverlay", "ImageText", "TextAlign", "AnchorPoint"]
+
 # Type aliases for clarity
 MarginType: TypeAlias = int | tuple[int, int, int, int]
 RGBColor: TypeAlias = tuple[int, int, int]

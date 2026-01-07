@@ -6,6 +6,15 @@ import numpy as np
 
 from videopython.base.text.transcription import Transcription
 
+__all__ = [
+    "FrameDescription",
+    "SceneDescription",
+    "VideoDescription",
+    "ColorHistogram",
+    "BoundingBox",
+    "DetectedObject",
+]
+
 
 @dataclass
 class ColorHistogram:
