@@ -11,6 +11,7 @@ from videopython.ai.backends import (
     ImageToVideoBackend,
     TextToVideoBackend,
     UnsupportedBackendError,
+    VideoUpscalerBackend,
 )
 from videopython.ai.config import get_default_backend
 from videopython.base.video import Video
@@ -162,5 +163,76 @@ class ImageToVideo:
         """
         if self.backend == "local":
             return await self._generate_local(image, fps)
+        else:
+            raise UnsupportedBackendError(self.backend, self.SUPPORTED_BACKENDS)
+
+
+class VideoUpscaler:
+    """Upscales video resolution using AI super-resolution models.
+
+    Uses RealBasicVSR for 4x upscaling with temporal consistency.
+    """
+
+    SUPPORTED_BACKENDS: list[str] = ["local"]
+
+    def __init__(
+        self,
+        backend: VideoUpscalerBackend | None = None,
+    ):
+        """Initialize video upscaler.
+
+        Args:
+            backend: Backend to use. If None, uses config default or 'local'.
+        """
+        resolved_backend: str = backend if backend is not None else get_default_backend("video_upscaler")
+        if resolved_backend not in self.SUPPORTED_BACKENDS:
+            raise UnsupportedBackendError(resolved_backend, self.SUPPORTED_BACKENDS)
+
+        self.backend: VideoUpscalerBackend = resolved_backend  # type: ignore[assignment]
+        self._inferencer: Any = None
+
+    def _init_local(self) -> None:
+        """Initialize local RealBasicVSR model via MMagic."""
+        import torch
+
+        if not torch.cuda.is_available():
+            raise ValueError("CUDA is not available, but local VideoUpscaler requires CUDA.")
+
+        from mmagic.apis import MMagicInferencer
+
+        self._inferencer = MMagicInferencer(model_name="realbasicvsr")
+
+    async def _upscale_local(self, video: Video) -> Video:
+        """Upscale video using local RealBasicVSR model."""
+        import tempfile
+        from pathlib import Path
+
+        if self._inferencer is None:
+            await asyncio.to_thread(self._init_local)
+
+        def _run_upscale() -> Video:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                input_path = Path(tmpdir) / "input.mp4"
+                output_path = Path(tmpdir) / "output.mp4"
+
+                video.save(str(input_path))
+
+                self._inferencer.infer(video=str(input_path), result_out_dir=str(output_path))
+
+                return Video.from_path(str(output_path))
+
+        return await asyncio.to_thread(_run_upscale)
+
+    async def upscale(self, video: Video) -> Video:
+        """Upscale video resolution by 4x.
+
+        Args:
+            video: Input video to upscale.
+
+        Returns:
+            Upscaled video with 4x resolution.
+        """
+        if self.backend == "local":
+            return await self._upscale_local(video)
         else:
             raise UnsupportedBackendError(self.backend, self.SUPPORTED_BACKENDS)

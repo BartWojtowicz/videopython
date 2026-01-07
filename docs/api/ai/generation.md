@@ -8,6 +8,7 @@ Generate videos, images, audio, and music from text prompts.
 |-------|-------|--------|--------|------------|
 | TextToVideo | Zeroscope | - | - | - |
 | ImageToVideo | SVD | - | - | - |
+| VideoUpscaler | RealBasicVSR | - | - | - |
 | TextToSpeech | Bark | TTS | - | Multilingual v2 |
 | TextToMusic | MusicGen | - | - | - |
 | TextToImage | SDXL | DALL-E 3 | - | - |
@@ -19,6 +20,10 @@ Generate videos, images, audio, and music from text prompts.
 ## ImageToVideo
 
 ::: videopython.ai.ImageToVideo
+
+## VideoUpscaler
+
+::: videopython.ai.VideoUpscaler
 
 ## TextToImage
 

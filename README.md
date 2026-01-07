@@ -77,6 +77,7 @@ Cloud backends require API keys: `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `ELEVENLABS
 |-------|-------|--------|--------|------------|
 | TextToVideo | Zeroscope | - | - | - |
 | ImageToVideo | SVD | - | - | - |
+| VideoUpscaler | RealBasicVSR | - | - | - |
 | TextToSpeech | Bark | TTS | - | Multilingual v2 |
 | TextToMusic | MusicGen | - | - | - |
 | TextToImage | SDXL | DALL-E 3 | - | - |

@@ -1,4 +1,4 @@
-from .generation import ImageToVideo, TextToImage, TextToMusic, TextToSpeech, TextToVideo
+from .generation import ImageToVideo, TextToImage, TextToMusic, TextToSpeech, TextToVideo, VideoUpscaler
 from .understanding import (
     AudioToText,
     CameraMotionDetector,
@@ -17,6 +17,7 @@ __all__ = [
     # Generation
     "TextToVideo",
     "ImageToVideo",
+    "VideoUpscaler",
     "TextToImage",
     "TextToSpeech",
     "TextToMusic",

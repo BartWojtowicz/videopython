@@ -8,6 +8,7 @@ from typing import Literal
 # Backend type definitions per task
 TextToVideoBackend = Literal["local"]
 ImageToVideoBackend = Literal["local"]
+VideoUpscalerBackend = Literal["local"]
 TextToSpeechBackend = Literal["local", "openai", "elevenlabs"]
 TextToMusicBackend = Literal["local"]
 TextToImageBackend = Literal["local", "openai"]

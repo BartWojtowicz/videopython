@@ -12,6 +12,7 @@ import tomllib
 DEFAULT_BACKENDS: dict[str, str] = {
     "text_to_video": "local",
     "image_to_video": "local",
+    "video_upscaler": "local",
     "text_to_speech": "local",
     "text_to_music": "local",
     "text_to_image": "local",
