@@ -6,8 +6,8 @@ Generate videos, images, audio, and music from text prompts.
 
 | Class | local | openai | gemini | elevenlabs |
 |-------|-------|--------|--------|------------|
-| TextToVideo | Zeroscope | - | - | - |
-| ImageToVideo | SVD | - | - | - |
+| TextToVideo | CogVideoX1.5-5B | - | - | - |
+| ImageToVideo | CogVideoX1.5-5B-I2V | - | - | - |
 | VideoUpscaler | RealBasicVSR | - | - | - |
 | TextToSpeech | Bark | TTS | - | Multilingual v2 |
 | TextToMusic | MusicGen | - | - | - |

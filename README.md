@@ -52,7 +52,7 @@ video = fade.apply((video1, video2))
 async def add_ai_content(video):
     # Generate an image and animate it
     image = await TextToImage(backend="openai").generate_image("A sunset over mountains")
-    intro = await ImageToVideo().generate_video(image=image, fps=24)
+    intro = await ImageToVideo().generate_video(image=image, prompt="Sunset animation")
 
     # Transcribe and add subtitles
     transcription = await AudioToText(backend="openai").transcribe(video)
@@ -75,8 +75,8 @@ Cloud backends require API keys: `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `ELEVENLABS
 
 | Class | local | openai | gemini | elevenlabs |
 |-------|-------|--------|--------|------------|
-| TextToVideo | Zeroscope | - | - | - |
-| ImageToVideo | SVD | - | - | - |
+| TextToVideo | CogVideoX1.5-5B | - | - | - |
+| ImageToVideo | CogVideoX1.5-5B-I2V | - | - | - |
 | VideoUpscaler | RealBasicVSR | - | - | - |
 | TextToSpeech | Bark | TTS | - | Multilingual v2 |
 | TextToMusic | MusicGen | - | - | - |
