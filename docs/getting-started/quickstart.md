@@ -1,6 +1,9 @@
 # Quick Start
 
-This guide covers the essential operations in VideoPython.
+This guide covers the essential operations in videopython.
+
+!!! tip "Follow Along"
+    All examples assume you have videos to work with. You can use any `.mp4` file, or download sample videos from sites like [Pexels](https://www.pexels.com/videos/).
 
 ## Loading Videos
 
@@ -52,6 +55,9 @@ video = pipeline.run(video)
 
 ## Combining Videos
 
+!!! warning "Matching Dimensions"
+    Videos must have the same dimensions and FPS to be combined. Use `Resize` and `ResampleFPS` transforms first if needed.
+
 ```python
 from videopython.base import Video, FadeTransition, BlurTransition
 
@@ -99,6 +105,9 @@ video.save("output.mov", format="mov")  # QuickTime
 
 ## AI Features (Quick Preview)
 
+!!! note "API Keys Required"
+    AI features require API keys. Set `OPENAI_API_KEY`, `GOOGLE_API_KEY`, or `ELEVENLABS_API_KEY` depending on the backend you use.
+
 ```python
 import asyncio
 from videopython.ai import TextToImage, TextToSpeech
@@ -114,7 +123,7 @@ image = asyncio.run(generate())
 # Generate speech with OpenAI TTS
 async def speak():
     tts = TextToSpeech(backend="openai")
-    audio = await tts.generate_audio("Welcome to VideoPython!")
+    audio = await tts.generate_audio("Welcome to videopython!")
     return audio
 
 audio = asyncio.run(speak())

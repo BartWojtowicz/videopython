@@ -145,5 +145,3 @@ data/exported/*.mp4
 # Model weights
 *.pt
 
-# Project notes
-TODO.md

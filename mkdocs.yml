@@ -1,4 +1,4 @@
-site_name: VideoPython
+site_name: videopython
 site_url: https://videopython.com
 site_description: Minimal video generation and processing library for Python
 repo_url: https://github.com/bartwojtowicz/videopython
@@ -8,14 +8,14 @@ theme:
   name: material
   palette:
     - scheme: default
-      primary: indigo
-      accent: indigo
+      primary: teal
+      accent: amber
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     - scheme: slate
-      primary: indigo
-      accent: indigo
+      primary: teal
+      accent: amber
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
@@ -64,6 +64,10 @@ nav:
   - Getting Started:
       - Installation: getting-started/installation.md
       - Quick Start: getting-started/quickstart.md
+  - Examples:
+      - Social Media Clip: examples/social-clip.md
+      - AI-Generated Video: examples/ai-video.md
+      - Auto-Subtitles: examples/auto-subtitles.md
   - API Reference:
       - Overview: api/index.md
       - Core:

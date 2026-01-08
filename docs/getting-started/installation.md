@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-VideoPython requires FFmpeg for video processing. Install it first:
+videopython requires FFmpeg for video processing. Install it first:
 
 ```bash
 # macOS
@@ -15,7 +15,7 @@ sudo apt-get install ffmpeg
 choco install ffmpeg
 ```
 
-## Install VideoPython
+## Install videopython
 
 ### Basic Installation
 
@@ -59,18 +59,3 @@ export GOOGLE_API_KEY="your-key-here"
 export ELEVENLABS_API_KEY="your-key-here"
 ```
 
-## Verify Installation
-
-```python
-from videopython import Video
-
-# Check basic functionality
-print("VideoPython installed successfully!")
-
-# Check AI features (if installed)
-try:
-    from videopython.ai import TextToImage
-    print("AI features available!")
-except ImportError:
-    print("AI features not installed")
-```
