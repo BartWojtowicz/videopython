@@ -1,6 +1,6 @@
 # API Reference
 
-VideoPython is organized into two main modules:
+videopython is organized into two main modules:
 
 ## `videopython.base`
 

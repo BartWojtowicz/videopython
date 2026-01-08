@@ -1,4 +1,4 @@
-# VideoPython
+# videopython
 
 A minimal video generation and processing library designed for short-form videos, with focus on simplicity and ease of use for both humans and AI agents.
 

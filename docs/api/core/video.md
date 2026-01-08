@@ -1,6 +1,6 @@
 # Video
 
-The `Video` class is the core data structure in VideoPython.
+The `Video` class is the core data structure in videopython.
 
 ## Video
 
