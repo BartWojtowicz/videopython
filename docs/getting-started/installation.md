@@ -40,8 +40,8 @@ uv add videopython --extra ai
 ```
 
 !!! note "Hardware Requirements"
-    Local AI models (video generation, music generation) require a CUDA-capable GPU.
-    An NVIDIA A40 or better is recommended for video generation.
+    Local AI models (video generation, music generation) require a GPU.
+    CUDA (NVIDIA) or MPS (Apple Silicon) is supported. An NVIDIA A40 or better is recommended for video generation.
 
 ## API Keys for Cloud Backends
 
@@ -52,10 +52,14 @@ Cloud backends require API keys set as environment variables:
 | OpenAI | `OPENAI_API_KEY` |
 | Google Gemini | `GOOGLE_API_KEY` |
 | ElevenLabs | `ELEVENLABS_API_KEY` |
+| Runway | `RUNWAYML_API_KEY` |
+| Luma AI | `LUMAAI_API_KEY` |
 
 ```bash
 export OPENAI_API_KEY="your-key-here"
 export GOOGLE_API_KEY="your-key-here"
 export ELEVENLABS_API_KEY="your-key-here"
+export RUNWAYML_API_KEY="your-key-here"
+export LUMAAI_API_KEY="your-key-here"
 ```
 

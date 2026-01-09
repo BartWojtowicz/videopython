@@ -4,14 +4,14 @@ Generate videos, images, audio, and music from text prompts.
 
 ## Backend Support
 
-| Class | local | openai | gemini | elevenlabs |
-|-------|-------|--------|--------|------------|
-| TextToVideo | CogVideoX1.5-5B | - | - | - |
-| ImageToVideo | CogVideoX1.5-5B-I2V | - | - | - |
-| VideoUpscaler | RealBasicVSR | - | - | - |
-| TextToSpeech | Bark | TTS | - | Multilingual v2 |
-| TextToMusic | MusicGen | - | - | - |
-| TextToImage | SDXL | DALL-E 3 | - | - |
+| Class | local | openai | gemini | elevenlabs | luma | runway |
+|-------|-------|--------|--------|------------|------|--------|
+| TextToVideo | CogVideoX1.5-5B | - | - | - | Dream Machine | - |
+| ImageToVideo | CogVideoX1.5-5B-I2V | - | - | - | Dream Machine | Gen-4 Turbo |
+| VideoUpscaler | RealBasicVSR | - | - | - | - | - |
+| TextToSpeech | Bark | TTS | - | Multilingual v2 | - | - |
+| TextToMusic | MusicGen | - | - | - | - | - |
+| TextToImage | SDXL | DALL-E 3 | - | - | - | - |
 
 ## TextToVideo
 
