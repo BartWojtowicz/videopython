@@ -68,6 +68,8 @@ ai = [
     "google-generativeai>=0.8.0",
     "elevenlabs>=1.0.0",
     "httpx>=0.27.0",
+    "runwayml>=0.10.0",
+    "lumaai>=1.0.0",
     # Detection backends
     "ultralytics>=8.0.0",
     "easyocr>=1.7.0",
@@ -104,6 +106,8 @@ ai = [
     "google-generativeai>=0.8.0",
     "elevenlabs>=1.0.0",
     "httpx>=0.27.0",
+    "runwayml>=0.10.0",
+    "lumaai>=1.0.0",
     # Detection backends
     "ultralytics>=8.0.0",
     "easyocr>=1.7.0",

@@ -6,8 +6,8 @@ import os
 from typing import Literal
 
 # Backend type definitions per task
-TextToVideoBackend = Literal["local"]
-ImageToVideoBackend = Literal["local"]
+TextToVideoBackend = Literal["local", "luma"]
+ImageToVideoBackend = Literal["local", "luma", "runway"]
 VideoUpscalerBackend = Literal["local"]
 TextToSpeechBackend = Literal["local", "openai", "elevenlabs"]
 TextToMusicBackend = Literal["local"]
@@ -21,6 +21,8 @@ API_KEY_ENV_VARS: dict[str, str] = {
     "openai": "OPENAI_API_KEY",
     "gemini": "GOOGLE_API_KEY",
     "elevenlabs": "ELEVENLABS_API_KEY",
+    "runway": "RUNWAYML_API_KEY",
+    "luma": "LUMAAI_API_KEY",
 }
 
 
