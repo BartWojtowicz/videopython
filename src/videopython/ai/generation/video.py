@@ -112,17 +112,20 @@ class TextToVideo:
         client = LumaAI(auth_token=get_api_key("luma", self._api_key))
 
         # Create generation request
-        generation = client.generations.create(prompt=prompt)
+        generation = client.generations.create(prompt=prompt, model="ray-2")
 
         # Poll for completion
         while generation.state not in ["completed", "failed"]:
             await asyncio.sleep(3)
+            assert generation.id is not None
             generation = client.generations.get(generation.id)
 
         if generation.state == "failed":
             raise RuntimeError(f"Luma generation failed: {generation.failure_reason}")
 
         # Download the video
+        if generation.assets is None:
+            raise RuntimeError("Luma generation completed but no assets returned")
         video_url = generation.assets.video
         if not video_url:
             raise RuntimeError("Luma generation completed but no video URL returned")
@@ -248,24 +251,28 @@ class ImageToVideo:
         image_uri = f"data:image/png;base64,{image_base64}"
 
         # Create image-to-video task
-        task = client.image_to_video.create(
+        task_response = client.image_to_video.create(
             model="gen4_turbo",
             prompt_image=image_uri,
-            prompt_text=prompt if prompt else None,
+            prompt_text=prompt if prompt else "",
+            ratio="1280:720",
         )
 
         # Poll for completion
+        task = client.tasks.retrieve(task_response.id)
         while task.status not in ["SUCCEEDED", "FAILED"]:
             await asyncio.sleep(5)
-            task = client.tasks.retrieve(task.id)
+            task = client.tasks.retrieve(task_response.id)
 
         if task.status == "FAILED":
-            raise RuntimeError(f"Runway generation failed: {task.failure}")
+            failure_msg = getattr(task, "failure", "Unknown error")
+            raise RuntimeError(f"Runway generation failed: {failure_msg}")
 
-        # Download the video
-        video_url = task.output[0] if task.output else None
-        if not video_url:
+        # Download the video - task.status is "SUCCEEDED" at this point
+        output = getattr(task, "output", None)
+        if not output:
             raise RuntimeError("Runway generation completed but no video URL returned")
+        video_url: str = output[0]
 
         import httpx
 
@@ -301,18 +308,22 @@ class ImageToVideo:
         # Create generation request with image
         generation = client.generations.create(
             prompt=prompt if prompt else "Animate this image",
+            model="ray-2",
             keyframes={"frame0": {"type": "image", "url": image_uri}},
         )
 
         # Poll for completion
         while generation.state not in ["completed", "failed"]:
             await asyncio.sleep(3)
+            assert generation.id is not None
             generation = client.generations.get(generation.id)
 
         if generation.state == "failed":
             raise RuntimeError(f"Luma generation failed: {generation.failure_reason}")
 
         # Download the video
+        if generation.assets is None:
+            raise RuntimeError("Luma generation completed but no assets returned")
         video_url = generation.assets.video
         if not video_url:
             raise RuntimeError("Luma generation completed but no video URL returned")

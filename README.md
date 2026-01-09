@@ -71,24 +71,24 @@ For more examples and API reference, see the [full documentation](docs/index.md)
 
 ## AI Backend Support
 
-Cloud backends require API keys: `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `ELEVENLABS_API_KEY`.
+Cloud backends require API keys: `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `ELEVENLABS_API_KEY`, `RUNWAYML_API_KEY`, `LUMAAI_API_KEY`.
 
-| Class | local | openai | gemini | elevenlabs |
-|-------|-------|--------|--------|------------|
-| TextToVideo | CogVideoX1.5-5B | - | - | - |
-| ImageToVideo | CogVideoX1.5-5B-I2V | - | - | - |
-| VideoUpscaler | RealBasicVSR | - | - | - |
-| TextToSpeech | Bark | TTS | - | Multilingual v2 |
-| TextToMusic | MusicGen | - | - | - |
-| TextToImage | SDXL | DALL-E 3 | - | - |
-| ImageToText | BLIP | GPT-4o | Gemini | - |
-| AudioToText | Whisper | Whisper API | Gemini | - |
-| LLMSummarizer | Ollama | GPT-4o | Gemini | - |
-| ObjectDetector | YOLO | GPT-4o | Gemini | - |
-| TextDetector | EasyOCR | GPT-4o | Gemini | - |
-| FaceDetector | OpenCV | - | - | - |
-| ShotTypeClassifier | - | GPT-4o | Gemini | - |
-| CameraMotionDetector | OpenCV | - | - | - |
+| Class | local | openai | gemini | elevenlabs | luma | runway |
+|-------|-------|--------|--------|------------|------|--------|
+| TextToVideo | CogVideoX1.5-5B | - | - | - | Dream Machine | - |
+| ImageToVideo | CogVideoX1.5-5B-I2V | - | - | - | Dream Machine | Gen-4 Turbo |
+| VideoUpscaler | RealBasicVSR | - | - | - | - | - |
+| TextToSpeech | Bark | TTS | - | Multilingual v2 | - | - |
+| TextToMusic | MusicGen | - | - | - | - | - |
+| TextToImage | SDXL | DALL-E 3 | - | - | - | - |
+| ImageToText | BLIP | GPT-4o | Gemini | - | - | - |
+| AudioToText | Whisper | Whisper API | Gemini | - | - | - |
+| LLMSummarizer | Ollama | GPT-4o | Gemini | - | - | - |
+| ObjectDetector | YOLO | GPT-4o | Gemini | - | - | - |
+| TextDetector | EasyOCR | GPT-4o | Gemini | - | - | - |
+| FaceDetector | OpenCV | - | - | - | - | - |
+| ShotTypeClassifier | - | GPT-4o | Gemini | - | - | - |
+| CameraMotionDetector | OpenCV | - | - | - | - | - |
 
 ## Development
 
