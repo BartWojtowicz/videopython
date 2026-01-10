@@ -1,28 +1,89 @@
-name: Publish to PyPI
+name: Release and Publish
 
 on:
   push:
-    tags:
-      - '*.*.*'
+    branches:
+      - main
+    paths:
+      - 'RELEASE_NOTES.md'
 
 jobs:
+  validate-version:
+    name: Validate version consistency
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.extract.outputs.version }}
+      notes: ${{ steps.extract.outputs.notes }}
+      should_release: ${{ steps.check.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from RELEASE_NOTES.md
+        id: extract
+        run: |
+          VERSION=$(grep -m1 '^## [0-9]' RELEASE_NOTES.md | sed 's/## //')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+          NOTES=$(awk '/^## [0-9]/{if(found) exit; found=1; next} found' RELEASE_NOTES.md)
+          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          echo "notes<<$EOF" >> $GITHUB_OUTPUT
+          echo "$NOTES" >> $GITHUB_OUTPUT
+          echo "$EOF" >> $GITHUB_OUTPUT
+
+      - name: Validate pyproject.toml version matches
+        run: |
+          PYPROJECT_VERSION=$(grep '^version' pyproject.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          RELEASE_VERSION="${{ steps.extract.outputs.version }}"
+
+          if [ "$PYPROJECT_VERSION" != "$RELEASE_VERSION" ]; then
+            echo "::error::Version mismatch! pyproject.toml has '$PYPROJECT_VERSION' but RELEASE_NOTES.md has '$RELEASE_VERSION'"
+            exit 1
+          fi
+          echo "Versions match: $PYPROJECT_VERSION"
+
+      - name: Check if tag already exists
+        id: check
+        run: |
+          if git rev-parse "${{ steps.extract.outputs.version }}" >/dev/null 2>&1; then
+            echo "Tag ${{ steps.extract.outputs.version }} already exists, skipping release"
+            echo "should_release=false" >> $GITHUB_OUTPUT
+          else
+            echo "should_release=true" >> $GITHUB_OUTPUT
+          fi
+
   test:
+    needs: validate-version
+    if: needs.validate-version.outputs.should_release == 'true'
     uses: ./.github/workflows/ci.yml
 
-  publish:
-    name: Build and publish to PyPI
-    needs: test
+  release:
+    name: Create GitHub Release
+    needs: [validate-version, test]
+    if: needs.validate-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     permissions:
-      id-token: write  # Required for trusted publishing
+      contents: write
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-      - name: Set up Python
-        run: uv python install 312
-      - name: Build package
-        run: uv build
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: actions/checkout@v4
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.validate-version.outputs.version }}
+          name: v${{ needs.validate-version.outputs.version }}
+          body: ${{ needs.validate-version.outputs.notes }}
+
+  publish:
+    name: Publish to PyPI
+    needs: [validate-version, test, release]
+    if: needs.validate-version.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv python install 312
+      - run: uv build
+      - uses: pypa/gh-action-pypi-publish@release/v1
