@@ -4,9 +4,10 @@ videopython is organized into two main modules:
 
 ## `videopython.base`
 
-Core video processing functionality with no AI dependencies:
+Core video and audio processing functionality with no AI dependencies:
 
 - [**Video**](core/video.md) - Core video class for loading, manipulating, and saving videos
+- [**Audio**](core/audio.md) - Core audio class for loading, manipulating, and saving audio
 - [**Transforms**](transforms.md) - Frame transformations (cut, resize, resample)
 - [**Transitions**](transitions.md) - Video transitions (fade, blur)
 - [**Effects**](effects.md) - Visual effects (blur, zoom, overlays)
@@ -28,6 +29,8 @@ from videopython import Video
 # Import specific classes from base
 from videopython.base import (
     Video,
+    Audio,
+    AudioMetadata,
     CutSeconds,
     FadeTransition,
     Transcription,
