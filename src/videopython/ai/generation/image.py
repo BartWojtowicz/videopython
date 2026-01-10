@@ -41,14 +41,26 @@ class TextToImage:
         import torch
         from diffusers import DiffusionPipeline
 
-        if not torch.cuda.is_available():
-            raise ValueError("CUDA is not available, but local TextToImage requires CUDA.")
+        if torch.cuda.is_available():
+            device = "cuda"
+            dtype = torch.float16
+            variant = "fp16"
+        elif torch.backends.mps.is_available():
+            device = "mps"
+            dtype = torch.float32  # MPS works better with float32
+            variant = None  # No fp16 variant for MPS
+        else:
+            raise ValueError("No GPU available. Local TextToImage requires CUDA or MPS (Apple Silicon).")
 
         model_name = "stabilityai/stable-diffusion-xl-base-1.0"
         self._pipeline = DiffusionPipeline.from_pretrained(
-            model_name, torch_dtype=torch.float16, variant="fp16", use_safetensors=True
+            model_name, torch_dtype=dtype, variant=variant, use_safetensors=True
         )
-        self._pipeline.to("cuda")
+        self._pipeline.to(device)
+
+        # Enable attention slicing for MPS memory efficiency
+        if device == "mps":
+            self._pipeline.enable_attention_slicing()
 
     async def _generate_local(self, prompt: str) -> Image.Image:
         """Generate image using local diffusion model."""

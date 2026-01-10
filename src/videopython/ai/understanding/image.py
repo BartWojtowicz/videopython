@@ -56,7 +56,12 @@ class ImageToText:
 
         device = self.device
         if device is None:
-            device = "cuda" if torch.cuda.is_available() else "cpu"
+            if torch.cuda.is_available():
+                device = "cuda"
+            elif torch.backends.mps.is_available():
+                device = "mps"
+            else:
+                device = "cpu"
 
         model_name = "Salesforce/blip-image-captioning-large"
         self._processor = BlipProcessor.from_pretrained(model_name)

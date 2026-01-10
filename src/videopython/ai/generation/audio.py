@@ -59,7 +59,12 @@ class TextToSpeech:
 
         device = self.device
         if device is None:
-            device = "cuda" if torch.cuda.is_available() else "cpu"
+            if torch.cuda.is_available():
+                device = "cuda"
+            elif torch.backends.mps.is_available():
+                device = "mps"
+            else:
+                device = "cpu"
 
         model_name = "suno/bark" if self.model_size == "base" else "suno/bark-small"
         self._processor = AutoProcessor.from_pretrained(model_name)
@@ -223,14 +228,29 @@ class TextToMusic:
         self.backend: TextToMusicBackend = resolved_backend  # type: ignore[assignment]
         self._processor: Any = None
         self._model: Any = None
+        self._device: str = "cpu"
 
     def _init_local(self) -> None:
         """Initialize local MusicGen model."""
+        import os
+
+        import torch
         from transformers import AutoProcessor, MusicgenForConditionalGeneration
+
+        # Enable MPS fallback for unsupported operations
+        os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+
+        if torch.cuda.is_available():
+            self._device = "cuda"
+        elif torch.backends.mps.is_available():
+            self._device = "mps"
+        else:
+            self._device = "cpu"
 
         model_name = "facebook/musicgen-small"
         self._processor = AutoProcessor.from_pretrained(model_name)
         self._model = MusicgenForConditionalGeneration.from_pretrained(model_name)
+        self._model.to(self._device)
 
     async def _generate_local(self, text: str, max_new_tokens: int) -> Audio:
         """Generate music using local MusicGen model."""
@@ -239,10 +259,12 @@ class TextToMusic:
 
         def _run_model() -> Audio:
             inputs = self._processor(text=[text], padding=True, return_tensors="pt")
+            # Move inputs to the same device as the model
+            inputs = {k: v.to(self._device) if hasattr(v, "to") else v for k, v in inputs.items()}
             audio_values = self._model.generate(**inputs, max_new_tokens=max_new_tokens)
             sampling_rate = self._model.config.audio_encoder.sampling_rate
 
-            audio_data = audio_values[0, 0].float().numpy()
+            audio_data = audio_values[0, 0].cpu().float().numpy()
 
             metadata = AudioMetadata(
                 sample_rate=sampling_rate,

@@ -8,7 +8,6 @@ Generate videos, images, audio, and music from text prompts.
 |-------|-------|--------|--------|------------|------|--------|
 | TextToVideo | CogVideoX1.5-5B | - | - | - | Dream Machine | - |
 | ImageToVideo | CogVideoX1.5-5B-I2V | - | - | - | Dream Machine | Gen-4 Turbo |
-| VideoUpscaler | RealBasicVSR | - | - | - | - | - |
 | TextToSpeech | Bark | TTS | - | Multilingual v2 | - | - |
 | TextToMusic | MusicGen | - | - | - | - | - |
 | TextToImage | SDXL | DALL-E 3 | - | - | - | - |
@@ -20,10 +19,6 @@ Generate videos, images, audio, and music from text prompts.
 ## ImageToVideo
 
 ::: videopython.ai.ImageToVideo
-
-## VideoUpscaler
-
-::: videopython.ai.VideoUpscaler
 
 ## TextToImage
 

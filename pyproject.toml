@@ -1,6 +1,6 @@
 [project]
 name = "videopython"
-version = "0.6.2"
+version = "0.6.3"
 description = "Minimal video generation and processing library."
 authors = [
     { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
@@ -31,6 +31,7 @@ classifiers = [
 ]
 
 dependencies = [
+    "hf-transfer>=0.1.9",
     "numpy>=1.25.2",
     "opencv-python>=4.9.0.80",
     "pillow>=10.3.0",
@@ -72,10 +73,6 @@ ai = [
     # Detection backends
     "ultralytics>=8.0.0",
     "easyocr>=1.7.0",
-    # Video upscaling
-    "mmagic>=1.2.0",
-    "mmcv>=2.0.0",
-    "mmengine>=0.10.0",
 ]
 
 # We have to keep it to make PIP use those dependency groups, not only UV
@@ -110,10 +107,6 @@ ai = [
     # Detection backends
     "ultralytics>=8.0.0",
     "easyocr>=1.7.0",
-    # Video upscaling
-    "mmagic>=1.2.0",
-    "mmcv>=2.0.0",
-    "mmengine>=0.10.0",
 ]
 
 [project.urls]
@@ -133,9 +126,6 @@ module = [
     "google.generativeai", "google.generativeai.*",
     "ultralytics", "ultralytics.*",
     "easyocr", "easyocr.*",
-    "mmagic", "mmagic.*",
-    "mmcv", "mmcv.*",
-    "mmengine", "mmengine.*",
 ]
 ignore_missing_imports = true
 

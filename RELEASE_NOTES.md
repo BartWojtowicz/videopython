@@ -1,5 +1,13 @@
 # Release Notes
 
+## 0.6.3
+
+- Removed `VideoUpscaler` - MMagic/mmcv has compatibility issues with NumPy 2.x and is unmaintained
+- Removed MPS support for CogVideoX models (TextToVideo, ImageToVideo) - these require CUDA due to 364GB+ memory requirements on MPS
+- Fixed `TextToMusic` crash on MPS - added missing `.cpu()` call before numpy conversion
+- Removed `mmagic`, `mmcv`, `mmengine` dependencies (reduces install size significantly)
+- Added MPS backend testing documentation (`scripts/mps_tests/MPS_TESTING.md`)
+
 ## 0.6.2
 
 - Added silence detection in audio analysis (`Audio.get_silence_intervals()`)
