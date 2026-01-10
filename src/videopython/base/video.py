@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Literal, get_args
 
 import numpy as np
-from soundpython import Audio
 
+from videopython.base.audio import Audio
 from videopython.base.utils import generate_random_name
 
 __all__ = ["Video", "VideoMetadata"]
