@@ -1,4 +1,11 @@
-from .audio import Audio, AudioMetadata
+from .audio import (
+    Audio,
+    AudioLevels,
+    AudioMetadata,
+    AudioSegment,
+    AudioSegmentType,
+    SilentSegment,
+)
 from .description import (
     BoundingBox,
     ColorHistogram,
@@ -8,6 +15,7 @@ from .description import (
     VideoDescription,
 )
 from .effects import Blur, Effect, FullImageOverlay, Zoom
+from .scene import SceneDetector
 from .text import (
     AnchorPoint,
     ImageText,
@@ -37,6 +45,10 @@ __all__ = [
     # Audio
     "Audio",
     "AudioMetadata",
+    "AudioLevels",
+    "AudioSegment",
+    "AudioSegmentType",
+    "SilentSegment",
     # Transforms
     "Transformation",
     "TransformationPipeline",
@@ -64,7 +76,9 @@ __all__ = [
     "ImageText",
     "TextAlign",
     "AnchorPoint",
-    # Description/Scene
+    # Scene Detection
+    "SceneDetector",
+    # Description
     "FrameDescription",
     "SceneDescription",
     "VideoDescription",

@@ -1,5 +1,12 @@
 # Release Notes
 
+## 0.6.2
+
+- Added silence detection in audio analysis (`Audio.get_silence_intervals()`)
+- Added scene type detection for videos (`SceneType` enum with OUTDOOR, INDOOR, CLOSEUP, etc.)
+- Added comprehensive tests for audio and scene functionality
+- Added import isolation tests to ensure optional dependencies don't break core imports
+
 ## 0.6.1
 
 - Added video understanding capabilities including scene analysis, color histograms, and object/text/face detection
