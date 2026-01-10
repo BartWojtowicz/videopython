@@ -39,3 +39,12 @@ uv run ruff check --fix
 # Run type checks
 uv run mypy src/
 ```
+
+## Releasing
+
+To release a new version:
+1. Update `version` in `pyproject.toml`
+2. Add a new section in `RELEASE_NOTES.md` with matching version (e.g., `## 0.7.0`)
+3. Push to `main`
+
+CI will validate that versions match, run tests, create a GitHub release, and publish to PyPI.
