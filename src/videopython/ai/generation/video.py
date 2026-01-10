@@ -11,7 +11,6 @@ from videopython.ai.backends import (
     ImageToVideoBackend,
     TextToVideoBackend,
     UnsupportedBackendError,
-    VideoUpscalerBackend,
     get_api_key,
 )
 from videopython.ai.config import get_default_backend
@@ -22,23 +21,27 @@ if TYPE_CHECKING:
 
 
 def _get_torch_device_and_dtype() -> tuple[str, Any]:
-    """Get the best available torch device and appropriate dtype.
+    """Get the best available torch device and appropriate dtype for CogVideoX.
+
+    CogVideoX requires CUDA - MPS is not supported due to memory requirements
+    (the model needs 364+ GB for attention computations on MPS).
 
     Returns:
-        Tuple of (device_name, dtype) - e.g. ("cuda", torch.bfloat16) or ("mps", torch.float16)
+        Tuple of (device_name, dtype) - e.g. ("cuda", torch.bfloat16)
 
     Raises:
-        ValueError: If no GPU is available.
+        ValueError: If CUDA is not available.
     """
     import torch
 
     if torch.cuda.is_available():
         return "cuda", torch.bfloat16
-    elif torch.backends.mps.is_available():
-        # MPS has limited bfloat16 support, use float16
-        return "mps", torch.float16
     else:
-        raise ValueError("No GPU available. Local video generation requires CUDA or MPS (Apple Silicon).")
+        raise ValueError(
+            "CUDA is required for local video generation. "
+            "CogVideoX models are not supported on MPS due to memory requirements. "
+            "Use a cloud backend (luma, runway) or run on a CUDA-enabled GPU."
+        )
 
 
 class TextToVideo:
@@ -368,76 +371,5 @@ class ImageToVideo:
             return await self._generate_runway(image, prompt)
         elif self.backend == "luma":
             return await self._generate_luma(image, prompt)
-        else:
-            raise UnsupportedBackendError(self.backend, self.SUPPORTED_BACKENDS)
-
-
-class VideoUpscaler:
-    """Upscales video resolution using AI super-resolution models.
-
-    Uses RealBasicVSR for 4x upscaling with temporal consistency.
-    """
-
-    SUPPORTED_BACKENDS: list[str] = ["local"]
-
-    def __init__(
-        self,
-        backend: VideoUpscalerBackend | None = None,
-    ):
-        """Initialize video upscaler.
-
-        Args:
-            backend: Backend to use. If None, uses config default or 'local'.
-        """
-        resolved_backend: str = backend if backend is not None else get_default_backend("video_upscaler")
-        if resolved_backend not in self.SUPPORTED_BACKENDS:
-            raise UnsupportedBackendError(resolved_backend, self.SUPPORTED_BACKENDS)
-
-        self.backend: VideoUpscalerBackend = resolved_backend  # type: ignore[assignment]
-        self._inferencer: Any = None
-
-    def _init_local(self) -> None:
-        """Initialize local RealBasicVSR model via MMagic."""
-        import torch
-
-        if not torch.cuda.is_available():
-            raise ValueError("CUDA is not available, but local VideoUpscaler requires CUDA.")
-
-        from mmagic.apis import MMagicInferencer
-
-        self._inferencer = MMagicInferencer(model_name="realbasicvsr")
-
-    async def _upscale_local(self, video: Video) -> Video:
-        """Upscale video using local RealBasicVSR model."""
-        import tempfile
-        from pathlib import Path
-
-        if self._inferencer is None:
-            await asyncio.to_thread(self._init_local)
-
-        def _run_upscale() -> Video:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                input_path = Path(tmpdir) / "input.mp4"
-                output_path = Path(tmpdir) / "output.mp4"
-
-                video.save(str(input_path))
-
-                self._inferencer.infer(video=str(input_path), result_out_dir=str(output_path))
-
-                return Video.from_path(str(output_path))
-
-        return await asyncio.to_thread(_run_upscale)
-
-    async def upscale(self, video: Video) -> Video:
-        """Upscale video resolution by 4x.
-
-        Args:
-            video: Input video to upscale.
-
-        Returns:
-            Upscaled video with 4x resolution.
-        """
-        if self.backend == "local":
-            return await self._upscale_local(video)
         else:
             raise UnsupportedBackendError(self.backend, self.SUPPORTED_BACKENDS)
