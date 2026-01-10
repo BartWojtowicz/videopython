@@ -3947,19 +3947,6 @@ wheels = [
 ]
 
 [[package]]
-name = "soundpython"
-version = "0.1.11"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/ad/97/af41516bd935e348db805de22ec4f95dab4605869354040ba62b2325b345/soundpython-0.1.11.tar.gz", hash = "sha256:fae0315ff8c851b2daef2c0ae655f4ced5312a2139c5851a01f44c67a803c0e0", size = 14257, upload-time = "2025-03-30T09:34:05.144Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/3f/57/6d3e3a92d4a913a3003b74eadd08afd8535b006408787a9f9d0fd3a801ea/soundpython-0.1.11-py3-none-any.whl", hash = "sha256:fac6d0870c61927dfe26b4b6b3e6672f46954d728592a06ce73bf0a37e77604d", size = 13540, upload-time = "2025-03-30T09:34:03.933Z" },
-]
-
-[[package]]
 name = "speechbrain"
 version = "1.0.3"
 source = { registry = "https://pypi.org/simple" }
@@ -4566,14 +4553,13 @@ wheels = [
 
 [[package]]
 name = "videopython"
-version = "0.5.5"
+version = "0.6.0"
 source = { editable = "." }
 dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "opencv-python" },
     { name = "pillow" },
-    { name = "soundpython" },
     { name = "tqdm" },
 ]
 
@@ -4680,7 +4666,6 @@ requires-dist = [
     { name = "runwayml", marker = "extra == 'ai'", specifier = ">=0.10.0" },
     { name = "scikit-learn", marker = "extra == 'ai'", specifier = ">=1.3.0" },
     { name = "scipy", marker = "extra == 'ai'", specifier = ">=1.10.0" },
-    { name = "soundpython", specifier = ">=0.1.11" },
     { name = "torch", marker = "extra == 'ai'", specifier = ">=2.1.0" },
     { name = "tqdm", specifier = ">=4.66.3" },
     { name = "transformers", marker = "extra == 'ai'", specifier = ">=4.38.1" },

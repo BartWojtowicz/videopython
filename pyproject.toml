@@ -1,6 +1,6 @@
 [project]
 name = "videopython"
-version = "0.5.5"
+version = "0.6.0"
 description = "Minimal video generation and processing library."
 authors = [
     { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
@@ -35,7 +35,6 @@ dependencies = [
     "opencv-python>=4.9.0.80",
     "pillow>=10.3.0",
     "tqdm>=4.66.3",
-    "soundpython>=0.1.11",
 ]
 
 [dependency-groups]

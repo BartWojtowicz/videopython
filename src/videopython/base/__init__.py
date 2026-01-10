@@ -1,3 +1,4 @@
+from .audio import Audio, AudioMetadata
 from .description import (
     BoundingBox,
     ColorHistogram,
@@ -33,6 +34,9 @@ __all__ = [
     # Core
     "Video",
     "VideoMetadata",
+    # Audio
+    "Audio",
+    "AudioMetadata",
     # Transforms
     "Transformation",
     "TransformationPipeline",

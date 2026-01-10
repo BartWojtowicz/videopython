@@ -5,8 +5,6 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from soundpython import Audio, AudioMetadata
-
 from videopython.ai.backends import (
     TextToMusicBackend,
     TextToSpeechBackend,
@@ -14,6 +12,7 @@ from videopython.ai.backends import (
     get_api_key,
 )
 from videopython.ai.config import get_default_backend
+from videopython.base.audio import Audio, AudioMetadata
 
 
 class TextToSpeech:

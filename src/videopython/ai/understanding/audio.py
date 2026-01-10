@@ -8,10 +8,9 @@ import tempfile
 from pathlib import Path
 from typing import Any, Literal
 
-from soundpython import Audio
-
 from videopython.ai.backends import AudioToTextBackend, UnsupportedBackendError, get_api_key
 from videopython.ai.config import get_default_backend
+from videopython.base.audio import Audio
 from videopython.base.text.transcription import Transcription, TranscriptionSegment, TranscriptionWord
 from videopython.base.video import Video
 
