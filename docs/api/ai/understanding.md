@@ -27,10 +27,6 @@ Analyze videos, transcribe audio, and describe visual content.
 
 ::: videopython.ai.LLMSummarizer
 
-## SceneDetector
-
-::: videopython.ai.SceneDetector
-
 ## VideoAnalyzer
 
 ::: videopython.ai.VideoAnalyzer

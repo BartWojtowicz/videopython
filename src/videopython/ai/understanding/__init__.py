@@ -9,13 +9,12 @@ from .detection import (
 )
 from .image import ImageToText
 from .text import LLMSummarizer
-from .video import SceneDetector, VideoAnalyzer
+from .video import VideoAnalyzer
 
 __all__ = [
     "AudioToText",
     "ImageToText",
     "LLMSummarizer",
-    "SceneDetector",
     "VideoAnalyzer",
     # Detection
     "ObjectDetector",

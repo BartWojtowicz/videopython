@@ -827,3 +827,270 @@ def test_resample_stereo():
     assert resampled.metadata.channels == 2
     assert resampled.metadata.sample_width == audio.metadata.sample_width
     assert abs(resampled.metadata.duration_seconds - audio.metadata.duration_seconds) < 0.1
+
+
+# =============================================================================
+# Audio Analysis Tests
+# =============================================================================
+
+
+def test_get_levels_silent():
+    """Test level calculation on silent audio"""
+    audio = Audio.create_silent(duration_seconds=1.0)
+    levels = audio.get_levels()
+
+    assert levels.rms < 1e-7
+    assert levels.peak < 1e-7
+    assert levels.db_rms < -100  # Very low dB for silent audio
+    assert levels.db_peak < -100
+
+
+def test_get_levels_full_scale_sine():
+    """Test level calculation on full-scale sine wave"""
+    sample_rate = 44100
+    duration = 1.0
+    t = np.linspace(0, duration, int(sample_rate * duration), dtype=np.float32)
+    # Full scale sine wave
+    data = np.sin(2 * np.pi * 440 * t).astype(np.float32)
+
+    audio = Audio(
+        data=data,
+        metadata=AudioMetadata(
+            sample_rate=sample_rate,
+            channels=1,
+            sample_width=2,
+            duration_seconds=duration,
+            frame_count=len(data),
+        ),
+    )
+
+    levels = audio.get_levels()
+
+    # Sine wave RMS is 1/sqrt(2) = ~0.707
+    assert 0.7 < levels.rms < 0.72
+    # Peak should be 1.0
+    assert 0.99 < levels.peak <= 1.0
+    # Peak dB should be ~0 for full scale
+    assert -0.1 < levels.db_peak < 0.1
+
+
+def test_get_levels_partial():
+    """Test level calculation on a portion of the audio"""
+    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+
+    full_levels = audio.get_levels()
+    partial_levels = audio.get_levels(start_seconds=0.0, end_seconds=0.5)
+
+    # Both should return valid AudioLevels
+    assert full_levels.rms > 0
+    assert partial_levels.rms > 0
+
+
+def test_get_levels_over_time():
+    """Test sliding window level analysis"""
+    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+
+    levels_over_time = audio.get_levels_over_time(window_seconds=0.1)
+
+    # Should return multiple measurements
+    assert len(levels_over_time) > 1
+
+    # Each entry should be a tuple of (timestamp, AudioLevels)
+    for timestamp, levels in levels_over_time:
+        assert isinstance(timestamp, float)
+        assert 0 <= timestamp <= audio.metadata.duration_seconds
+        assert hasattr(levels, "rms")
+        assert hasattr(levels, "db_rms")
+
+
+def test_detect_silence_on_silent_audio():
+    """Test silence detection on fully silent audio"""
+    audio = Audio.create_silent(duration_seconds=2.0)
+    silent_segments = audio.detect_silence(threshold_db=-40.0, min_duration=0.5)
+
+    # Entire audio should be detected as silent
+    assert len(silent_segments) >= 1
+    # Total silent duration should be close to 2.0 seconds
+    total_silent = sum(seg.duration for seg in silent_segments)
+    assert total_silent > 1.5  # Allow some tolerance
+
+
+def test_detect_silence_with_gaps():
+    """Test silence detection on audio with silent gaps"""
+    sample_rate = 44100
+    duration = 3.0
+
+    # Create audio: 1s tone, 1s silence, 1s tone
+    t = np.linspace(0, 1.0, sample_rate, dtype=np.float32)
+    tone = np.sin(2 * np.pi * 440 * t) * 0.5
+    silence = np.zeros(sample_rate, dtype=np.float32)
+
+    data = np.concatenate([tone, silence, tone])
+
+    audio = Audio(
+        data=data,
+        metadata=AudioMetadata(
+            sample_rate=sample_rate,
+            channels=1,
+            sample_width=2,
+            duration_seconds=duration,
+            frame_count=len(data),
+        ),
+    )
+
+    silent_segments = audio.detect_silence(threshold_db=-40.0, min_duration=0.5)
+
+    # Should detect the 1-second silent gap
+    assert len(silent_segments) >= 1
+    # The silent segment should be around 1 second at position 1.0s
+    middle_segment = [s for s in silent_segments if 0.8 < s.start < 1.2]
+    assert len(middle_segment) >= 1
+
+
+def test_detect_silence_no_silence():
+    """Test silence detection on continuous audio"""
+    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+
+    # Use a very low threshold to ensure nothing is detected as silent
+    silent_segments = audio.detect_silence(threshold_db=-100.0, min_duration=0.5)
+
+    # May or may not have silent segments depending on the file
+    # Just verify it returns a list
+    assert isinstance(silent_segments, list)
+
+
+def test_classify_segments_synthetic_silence():
+    """Test classification on silent audio"""
+    from videopython.base.audio.analysis import AudioSegmentType
+
+    audio = Audio.create_silent(duration_seconds=3.0)
+    segments = audio.classify_segments(segment_length=2.0, overlap=0.0)
+
+    # At least one segment should be classified
+    assert len(segments) >= 1
+
+    # Silent audio should be classified as SILENCE
+    for seg in segments:
+        assert seg.segment_type == AudioSegmentType.SILENCE
+
+
+def test_classify_segments_synthetic_noise():
+    """Test classification on white noise"""
+    from videopython.base.audio.analysis import AudioSegmentType
+
+    sample_rate = 44100
+    duration = 3.0
+    data = np.random.randn(int(sample_rate * duration)).astype(np.float32) * 0.3
+
+    audio = Audio(
+        data=data,
+        metadata=AudioMetadata(
+            sample_rate=sample_rate,
+            channels=1,
+            sample_width=2,
+            duration_seconds=duration,
+            frame_count=len(data),
+        ),
+    )
+
+    segments = audio.classify_segments(segment_length=2.0, overlap=0.0)
+
+    # Should return segments
+    assert len(segments) >= 1
+
+    # Noise should ideally be classified as NOISE, but heuristics aren't perfect
+    # At minimum, check structure
+    for seg in segments:
+        assert seg.segment_type in AudioSegmentType
+        assert 0.0 <= seg.confidence <= 1.0
+        assert seg.duration > 0
+
+
+def test_classify_segments_returns_valid_structure():
+    """Test that classify_segments returns valid AudioSegment objects"""
+    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+
+    # Only classify if audio is long enough
+    if audio.metadata.duration_seconds >= 2.0:
+        segments = audio.classify_segments(segment_length=2.0, overlap=0.5)
+
+        for seg in segments:
+            assert seg.start >= 0
+            assert seg.end > seg.start
+            assert seg.duration == seg.end - seg.start
+            assert 0.0 <= seg.confidence <= 1.0
+            assert seg.levels is not None
+
+
+def test_normalize_peak():
+    """Test peak normalization"""
+    sample_rate = 44100
+    duration = 1.0
+    # Create audio at -12 dB peak
+    peak_amplitude = 0.25  # -12 dB
+    t = np.linspace(0, duration, int(sample_rate * duration), dtype=np.float32)
+    data = (np.sin(2 * np.pi * 440 * t) * peak_amplitude).astype(np.float32)
+
+    audio = Audio(
+        data=data,
+        metadata=AudioMetadata(
+            sample_rate=sample_rate,
+            channels=1,
+            sample_width=2,
+            duration_seconds=duration,
+            frame_count=len(data),
+        ),
+    )
+
+    # Normalize to -3 dB peak
+    normalized = audio.normalize(target_db=-3.0, method="peak")
+
+    # Check that peak is now at -3 dB (approximately 0.708)
+    new_peak = np.max(np.abs(normalized.data))
+    expected_peak = 10 ** (-3.0 / 20)  # ~0.708
+    assert abs(new_peak - expected_peak) < 0.01
+
+
+def test_normalize_rms():
+    """Test RMS normalization"""
+    sample_rate = 44100
+    duration = 1.0
+    # Create audio at -20 dB RMS
+    t = np.linspace(0, duration, int(sample_rate * duration), dtype=np.float32)
+    data = (np.sin(2 * np.pi * 440 * t) * 0.1).astype(np.float32)
+
+    audio = Audio(
+        data=data,
+        metadata=AudioMetadata(
+            sample_rate=sample_rate,
+            channels=1,
+            sample_width=2,
+            duration_seconds=duration,
+            frame_count=len(data),
+        ),
+    )
+
+    # Normalize RMS to -10 dB
+    normalized = audio.normalize(target_db=-10.0, method="rms")
+
+    # Check that normalization occurred (RMS should be higher)
+    original_rms = np.sqrt(np.mean(audio.data**2))
+    new_rms = np.sqrt(np.mean(normalized.data**2))
+    assert new_rms > original_rms
+
+
+def test_normalize_silent_audio():
+    """Test that normalizing silent audio returns silent audio"""
+    audio = Audio.create_silent(duration_seconds=1.0)
+    normalized = audio.normalize(target_db=-3.0)
+
+    # Should still be silent
+    assert np.all(np.abs(normalized.data) < 1e-7)
+
+
+def test_normalize_invalid_method():
+    """Test that invalid normalization method raises error"""
+    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+
+    with pytest.raises(ValueError, match="Unknown method"):
+        audio.normalize(method="invalid")

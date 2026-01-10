@@ -5,8 +5,12 @@ import subprocess
 import wave
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from videopython.base.audio.analysis import AudioLevels, AudioSegment, AudioSegmentType, SilentSegment
 
 
 @dataclass
@@ -667,3 +671,309 @@ class Audio:
             f"sample_rate={self.metadata.sample_rate}Hz, "
             f"duration={self.metadata.duration_seconds:.2f}s)"
         )
+
+    # -------------------------------------------------------------------------
+    # Audio Analysis Methods
+    # -------------------------------------------------------------------------
+
+    def get_levels(
+        self,
+        start_seconds: float = 0.0,
+        end_seconds: float | None = None,
+    ) -> "AudioLevels":
+        """Calculate audio levels for a segment.
+
+        Args:
+            start_seconds: Start time in seconds (default: 0.0)
+            end_seconds: End time in seconds (default: None, meaning end of audio)
+
+        Returns:
+            AudioLevels with RMS, peak, and dB measurements
+
+        Example:
+            >>> audio = Audio.from_file("audio.mp3")
+            >>> levels = audio.get_levels()
+            >>> print(f"Peak: {levels.db_peak:.1f} dB")
+        """
+        from videopython.base.audio.analysis import AudioLevels
+
+        segment = self.slice(start_seconds, end_seconds)
+        data = segment.data.flatten() if segment.metadata.channels == 2 else segment.data
+
+        rms = float(np.sqrt(np.mean(data**2)))
+        peak = float(np.max(np.abs(data)))
+
+        # Convert to dB (avoid log of zero)
+        db_rms = 20 * np.log10(max(rms, 1e-10))
+        db_peak = 20 * np.log10(max(peak, 1e-10))
+
+        return AudioLevels(rms=rms, peak=peak, db_rms=float(db_rms), db_peak=float(db_peak))
+
+    def get_levels_over_time(
+        self,
+        window_seconds: float = 0.1,
+        hop_seconds: float | None = None,
+    ) -> list[tuple[float, "AudioLevels"]]:
+        """Calculate audio levels over time using a sliding window.
+
+        Args:
+            window_seconds: Window size in seconds (default: 0.1)
+            hop_seconds: Hop size in seconds (default: window_seconds / 2)
+
+        Returns:
+            List of (timestamp, AudioLevels) tuples where timestamp is the
+            center of each window
+
+        Example:
+            >>> levels_over_time = audio.get_levels_over_time(window_seconds=0.1)
+            >>> for timestamp, levels in levels_over_time:
+            ...     print(f"{timestamp:.2f}s: {levels.db_rms:.1f} dB")
+        """
+        if hop_seconds is None:
+            hop_seconds = window_seconds / 2
+
+        results = []
+        current_time = 0.0
+
+        while current_time + window_seconds <= self.metadata.duration_seconds:
+            levels = self.get_levels(current_time, current_time + window_seconds)
+            results.append((current_time + window_seconds / 2, levels))
+            current_time += hop_seconds
+
+        return results
+
+    def detect_silence(
+        self,
+        threshold_db: float = -40.0,
+        min_duration: float = 0.5,
+        window_seconds: float = 0.1,
+    ) -> list["SilentSegment"]:
+        """Detect silent segments in the audio.
+
+        Args:
+            threshold_db: RMS level below which audio is considered silent (default: -40 dB)
+            min_duration: Minimum duration for a segment to be classified as silent (default: 0.5s)
+            window_seconds: Window size for level analysis (default: 0.1s)
+
+        Returns:
+            List of SilentSegment objects representing detected silent regions
+
+        Example:
+            >>> silent_segments = audio.detect_silence(threshold_db=-40.0, min_duration=0.5)
+            >>> for seg in silent_segments:
+            ...     print(f"Silence: {seg.start:.2f}s - {seg.end:.2f}s")
+        """
+        from videopython.base.audio.analysis import SilentSegment
+
+        levels_over_time = self.get_levels_over_time(window_seconds=window_seconds, hop_seconds=window_seconds / 2)
+
+        silent_segments = []
+        in_silence = False
+        silence_start = 0.0
+        silence_levels: list[float] = []
+
+        for timestamp, levels in levels_over_time:
+            is_silent = levels.db_rms < threshold_db
+
+            if is_silent and not in_silence:
+                # Start of silence
+                in_silence = True
+                silence_start = timestamp - window_seconds / 2
+                silence_levels = [levels.rms]
+            elif is_silent and in_silence:
+                # Continue silence
+                silence_levels.append(levels.rms)
+            elif not is_silent and in_silence:
+                # End of silence
+                silence_end = timestamp - window_seconds / 2
+                duration = silence_end - silence_start
+
+                if duration >= min_duration:
+                    avg_level = sum(silence_levels) / len(silence_levels)
+                    silent_segments.append(
+                        SilentSegment(
+                            start=silence_start,
+                            end=silence_end,
+                            duration=duration,
+                            avg_level=avg_level,
+                        )
+                    )
+
+                in_silence = False
+                silence_levels = []
+
+        # Handle case where audio ends in silence
+        if in_silence:
+            silence_end = self.metadata.duration_seconds
+            duration = silence_end - silence_start
+            if duration >= min_duration:
+                avg_level = sum(silence_levels) / len(silence_levels) if silence_levels else 0.0
+                silent_segments.append(
+                    SilentSegment(
+                        start=silence_start,
+                        end=silence_end,
+                        duration=duration,
+                        avg_level=avg_level,
+                    )
+                )
+
+        return silent_segments
+
+    def classify_segments(
+        self,
+        segment_length: float = 2.0,
+        overlap: float = 0.5,
+    ) -> list["AudioSegment"]:
+        """Classify audio segments as speech, music, noise, or silence.
+
+        This uses basic signal processing heuristics (no ML):
+        - Zero-crossing rate (higher for speech/noise)
+        - Spectral flatness (higher for noise, lower for music)
+        - Energy distribution across frequency bands
+
+        Args:
+            segment_length: Length of each segment to classify in seconds (default: 2.0)
+            overlap: Overlap between segments as fraction (default: 0.5)
+
+        Returns:
+            List of AudioSegment objects with classifications
+
+        Example:
+            >>> segments = audio.classify_segments(segment_length=2.0)
+            >>> for seg in segments:
+            ...     print(f"{seg.start:.1f}-{seg.end:.1f}s: {seg.segment_type.value}")
+        """
+        from videopython.base.audio.analysis import AudioSegment
+
+        hop_length = segment_length * (1 - overlap)
+        segments = []
+        current_time = 0.0
+
+        while current_time + segment_length <= self.metadata.duration_seconds:
+            segment_audio = self.slice(current_time, current_time + segment_length)
+            segment_type, confidence = self._classify_segment(segment_audio)
+            levels = self.get_levels(current_time, current_time + segment_length)
+
+            segments.append(
+                AudioSegment(
+                    start=current_time,
+                    end=current_time + segment_length,
+                    segment_type=segment_type,
+                    confidence=confidence,
+                    levels=levels,
+                )
+            )
+
+            current_time += hop_length
+
+        return segments
+
+    def _classify_segment(self, segment: "Audio") -> tuple["AudioSegmentType", float]:
+        """Classify a single audio segment using heuristics.
+
+        Uses zero-crossing rate, spectral flatness, and speech band energy
+        to make a best-effort classification without ML.
+
+        Args:
+            segment: Audio segment to classify
+
+        Returns:
+            Tuple of (AudioSegmentType, confidence)
+        """
+        from videopython.base.audio.analysis import AudioSegmentType
+
+        data = segment.to_mono().data
+
+        # Calculate RMS
+        rms = np.sqrt(np.mean(data**2))
+
+        # Check for silence first
+        if rms < 0.01:  # Very quiet
+            return AudioSegmentType.SILENCE, 0.95
+
+        # Zero-crossing rate (normalized)
+        zero_crossings = np.sum(np.abs(np.diff(np.sign(data)))) / 2
+        zcr = zero_crossings / len(data)
+
+        # Spectral analysis using FFT
+        fft = np.abs(np.fft.rfft(data))
+        freqs = np.fft.rfftfreq(len(data), 1.0 / segment.metadata.sample_rate)
+
+        # Spectral flatness (geometric mean / arithmetic mean)
+        # Higher values indicate noise-like signal
+        log_fft = np.log(fft + 1e-10)
+        geometric_mean = np.exp(np.mean(log_fft))
+        arithmetic_mean = np.mean(fft)
+        spectral_flatness = geometric_mean / (arithmetic_mean + 1e-10)
+
+        # Energy in speech frequency range (300-3400 Hz)
+        speech_mask = (freqs >= 300) & (freqs <= 3400)
+        speech_energy = np.sum(fft[speech_mask] ** 2)
+        total_energy = np.sum(fft**2) + 1e-10
+        speech_ratio = speech_energy / total_energy
+
+        # Spectral centroid (where is the "center of mass" of the spectrum)
+        spectral_centroid = np.sum(freqs * fft) / (np.sum(fft) + 1e-10)
+
+        # Heuristic classification
+        # Noise: high spectral flatness, high ZCR
+        if spectral_flatness > 0.5 and zcr > 0.1:
+            return AudioSegmentType.NOISE, min(0.7, float(spectral_flatness))
+
+        # Speech: medium ZCR, energy concentrated in 300-3400 Hz
+        if speech_ratio > 0.4 and 0.02 < zcr < 0.15:
+            return AudioSegmentType.SPEECH, min(0.8, float(speech_ratio))
+
+        # Music: lower ZCR, lower spectral flatness, broader spectrum
+        if spectral_flatness < 0.3 and spectral_centroid < 2000:
+            return AudioSegmentType.MUSIC, min(0.7, 1 - float(spectral_flatness))
+
+        # Default to speech with lower confidence
+        return AudioSegmentType.SPEECH, 0.4
+
+    def normalize(
+        self,
+        target_db: float = -3.0,
+        method: str = "peak",
+    ) -> "Audio":
+        """Normalize audio to a target level.
+
+        Args:
+            target_db: Target level in dB (default: -3.0 dB, allows headroom)
+            method: Normalization method, either "peak" or "rms" (default: "peak")
+
+        Returns:
+            New Audio object with normalized levels
+
+        Example:
+            >>> normalized = audio.normalize(target_db=-3.0, method="peak")
+            >>> print(f"New peak: {normalized.get_levels().db_peak:.1f} dB")
+        """
+        data = self.data.copy()
+
+        if method == "peak":
+            current_peak = np.max(np.abs(data))
+            if current_peak < 1e-10:
+                return Audio(data, self.metadata)
+
+            target_amplitude = 10 ** (target_db / 20)
+            scale_factor = target_amplitude / current_peak
+
+        elif method == "rms":
+            current_rms = np.sqrt(np.mean(data**2))
+            if current_rms < 1e-10:
+                return Audio(data, self.metadata)
+
+            target_rms = 10 ** (target_db / 20)
+            scale_factor = target_rms / current_rms
+
+        else:
+            raise ValueError(f"Unknown method: {method}. Use 'peak' or 'rms'")
+
+        # Apply scaling
+        normalized_data = data * scale_factor
+
+        # Clip to prevent overflow (should be rare with proper target_db)
+        normalized_data = np.clip(normalized_data, -1.0, 1.0)
+
+        return Audio(normalized_data.astype(np.float32), self.metadata)

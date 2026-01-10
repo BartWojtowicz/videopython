@@ -7,7 +7,6 @@ from .understanding import (
     ImageToText,
     LLMSummarizer,
     ObjectDetector,
-    SceneDetector,
     ShotTypeClassifier,
     TextDetector,
     VideoAnalyzer,
@@ -25,7 +24,6 @@ __all__ = [
     "AudioToText",
     "ImageToText",
     "LLMSummarizer",
-    "SceneDetector",
     "VideoAnalyzer",
     # Detection
     "ObjectDetector",
