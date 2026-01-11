@@ -52,15 +52,14 @@ class ImageToText:
     def _init_local(self) -> None:
         """Initialize local BLIP model."""
         import torch
-        from transformers import BlipForConditionalGeneration, BlipProcessor
+        from transformers.models.blip import BlipForConditionalGeneration, BlipProcessor
 
         device = self.device
         if device is None:
             if torch.cuda.is_available():
                 device = "cuda"
-            elif torch.backends.mps.is_available():
-                device = "mps"
             else:
+                # MPS has issues with BLIP in transformers 4.52+, use CPU
                 device = "cpu"
 
         model_name = "Salesforce/blip-image-captioning-large"
