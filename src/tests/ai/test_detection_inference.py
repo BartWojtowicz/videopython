@@ -32,7 +32,6 @@ def video_frames():
     return [video.frames[i] for i in indices if i < len(video.frames)]
 
 
-@pytest.mark.asyncio(loop_scope="function")
 class TestObjectDetectorLocal:
     """Tests for ObjectDetector with YOLO backend."""
 
@@ -59,31 +58,27 @@ class TestObjectDetectorLocal:
         """Create PIL Image from sample."""
         return Image.fromarray(sample_image)
 
-    @pytest.mark.asyncio
-    async def test_detector_initialization(self, detector):
+    def test_detector_initialization(self, detector):
         """Test detector initializes correctly."""
         assert detector.backend == "local"
         assert detector.model_size == "n"
         assert detector.confidence_threshold == 0.25
 
-    @pytest.mark.asyncio
-    async def test_detect_returns_list(self, detector, sample_image):
+    def test_detect_returns_list(self, detector, sample_image):
         """Test detection returns a list of DetectedObject."""
-        results = await detector.detect(sample_image)
+        results = detector.detect(sample_image)
         assert isinstance(results, list)
         for obj in results:
             assert isinstance(obj, DetectedObject)
 
-    @pytest.mark.asyncio
-    async def test_detect_with_pil_image(self, detector, pil_image):
+    def test_detect_with_pil_image(self, detector, pil_image):
         """Test detection works with PIL Image input."""
-        results = await detector.detect(pil_image)
+        results = detector.detect(pil_image)
         assert isinstance(results, list)
 
-    @pytest.mark.asyncio
-    async def test_detected_object_has_bounding_box(self, detector, sample_image):
+    def test_detected_object_has_bounding_box(self, detector, sample_image):
         """Test that detected objects have bounding boxes with valid coordinates."""
-        results = await detector.detect(sample_image)
+        results = detector.detect(sample_image)
         for obj in results:
             assert obj.label is not None
             assert 0 <= obj.confidence <= 1
@@ -95,13 +90,12 @@ class TestObjectDetectorLocal:
                 assert 0 <= bbox.width <= 1
                 assert 0 <= bbox.height <= 1
 
-    @pytest.mark.asyncio
-    async def test_detect_on_real_video_frame(self, detector, video_frames):
+    def test_detect_on_real_video_frame(self, detector, video_frames):
         """Test detection on actual video frames from big_video.mp4."""
         # Test on multiple frames
         all_detections = []
         for frame in video_frames:
-            results = await detector.detect(frame)
+            results = detector.detect(frame)
             assert isinstance(results, list)
             all_detections.extend(results)
 
@@ -118,7 +112,6 @@ class TestObjectDetectorLocal:
                 assert 0 <= bbox.height <= 1
 
 
-@pytest.mark.asyncio(loop_scope="function")
 class TestFaceDetector:
     """Tests for FaceDetector with OpenCV backend."""
 
@@ -139,40 +132,34 @@ class TestFaceDetector:
         """Create PIL Image from blank image."""
         return Image.fromarray(blank_image)
 
-    @pytest.mark.asyncio
-    async def test_detector_initialization(self, detector):
+    def test_detector_initialization(self, detector):
         """Test detector initializes correctly."""
         assert detector.confidence_threshold == 0.5
 
-    @pytest.mark.asyncio
-    async def test_detect_returns_int(self, detector, blank_image):
+    def test_detect_returns_int(self, detector, blank_image):
         """Test detection returns an integer count."""
-        count = await detector.detect(blank_image)
+        count = detector.detect(blank_image)
         assert isinstance(count, int)
         assert count >= 0
 
-    @pytest.mark.asyncio
-    async def test_detect_with_pil_image(self, detector, pil_blank_image):
+    def test_detect_with_pil_image(self, detector, pil_blank_image):
         """Test detection works with PIL Image input."""
-        count = await detector.detect(pil_blank_image)
+        count = detector.detect(pil_blank_image)
         assert isinstance(count, int)
 
-    @pytest.mark.asyncio
-    async def test_blank_image_no_faces(self, detector, blank_image):
+    def test_blank_image_no_faces(self, detector, blank_image):
         """Test that blank image returns 0 faces."""
-        count = await detector.detect(blank_image)
+        count = detector.detect(blank_image)
         assert count == 0
 
-    @pytest.mark.asyncio
-    async def test_detect_on_real_video_frame(self, detector, video_frames):
+    def test_detect_on_real_video_frame(self, detector, video_frames):
         """Test face detection on actual video frames from big_video.mp4."""
         for frame in video_frames:
-            count = await detector.detect(frame)
+            count = detector.detect(frame)
             assert isinstance(count, int)
             assert count >= 0
 
 
-@pytest.mark.asyncio(loop_scope="function")
 class TestTextDetectorLocal:
     """Tests for TextDetector with EasyOCR backend."""
 
@@ -193,37 +180,32 @@ class TestTextDetectorLocal:
         """Create PIL Image from blank image."""
         return Image.fromarray(blank_image)
 
-    @pytest.mark.asyncio
-    async def test_detector_initialization(self, detector):
+    def test_detector_initialization(self, detector):
         """Test detector initializes correctly."""
         assert detector.backend == "local"
         assert detector.languages == ["en"]
 
-    @pytest.mark.asyncio
-    async def test_detect_returns_list(self, detector, blank_image):
+    def test_detect_returns_list(self, detector, blank_image):
         """Test detection returns a list of strings."""
-        results = await detector.detect(blank_image)
+        results = detector.detect(blank_image)
         assert isinstance(results, list)
         for text in results:
             assert isinstance(text, str)
 
-    @pytest.mark.asyncio
-    async def test_detect_with_pil_image(self, detector, pil_blank_image):
+    def test_detect_with_pil_image(self, detector, pil_blank_image):
         """Test detection works with PIL Image input."""
-        results = await detector.detect(pil_blank_image)
+        results = detector.detect(pil_blank_image)
         assert isinstance(results, list)
 
-    @pytest.mark.asyncio
-    async def test_detect_on_real_video_frame(self, detector, video_frames):
+    def test_detect_on_real_video_frame(self, detector, video_frames):
         """Test OCR on actual video frames from big_video.mp4."""
         for frame in video_frames:
-            results = await detector.detect(frame)
+            results = detector.detect(frame)
             assert isinstance(results, list)
             for text in results:
                 assert isinstance(text, str)
 
 
-@pytest.mark.asyncio(loop_scope="function")
 class TestCameraMotionDetector:
     """Tests for CameraMotionDetector with optical flow."""
 
@@ -267,60 +249,53 @@ class TestCameraMotionDetector:
 
         return frame1, frame2
 
-    @pytest.mark.asyncio
-    async def test_detector_initialization(self, detector):
+    def test_detector_initialization(self, detector):
         """Test detector initializes correctly."""
         assert detector.motion_threshold == 2.0
         assert detector.zoom_threshold == 0.1
 
-    @pytest.mark.asyncio
-    async def test_detect_returns_valid_motion_type(self, detector, static_frames):
+    def test_detect_returns_valid_motion_type(self, detector, static_frames):
         """Test detection returns a valid motion type string."""
         frame1, frame2 = static_frames
-        result = await detector.detect(frame1, frame2)
+        result = detector.detect(frame1, frame2)
         assert isinstance(result, str)
         assert result in detector.MOTION_TYPES
 
-    @pytest.mark.asyncio
-    async def test_static_frames_detected(self, detector, static_frames):
+    def test_static_frames_detected(self, detector, static_frames):
         """Test that identical frames are detected as static."""
         frame1, frame2 = static_frames
-        result = await detector.detect(frame1, frame2)
+        result = detector.detect(frame1, frame2)
         assert result == "static"
 
-    @pytest.mark.asyncio
-    async def test_detect_with_pil_images(self, detector, static_frames):
+    def test_detect_with_pil_images(self, detector, static_frames):
         """Test detection works with PIL Image input."""
         frame1, frame2 = static_frames
         pil1 = Image.fromarray(frame1)
         pil2 = Image.fromarray(frame2)
-        result = await detector.detect(pil1, pil2)
+        result = detector.detect(pil1, pil2)
         assert isinstance(result, str)
         assert result in detector.MOTION_TYPES
 
-    @pytest.mark.asyncio
-    async def test_pan_motion_detected(self, detector, pan_frames):
+    def test_pan_motion_detected(self, detector, pan_frames):
         """Test that horizontal motion is detected as pan."""
         frame1, frame2 = pan_frames
-        result = await detector.detect(frame1, frame2)
+        result = detector.detect(frame1, frame2)
         # Pan or complex are acceptable since optical flow may pick up mixed signals
         assert result in ["pan", "complex", "static"]
 
-    @pytest.mark.asyncio
-    async def test_tilt_motion_detected(self, detector, tilt_frames):
+    def test_tilt_motion_detected(self, detector, tilt_frames):
         """Test that vertical motion is detected as tilt."""
         frame1, frame2 = tilt_frames
-        result = await detector.detect(frame1, frame2)
+        result = detector.detect(frame1, frame2)
         # Tilt or complex are acceptable since optical flow may pick up mixed signals
         assert result in ["tilt", "complex", "static"]
 
-    @pytest.mark.asyncio
-    async def test_detect_on_real_video_frames(self, detector, video_frames):
+    def test_detect_on_real_video_frames(self, detector, video_frames):
         """Test camera motion detection on consecutive frames from big_video.mp4."""
         # Test motion between consecutive frame pairs
         for i in range(len(video_frames) - 1):
             frame1 = video_frames[i]
             frame2 = video_frames[i + 1]
-            result = await detector.detect(frame1, frame2)
+            result = detector.detect(frame1, frame2)
             assert isinstance(result, str)
             assert result in detector.MOTION_TYPES

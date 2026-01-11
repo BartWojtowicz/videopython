@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import io
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import numpy as np
@@ -75,37 +75,34 @@ class ImageToText:
         image.save(buffer, format="PNG")
         return base64.b64encode(buffer.getvalue()).decode()
 
-    async def _describe_local(
+    def _describe_local(
         self,
         image: np.ndarray | Image.Image,
         prompt: str | None,
     ) -> str:
         """Generate description using local BLIP model."""
         if self._model is None:
-            await asyncio.to_thread(self._init_local)
+            self._init_local()
 
-        def _run_model() -> str:
-            # Convert numpy array to PIL Image if needed
-            pil_image = image
-            if isinstance(image, np.ndarray):
-                pil_image = Image.fromarray(image)
+        # Convert numpy array to PIL Image if needed
+        pil_image = image
+        if isinstance(image, np.ndarray):
+            pil_image = Image.fromarray(image)
 
-            inputs = self._processor(pil_image, prompt, return_tensors="pt").to(self.device)
-            output = self._model.generate(**inputs, max_new_tokens=50)
-            return self._processor.decode(output[0], skip_special_tokens=True)
+        inputs = self._processor(pil_image, prompt, return_tensors="pt").to(self.device)
+        output = self._model.generate(**inputs, max_new_tokens=50)
+        return self._processor.decode(output[0], skip_special_tokens=True)
 
-        return await asyncio.to_thread(_run_model)
-
-    async def _describe_openai(
+    def _describe_openai(
         self,
         image: np.ndarray | Image.Image,
         prompt: str | None,
     ) -> str:
         """Generate description using OpenAI GPT-4o."""
-        from openai import AsyncOpenAI
+        from openai import OpenAI
 
         api_key = get_api_key("openai", self.api_key)
-        client = AsyncOpenAI(api_key=api_key)
+        client = OpenAI(api_key=api_key)
 
         # Convert to PIL Image if needed
         if isinstance(image, np.ndarray):
@@ -116,7 +113,7 @@ class ImageToText:
         system_prompt = "You are an image analysis assistant. Describe images concisely."
         user_prompt = prompt or "Describe this image in 1-2 sentences."
 
-        response = await client.chat.completions.create(
+        response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -136,7 +133,7 @@ class ImageToText:
 
         return response.choices[0].message.content or ""
 
-    async def _describe_gemini(
+    def _describe_gemini(
         self,
         image: np.ndarray | Image.Image,
         prompt: str | None,
@@ -154,14 +151,10 @@ class ImageToText:
         model = genai.GenerativeModel("gemini-2.0-flash")
         user_prompt = prompt or "Describe this image in 1-2 sentences."
 
-        # Gemini's generate_content is sync, wrap in thread
-        def _run_gemini() -> str:
-            response = model.generate_content([user_prompt, image])
-            return response.text
+        response = model.generate_content([user_prompt, image])
+        return response.text
 
-        return await asyncio.to_thread(_run_gemini)
-
-    async def describe_image(
+    def describe_image(
         self,
         image: np.ndarray | Image.Image,
         prompt: str | None = None,
@@ -176,15 +169,15 @@ class ImageToText:
             Text description of the image.
         """
         if self.backend == "local":
-            return await self._describe_local(image, prompt)
+            return self._describe_local(image, prompt)
         elif self.backend == "openai":
-            return await self._describe_openai(image, prompt)
+            return self._describe_openai(image, prompt)
         elif self.backend == "gemini":
-            return await self._describe_gemini(image, prompt)
+            return self._describe_gemini(image, prompt)
         else:
             raise UnsupportedBackendError(self.backend, self.SUPPORTED_BACKENDS)
 
-    async def describe_frame(
+    def describe_frame(
         self,
         video: Video,
         frame_index: int,
@@ -208,7 +201,7 @@ class ImageToText:
             raise ValueError(f"frame_index {frame_index} out of bounds for video with {len(video.frames)} frames")
 
         frame = video.frames[frame_index]
-        description = await self.describe_image(frame, prompt)
+        description = self.describe_image(frame, prompt)
         timestamp = frame_index / video.fps
 
         color_histogram = None
@@ -222,7 +215,7 @@ class ImageToText:
             color_histogram=color_histogram,
         )
 
-    async def describe_frames(
+    def describe_frames(
         self,
         video: Video,
         frame_indices: list[int],
@@ -242,13 +235,15 @@ class ImageToText:
         Returns:
             List of FrameDescription objects.
         """
-        # Process frames concurrently
-        tasks = [
-            self.describe_frame(video, idx, prompt, extract_colors, include_full_histogram) for idx in frame_indices
-        ]
-        return await asyncio.gather(*tasks)
+        # Process frames concurrently using ThreadPoolExecutor
+        with ThreadPoolExecutor() as executor:
+            futures = [
+                executor.submit(self.describe_frame, video, idx, prompt, extract_colors, include_full_histogram)
+                for idx in frame_indices
+            ]
+            return [f.result() for f in futures]
 
-    async def describe_scene(
+    def describe_scene(
         self,
         video: Video,
         scene: SceneDescription,
@@ -279,4 +274,4 @@ class ImageToText:
         if not frame_indices:
             frame_indices = [scene.start_frame]
 
-        return await self.describe_frames(video, frame_indices, prompt, extract_colors, include_full_histogram)
+        return self.describe_frames(video, frame_indices, prompt, extract_colors, include_full_histogram)

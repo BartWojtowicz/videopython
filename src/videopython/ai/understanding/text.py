@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-
 from videopython.ai.backends import LLMBackend, UnsupportedBackendError, get_api_key
 from videopython.ai.config import get_default_backend
 from videopython.base.description import SceneDescription, VideoDescription
@@ -52,32 +50,29 @@ class LLMSummarizer:
         else:
             return "llama3.2"
 
-    async def _generate_local(self, prompt: str) -> str:
+    def _generate_local(self, prompt: str) -> str:
         """Generate text using local Ollama."""
         import ollama
 
         model = self._get_model_name()
 
-        def _run_ollama() -> str:
-            response = ollama.generate(
-                model=model,
-                prompt=prompt,
-                options={"temperature": 0.3, "num_predict": 150},
-            )
-            return response["response"].strip()
+        response = ollama.generate(
+            model=model,
+            prompt=prompt,
+            options={"temperature": 0.3, "num_predict": 150},
+        )
+        return response["response"].strip()
 
-        return await asyncio.to_thread(_run_ollama)
-
-    async def _generate_openai(self, prompt: str) -> str:
+    def _generate_openai(self, prompt: str) -> str:
         """Generate text using OpenAI."""
-        from openai import AsyncOpenAI
+        from openai import OpenAI
 
         api_key = get_api_key("openai", self.api_key)
-        client = AsyncOpenAI(api_key=api_key)
+        client = OpenAI(api_key=api_key)
 
         model = self._get_model_name()
 
-        response = await client.chat.completions.create(
+        response = client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=150,
@@ -86,7 +81,7 @@ class LLMSummarizer:
 
         return response.choices[0].message.content or ""
 
-    async def _generate_gemini(self, prompt: str) -> str:
+    def _generate_gemini(self, prompt: str) -> str:
         """Generate text using Google Gemini."""
         import google.generativeai as genai
 
@@ -96,30 +91,27 @@ class LLMSummarizer:
         model_name = self._get_model_name()
         model = genai.GenerativeModel(model_name)
 
-        def _run_gemini() -> str:
-            response = model.generate_content(
-                prompt,
-                generation_config=genai.GenerationConfig(
-                    temperature=0.3,
-                    max_output_tokens=150,
-                ),
-            )
-            return response.text
+        response = model.generate_content(
+            prompt,
+            generation_config=genai.GenerationConfig(
+                temperature=0.3,
+                max_output_tokens=150,
+            ),
+        )
+        return response.text
 
-        return await asyncio.to_thread(_run_gemini)
-
-    async def _generate(self, prompt: str) -> str:
+    def _generate(self, prompt: str) -> str:
         """Generate text using the configured backend."""
         if self.backend == "local":
-            return await self._generate_local(prompt)
+            return self._generate_local(prompt)
         elif self.backend == "openai":
-            return await self._generate_openai(prompt)
+            return self._generate_openai(prompt)
         elif self.backend == "gemini":
-            return await self._generate_gemini(prompt)
+            return self._generate_gemini(prompt)
         else:
             raise UnsupportedBackendError(self.backend, self.SUPPORTED_BACKENDS)
 
-    async def summarize_scene(self, frame_descriptions: list[tuple[float, str]]) -> str:
+    def summarize_scene(self, frame_descriptions: list[tuple[float, str]]) -> str:
         """Generate a coherent summary of a scene from frame descriptions.
 
         Args:
@@ -148,12 +140,12 @@ Remove redundancy and synthesize the information into a flowing narrative. Be co
 Summary:"""
 
         try:
-            return await self._generate(prompt)
+            return self._generate(prompt)
         except Exception:
             # Fallback: return concatenated descriptions
             return " ".join([desc for _, desc in frame_descriptions])
 
-    async def summarize_video(self, scene_summaries: list[tuple[float, float, str]]) -> str:
+    def summarize_video(self, scene_summaries: list[tuple[float, float, str]]) -> str:
         """Generate a high-level summary of the entire video from scene summaries.
 
         Args:
@@ -184,12 +176,12 @@ Synthesize the scenes into a high-level overview that captures the video's essen
 Summary:"""
 
         try:
-            return await self._generate(prompt)
+            return self._generate(prompt)
         except Exception:
             # Fallback: return concatenated scene summaries
             return " ".join([summary for _, _, summary in scene_summaries])
 
-    async def summarize_scene_description(self, scene_description: SceneDescription) -> str:
+    def summarize_scene_description(self, scene_description: SceneDescription) -> str:
         """Generate summary from a SceneDescription object.
 
         Args:
@@ -199,9 +191,9 @@ Summary:"""
             Coherent summary of the scene.
         """
         frame_descriptions = [(fd.timestamp, fd.description) for fd in scene_description.frame_descriptions]
-        return await self.summarize_scene(frame_descriptions)
+        return self.summarize_scene(frame_descriptions)
 
-    async def summarize_video_description(self, video_description: VideoDescription) -> str:
+    def summarize_video_description(self, video_description: VideoDescription) -> str:
         """Generate summary from a VideoDescription object.
 
         Args:
@@ -213,4 +205,4 @@ Summary:"""
         scene_summaries = [
             (sd.start, sd.end, sd.get_description_summary()) for sd in video_description.scene_descriptions
         ]
-        return await self.summarize_video(scene_summaries)
+        return self.summarize_video(scene_summaries)

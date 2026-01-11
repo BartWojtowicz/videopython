@@ -109,24 +109,15 @@ video.save("output.mov", format="mov")  # QuickTime
     AI features require API keys. Set `OPENAI_API_KEY`, `GOOGLE_API_KEY`, or `ELEVENLABS_API_KEY` depending on the backend you use.
 
 ```python
-import asyncio
 from videopython.ai import TextToImage, TextToSpeech
 
 # Generate an image with DALL-E
-async def generate():
-    generator = TextToImage(backend="openai")
-    image = await generator.generate_image("A sunset over mountains")
-    return image
-
-image = asyncio.run(generate())
+generator = TextToImage(backend="openai")
+image = generator.generate_image("A sunset over mountains")
 
 # Generate speech with OpenAI TTS
-async def speak():
-    tts = TextToSpeech(backend="openai")
-    audio = await tts.generate_audio("Welcome to videopython!")
-    return audio
-
-audio = asyncio.run(speak())
+tts = TextToSpeech(backend="openai")
+audio = tts.generate_audio("Welcome to videopython!")
 ```
 
 See the [API Reference](../api/index.md) for complete documentation.

@@ -28,7 +28,6 @@ pip install videopython
 ## Quick Example
 
 ```python
-import asyncio
 from videopython.base import Video, CutSeconds, Resize, TransformationPipeline, FadeTransition
 from videopython.ai import TextToImage, ImageToVideo, AudioToText
 from videopython.base.text import TranscriptionOverlay
@@ -49,19 +48,19 @@ fade = FadeTransition(effect_time_seconds=1.0)
 video = fade.apply((video1, video2))
 
 # Generate and add AI content
-async def add_ai_content(video):
+def add_ai_content(video):
     # Generate an image and animate it
-    image = await TextToImage(backend="openai").generate_image("A sunset over mountains")
-    intro = await ImageToVideo().generate_video(image=image, prompt="Sunset animation")
+    image = TextToImage(backend="openai").generate_image("A sunset over mountains")
+    intro = ImageToVideo().generate_video(image=image, prompt="Sunset animation")
 
     # Transcribe and add subtitles
-    transcription = await AudioToText(backend="openai").transcribe(video)
+    transcription = AudioToText(backend="openai").transcribe(video)
     overlay = TranscriptionOverlay()
     video = overlay.apply(video, transcription)
 
     return intro + video
 
-video = asyncio.run(add_ai_content(video))
+video = add_ai_content(video)
 video.save("output.mp4")
 ```
 

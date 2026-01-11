@@ -1,6 +1,6 @@
 [project]
 name = "videopython"
-version = "0.6.3"
+version = "0.7.0"
 description = "Minimal video generation and processing library."
 authors = [
     { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
@@ -43,7 +43,6 @@ dev = [
     "ruff>=0.1.14",
     "mypy>=1.8.0",
     "pytest>=7.4.0",
-    "pytest-asyncio>=0.23.0",
     "types-Pillow>=10.2.0.20240213",
     "types-tqdm>=4.66.0.20240106",
     "pytest-cov>=6.1.1",
@@ -81,7 +80,6 @@ dev = [
     "ruff>=0.1.14",
     "mypy>=1.8.0",
     "pytest>=7.4.0",
-    "pytest-asyncio>=0.23.0",
     "types-Pillow>=10.2.0.20240213",
     "types-tqdm>=4.66.0.20240106",
     "pytest-cov>=6.1.1",

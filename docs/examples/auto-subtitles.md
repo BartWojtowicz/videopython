@@ -9,18 +9,17 @@ Take a video with speech, transcribe the audio using AI, and overlay synchronize
 ## Full Example
 
 ```python
-import asyncio
 from videopython.base import Video
 from videopython.ai import AudioToText
 from videopython.base.text import TranscriptionOverlay
 
-async def add_subtitles(input_path: str, output_path: str):
+def add_subtitles(input_path: str, output_path: str):
     # Load video
     video = Video.from_path(input_path)
 
     # Transcribe audio
     transcriber = AudioToText(backend="openai")
-    transcription = await transcriber.transcribe(video)
+    transcription = transcriber.transcribe(video)
 
     # Apply subtitle overlay
     overlay = TranscriptionOverlay(
@@ -35,7 +34,7 @@ async def add_subtitles(input_path: str, output_path: str):
     # Save with burned-in subtitles
     video.save(output_path)
 
-asyncio.run(add_subtitles("interview.mp4", "interview_subtitled.mp4"))
+add_subtitles("interview.mp4", "interview_subtitled.mp4")
 ```
 
 ## Step-by-Step Breakdown
@@ -44,7 +43,7 @@ asyncio.run(add_subtitles("interview.mp4", "interview_subtitled.mp4"))
 
 ```python
 transcriber = AudioToText(backend="openai")  # Uses Whisper API
-transcription = await transcriber.transcribe(video)
+transcription = transcriber.transcribe(video)
 ```
 
 The transcription includes word-level timestamps:
