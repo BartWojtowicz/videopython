@@ -29,6 +29,47 @@ Analyze videos, transcribe audio, and describe visual content.
 
 ## VideoAnalyzer
 
+Comprehensive video analysis combining scene detection, frame understanding, and transcription.
+
+### Basic Usage (In-Memory)
+
+```python
+from videopython.base import Video
+from videopython.ai import VideoAnalyzer
+
+video = Video.from_path("video.mp4")
+analyzer = VideoAnalyzer()
+
+# Full analysis with transcription
+result = analyzer.analyze(video, frames_per_second=1.0, transcribe=True)
+
+for scene in result.scene_descriptions:
+    print(f"Scene: {scene.start:.1f}s - {scene.end:.1f}s")
+    for fd in scene.frame_descriptions:
+        print(f"  Frame {fd.frame_index}: {fd.description}")
+```
+
+### Memory-Efficient Analysis (Recommended for Long Videos)
+
+For long videos, use `analyze_path()` which combines streaming scene detection with selective frame extraction. Only sampled frames are loaded into memory.
+
+```python
+from videopython.ai import VideoAnalyzer
+
+analyzer = VideoAnalyzer()
+
+# Analyze 20-minute video with minimal memory usage
+# At 0.2 fps, loads ~240 frames instead of ~28,800
+result = analyzer.analyze_path(
+    "long_video.mp4",
+    frames_per_second=0.2,  # Sample 1 frame every 5 seconds
+    transcribe=True,
+)
+
+print(f"Detected {len(result.scene_descriptions)} scenes")
+print(f"Summary: {result.get_full_summary()}")
+```
+
 ::: videopython.ai.VideoAnalyzer
 
 ## Detection Classes
