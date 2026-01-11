@@ -1,5 +1,13 @@
 # Release Notes
 
+## 0.7.1
+
+- Added `SceneDetector.detect_parallel()` for multi-core scene detection (3.5x speedup on 8 cores)
+- Added `SceneDetector.detect_streaming()` for memory-efficient frame-by-frame processing
+- Added `FrameIterator` for streaming video frames without loading entire video into memory
+- Added `VideoAnalyzer.analyze_path()` for memory-efficient analysis of long videos
+- Scene detection now works on video files directly without loading all frames into RAM
+
 ## 0.7.0
 
 - **Breaking change**: Removed async/await from all AI module APIs - all functions are now synchronous

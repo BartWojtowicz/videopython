@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Literal
 
 import numpy as np
@@ -8,7 +9,7 @@ from videopython.ai.backends import ImageToTextBackend
 from videopython.ai.understanding.image import ImageToText
 from videopython.base.description import FrameDescription, SceneDescription, VideoDescription
 from videopython.base.scene import SceneDetector
-from videopython.base.video import Video
+from videopython.base.video import Video, VideoMetadata, extract_frames_at_indices
 
 
 class FrameAnalyzer:
@@ -306,3 +307,149 @@ class VideoAnalyzer:
         """
         understanding = self.analyze(video, transcribe=False)
         return understanding.scene_descriptions
+
+    def analyze_path(
+        self,
+        path: str | Path,
+        frames_per_second: float = 1.0,
+        transcribe: bool = False,
+        transcription_model: Literal["tiny", "base", "small", "medium", "large", "turbo"] = "base",
+        description_prompt: str | None = None,
+        extract_colors: bool = False,
+        include_full_histogram: bool = False,
+        detect_objects: bool = False,
+        detect_faces: bool = False,
+        detect_text: bool = False,
+        detect_shot_type: bool = False,
+        generate_summaries: bool = False,
+    ) -> VideoDescription:
+        """Analyze video from path with minimal memory usage.
+
+        Unlike analyze(), this method:
+        1. Uses streaming scene detection (O(1) memory for scene detection)
+        2. Only loads frames needed for analysis (sampled frames per scene)
+
+        Memory usage: O(sampled_frames_per_scene) instead of O(total_frames).
+        This makes it possible to analyze very long videos that would not
+        fit in memory when loaded entirely.
+
+        Args:
+            path: Path to video file
+            frames_per_second: Frame sampling rate for visual analysis (default: 1.0 fps)
+            transcribe: Whether to generate audio transcription (default: False)
+            transcription_model: Whisper model to use if transcribe=True (default: "base")
+            description_prompt: Optional prompt to guide frame descriptions
+            extract_colors: Whether to extract color features from frames (default: False)
+            include_full_histogram: Whether to include full HSV histogram (default: False)
+            detect_objects: Whether to detect objects in frames (default: False)
+            detect_faces: Whether to detect faces in frames (default: False)
+            detect_text: Whether to detect text (OCR) in frames (default: False)
+            detect_shot_type: Whether to classify shot type (cloud backends only) (default: False)
+            generate_summaries: Whether to generate LLM summaries for scenes (default: False)
+
+        Returns:
+            VideoDescription object with complete analysis
+
+        Example:
+            >>> analyzer = VideoAnalyzer()
+            >>> # For 20-minute video at 0.2 fps, loads ~240 frames instead of ~28,800
+            >>> result = analyzer.analyze_path("long_video.mp4", frames_per_second=0.2)
+        """
+        path = Path(path)
+        metadata = VideoMetadata.from_path(path)
+
+        # Step 1: Stream scene detection (O(1) memory)
+        scene_descriptions = self.scene_detector.detect_streaming(path)
+
+        # Step 2: Set up frame analyzer if any detection is enabled
+        frame_analyzer = None
+        if detect_objects or detect_faces or detect_text or detect_shot_type:
+            frame_analyzer = FrameAnalyzer(
+                backend=self.detection_backend,
+                api_key=self.api_key,
+                object_detection=detect_objects,
+                face_detection=detect_faces,
+                text_detection=detect_text,
+                shot_type_detection=detect_shot_type,
+            )
+
+        # Step 3: Process each scene, loading only sampled frames
+        for scene_desc in scene_descriptions:
+            # Calculate which frames to sample
+            frame_interval = max(1, int(metadata.fps / frames_per_second))
+            frame_indices = list(range(scene_desc.start_frame, scene_desc.end_frame, frame_interval))
+
+            if not frame_indices:
+                frame_indices = [scene_desc.start_frame]
+
+            # Extract only needed frames from file
+            scene_frames = extract_frames_at_indices(path, frame_indices)
+
+            # Generate frame descriptions
+            frame_descriptions = []
+            for i, frame_idx in enumerate(frame_indices):
+                if i >= len(scene_frames):
+                    break
+
+                frame = scene_frames[i]
+
+                # Get description using ImageToText
+                description = self.image_to_text.describe_image(frame, description_prompt)
+                timestamp = frame_idx / metadata.fps
+
+                # Color features if requested
+                color_histogram = None
+                if extract_colors:
+                    color_histogram = self.image_to_text.color_analyzer.extract_color_features(
+                        frame, include_full_histogram
+                    )
+
+                fd = FrameDescription(
+                    frame_index=frame_idx,
+                    timestamp=timestamp,
+                    description=description,
+                    color_histogram=color_histogram,
+                )
+
+                # Detection if enabled
+                if frame_analyzer:
+                    frame_analyzer.analyze_frame(frame, fd)
+
+                frame_descriptions.append(fd)
+
+            scene_desc.frame_descriptions = frame_descriptions
+
+            # Aggregate scene-level data
+            if detect_objects:
+                scene_desc.detected_entities = _aggregate_detected_entities(frame_descriptions)
+
+            if extract_colors:
+                scene_desc.dominant_colors = _aggregate_dominant_colors(frame_descriptions)
+
+        # Step 4: Optional transcription (audio-only, already memory efficient)
+        transcription = None
+        if transcribe:
+            from videopython.ai.understanding.audio import AudioToText
+            from videopython.base.audio import Audio
+
+            audio = Audio.from_file(str(path))
+            transcriber = AudioToText(model_name=transcription_model)
+            transcription = transcriber.transcribe(audio)
+
+        # Create VideoDescription and distribute transcription to scenes
+        video_description = VideoDescription(
+            scene_descriptions=scene_descriptions,
+            transcription=transcription,
+        )
+        if transcription:
+            video_description.distribute_transcription()
+
+        # Step 5: Generate summaries if requested
+        if generate_summaries:
+            from videopython.ai.understanding.text import LLMSummarizer
+
+            summarizer = LLMSummarizer(backend=self.detection_backend, api_key=self.api_key)
+            for scene_desc in scene_descriptions:
+                scene_desc.summary = summarizer.summarize_scene_description(scene_desc)
+
+        return video_description
