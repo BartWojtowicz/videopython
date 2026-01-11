@@ -36,12 +36,21 @@ from .transforms import (
     TransformationPipeline,
 )
 from .transitions import BlurTransition, FadeTransition, InstantTransition, Transition
-from .video import Video, VideoMetadata
+from .video import (
+    FrameIterator,
+    Video,
+    VideoMetadata,
+    extract_frames_at_indices,
+    extract_frames_at_times,
+)
 
 __all__ = [
     # Core
     "Video",
     "VideoMetadata",
+    "FrameIterator",
+    "extract_frames_at_indices",
+    "extract_frames_at_times",
     # Audio
     "Audio",
     "AudioMetadata",

@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+from tests.test_config import SMALL_VIDEO_PATH
 from videopython.base.audio import Audio
 from videopython.base.scene import SceneDetector
 from videopython.base.video import Video
@@ -227,3 +228,82 @@ class TestSceneDescriptionProperties:
         assert scene.start_frame >= 0
         assert scene.end_frame > scene.start_frame
         assert scene.duration > 0
+
+
+class TestStreamingSceneDetection:
+    """Tests for streaming scene detection methods."""
+
+    def test_detect_streaming_basic(self):
+        """Test that streaming detection works on real video file."""
+        detector = SceneDetector(threshold=0.3, min_scene_length=0.5)
+        scenes = detector.detect_streaming(SMALL_VIDEO_PATH)
+
+        # Should detect at least one scene
+        assert len(scenes) >= 1
+        # First scene should start at 0
+        assert scenes[0].start == 0.0
+        assert scenes[0].start_frame == 0
+
+    def test_detect_streaming_matches_detect(self):
+        """Test that streaming detection produces similar results as batch."""
+        # Load video fully for comparison
+        video = Video.from_path(SMALL_VIDEO_PATH)
+
+        detector = SceneDetector(threshold=0.3, min_scene_length=0.0)
+
+        # Compare batch vs streaming
+        batch_scenes = detector.detect(video)
+        streaming_scenes = detector.detect_streaming(SMALL_VIDEO_PATH)
+
+        # Should have similar number of scenes (may differ slightly due to frame count)
+        assert abs(len(batch_scenes) - len(streaming_scenes)) <= 1
+
+        # First scene boundaries should match
+        if batch_scenes and streaming_scenes:
+            assert batch_scenes[0].start_frame == streaming_scenes[0].start_frame
+
+    def test_detect_from_path_classmethod(self):
+        """Test convenience class method."""
+        scenes = SceneDetector.detect_from_path(SMALL_VIDEO_PATH, threshold=0.3)
+
+        assert len(scenes) >= 1
+        assert scenes[0].start == 0.0
+        assert scenes[0].start_frame == 0
+
+    def test_detect_from_path_custom_params(self):
+        """Test class method with custom parameters."""
+        scenes_sensitive = SceneDetector.detect_from_path(SMALL_VIDEO_PATH, threshold=0.1, min_scene_length=0.0)
+        scenes_less_sensitive = SceneDetector.detect_from_path(SMALL_VIDEO_PATH, threshold=0.5, min_scene_length=0.5)
+
+        # More sensitive threshold should detect more or equal scenes
+        assert len(scenes_sensitive) >= len(scenes_less_sensitive)
+
+    def test_detect_streaming_scene_properties(self):
+        """Test that streaming scenes have correct properties."""
+        detector = SceneDetector(threshold=0.3)
+        scenes = detector.detect_streaming(SMALL_VIDEO_PATH)
+
+        for scene in scenes:
+            # Check all fields are present and valid
+            assert hasattr(scene, "start")
+            assert hasattr(scene, "end")
+            assert hasattr(scene, "start_frame")
+            assert hasattr(scene, "end_frame")
+            assert hasattr(scene, "duration")
+
+            assert scene.start >= 0
+            assert scene.end > scene.start
+            assert scene.start_frame >= 0
+            assert scene.end_frame > scene.start_frame
+            assert scene.duration > 0
+
+    def test_detect_streaming_file_not_found(self):
+        """Test that non-existent file raises error."""
+        detector = SceneDetector()
+        with pytest.raises(FileNotFoundError):
+            detector.detect_streaming("/nonexistent/path/video.mp4")
+
+    def test_detect_from_path_file_not_found(self):
+        """Test that class method raises for non-existent file."""
+        with pytest.raises(FileNotFoundError):
+            SceneDetector.detect_from_path("/nonexistent/path/video.mp4")

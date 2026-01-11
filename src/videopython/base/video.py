@@ -6,14 +6,23 @@ import tempfile
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
-from typing import Literal, get_args
+from typing import TYPE_CHECKING, Generator, Literal, get_args
 
 import numpy as np
 
 from videopython.base.audio import Audio
 from videopython.base.utils import generate_random_name
 
-__all__ = ["Video", "VideoMetadata"]
+if TYPE_CHECKING:
+    pass
+
+__all__ = [
+    "Video",
+    "VideoMetadata",
+    "FrameIterator",
+    "extract_frames_at_indices",
+    "extract_frames_at_times",
+]
 
 ALLOWED_VIDEO_FORMATS = Literal["mp4", "avi", "mov", "mkv", "webm"]
 
@@ -138,6 +147,236 @@ class VideoMetadata:
             and round(self.fps) >= round(target_format.fps)
             and self.total_seconds >= target_format.total_seconds
         )
+
+
+class FrameIterator:
+    """Memory-efficient frame iterator using ffmpeg streaming.
+
+    Yields frames one at a time, keeping memory usage constant regardless
+    of video length. Supports context manager protocol for resource cleanup.
+
+    This is useful for operations that only need to process frames sequentially,
+    such as scene detection, without loading the entire video into memory.
+
+    Example:
+        >>> with FrameIterator("video.mp4") as frames:
+        ...     for idx, frame in frames:
+        ...         process(frame)
+    """
+
+    def __init__(
+        self,
+        path: str | Path,
+        start_second: float | None = None,
+        end_second: float | None = None,
+    ):
+        """Initialize the frame iterator.
+
+        Args:
+            path: Path to video file
+            start_second: Optional start time in seconds (seek before reading)
+            end_second: Optional end time in seconds (stop reading after this)
+        """
+        self.path = Path(path)
+        if not self.path.exists():
+            raise FileNotFoundError(f"Video file not found: {path}")
+
+        self.metadata = VideoMetadata.from_path(path)
+        self.start_second = start_second if start_second is not None else 0.0
+        self.end_second = end_second
+        self._process: subprocess.Popen | None = None
+        self._frame_size = self.metadata.width * self.metadata.height * 3
+
+    def _build_ffmpeg_command(self) -> list[str]:
+        """Build ffmpeg command for frame streaming."""
+        cmd = ["ffmpeg"]
+
+        if self.start_second > 0:
+            cmd.extend(["-ss", str(self.start_second)])
+
+        cmd.extend(["-i", str(self.path)])
+
+        if self.end_second is not None:
+            duration = self.end_second - self.start_second
+            cmd.extend(["-t", str(duration)])
+
+        cmd.extend(
+            [
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgb24",
+                "-vcodec",
+                "rawvideo",
+                "-y",
+                "pipe:1",
+            ]
+        )
+        return cmd
+
+    def __iter__(self) -> Generator[tuple[int, np.ndarray], None, None]:
+        """Yield (frame_index, frame) tuples.
+
+        Frame indices are absolute indices in the original video,
+        accounting for any start_second offset.
+        """
+        cmd = self._build_ffmpeg_command()
+
+        self._process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            bufsize=self._frame_size * 2,
+        )
+
+        # Calculate starting frame index based on start_second
+        start_frame = int(self.start_second * self.metadata.fps)
+        frame_idx = start_frame
+
+        try:
+            while True:
+                raw_frame = self._process.stdout.read(self._frame_size)  # type: ignore
+                if len(raw_frame) != self._frame_size:
+                    break
+
+                frame = np.frombuffer(raw_frame, dtype=np.uint8).copy()
+                frame = frame.reshape(self.metadata.height, self.metadata.width, 3)
+
+                yield frame_idx, frame
+                frame_idx += 1
+        finally:
+            self._cleanup()
+
+    def _cleanup(self) -> None:
+        """Clean up ffmpeg process."""
+        if self._process is not None:
+            if self._process.poll() is None:
+                self._process.terminate()
+                try:
+                    self._process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self._process.kill()
+                    self._process.wait()
+            if self._process.stdout:
+                self._process.stdout.close()
+            self._process = None
+
+    def __enter__(self) -> "FrameIterator":
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self._cleanup()
+
+
+def extract_frames_at_indices(
+    path: str | Path,
+    frame_indices: list[int],
+) -> np.ndarray:
+    """Extract specific frames from video without loading all frames.
+
+    Uses ffmpeg's select filter for extraction. For sparse frame selection
+    (e.g., 1 frame every 100), this is much more memory-efficient than
+    loading all frames.
+
+    Args:
+        path: Path to video file
+        frame_indices: List of frame indices to extract (0-indexed)
+
+    Returns:
+        numpy array of shape (len(frame_indices), H, W, 3)
+
+    Example:
+        >>> frames = extract_frames_at_indices("video.mp4", [0, 100, 200])
+        >>> frames.shape  # (3, 1080, 1920, 3)
+    """
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"Video file not found: {path}")
+
+    if not frame_indices:
+        metadata = VideoMetadata.from_path(path)
+        return np.empty((0, metadata.height, metadata.width, 3), dtype=np.uint8)
+
+    metadata = VideoMetadata.from_path(path)
+
+    # Remove duplicates and sort for ffmpeg
+    unique_sorted_indices = sorted(set(frame_indices))
+
+    # Build select filter expression
+    select_expr = "+".join([f"eq(n\\,{idx})" for idx in unique_sorted_indices])
+
+    cmd = [
+        "ffmpeg",
+        "-i",
+        str(path),
+        "-vf",
+        f"select='{select_expr}'",
+        "-vsync",
+        "vfr",  # Variable frame rate output
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "rgb24",
+        "-y",
+        "pipe:1",
+    ]
+
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        bufsize=10**8,
+    )
+
+    frame_size = metadata.width * metadata.height * 3
+
+    try:
+        raw_data, _ = process.communicate()
+
+        actual_frames = len(raw_data) // frame_size
+        if actual_frames == 0:
+            return np.empty((0, metadata.height, metadata.width, 3), dtype=np.uint8)
+
+        # Truncate to complete frames only
+        raw_data = raw_data[: actual_frames * frame_size]
+
+        frames = np.frombuffer(raw_data, dtype=np.uint8).copy()
+        frames = frames.reshape(-1, metadata.height, metadata.width, 3)
+
+        # Reorder to match original frame_indices order if needed
+        if unique_sorted_indices != frame_indices:
+            index_map = {idx: i for i, idx in enumerate(unique_sorted_indices)}
+            reorder = [index_map[idx] for idx in frame_indices if idx in index_map]
+            frames = frames[reorder]
+
+        return frames
+
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            process.wait()
+
+
+def extract_frames_at_times(
+    path: str | Path,
+    timestamps: list[float],
+) -> np.ndarray:
+    """Extract frames at specific timestamps.
+
+    Args:
+        path: Path to video file
+        timestamps: List of timestamps in seconds
+
+    Returns:
+        numpy array of shape (len(timestamps), H, W, 3)
+
+    Example:
+        >>> frames = extract_frames_at_times("video.mp4", [0.0, 5.0, 10.0])
+        >>> frames.shape  # (3, 1080, 1920, 3)
+    """
+    metadata = VideoMetadata.from_path(path)
+    frame_indices = [int(t * metadata.fps) for t in timestamps]
+    return extract_frames_at_indices(path, frame_indices)
 
 
 class Video:
