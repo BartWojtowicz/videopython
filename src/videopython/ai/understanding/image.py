@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import io
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import numpy as np
@@ -59,13 +58,15 @@ class ImageToText:
             if torch.cuda.is_available():
                 device = "cuda"
             else:
-                # MPS has issues with BLIP in transformers 4.52+, use CPU
+                # MPS is slower than CPU for BLIP (~2x slower in benchmarks),
+                # so we default to CPU for best performance
                 device = "cpu"
 
         model_name = "Salesforce/blip-image-captioning-large"
         self._processor = BlipProcessor.from_pretrained(model_name)
         self._model = BlipForConditionalGeneration.from_pretrained(model_name)
         self._model.to(device)
+
         self.device = device
 
     def _image_to_base64(self, image: Image.Image) -> str:
@@ -234,13 +235,10 @@ class ImageToText:
         Returns:
             List of FrameDescription objects.
         """
-        # Process frames concurrently using ThreadPoolExecutor
-        with ThreadPoolExecutor() as executor:
-            futures = [
-                executor.submit(self.describe_frame, video, idx, prompt, extract_colors, include_full_histogram)
-                for idx in frame_indices
-            ]
-            return [f.result() for f in futures]
+        # Process frames sequentially (thread parallelism causes issues with model initialization)
+        return [
+            self.describe_frame(video, idx, prompt, extract_colors, include_full_histogram) for idx in frame_indices
+        ]
 
     def describe_scene(
         self,

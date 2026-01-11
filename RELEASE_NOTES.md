@@ -1,5 +1,12 @@
 # Release Notes
 
+## 0.7.3
+
+- Fixed thread safety issue in `ImageToText.describe_frames()` that caused meta tensor errors during concurrent model initialization
+- Removed thread parallelism from frame captioning (was causing race conditions with lazy model loading)
+- BLIP captioning now defaults to CPU instead of MPS on Apple Silicon (benchmarks show CPU is ~2x faster for this model)
+- Parallel processing remains available for scene detection via `SceneDetector.detect_parallel()` (histogram-based, no AI models)
+
 ## 0.7.2
 
 - Fixed compatibility with transformers 4.52+ (updated BLIP import path)
