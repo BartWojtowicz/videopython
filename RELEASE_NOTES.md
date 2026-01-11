@@ -1,5 +1,9 @@
 # Release Notes
 
+## 0.7.2
+
+- Fixed compatibility with transformers 4.52+ (updated BLIP import path)
+
 ## 0.7.1
 
 - Added `SceneDetector.detect_parallel()` for multi-core scene detection (3.5x speedup on 8 cores)
