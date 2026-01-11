@@ -9,11 +9,10 @@ Generate images from text prompts, animate them into video segments, add AI-gene
 ## Full Example
 
 ```python
-import asyncio
 from videopython.base import Video, FadeTransition, Resize, TransformationPipeline
 from videopython.ai import TextToImage, ImageToVideo, TextToSpeech
 
-async def create_ai_video():
+def create_ai_video():
     # Define scenes with prompts
     scenes = [
         {
@@ -38,16 +37,16 @@ async def create_ai_video():
     videos = []
     for scene in scenes:
         # Generate image
-        image = await image_gen.generate_image(scene["image_prompt"])
+        image = image_gen.generate_image(scene["image_prompt"])
 
         # Animate image to video (4 seconds)
-        video = await video_gen.generate_video(image=image, fps=24)
+        video = video_gen.generate_video(image=image, fps=24)
 
         # Resize to consistent dimensions
         video = Resize(width=1920, height=1080).apply(video)
 
         # Generate narration audio
-        audio = await speech_gen.generate_audio(scene["narration"])
+        audio = speech_gen.generate_audio(scene["narration"])
 
         # Add audio to video segment
         video.add_audio(audio)
@@ -62,7 +61,7 @@ async def create_ai_video():
     return final
 
 # Run and save
-video = asyncio.run(create_ai_video())
+video = create_ai_video()
 video.save("ai_generated.mp4")
 ```
 
@@ -72,7 +71,7 @@ video.save("ai_generated.mp4")
 
 ```python
 image_gen = TextToImage(backend="openai")  # Uses DALL-E 3
-image = await image_gen.generate_image("A serene mountain landscape at sunrise")
+image = image_gen.generate_image("A serene mountain landscape at sunrise")
 ```
 
 Available backends:
@@ -86,7 +85,7 @@ Available backends:
 
 ```python
 video_gen = ImageToVideo(backend="local")  # Uses Stable Video Diffusion
-video = await video_gen.generate_video(image=image, fps=24)
+video = video_gen.generate_video(image=image, fps=24)
 ```
 
 !!! note "Local Models"
@@ -96,7 +95,7 @@ video = await video_gen.generate_video(image=image, fps=24)
 
 ```python
 speech_gen = TextToSpeech(backend="openai")  # Uses OpenAI TTS
-audio = await speech_gen.generate_audio("Your narration text here")
+audio = speech_gen.generate_audio("Your narration text here")
 ```
 
 Available backends:

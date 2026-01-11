@@ -1,5 +1,13 @@
 # Release Notes
 
+## 0.7.0
+
+- **Breaking change**: Removed async/await from all AI module APIs - all functions are now synchronous
+- Simplified API: no more `asyncio.run()` boilerplate required
+- `describe_frames()` uses `ThreadPoolExecutor` for parallel frame processing (maintains performance)
+- Removed `pytest-asyncio` dependency
+- Fixed whisper type stubs (renamed to `__init__.pyi`)
+
 ## 0.6.3
 
 - Removed `VideoUpscaler` - MMagic/mmcv has compatibility issues with NumPy 2.x and is unmaintained

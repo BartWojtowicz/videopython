@@ -88,7 +88,7 @@ class FrameAnalyzer:
                     api_key=api_key,
                 )
 
-    async def analyze_frame(
+    def analyze_frame(
         self,
         frame: np.ndarray,
         frame_description: FrameDescription,
@@ -104,7 +104,7 @@ class FrameAnalyzer:
         """
         if self._combined_analyzer:
             # Cloud backend: single API call for all detections
-            result = await self._combined_analyzer.analyze(frame)
+            result = self._combined_analyzer.analyze(frame)
             if self.object_detection:
                 frame_description.detected_objects = result.detected_objects
             if self.face_detection:
@@ -116,13 +116,13 @@ class FrameAnalyzer:
         else:
             # Local backend: individual detectors
             if self._object_detector:
-                frame_description.detected_objects = await self._object_detector.detect(frame)
+                frame_description.detected_objects = self._object_detector.detect(frame)
 
             if self._face_detector:
-                frame_description.detected_faces = await self._face_detector.detect(frame)
+                frame_description.detected_faces = self._face_detector.detect(frame)
 
             if self._text_detector:
-                frame_description.detected_text = await self._text_detector.detect(frame)
+                frame_description.detected_text = self._text_detector.detect(frame)
 
         return frame_description
 
@@ -197,7 +197,7 @@ class VideoAnalyzer:
         self.detection_backend = detection_backend
         self.api_key = api_key
 
-    async def analyze(
+    def analyze(
         self,
         video: Video,
         frames_per_second: float = 1.0,
@@ -248,7 +248,7 @@ class VideoAnalyzer:
 
         # Step 3: Analyze frames from each scene and populate frame_descriptions
         for scene_desc in scene_descriptions:
-            frame_descriptions = await self.image_to_text.describe_scene(
+            frame_descriptions = self.image_to_text.describe_scene(
                 video,
                 scene_desc,
                 frames_per_second=frames_per_second,
@@ -261,7 +261,7 @@ class VideoAnalyzer:
             if frame_analyzer:
                 for fd in frame_descriptions:
                     frame = video.frames[fd.frame_index]
-                    await frame_analyzer.analyze_frame(frame, fd)
+                    frame_analyzer.analyze_frame(frame, fd)
 
             scene_desc.frame_descriptions = frame_descriptions
 
@@ -278,7 +278,7 @@ class VideoAnalyzer:
             from videopython.ai.understanding.audio import AudioToText
 
             transcriber = AudioToText(model_name=transcription_model)
-            transcription = await transcriber.transcribe(video)
+            transcription = transcriber.transcribe(video)
 
         # Create VideoDescription and distribute transcription to scenes
         video_description = VideoDescription(scene_descriptions=scene_descriptions, transcription=transcription)
@@ -291,11 +291,11 @@ class VideoAnalyzer:
 
             summarizer = LLMSummarizer(backend=self.detection_backend, api_key=self.api_key)
             for scene_desc in scene_descriptions:
-                scene_desc.summary = await summarizer.summarize_scene_description(scene_desc)
+                scene_desc.summary = summarizer.summarize_scene_description(scene_desc)
 
         return video_description
 
-    async def analyze_scenes_only(self, video: Video) -> list[SceneDescription]:
+    def analyze_scenes_only(self, video: Video) -> list[SceneDescription]:
         """Analyze video scenes without transcription (convenience method).
 
         Args:
@@ -304,5 +304,5 @@ class VideoAnalyzer:
         Returns:
             List of SceneDescription objects
         """
-        understanding = await self.analyze(video, transcribe=False)
+        understanding = self.analyze(video, transcribe=False)
         return understanding.scene_descriptions

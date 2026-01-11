@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
+import time
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -79,7 +79,7 @@ class TextToVideo:
         self._pipeline = CogVideoXPipeline.from_pretrained(model_name, torch_dtype=dtype)
         self._pipeline.to(self._device)
 
-    async def _generate_local(
+    def _generate_local(
         self,
         prompt: str,
         num_steps: int,
@@ -87,29 +87,27 @@ class TextToVideo:
         guidance_scale: float,
     ) -> Video:
         """Generate video using local CogVideoX diffusion model."""
+        import torch
+
         if self._pipeline is None:
-            await asyncio.to_thread(self._init_local)
+            self._init_local()
 
-        def _run_pipeline() -> Video:
-            import torch
+        video_frames = self._pipeline(
+            prompt=prompt,
+            num_inference_steps=num_steps,
+            num_frames=num_frames,
+            guidance_scale=guidance_scale,
+            generator=torch.Generator(device=self._device).manual_seed(42),
+        ).frames[0]
+        video_frames = np.asarray(video_frames, dtype=np.uint8)
+        return Video.from_frames(video_frames, fps=16.0)
 
-            video_frames = self._pipeline(
-                prompt=prompt,
-                num_inference_steps=num_steps,
-                num_frames=num_frames,
-                guidance_scale=guidance_scale,
-                generator=torch.Generator(device=self._device).manual_seed(42),
-            ).frames[0]
-            video_frames = np.asarray(video_frames, dtype=np.uint8)
-            return Video.from_frames(video_frames, fps=16.0)
-
-        return await asyncio.to_thread(_run_pipeline)
-
-    async def _generate_luma(self, prompt: str) -> Video:
+    def _generate_luma(self, prompt: str) -> Video:
         """Generate video using Luma AI Dream Machine API."""
         import tempfile
         from pathlib import Path
 
+        import httpx
         from lumaai import LumaAI
 
         client = LumaAI(auth_token=get_api_key("luma", self._api_key))
@@ -119,7 +117,7 @@ class TextToVideo:
 
         # Poll for completion
         while generation.state not in ["completed", "failed"]:
-            await asyncio.sleep(3)
+            time.sleep(3)
             assert generation.id is not None
             generation = client.generations.get(generation.id)
 
@@ -133,10 +131,8 @@ class TextToVideo:
         if not video_url:
             raise RuntimeError("Luma generation completed but no video URL returned")
 
-        import httpx
-
-        async with httpx.AsyncClient() as http_client:
-            response = await http_client.get(video_url)
+        with httpx.Client() as http_client:
+            response = http_client.get(video_url)
             response.raise_for_status()
 
             with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
@@ -147,7 +143,7 @@ class TextToVideo:
         temp_path.unlink()
         return video
 
-    async def generate_video(
+    def generate_video(
         self,
         prompt: str,
         num_steps: int = 50,
@@ -166,9 +162,9 @@ class TextToVideo:
             Generated video.
         """
         if self.backend == "local":
-            return await self._generate_local(prompt, num_steps, num_frames, guidance_scale)
+            return self._generate_local(prompt, num_steps, num_frames, guidance_scale)
         elif self.backend == "luma":
-            return await self._generate_luma(prompt)
+            return self._generate_luma(prompt)
         else:
             raise UnsupportedBackendError(self.backend, self.SUPPORTED_BACKENDS)
 
@@ -208,7 +204,7 @@ class ImageToVideo:
         self._pipeline = CogVideoXImageToVideoPipeline.from_pretrained(model_name, torch_dtype=dtype)
         self._pipeline.to(self._device)
 
-    async def _generate_local(
+    def _generate_local(
         self,
         image: Image,
         prompt: str,
@@ -217,32 +213,30 @@ class ImageToVideo:
         guidance_scale: float,
     ) -> Video:
         """Generate video using local CogVideoX I2V diffusion model."""
+        import torch
+
         if self._pipeline is None:
-            await asyncio.to_thread(self._init_local)
+            self._init_local()
 
-        def _run_pipeline() -> Video:
-            import torch
+        video_frames = self._pipeline(
+            prompt=prompt,
+            image=image,
+            num_inference_steps=num_steps,
+            num_frames=num_frames,
+            guidance_scale=guidance_scale,
+            generator=torch.Generator(device=self._device).manual_seed(42),
+        ).frames[0]
+        video_frames = np.asarray(video_frames, dtype=np.uint8)
+        return Video.from_frames(video_frames, fps=16.0)
 
-            video_frames = self._pipeline(
-                prompt=prompt,
-                image=image,
-                num_inference_steps=num_steps,
-                num_frames=num_frames,
-                guidance_scale=guidance_scale,
-                generator=torch.Generator(device=self._device).manual_seed(42),
-            ).frames[0]
-            video_frames = np.asarray(video_frames, dtype=np.uint8)
-            return Video.from_frames(video_frames, fps=16.0)
-
-        return await asyncio.to_thread(_run_pipeline)
-
-    async def _generate_runway(self, image: Image, prompt: str) -> Video:
+    def _generate_runway(self, image: Image, prompt: str) -> Video:
         """Generate video using Runway Gen-4 Turbo API."""
         import base64
         import io
         import tempfile
         from pathlib import Path
 
+        import httpx
         from runwayml import RunwayML
 
         client = RunwayML(api_key=get_api_key("runway", self._api_key))
@@ -264,7 +258,7 @@ class ImageToVideo:
         # Poll for completion
         task = client.tasks.retrieve(task_response.id)
         while task.status not in ["SUCCEEDED", "FAILED"]:
-            await asyncio.sleep(5)
+            time.sleep(5)
             task = client.tasks.retrieve(task_response.id)
 
         if task.status == "FAILED":
@@ -277,10 +271,8 @@ class ImageToVideo:
             raise RuntimeError("Runway generation completed but no video URL returned")
         video_url: str = output[0]
 
-        import httpx
-
-        async with httpx.AsyncClient() as http_client:
-            response = await http_client.get(video_url)
+        with httpx.Client() as http_client:
+            response = http_client.get(video_url)
             response.raise_for_status()
 
             with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
@@ -291,13 +283,14 @@ class ImageToVideo:
         temp_path.unlink()
         return video
 
-    async def _generate_luma(self, image: Image, prompt: str) -> Video:
+    def _generate_luma(self, image: Image, prompt: str) -> Video:
         """Generate video using Luma AI Dream Machine API."""
         import base64
         import io
         import tempfile
         from pathlib import Path
 
+        import httpx
         from lumaai import LumaAI
 
         client = LumaAI(auth_token=get_api_key("luma", self._api_key))
@@ -317,7 +310,7 @@ class ImageToVideo:
 
         # Poll for completion
         while generation.state not in ["completed", "failed"]:
-            await asyncio.sleep(3)
+            time.sleep(3)
             assert generation.id is not None
             generation = client.generations.get(generation.id)
 
@@ -331,10 +324,8 @@ class ImageToVideo:
         if not video_url:
             raise RuntimeError("Luma generation completed but no video URL returned")
 
-        import httpx
-
-        async with httpx.AsyncClient() as http_client:
-            response = await http_client.get(video_url)
+        with httpx.Client() as http_client:
+            response = http_client.get(video_url)
             response.raise_for_status()
 
             with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
@@ -345,7 +336,7 @@ class ImageToVideo:
         temp_path.unlink()
         return video
 
-    async def generate_video(
+    def generate_video(
         self,
         image: Image,
         prompt: str = "",
@@ -366,10 +357,10 @@ class ImageToVideo:
             Generated animated video.
         """
         if self.backend == "local":
-            return await self._generate_local(image, prompt, num_steps, num_frames, guidance_scale)
+            return self._generate_local(image, prompt, num_steps, num_frames, guidance_scale)
         elif self.backend == "runway":
-            return await self._generate_runway(image, prompt)
+            return self._generate_runway(image, prompt)
         elif self.backend == "luma":
-            return await self._generate_luma(image, prompt)
+            return self._generate_luma(image, prompt)
         else:
             raise UnsupportedBackendError(self.backend, self.SUPPORTED_BACKENDS)

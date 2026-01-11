@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import io
 import json
@@ -59,61 +58,58 @@ class ObjectDetector:
         image.save(buffer, format="PNG")
         return base64.b64encode(buffer.getvalue()).decode()
 
-    async def _detect_local(self, image: np.ndarray | Image.Image) -> list[DetectedObject]:
+    def _detect_local(self, image: np.ndarray | Image.Image) -> list[DetectedObject]:
         """Detect objects using YOLO."""
         if self._model is None:
-            await asyncio.to_thread(self._init_yolo)
+            self._init_yolo()
 
-        def _run_detection() -> list[DetectedObject]:
-            # Convert PIL to numpy if needed
-            if isinstance(image, Image.Image):
-                img_array = np.array(image)
-            else:
-                img_array = image
+        # Convert PIL to numpy if needed
+        if isinstance(image, Image.Image):
+            img_array = np.array(image)
+        else:
+            img_array = image
 
-            results = self._model(img_array, conf=self.confidence_threshold, verbose=False)
-            detected_objects = []
+        results = self._model(img_array, conf=self.confidence_threshold, verbose=False)
+        detected_objects = []
 
-            for result in results:
-                boxes = result.boxes
-                if boxes is None:
-                    continue
+        for result in results:
+            boxes = result.boxes
+            if boxes is None:
+                continue
 
-                img_h, img_w = result.orig_shape
+            img_h, img_w = result.orig_shape
 
-                for i in range(len(boxes)):
-                    # Get box coordinates (xyxy format)
-                    x1, y1, x2, y2 = boxes.xyxy[i].tolist()
-                    conf = float(boxes.conf[i])
-                    cls_id = int(boxes.cls[i])
-                    label = self._model.names[cls_id]
+            for i in range(len(boxes)):
+                # Get box coordinates (xyxy format)
+                x1, y1, x2, y2 = boxes.xyxy[i].tolist()
+                conf = float(boxes.conf[i])
+                cls_id = int(boxes.cls[i])
+                label = self._model.names[cls_id]
 
-                    # Normalize coordinates to [0, 1]
-                    bbox = BoundingBox(
-                        x=x1 / img_w,
-                        y=y1 / img_h,
-                        width=(x2 - x1) / img_w,
-                        height=(y2 - y1) / img_h,
+                # Normalize coordinates to [0, 1]
+                bbox = BoundingBox(
+                    x=x1 / img_w,
+                    y=y1 / img_h,
+                    width=(x2 - x1) / img_w,
+                    height=(y2 - y1) / img_h,
+                )
+
+                detected_objects.append(
+                    DetectedObject(
+                        label=label,
+                        confidence=conf,
+                        bounding_box=bbox,
                     )
+                )
 
-                    detected_objects.append(
-                        DetectedObject(
-                            label=label,
-                            confidence=conf,
-                            bounding_box=bbox,
-                        )
-                    )
+        return detected_objects
 
-            return detected_objects
-
-        return await asyncio.to_thread(_run_detection)
-
-    async def _detect_openai(self, image: np.ndarray | Image.Image) -> list[DetectedObject]:
+    def _detect_openai(self, image: np.ndarray | Image.Image) -> list[DetectedObject]:
         """Detect objects using OpenAI GPT-4o."""
-        from openai import AsyncOpenAI
+        from openai import OpenAI
 
         api_key = get_api_key("openai", self.api_key)
-        client = AsyncOpenAI(api_key=api_key)
+        client = OpenAI(api_key=api_key)
 
         if isinstance(image, np.ndarray):
             image = Image.fromarray(image)
@@ -133,7 +129,7 @@ Where bbox coordinates are normalized (0-1) relative to image dimensions:
 Only include objects you're confident about. Return empty array [] if no objects detected.
 Return ONLY the JSON array, no other text."""
 
-        response = await client.chat.completions.create(
+        response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {
@@ -149,7 +145,7 @@ Return ONLY the JSON array, no other text."""
 
         return self._parse_detection_response(response.choices[0].message.content or "[]")
 
-    async def _detect_gemini(self, image: np.ndarray | Image.Image) -> list[DetectedObject]:
+    def _detect_gemini(self, image: np.ndarray | Image.Image) -> list[DetectedObject]:
         """Detect objects using Google Gemini."""
         import google.generativeai as genai
 
@@ -174,12 +170,8 @@ Where bbox coordinates are normalized (0-1) relative to image dimensions:
 Only include objects you're confident about. Return empty array [] if no objects detected.
 Return ONLY the JSON array, no other text."""
 
-        def _run_gemini() -> str:
-            response = model.generate_content([prompt, image])
-            return response.text
-
-        response_text = await asyncio.to_thread(_run_gemini)
-        return self._parse_detection_response(response_text)
+        response = model.generate_content([prompt, image])
+        return self._parse_detection_response(response.text)
 
     def _parse_detection_response(self, response: str) -> list[DetectedObject]:
         """Parse JSON response from cloud backends into DetectedObject list."""
@@ -216,7 +208,7 @@ Return ONLY the JSON array, no other text."""
         except (json.JSONDecodeError, KeyError, TypeError):
             return []
 
-    async def detect(self, image: np.ndarray | Image.Image) -> list[DetectedObject]:
+    def detect(self, image: np.ndarray | Image.Image) -> list[DetectedObject]:
         """Detect objects in an image.
 
         Args:
@@ -226,11 +218,11 @@ Return ONLY the JSON array, no other text."""
             List of DetectedObject instances.
         """
         if self.backend == "local":
-            return await self._detect_local(image)
+            return self._detect_local(image)
         elif self.backend == "openai":
-            return await self._detect_openai(image)
+            return self._detect_openai(image)
         elif self.backend == "gemini":
-            return await self._detect_gemini(image)
+            return self._detect_gemini(image)
         else:
             raise UnsupportedBackendError(self.backend, self.SUPPORTED_BACKENDS)
 
@@ -266,7 +258,7 @@ class FaceDetector:
         self._cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
         self._model_loaded = True
 
-    async def detect(self, image: np.ndarray | Image.Image) -> int:
+    def detect(self, image: np.ndarray | Image.Image) -> int:
         """Detect faces in an image.
 
         Args:
@@ -275,37 +267,33 @@ class FaceDetector:
         Returns:
             Number of faces detected.
         """
+        import cv2
 
-        def _run_detection() -> int:
-            import cv2
+        # Convert PIL to numpy if needed
+        if isinstance(image, Image.Image):
+            img_array = np.array(image)
+        else:
+            img_array = image
 
-            # Convert PIL to numpy if needed
-            if isinstance(image, Image.Image):
-                img_array = np.array(image)
-            else:
-                img_array = image
+        # Convert RGB to BGR for OpenCV
+        if len(img_array.shape) == 3 and img_array.shape[2] == 3:
+            img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+        else:
+            img_bgr = img_array
 
-            # Convert RGB to BGR for OpenCV
-            if len(img_array.shape) == 3 and img_array.shape[2] == 3:
-                img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
-            else:
-                img_bgr = img_array
+        # Use Haar cascade (simpler, more reliable)
+        if not self._model_loaded:
+            self._init_cascade()
 
-            # Use Haar cascade (simpler, more reliable)
-            if not self._model_loaded:
-                self._init_cascade()
+        gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+        faces = self._cascade.detectMultiScale(
+            gray,
+            scaleFactor=1.1,
+            minNeighbors=5,
+            minSize=(30, 30),
+        )
 
-            gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-            faces = self._cascade.detectMultiScale(
-                gray,
-                scaleFactor=1.1,
-                minNeighbors=5,
-                minSize=(30, 30),
-            )
-
-            return len(faces)
-
-        return await asyncio.to_thread(_run_detection)
+        return len(faces)
 
 
 class TextDetector:
@@ -347,30 +335,27 @@ class TextDetector:
         image.save(buffer, format="PNG")
         return base64.b64encode(buffer.getvalue()).decode()
 
-    async def _detect_local(self, image: np.ndarray | Image.Image) -> list[str]:
+    def _detect_local(self, image: np.ndarray | Image.Image) -> list[str]:
         """Detect text using EasyOCR."""
         if self._reader is None:
-            await asyncio.to_thread(self._init_easyocr)
+            self._init_easyocr()
 
-        def _run_ocr() -> list[str]:
-            # Convert PIL to numpy if needed
-            if isinstance(image, Image.Image):
-                img_array = np.array(image)
-            else:
-                img_array = image
+        # Convert PIL to numpy if needed
+        if isinstance(image, Image.Image):
+            img_array = np.array(image)
+        else:
+            img_array = image
 
-            results = self._reader.readtext(img_array)
-            # Extract just the text from results (each result is [bbox, text, confidence])
-            return [text for _, text, _ in results if text.strip()]
+        results = self._reader.readtext(img_array)
+        # Extract just the text from results (each result is [bbox, text, confidence])
+        return [text for _, text, _ in results if text.strip()]
 
-        return await asyncio.to_thread(_run_ocr)
-
-    async def _detect_openai(self, image: np.ndarray | Image.Image) -> list[str]:
+    def _detect_openai(self, image: np.ndarray | Image.Image) -> list[str]:
         """Detect text using OpenAI GPT-4o."""
-        from openai import AsyncOpenAI
+        from openai import OpenAI
 
         api_key = get_api_key("openai", self.api_key)
-        client = AsyncOpenAI(api_key=api_key)
+        client = OpenAI(api_key=api_key)
 
         if isinstance(image, np.ndarray):
             image = Image.fromarray(image)
@@ -383,7 +368,7 @@ Example: ["STOP", "Main Street", "Open 24 Hours"]
 Return empty array [] if no text is found.
 Return ONLY the JSON array, no other text."""
 
-        response = await client.chat.completions.create(
+        response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {
@@ -399,7 +384,7 @@ Return ONLY the JSON array, no other text."""
 
         return self._parse_text_response(response.choices[0].message.content or "[]")
 
-    async def _detect_gemini(self, image: np.ndarray | Image.Image) -> list[str]:
+    def _detect_gemini(self, image: np.ndarray | Image.Image) -> list[str]:
         """Detect text using Google Gemini."""
         import google.generativeai as genai
 
@@ -417,12 +402,8 @@ Example: ["STOP", "Main Street", "Open 24 Hours"]
 Return empty array [] if no text is found.
 Return ONLY the JSON array, no other text."""
 
-        def _run_gemini() -> str:
-            response = model.generate_content([prompt, image])
-            return response.text
-
-        response_text = await asyncio.to_thread(_run_gemini)
-        return self._parse_text_response(response_text)
+        response = model.generate_content([prompt, image])
+        return self._parse_text_response(response.text)
 
     def _parse_text_response(self, response: str) -> list[str]:
         """Parse JSON response from cloud backends into string list."""
@@ -438,7 +419,7 @@ Return ONLY the JSON array, no other text."""
         except (json.JSONDecodeError, TypeError):
             return []
 
-    async def detect(self, image: np.ndarray | Image.Image) -> list[str]:
+    def detect(self, image: np.ndarray | Image.Image) -> list[str]:
         """Detect text in an image.
 
         Args:
@@ -448,11 +429,11 @@ Return ONLY the JSON array, no other text."""
             List of detected text strings.
         """
         if self.backend == "local":
-            return await self._detect_local(image)
+            return self._detect_local(image)
         elif self.backend == "openai":
-            return await self._detect_openai(image)
+            return self._detect_openai(image)
         elif self.backend == "gemini":
-            return await self._detect_gemini(image)
+            return self._detect_gemini(image)
         else:
             raise UnsupportedBackendError(self.backend, self.SUPPORTED_BACKENDS)
 
@@ -490,12 +471,12 @@ class ShotTypeClassifier:
         image.save(buffer, format="PNG")
         return base64.b64encode(buffer.getvalue()).decode()
 
-    async def _classify_openai(self, image: np.ndarray | Image.Image) -> str | None:
+    def _classify_openai(self, image: np.ndarray | Image.Image) -> str | None:
         """Classify shot type using OpenAI GPT-4o."""
-        from openai import AsyncOpenAI
+        from openai import OpenAI
 
         api_key = get_api_key("openai", self.api_key)
-        client = AsyncOpenAI(api_key=api_key)
+        client = OpenAI(api_key=api_key)
 
         if isinstance(image, np.ndarray):
             image = Image.fromarray(image)
@@ -515,7 +496,7 @@ Definitions:
 
 Return ONLY the shot type label, nothing else."""
 
-        response = await client.chat.completions.create(
+        response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {
@@ -532,7 +513,7 @@ Return ONLY the shot type label, nothing else."""
         result = (response.choices[0].message.content or "").strip().lower()
         return result if result in self.SHOT_TYPES else None
 
-    async def _classify_gemini(self, image: np.ndarray | Image.Image) -> str | None:
+    def _classify_gemini(self, image: np.ndarray | Image.Image) -> str | None:
         """Classify shot type using Google Gemini."""
         import google.generativeai as genai
 
@@ -557,14 +538,11 @@ Definitions:
 
 Return ONLY the shot type label, nothing else."""
 
-        def _run_gemini() -> str:
-            response = model.generate_content([prompt, image])
-            return response.text
-
-        result = (await asyncio.to_thread(_run_gemini)).strip().lower()
+        response = model.generate_content([prompt, image])
+        result = response.text.strip().lower()
         return result if result in self.SHOT_TYPES else None
 
-    async def classify(self, image: np.ndarray | Image.Image) -> str | None:
+    def classify(self, image: np.ndarray | Image.Image) -> str | None:
         """Classify the shot type of an image.
 
         Args:
@@ -574,9 +552,9 @@ Return ONLY the shot type label, nothing else."""
             Shot type string or None if classification failed.
         """
         if self.backend == "openai":
-            return await self._classify_openai(image)
+            return self._classify_openai(image)
         elif self.backend == "gemini":
-            return await self._classify_gemini(image)
+            return self._classify_gemini(image)
         else:
             raise UnsupportedBackendError(self.backend, self.SUPPORTED_BACKENDS)
 
@@ -734,12 +712,12 @@ Shot type definitions:
                 shot_type=None,
             )
 
-    async def _analyze_openai(self, image: np.ndarray | Image.Image) -> CombinedFrameAnalysis:
+    def _analyze_openai(self, image: np.ndarray | Image.Image) -> CombinedFrameAnalysis:
         """Analyze image using OpenAI GPT-4o with structured outputs."""
-        from openai import AsyncOpenAI
+        from openai import OpenAI
 
         api_key = get_api_key("openai", self.api_key)
-        client = AsyncOpenAI(api_key=api_key)
+        client = OpenAI(api_key=api_key)
 
         if isinstance(image, np.ndarray):
             image = Image.fromarray(image)
@@ -747,7 +725,7 @@ Shot type definitions:
         image_base64 = self._image_to_base64(image)
         prompt = self._get_combined_prompt()
 
-        response = await client.chat.completions.create(
+        response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {
@@ -773,7 +751,7 @@ Shot type definitions:
         data = json.loads(content)
         return self._parse_response(data)
 
-    async def _analyze_gemini(self, image: np.ndarray | Image.Image) -> CombinedFrameAnalysis:
+    def _analyze_gemini(self, image: np.ndarray | Image.Image) -> CombinedFrameAnalysis:
         """Analyze image using Google Gemini with structured outputs."""
         import google.generativeai as genai
 
@@ -785,21 +763,18 @@ Shot type definitions:
 
         prompt = self._get_combined_prompt()
 
-        def _run_gemini() -> dict[str, Any]:
-            model = genai.GenerativeModel(
-                "gemini-2.0-flash",
-                generation_config=genai.GenerationConfig(
-                    response_mime_type="application/json",
-                    response_schema=self.RESPONSE_SCHEMA,
-                ),
-            )
-            response = model.generate_content([prompt, image])
-            return json.loads(response.text)
-
-        data = await asyncio.to_thread(_run_gemini)
+        model = genai.GenerativeModel(
+            "gemini-2.0-flash",
+            generation_config=genai.GenerationConfig(
+                response_mime_type="application/json",
+                response_schema=self.RESPONSE_SCHEMA,
+            ),
+        )
+        response = model.generate_content([prompt, image])
+        data = json.loads(response.text)
         return self._parse_response(data)
 
-    async def analyze(self, image: np.ndarray | Image.Image) -> CombinedFrameAnalysis:
+    def analyze(self, image: np.ndarray | Image.Image) -> CombinedFrameAnalysis:
         """Analyze an image with a single API call.
 
         Args:
@@ -809,9 +784,9 @@ Shot type definitions:
             CombinedFrameAnalysis with all detection results.
         """
         if self.backend == "openai":
-            return await self._analyze_openai(image)
+            return self._analyze_openai(image)
         elif self.backend == "gemini":
-            return await self._analyze_gemini(image)
+            return self._analyze_gemini(image)
         else:
             raise UnsupportedBackendError(self.backend, self.SUPPORTED_BACKENDS)
 
@@ -835,7 +810,7 @@ class CameraMotionDetector:
         self.motion_threshold = motion_threshold
         self.zoom_threshold = zoom_threshold
 
-    async def detect(
+    def detect(
         self,
         frame1: np.ndarray | Image.Image,
         frame2: np.ndarray | Image.Image,
@@ -849,95 +824,91 @@ class CameraMotionDetector:
         Returns:
             Motion type: 'static', 'pan', 'tilt', 'zoom', or 'complex'.
         """
+        import cv2
 
-        def _analyze_motion() -> str:
-            import cv2
+        # Convert to numpy if needed
+        if isinstance(frame1, Image.Image):
+            img1 = np.array(frame1)
+        else:
+            img1 = frame1
 
-            # Convert to numpy if needed
-            if isinstance(frame1, Image.Image):
-                img1 = np.array(frame1)
-            else:
-                img1 = frame1
+        if isinstance(frame2, Image.Image):
+            img2 = np.array(frame2)
+        else:
+            img2 = frame2
 
-            if isinstance(frame2, Image.Image):
-                img2 = np.array(frame2)
-            else:
-                img2 = frame2
+        # Convert to grayscale
+        if len(img1.shape) == 3:
+            gray1 = cv2.cvtColor(img1, cv2.COLOR_RGB2GRAY)
+        else:
+            gray1 = img1
 
-            # Convert to grayscale
-            if len(img1.shape) == 3:
-                gray1 = cv2.cvtColor(img1, cv2.COLOR_RGB2GRAY)
-            else:
-                gray1 = img1
+        if len(img2.shape) == 3:
+            gray2 = cv2.cvtColor(img2, cv2.COLOR_RGB2GRAY)
+        else:
+            gray2 = img2
 
-            if len(img2.shape) == 3:
-                gray2 = cv2.cvtColor(img2, cv2.COLOR_RGB2GRAY)
-            else:
-                gray2 = img2
+        # Calculate optical flow using Farneback method
+        flow = cv2.calcOpticalFlowFarneback(
+            gray1,
+            gray2,
+            None,
+            pyr_scale=0.5,
+            levels=3,
+            winsize=15,
+            iterations=3,
+            poly_n=5,
+            poly_sigma=1.2,
+            flags=0,
+        )
 
-            # Calculate optical flow using Farneback method
-            flow = cv2.calcOpticalFlowFarneback(
-                gray1,
-                gray2,
-                None,
-                pyr_scale=0.5,
-                levels=3,
-                winsize=15,
-                iterations=3,
-                poly_n=5,
-                poly_sigma=1.2,
-                flags=0,
-            )
+        # Analyze flow vectors
+        flow_x = flow[..., 0]
+        flow_y = flow[..., 1]
 
-            # Analyze flow vectors
-            flow_x = flow[..., 0]
-            flow_y = flow[..., 1]
+        # Calculate magnitude
+        magnitude = np.sqrt(flow_x**2 + flow_y**2)
+        avg_magnitude = np.mean(magnitude)
 
-            # Calculate magnitude
-            magnitude = np.sqrt(flow_x**2 + flow_y**2)
-            avg_magnitude = np.mean(magnitude)
+        if avg_magnitude < self.motion_threshold:
+            return "static"
 
-            if avg_magnitude < self.motion_threshold:
-                return "static"
+        # Calculate mean flow direction
+        mean_flow_x = np.mean(flow_x)
+        mean_flow_y = np.mean(flow_y)
 
-            # Calculate mean flow direction
-            mean_flow_x = np.mean(flow_x)
-            mean_flow_y = np.mean(flow_y)
+        # Check for zoom by analyzing flow from center
+        h, w = gray1.shape
+        cy, cx = h // 2, w // 2
 
-            # Check for zoom by analyzing flow from center
-            h, w = gray1.shape
-            cy, cx = h // 2, w // 2
+        # Sample flow at different distances from center
+        center_region = magnitude[cy - h // 4 : cy + h // 4, cx - w // 4 : cx + w // 4]
+        edge_region_top = magnitude[: h // 4, :]
+        edge_region_bottom = magnitude[-h // 4 :, :]
+        edge_region_left = magnitude[:, : w // 4]
+        edge_region_right = magnitude[:, -w // 4 :]
 
-            # Sample flow at different distances from center
-            center_region = magnitude[cy - h // 4 : cy + h // 4, cx - w // 4 : cx + w // 4]
-            edge_region_top = magnitude[: h // 4, :]
-            edge_region_bottom = magnitude[-h // 4 :, :]
-            edge_region_left = magnitude[:, : w // 4]
-            edge_region_right = magnitude[:, -w // 4 :]
+        center_mag = np.mean(center_region) if center_region.size > 0 else 0
+        edge_mag = np.mean(
+            [
+                np.mean(edge_region_top) if edge_region_top.size > 0 else 0,
+                np.mean(edge_region_bottom) if edge_region_bottom.size > 0 else 0,
+                np.mean(edge_region_left) if edge_region_left.size > 0 else 0,
+                np.mean(edge_region_right) if edge_region_right.size > 0 else 0,
+            ]
+        )
 
-            center_mag = np.mean(center_region) if center_region.size > 0 else 0
-            edge_mag = np.mean(
-                [
-                    np.mean(edge_region_top) if edge_region_top.size > 0 else 0,
-                    np.mean(edge_region_bottom) if edge_region_bottom.size > 0 else 0,
-                    np.mean(edge_region_left) if edge_region_left.size > 0 else 0,
-                    np.mean(edge_region_right) if edge_region_right.size > 0 else 0,
-                ]
-            )
+        # Zoom detection: edges move more than center (zoom in) or vice versa
+        if edge_mag > 0 and abs(edge_mag - center_mag) / edge_mag > self.zoom_threshold:
+            return "zoom"
 
-            # Zoom detection: edges move more than center (zoom in) or vice versa
-            if edge_mag > 0 and abs(edge_mag - center_mag) / edge_mag > self.zoom_threshold:
-                return "zoom"
+        # Determine dominant motion direction
+        abs_x = abs(mean_flow_x)
+        abs_y = abs(mean_flow_y)
 
-            # Determine dominant motion direction
-            abs_x = abs(mean_flow_x)
-            abs_y = abs(mean_flow_y)
-
-            if abs_x > abs_y * 1.5:
-                return "pan"  # Horizontal motion
-            elif abs_y > abs_x * 1.5:
-                return "tilt"  # Vertical motion
-            else:
-                return "complex"  # Mixed motion
-
-        return await asyncio.to_thread(_analyze_motion)
+        if abs_x > abs_y * 1.5:
+            return "pan"  # Horizontal motion
+        elif abs_y > abs_x * 1.5:
+            return "tilt"  # Vertical motion
+        else:
+            return "complex"  # Mixed motion

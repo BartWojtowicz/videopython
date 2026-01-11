@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import io
 from typing import Any
 
@@ -62,25 +61,22 @@ class TextToImage:
         if device == "mps":
             self._pipeline.enable_attention_slicing()
 
-    async def _generate_local(self, prompt: str) -> Image.Image:
+    def _generate_local(self, prompt: str) -> Image.Image:
         """Generate image using local diffusion model."""
         if self._pipeline is None:
-            await asyncio.to_thread(self._init_local)
+            self._init_local()
 
-        def _run_pipeline() -> Image.Image:
-            return self._pipeline(prompt=prompt).images[0]
+        return self._pipeline(prompt=prompt).images[0]
 
-        return await asyncio.to_thread(_run_pipeline)
-
-    async def _generate_openai(self, prompt: str, size: str) -> Image.Image:
+    def _generate_openai(self, prompt: str, size: str) -> Image.Image:
         """Generate image using OpenAI DALL-E."""
         import httpx
-        from openai import AsyncOpenAI
+        from openai import OpenAI
 
         api_key = get_api_key("openai", self.api_key)
-        client = AsyncOpenAI(api_key=api_key)
+        client = OpenAI(api_key=api_key)
 
-        response = await client.images.generate(
+        response = client.images.generate(
             model="dall-e-3",
             prompt=prompt,
             size=size,  # type: ignore
@@ -93,13 +89,13 @@ class TextToImage:
             raise RuntimeError("OpenAI returned no image URL")
 
         # Download the image
-        async with httpx.AsyncClient() as http_client:
-            image_response = await http_client.get(image_url, timeout=60.0)
+        with httpx.Client() as http_client:
+            image_response = http_client.get(image_url, timeout=60.0)
             image_response.raise_for_status()
 
             return Image.open(io.BytesIO(image_response.content))
 
-    async def generate_image(
+    def generate_image(
         self,
         prompt: str,
         size: str = "1024x1024",
@@ -114,8 +110,8 @@ class TextToImage:
             Generated PIL Image.
         """
         if self.backend == "local":
-            return await self._generate_local(prompt)
+            return self._generate_local(prompt)
         elif self.backend == "openai":
-            return await self._generate_openai(prompt, size)
+            return self._generate_openai(prompt, size)
         else:
             raise UnsupportedBackendError(self.backend, self.SUPPORTED_BACKENDS)

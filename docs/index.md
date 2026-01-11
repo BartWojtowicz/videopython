@@ -5,26 +5,25 @@ A minimal Python library for video generation and editing, built for short-form 
 ## Quick Example
 
 ```python
-import asyncio
 from videopython.base import Video, Resize, FadeTransition
 from videopython.ai import TextToImage, ImageToVideo, TextToSpeech
 
-async def create_video():
+def create_video():
     # Generate an image and animate it
-    image = await TextToImage(backend="openai").generate_image(
+    image = TextToImage(backend="openai").generate_image(
         "A cozy coffee shop on a rainy evening, warm lighting"
     )
-    video = await ImageToVideo().generate_video(image=image, fps=24)
+    video = ImageToVideo().generate_video(image=image, fps=24)
     video = Resize(width=1080, height=1920).apply(video)  # Vertical format
 
     # Add narration
-    audio = await TextToSpeech(backend="openai").generate_audio(
+    audio = TextToSpeech(backend="openai").generate_audio(
         "Sometimes the best ideas come with a cup of coffee and the sound of rain."
     )
     video.add_audio(audio)
     video.save("coffee_shop.mp4")
 
-asyncio.run(create_video())
+create_video()
 ```
 
 ## What You Can Do

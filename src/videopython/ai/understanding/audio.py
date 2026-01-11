@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
 import io
+import os
 import tempfile
 from pathlib import Path
 from typing import Any, Literal
@@ -112,32 +112,29 @@ class AudioToText:
 
         return Transcription(words=words)
 
-    async def _transcribe_local(self, audio: Audio) -> Transcription:
+    def _transcribe_local(self, audio: Audio) -> Transcription:
         """Transcribe using local Whisper model."""
         import whisper
 
         if self._model is None:
-            await asyncio.to_thread(self._init_local)
+            self._init_local()
 
         audio_mono = audio.to_mono().resample(whisper.audio.SAMPLE_RATE)
 
-        def _run_whisper() -> Transcription:
-            if self.enable_diarization:
-                audio_data = audio_mono.data
-                transcription_result = self._model.transcribe(audio_data)
-                return self._process_whisperx_result(transcription_result, audio_data)
-            else:
-                transcription_result = self._model.transcribe(audio=audio_mono.data, word_timestamps=True)
-                return self._process_transcription_result(transcription_result)
+        if self.enable_diarization:
+            audio_data = audio_mono.data
+            transcription_result = self._model.transcribe(audio_data)
+            return self._process_whisperx_result(transcription_result, audio_data)
+        else:
+            transcription_result = self._model.transcribe(audio=audio_mono.data, word_timestamps=True)
+            return self._process_transcription_result(transcription_result)
 
-        return await asyncio.to_thread(_run_whisper)
-
-    async def _transcribe_openai(self, audio: Audio) -> Transcription:
+    def _transcribe_openai(self, audio: Audio) -> Transcription:
         """Transcribe using OpenAI Whisper API."""
-        from openai import AsyncOpenAI
+        from openai import OpenAI
 
         api_key = get_api_key("openai", self.api_key)
-        client = AsyncOpenAI(api_key=api_key)
+        client = OpenAI(api_key=api_key)
 
         # Convert audio to file-like object (WAV format)
         # Save to temp file first, then read into BytesIO
@@ -149,7 +146,7 @@ class AudioToText:
         audio_bytes.name = "audio.wav"
         Path(temp_path).unlink()  # Clean up temp file
 
-        response = await client.audio.transcriptions.create(
+        response = client.audio.transcriptions.create(
             model="whisper-1",
             file=audio_bytes,
             response_format="verbose_json",
@@ -182,7 +179,7 @@ class AudioToText:
 
         return Transcription(segments=segments)
 
-    async def _transcribe_gemini(self, audio: Audio) -> Transcription:
+    def _transcribe_gemini(self, audio: Audio) -> Transcription:
         """Transcribe using Google Gemini."""
         import google.generativeai as genai
 
@@ -196,7 +193,7 @@ class AudioToText:
 
         model = genai.GenerativeModel("gemini-2.0-flash")
 
-        def _run_gemini() -> str:
+        try:
             # Upload audio file
             audio_file = genai.upload_file(temp_path)
 
@@ -206,13 +203,8 @@ class AudioToText:
                     "Transcribe this audio. Return only the transcription text, nothing else.",
                 ]
             )
-            return response.text
-
-        try:
-            transcription_text = await asyncio.to_thread(_run_gemini)
+            transcription_text = response.text
         finally:
-            import os
-
             os.unlink(temp_path)
 
         # Gemini doesn't provide timestamps, create a single segment
@@ -227,7 +219,7 @@ class AudioToText:
             ]
         )
 
-    async def transcribe(self, media: Audio | Video) -> Transcription:
+    def transcribe(self, media: Audio | Video) -> Transcription:
         """Transcribe audio or video to text.
 
         Args:
@@ -248,10 +240,10 @@ class AudioToText:
             raise TypeError(f"Unsupported media type: {type(media)}. Expected Audio or Video.")
 
         if self.backend == "local":
-            return await self._transcribe_local(audio)
+            return self._transcribe_local(audio)
         elif self.backend == "openai":
-            return await self._transcribe_openai(audio)
+            return self._transcribe_openai(audio)
         elif self.backend == "gemini":
-            return await self._transcribe_gemini(audio)
+            return self._transcribe_gemini(audio)
         else:
             raise UnsupportedBackendError(self.backend, self.SUPPORTED_BACKENDS)
