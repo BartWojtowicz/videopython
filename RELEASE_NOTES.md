@@ -1,5 +1,9 @@
 # Release Notes
 
+## 0.7.4
+
+- Fixed audio slicing issue in Blur transition.
+
 ## 0.7.3
 
 - Fixed thread safety issue in `ImageToText.describe_frames()` that caused meta tensor errors during concurrent model initialization
