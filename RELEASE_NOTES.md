@@ -1,5 +1,13 @@
 # Release Notes
 
+## 0.8.3
+
+- Added `preset` and `crf` parameters to `Video.save()` for encoding control
+  - `preset`: Speed/compression tradeoff (ultrafast to veryslow), default "medium"
+  - `crf`: Quality control (0-51), default 23. Lower values = better quality, larger files
+  - Changed default preset from "ultrafast" to "medium" for better compression
+  - Removed `-tune zerolatency` for improved compression efficiency
+
 ## 0.8.2
 
 - Fixed missing `MotionInfo` export from `videopython.base`
