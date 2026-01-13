@@ -1,4 +1,4 @@
-from .audio import AudioToText
+from .audio import AudioClassifier, AudioToText
 from .detection import (
     CameraMotionDetector,
     CombinedFrameAnalyzer,
@@ -13,6 +13,7 @@ from .video import VideoAnalyzer
 
 __all__ = [
     "AudioToText",
+    "AudioClassifier",
     "ImageToText",
     "LLMSummarizer",
     "VideoAnalyzer",

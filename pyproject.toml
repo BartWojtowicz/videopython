@@ -1,6 +1,6 @@
 [project]
 name = "videopython"
-version = "0.7.4"
+version = "0.8.0"
 description = "Minimal video generation and processing library."
 authors = [
     { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
@@ -31,7 +31,6 @@ classifiers = [
 ]
 
 dependencies = [
-    "hf-transfer>=0.1.9",
     "numpy>=1.25.2",
     "opencv-python>=4.9.0.80",
     "pillow>=10.3.0",
@@ -54,6 +53,7 @@ dev = [
 ai = [
     "accelerate>=0.29.2",
     "diffusers>=0.26.3",
+    "hf-transfer>=0.1.9",
     "torch>=2.1.0",
     "transformers>=4.38.1",
     "openai-whisper>=20240930",
@@ -72,6 +72,8 @@ ai = [
     # Detection backends
     "ultralytics>=8.0.0",
     "easyocr>=1.7.0",
+    # Audio classification
+    "panns-inference>=0.1.0",
 ]
 
 # We have to keep it to make PIP use those dependency groups, not only UV
@@ -87,6 +89,7 @@ dev = [
 ai = [
     "accelerate>=0.29.2",
     "diffusers>=0.26.3",
+    "hf-transfer>=0.1.9",
     "torch>=2.1.0",
     "transformers>=4.38.1",
     "openai-whisper>=20240930",
@@ -105,6 +108,8 @@ ai = [
     # Detection backends
     "ultralytics>=8.0.0",
     "easyocr>=1.7.0",
+    # Audio classification
+    "panns-inference>=0.1.0",
 ]
 
 [project.urls]
@@ -124,6 +129,7 @@ module = [
     "google.generativeai", "google.generativeai.*",
     "ultralytics", "ultralytics.*",
     "easyocr", "easyocr.*",
+    "panns_inference", "panns_inference.*",
 ]
 ignore_missing_imports = true
 

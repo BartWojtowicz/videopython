@@ -1,5 +1,6 @@
 from .generation import ImageToVideo, TextToImage, TextToMusic, TextToSpeech, TextToVideo
 from .understanding import (
+    AudioClassifier,
     AudioToText,
     CameraMotionDetector,
     CombinedFrameAnalyzer,
@@ -21,6 +22,7 @@ __all__ = [
     "TextToMusic",
     # Understanding
     "AudioToText",
+    "AudioClassifier",
     "ImageToText",
     "LLMSummarizer",
     "VideoAnalyzer",

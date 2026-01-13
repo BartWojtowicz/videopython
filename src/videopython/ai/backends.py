@@ -13,6 +13,7 @@ TextToMusicBackend = Literal["local"]
 TextToImageBackend = Literal["local", "openai"]
 ImageToTextBackend = Literal["local", "openai", "gemini"]
 AudioToTextBackend = Literal["local", "openai", "gemini"]
+AudioClassifierBackend = Literal["local"]
 LLMBackend = Literal["local", "openai", "gemini"]
 
 # Environment variable names per provider

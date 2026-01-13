@@ -7,7 +7,12 @@ import numpy as np
 
 from videopython.ai.backends import ImageToTextBackend
 from videopython.ai.understanding.image import ImageToText
-from videopython.base.description import FrameDescription, SceneDescription, VideoDescription
+from videopython.base.description import (
+    AudioClassification,
+    FrameDescription,
+    SceneDescription,
+    VideoDescription,
+)
 from videopython.base.scene import SceneDetector
 from videopython.base.video import Video, VideoMetadata, extract_frames_at_indices
 
@@ -173,6 +178,25 @@ def _aggregate_dominant_colors(
     return [color for color, _ in color_counts.most_common(num_colors)]
 
 
+def _distribute_audio_events(
+    scene_descriptions: list[SceneDescription],
+    audio_classification: AudioClassification,
+) -> None:
+    """Distribute audio events to scenes based on timestamps.
+
+    Args:
+        scene_descriptions: List of SceneDescription objects.
+        audio_classification: AudioClassification with detected events.
+    """
+    for scene_desc in scene_descriptions:
+        scene_events = [
+            event
+            for event in audio_classification.events
+            if event.start < scene_desc.end and event.end > scene_desc.start
+        ]
+        scene_desc.audio_events = scene_events if scene_events else None
+
+
 class VideoAnalyzer:
     """Comprehensive video analysis combining scene detection, frame understanding, and transcription."""
 
@@ -212,6 +236,8 @@ class VideoAnalyzer:
         detect_text: bool = False,
         detect_shot_type: bool = False,
         generate_summaries: bool = False,
+        classify_audio: bool = False,
+        audio_classifier_threshold: float = 0.3,
     ) -> VideoDescription:
         """Perform comprehensive video analysis.
 
@@ -228,6 +254,8 @@ class VideoAnalyzer:
             detect_text: Whether to detect text (OCR) in frames (default: False)
             detect_shot_type: Whether to classify shot type (cloud backends only) (default: False)
             generate_summaries: Whether to generate LLM summaries for scenes (default: False)
+            classify_audio: Whether to classify audio events/sounds (default: False)
+            audio_classifier_threshold: Minimum confidence for audio events (default: 0.3)
 
         Returns:
             VideoDescription object with complete analysis
@@ -286,7 +314,15 @@ class VideoAnalyzer:
         if transcription:
             video_description.distribute_transcription()
 
-        # Step 5: Generate summaries if requested
+        # Step 5: Optional audio classification
+        if classify_audio:
+            from videopython.ai.understanding.audio import AudioClassifier
+
+            classifier = AudioClassifier(confidence_threshold=audio_classifier_threshold)
+            audio_classification = classifier.classify(video)
+            _distribute_audio_events(scene_descriptions, audio_classification)
+
+        # Step 6: Generate summaries if requested
         if generate_summaries:
             from videopython.ai.understanding.text import LLMSummarizer
 
@@ -322,6 +358,8 @@ class VideoAnalyzer:
         detect_text: bool = False,
         detect_shot_type: bool = False,
         generate_summaries: bool = False,
+        classify_audio: bool = False,
+        audio_classifier_threshold: float = 0.3,
     ) -> VideoDescription:
         """Analyze video from path with minimal memory usage.
 
@@ -346,6 +384,8 @@ class VideoAnalyzer:
             detect_text: Whether to detect text (OCR) in frames (default: False)
             detect_shot_type: Whether to classify shot type (cloud backends only) (default: False)
             generate_summaries: Whether to generate LLM summaries for scenes (default: False)
+            classify_audio: Whether to classify audio events/sounds (default: False)
+            audio_classifier_threshold: Minimum confidence for audio events (default: 0.3)
 
         Returns:
             VideoDescription object with complete analysis
@@ -444,7 +484,17 @@ class VideoAnalyzer:
         if transcription:
             video_description.distribute_transcription()
 
-        # Step 5: Generate summaries if requested
+        # Step 5: Optional audio classification
+        if classify_audio:
+            from videopython.ai.understanding.audio import AudioClassifier
+            from videopython.base.audio import Audio
+
+            audio = Audio.from_file(str(path))
+            classifier = AudioClassifier(confidence_threshold=audio_classifier_threshold)
+            audio_classification = classifier.classify(audio)
+            _distribute_audio_events(scene_descriptions, audio_classification)
+
+        # Step 6: Generate summaries if requested
         if generate_summaries:
             from videopython.ai.understanding.text import LLMSummarizer
 
