@@ -13,6 +13,7 @@ from .description import (
     ColorHistogram,
     DetectedObject,
     FrameDescription,
+    MotionInfo,
     SceneDescription,
     VideoDescription,
 )
@@ -98,4 +99,5 @@ __all__ = [
     "DetectedObject",
     "AudioEvent",
     "AudioClassification",
+    "MotionInfo",
 ]
