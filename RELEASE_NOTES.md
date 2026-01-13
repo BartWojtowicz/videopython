@@ -1,5 +1,26 @@
 # Release Notes
 
+## 0.9.0
+
+### Breaking Changes
+
+- `add_audio()` and `add_audio_from_file()` now return a new `Video` instance instead of mutating in place
+- Reduced public API exports from `videopython.base` (items still importable, just not in `__all__`)
+
+### Deprecated
+
+- `Audio.from_file()` is deprecated, use `Audio.from_path()` instead
+
+### Fixed
+
+- Security: Replaced `eval()` with `json.loads()` when parsing ffprobe output in audio loading
+- `Audio.is_silent` now returns Python `bool` instead of `np.bool`
+- Exception handling now uses specific exceptions instead of generic `except Exception`
+
+### Changed
+
+- Large video loading (>10GB estimated RAM) now emits `ResourceWarning` suggesting `FrameIterator`
+
 ## 0.8.3
 
 - Added `preset` and `crf` parameters to `Video.save()` for encoding control

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import subprocess
 import wave
 from dataclasses import dataclass
@@ -56,7 +57,7 @@ class Audio:
         self.metadata = metadata
 
     @property
-    def is_silent(self) -> np.bool:
+    def is_silent(self) -> bool:
         """
         Check if the audio track is silent (all samples are effectively zero)
 
@@ -64,7 +65,7 @@ class Audio:
             bool: True if the audio is silent, False otherwise
         """
         # Use a small threshold to account for floating-point precision
-        return np.all(np.abs(self.data) < 1e-7)
+        return bool(np.all(np.abs(self.data) < 1e-7))
 
     @staticmethod
     def _get_ffmpeg_info(file_path: Path) -> dict:
@@ -82,7 +83,7 @@ class Audio:
 
         try:
             output = subprocess.check_output(cmd)
-            info = eval(output)  # Safe since we control the input from ffprobe
+            info = json.loads(output.decode())
 
             # Find the audio stream
             audio_stream = None
@@ -149,7 +150,7 @@ class Audio:
         return cls(data, metadata)
 
     @classmethod
-    def from_file(cls, file_path: str | Path) -> Audio:
+    def from_path(cls, file_path: str | Path) -> Audio:
         """
         Load audio from a file using ffmpeg
 
@@ -247,6 +248,18 @@ class Audio:
 
         except subprocess.CalledProcessError as e:
             raise AudioLoadError(f"Error running ffmpeg: {e}")
+
+    @classmethod
+    def from_file(cls, file_path: str | Path) -> Audio:
+        """Deprecated: Use from_path() instead."""
+        import warnings
+
+        warnings.warn(
+            "Audio.from_file() is deprecated, use Audio.from_path() instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return cls.from_path(file_path)
 
     def to_mono(self) -> Audio:
         """

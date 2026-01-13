@@ -1,16 +1,8 @@
-from .audio import (
-    Audio,
-    AudioLevels,
-    AudioMetadata,
-    AudioSegment,
-    AudioSegmentType,
-    SilentSegment,
-)
+from .audio import Audio, AudioMetadata
 from .description import (
     AudioClassification,
     AudioEvent,
     BoundingBox,
-    ColorHistogram,
     DetectedObject,
     FrameDescription,
     MotionInfo,
@@ -39,28 +31,16 @@ from .transforms import (
     TransformationPipeline,
 )
 from .transitions import BlurTransition, FadeTransition, InstantTransition, Transition
-from .video import (
-    FrameIterator,
-    Video,
-    VideoMetadata,
-    extract_frames_at_indices,
-    extract_frames_at_times,
-)
+from .video import FrameIterator, Video, VideoMetadata
 
 __all__ = [
     # Core
     "Video",
     "VideoMetadata",
     "FrameIterator",
-    "extract_frames_at_indices",
-    "extract_frames_at_times",
     # Audio
     "Audio",
     "AudioMetadata",
-    "AudioLevels",
-    "AudioSegment",
-    "AudioSegmentType",
-    "SilentSegment",
     # Transforms
     "Transformation",
     "TransformationPipeline",
@@ -80,7 +60,7 @@ __all__ = [
     "FullImageOverlay",
     "Blur",
     "Zoom",
-    # Text/Transcription
+    # Text & Transcription
     "Transcription",
     "TranscriptionSegment",
     "TranscriptionWord",
@@ -90,11 +70,10 @@ __all__ = [
     "AnchorPoint",
     # Scene Detection
     "SceneDetector",
-    # Description
+    # Description types
     "FrameDescription",
     "SceneDescription",
     "VideoDescription",
-    "ColorHistogram",
     "BoundingBox",
     "DetectedObject",
     "AudioEvent",
