@@ -56,7 +56,7 @@ fade = FadeTransition(effect_time_seconds=0.5)
 final = fade.apply((title_card, video))
 
 # Add background music
-final.add_audio_from_file("upbeat_music.mp3")
+final = final.add_audio_from_file("upbeat_music.mp3")
 
 # Save
 final.save("social_clip.mp4")

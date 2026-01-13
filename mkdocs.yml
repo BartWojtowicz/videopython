@@ -68,10 +68,13 @@ nav:
       - Social Media Clip: examples/social-clip.md
       - AI-Generated Video: examples/ai-video.md
       - Auto-Subtitles: examples/auto-subtitles.md
+      - Processing Large Videos: examples/large-videos.md
   - API Reference:
       - Overview: api/index.md
       - Core:
           - Video: api/core/video.md
+          - Audio: api/core/audio.md
+          - Scene Detection: api/core/scene.md
       - Transforms: api/transforms.md
       - Transitions: api/transitions.md
       - Effects: api/effects.md

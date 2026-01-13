@@ -32,8 +32,6 @@ from videopython.base import (
     Video,
     Audio,
     AudioMetadata,
-    AudioLevels,
-    SilentSegment,
     SceneDetector,
     CutSeconds,
     FadeTransition,
