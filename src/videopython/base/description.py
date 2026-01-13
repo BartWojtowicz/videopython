@@ -13,6 +13,8 @@ __all__ = [
     "ColorHistogram",
     "BoundingBox",
     "DetectedObject",
+    "AudioEvent",
+    "AudioClassification",
 ]
 
 
@@ -80,6 +82,41 @@ class DetectedObject:
 
 
 @dataclass
+class AudioEvent:
+    """A detected audio event with timestamp.
+
+    Attributes:
+        start: Start time in seconds
+        end: End time in seconds
+        label: Name of the detected sound (e.g., "Music", "Speech", "Dog bark")
+        confidence: Detection confidence score between 0 and 1
+    """
+
+    start: float
+    end: float
+    label: str
+    confidence: float
+
+    @property
+    def duration(self) -> float:
+        """Duration of the audio event in seconds."""
+        return self.end - self.start
+
+
+@dataclass
+class AudioClassification:
+    """Complete audio classification results.
+
+    Attributes:
+        events: List of detected audio events with timestamps
+        clip_predictions: Overall class probabilities for the entire audio clip
+    """
+
+    events: list[AudioEvent]
+    clip_predictions: dict[str, float] = field(default_factory=dict)
+
+
+@dataclass
 class FrameDescription:
     """Represents a description of a video frame.
 
@@ -137,6 +174,7 @@ class SceneDescription:
     scene_type: str | None = None
     detected_entities: list[str] | None = None
     dominant_colors: list[tuple[int, int, int]] | None = None
+    audio_events: list[AudioEvent] | None = None
 
     @property
     def duration(self) -> float:

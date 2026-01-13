@@ -7,6 +7,8 @@ from .audio import (
     SilentSegment,
 )
 from .description import (
+    AudioClassification,
+    AudioEvent,
     BoundingBox,
     ColorHistogram,
     DetectedObject,
@@ -94,4 +96,6 @@ __all__ = [
     "ColorHistogram",
     "BoundingBox",
     "DetectedObject",
+    "AudioEvent",
+    "AudioClassification",
 ]

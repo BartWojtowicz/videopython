@@ -18,6 +18,7 @@ DEFAULT_BACKENDS: dict[str, str] = {
     "text_to_image": "local",
     "image_to_text": "local",
     "audio_to_text": "local",
+    "audio_classifier": "local",
     "llm_summarizer": "local",
 }
 

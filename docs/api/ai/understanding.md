@@ -8,6 +8,7 @@ Analyze videos, transcribe audio, and describe visual content.
 |-------|-------|--------|--------|------------|
 | ImageToText | BLIP | GPT-4o | Gemini | - |
 | AudioToText | Whisper | Whisper API | Gemini | - |
+| AudioClassifier | PANNs | - | - | - |
 | LLMSummarizer | Ollama | GPT-4o | Gemini | - |
 | ObjectDetector | YOLO | GPT-4o | Gemini | - |
 | TextDetector | EasyOCR | GPT-4o | Gemini | - |
@@ -18,6 +19,47 @@ Analyze videos, transcribe audio, and describe visual content.
 ## AudioToText
 
 ::: videopython.ai.AudioToText
+
+## AudioClassifier
+
+Detect and classify sounds, music, and audio events with timestamps using PANNs (Pretrained Audio Neural Networks).
+
+### Basic Usage
+
+```python
+from videopython.ai import AudioClassifier
+from videopython.base import Video
+
+classifier = AudioClassifier(confidence_threshold=0.3)
+video = Video.from_path("video.mp4")
+
+result = classifier.classify(video)
+
+# Clip-level predictions (overall audio content)
+for label, confidence in result.clip_predictions.items():
+    print(f"{label}: {confidence:.2f}")
+
+# Timestamped events
+for event in result.events:
+    print(f"{event.start:.1f}s - {event.end:.1f}s: {event.label} ({event.confidence:.2f})")
+```
+
+### With VideoAnalyzer
+
+```python
+from videopython.ai import VideoAnalyzer
+
+analyzer = VideoAnalyzer()
+result = analyzer.analyze(video, classify_audio=True, audio_classifier_threshold=0.3)
+
+for scene in result.scene_descriptions:
+    if scene.audio_events:
+        print(f"Scene {scene.start:.1f}s - {scene.end:.1f}s:")
+        for event in scene.audio_events:
+            print(f"  {event.label}: {event.start:.1f}s - {event.end:.1f}s")
+```
+
+::: videopython.ai.AudioClassifier
 
 ## ImageToText
 
@@ -121,3 +163,11 @@ These classes are used by `SceneDetector` and `VideoAnalyzer` to represent analy
 ### DetectedObject
 
 ::: videopython.base.DetectedObject
+
+### AudioEvent
+
+::: videopython.base.AudioEvent
+
+### AudioClassification
+
+::: videopython.base.AudioClassification

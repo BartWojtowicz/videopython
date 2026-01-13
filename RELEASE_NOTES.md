@@ -1,8 +1,18 @@
 # Release Notes
 
-## 0.7.4
+## 0.8.0
 
-- Fixed audio slicing issue in Blur transition.
+- Added `AudioClassifier` for sound event detection using PANNs (Pretrained Audio Neural Networks)
+  - Detects 527 AudioSet sound classes (speech, music, animals, vehicles, alarms, etc.)
+  - Returns timestamped `AudioEvent` objects with start/end times and confidence scores
+  - Configurable confidence threshold and model selection (Cnn14, Cnn10, ResNet38, MobileNetV2)
+  - Frame-level predictions (~10ms resolution) automatically merged into coherent events
+- Added `classify_audio` parameter to `VideoAnalyzer.analyze()` and `VideoAnalyzer.analyze_path()`
+  - Audio events are automatically distributed to scene descriptions
+  - New `audio_events` field on `SceneDescription`
+- New dataclasses: `AudioEvent`, `AudioClassification`
+- Added `panns-inference` to AI dependencies
+- Fixed audio slicing issue in Blur transition
 
 ## 0.7.3
 
