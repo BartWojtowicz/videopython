@@ -25,6 +25,9 @@ __all__ = [
 ]
 
 ALLOWED_VIDEO_FORMATS = Literal["mp4", "avi", "mov", "mkv", "webm"]
+ALLOWED_VIDEO_PRESETS = Literal[
+    "ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"
+]
 
 # Frame buffer constants for video loading
 # Used to pre-allocate frame array with safety margin for frame rate variations
@@ -601,19 +604,30 @@ class Video:
 
         return split_videos
 
-    def save(self, filename: str | Path | None = None, format: ALLOWED_VIDEO_FORMATS = "mp4") -> Path:
-        """Save video to file with optimized performance.
+    def save(
+        self,
+        filename: str | Path | None = None,
+        format: ALLOWED_VIDEO_FORMATS = "mp4",
+        preset: ALLOWED_VIDEO_PRESETS = "medium",
+        crf: int = 23,
+    ) -> Path:
+        """Save video to file.
 
         Args:
             filename: Output filename. If None, generates random name
             format: Output format (mp4, avi, mov, mkv, webm)
+            preset: Encoding speed/compression tradeoff. Slower presets give smaller
+                files at the same quality. Options from fastest to smallest:
+                ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow
+            crf: Constant Rate Factor (0-51). Lower = better quality, larger file.
+                Default 23 is visually lossless for most content. Range 18-28 recommended.
 
         Returns:
             Path to saved video file
 
         Raises:
             RuntimeError: If video is not loaded
-            ValueError: If format is not supported
+            ValueError: If format or preset is not supported
         """
         if not self.is_loaded():
             raise RuntimeError("Video is not loaded, cannot save!")
@@ -621,6 +635,11 @@ class Video:
         if format.lower() not in get_args(ALLOWED_VIDEO_FORMATS):
             raise ValueError(
                 f"Unsupported format: {format}. Allowed formats are: {', '.join(get_args(ALLOWED_VIDEO_FORMATS))}"
+            )
+
+        if preset not in get_args(ALLOWED_VIDEO_PRESETS):
+            raise ValueError(
+                f"Unsupported preset: {preset}. Allowed presets are: {', '.join(get_args(ALLOWED_VIDEO_PRESETS))}"
             )
 
         if filename is None:
@@ -643,7 +662,7 @@ class Video:
                 # Calculate exact duration
                 duration = len(self.frames) / self.fps
 
-                # Construct FFmpeg command for maximum performance
+                # Construct FFmpeg command
                 ffmpeg_command = [
                     "ffmpeg",
                     "-y",
@@ -665,11 +684,9 @@ class Video:
                     "-c:v",
                     "libx264",
                     "-preset",
-                    "ultrafast",  # Fastest encoding
-                    "-tune",
-                    "zerolatency",  # Reduce encoding latency
+                    preset,
                     "-crf",
-                    "23",  # Reasonable quality/size tradeoff
+                    str(crf),
                     # Audio settings
                     "-c:a",
                     "aac",
