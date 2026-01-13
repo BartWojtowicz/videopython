@@ -20,7 +20,7 @@ def create_video():
     audio = TextToSpeech(backend="openai").generate_audio(
         "Sometimes the best ideas come with a cup of coffee and the sound of rain."
     )
-    video.add_audio(audio)
+    video = video.add_audio(audio)
     video.save("coffee_shop.mp4")
 
 create_video()

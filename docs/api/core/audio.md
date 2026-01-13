@@ -10,7 +10,7 @@ The `Audio` class handles audio data with numpy arrays, supporting operations li
 from videopython.base import Audio
 
 # Load from file
-audio = Audio.from_file("music.mp3")
+audio = Audio.from_path("music.mp3")
 
 # Create silent track
 silent = Audio.create_silent(duration_seconds=5.0, stereo=True)
@@ -39,7 +39,7 @@ The `Audio` class includes methods for analyzing audio levels, detecting silence
 ```python
 from videopython.base import Audio
 
-audio = Audio.from_file("audio.mp3")
+audio = Audio.from_path("audio.mp3")
 
 # Get overall levels
 levels = audio.get_levels()
@@ -59,7 +59,7 @@ for timestamp, levels in levels_over_time:
 ```python
 from videopython.base import Audio
 
-audio = Audio.from_file("podcast.mp3")
+audio = Audio.from_path("podcast.mp3")
 
 # Detect silent segments
 silent_segments = audio.detect_silence(
@@ -78,7 +78,7 @@ Classify audio segments as speech, music, noise, or silence using heuristic anal
 ```python
 from videopython.base import Audio
 
-audio = Audio.from_file("mixed_content.mp3")
+audio = Audio.from_path("mixed_content.mp3")
 
 # Classify 2-second segments with 50% overlap
 segments = audio.classify_segments(segment_length=2.0, overlap=0.5)
@@ -92,7 +92,7 @@ for seg in segments:
 ```python
 from videopython.base import Audio
 
-audio = Audio.from_file("quiet_audio.mp3")
+audio = Audio.from_path("quiet_audio.mp3")
 
 # Peak normalization (default)
 normalized = audio.normalize(target_db=-3.0, method="peak")

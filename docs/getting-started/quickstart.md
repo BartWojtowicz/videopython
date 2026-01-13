@@ -84,10 +84,10 @@ from videopython.base import Video
 video = Video.from_path("input.mp4")
 
 # Add audio from file (overlays on existing audio)
-video.add_audio_from_file("music.mp3")
+video = video.add_audio_from_file("music.mp3")
 
 # Add audio without overlay (replaces existing)
-video.add_audio_from_file("narration.mp3", overlay=False)
+video = video.add_audio_from_file("narration.mp3", overlay=False)
 
 # Save with audio
 video.save("output.mp4")
@@ -101,7 +101,15 @@ video.save("output.webm", format="webm")  # WebM format
 video.save("output.mov", format="mov")  # QuickTime
 
 # Supported formats: mp4, avi, mov, mkv, webm
+
+# Control encoding quality and speed
+video.save("output.mp4", preset="slow", crf=18)  # Higher quality, slower encoding
+video.save("output.mp4", preset="ultrafast", crf=28)  # Faster encoding, lower quality
 ```
+
+!!! tip "Encoding Options"
+    - `preset`: Speed/compression tradeoff. Options: ultrafast, superfast, veryfast, faster, fast, medium (default), slow, slower, veryslow. Slower presets produce smaller files.
+    - `crf`: Quality level (0-51). Default is 23. Lower values = better quality, larger files. 18 is visually lossless.
 
 ## AI Features (Quick Preview)
 

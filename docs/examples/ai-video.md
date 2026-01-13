@@ -49,7 +49,7 @@ def create_ai_video():
         audio = speech_gen.generate_audio(scene["narration"])
 
         # Add audio to video segment
-        video.add_audio(audio)
+        video = video.add_audio(audio)
         videos.append(video)
 
     # Combine all segments with fade transitions
