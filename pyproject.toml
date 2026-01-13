@@ -76,7 +76,7 @@ ai = [
     "panns-inference>=0.1.0",
 ]
 
-# We have to keep it to make PIP use those dependency groups, not only UV
+# Required for pip install videopython[ai] - pip uses optional-dependencies, not dependency-groups
 [project.optional-dependencies]
 dev = [
     "ruff>=0.1.14",

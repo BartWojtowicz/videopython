@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import tempfile
+import warnings
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
@@ -10,7 +11,7 @@ from typing import TYPE_CHECKING, Generator, Literal, get_args
 
 import numpy as np
 
-from videopython.base.audio import Audio
+from videopython.base.audio import Audio, AudioLoadError
 from videopython.base.utils import generate_random_name
 
 if TYPE_CHECKING:
@@ -414,6 +415,26 @@ class Video:
             if start_second is not None and end_second is not None and start_second >= end_second:
                 raise ValueError("start_second must be less than end_second")
 
+            # Estimate memory usage and warn for large videos
+            segment_duration = total_duration
+            if start_second is not None and end_second is not None:
+                segment_duration = end_second - start_second
+            elif end_second is not None:
+                segment_duration = end_second
+            elif start_second is not None:
+                segment_duration = total_duration - start_second
+
+            estimated_frames = int(segment_duration * fps)
+            estimated_bytes = estimated_frames * height * width * 3
+            estimated_gb = estimated_bytes / (1024**3)
+            if estimated_gb > 10:
+                warnings.warn(
+                    f"Loading this video will use ~{estimated_gb:.1f}GB of RAM. "
+                    f"For large videos, consider using FrameIterator for memory-efficient streaming.",
+                    ResourceWarning,
+                    stacklevel=2,
+                )
+
             # Build FFmpeg command with improved segment handling
             ffmpeg_cmd = ["ffmpeg"]
 
@@ -539,14 +560,14 @@ class Video:
 
             # Load audio for the specified segment
             try:
-                audio = Audio.from_file(path)
+                audio = Audio.from_path(path)
                 # Slice audio to match the video segment
                 if start_second is not None or end_second is not None:
                     audio_start = start_second if start_second is not None else 0
                     audio_end = end_second if end_second is not None else audio.metadata.duration_seconds
                     audio = audio.slice(start_seconds=audio_start, end_seconds=audio_end)
-            except Exception:
-                print(f"No audio found for `{path}`, adding silent track!")
+            except (AudioLoadError, FileNotFoundError, subprocess.CalledProcessError):
+                warnings.warn(f"No audio found for `{path}`, adding silent track.")
                 # Create silent audio based on actual frames read
                 segment_duration = frames_read / fps
                 audio = Audio.create_silent(duration_seconds=round(segment_duration, 2), stereo=True, sample_rate=44100)
@@ -712,7 +733,16 @@ class Video:
                     print(f"FFmpeg stderr: {e.stderr}")
                     raise
 
-    def add_audio(self, audio: Audio, overlay: bool = True) -> None:
+    def add_audio(self, audio: Audio, overlay: bool = True) -> Video:
+        """Add audio to video, returning a new Video instance.
+
+        Args:
+            audio: Audio to add
+            overlay: If True, overlay on existing audio; if False, replace it
+
+        Returns:
+            New Video with the audio added
+        """
         video_duration = self.total_seconds
         audio_duration = audio.metadata.duration_seconds
 
@@ -727,19 +757,31 @@ class Video:
             )
             audio = audio.concat(silence)
 
-        if self.audio.is_silent:
-            self.audio = audio
+        new_video = self.copy()
+        if new_video.audio.is_silent:
+            new_video.audio = audio
         elif overlay:
-            self.audio = self.audio.overlay(audio, position=0.0)
+            new_video.audio = new_video.audio.overlay(audio, position=0.0)
         else:
-            self.audio = audio
+            new_video.audio = audio
+        return new_video
 
-    def add_audio_from_file(self, path: str, overlay: bool = True) -> None:
-        try:
-            new_audio = Audio.from_file(path)
-            self.add_audio(new_audio, overlay)
-        except Exception:
-            print(f"Audio file `{path}` not found or invalid, skipping!")
+    def add_audio_from_file(self, path: str, overlay: bool = True) -> Video:
+        """Add audio from file, returning a new Video instance.
+
+        Args:
+            path: Path to audio file
+            overlay: If True, overlay on existing audio; if False, replace it
+
+        Returns:
+            New Video with the audio added
+
+        Raises:
+            AudioLoadError: If audio file cannot be loaded
+            FileNotFoundError: If audio file does not exist
+        """
+        new_audio = Audio.from_path(path)
+        return self.add_audio(new_audio, overlay)
 
     def __add__(self, other: Video) -> Video:
         if self.fps != other.fps:
