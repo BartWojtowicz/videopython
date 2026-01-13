@@ -1,5 +1,9 @@
 # Release Notes
 
+## 0.9.1
+
+- Re-release of 0.9.0 (PyPI publish failed)
+
 ## 0.9.0
 
 ### Breaking Changes
