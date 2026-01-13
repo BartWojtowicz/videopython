@@ -15,6 +15,7 @@ Analyze videos, transcribe audio, and describe visual content.
 | FaceDetector | OpenCV | - | - | - |
 | ShotTypeClassifier | - | GPT-4o | Gemini | - |
 | CameraMotionDetector | OpenCV | - | - | - |
+| MotionAnalyzer | OpenCV | - | - | - |
 
 ## AudioToText
 
@@ -136,6 +137,41 @@ print(f"Summary: {result.get_full_summary()}")
 
 ::: videopython.ai.CameraMotionDetector
 
+### MotionAnalyzer
+
+Analyze motion in video frames using optical flow. Detects camera motion types (pan, tilt, zoom) and measures motion magnitude.
+
+```python
+from videopython.ai import MotionAnalyzer
+from videopython.base import Video
+
+analyzer = MotionAnalyzer()
+video = Video.from_path("video.mp4")
+
+# Analyze motion between two frames
+motion = analyzer.analyze_frames(video.frames[0], video.frames[1])
+print(f"Motion type: {motion.motion_type}, magnitude: {motion.magnitude:.2f}")
+
+# Analyze entire video (memory-efficient)
+results = analyzer.analyze_video_path("video.mp4", frames_per_second=1.0)
+for timestamp, motion in results:
+    print(f"{timestamp:.1f}s: {motion.motion_type} ({motion.magnitude:.2f})")
+```
+
+With VideoAnalyzer:
+
+```python
+from videopython.ai import VideoAnalyzer
+
+analyzer = VideoAnalyzer()
+result = analyzer.analyze(video, analyze_motion=True)
+
+for scene in result.scene_descriptions:
+    print(f"Scene {scene.start:.1f}s: {scene.dominant_motion_type} (avg magnitude: {scene.avg_motion_magnitude:.2f})")
+```
+
+::: videopython.ai.MotionAnalyzer
+
 ### CombinedFrameAnalyzer
 
 ::: videopython.ai.CombinedFrameAnalyzer
@@ -171,3 +207,7 @@ These classes are used by `SceneDetector` and `VideoAnalyzer` to represent analy
 ### AudioClassification
 
 ::: videopython.base.AudioClassification
+
+### MotionInfo
+
+::: videopython.base.MotionInfo
