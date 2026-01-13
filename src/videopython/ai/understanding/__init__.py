@@ -8,6 +8,7 @@ from .detection import (
     TextDetector,
 )
 from .image import ImageToText
+from .motion import MotionAnalyzer
 from .text import LLMSummarizer
 from .video import VideoAnalyzer
 
@@ -24,4 +25,6 @@ __all__ = [
     "ShotTypeClassifier",
     "CameraMotionDetector",
     "CombinedFrameAnalyzer",
+    # Motion
+    "MotionAnalyzer",
 ]

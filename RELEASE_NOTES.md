@@ -1,5 +1,18 @@
 # Release Notes
 
+## 0.8.1
+
+- Added `MotionAnalyzer` for motion detection via optical flow analysis (Farneback method)
+  - Detects motion types: static, pan, tilt, zoom, complex
+  - Returns normalized motion magnitude (0-1) and raw pixel displacement
+  - Frame-level analysis with `analyze_frames()` and `analyze_frame_sequence()`
+  - Memory-efficient `analyze_video_path()` for long videos
+  - Scene-level aggregation via `aggregate_motion()`
+- Added `analyze_motion` parameter to `VideoAnalyzer.analyze()` and `VideoAnalyzer.analyze_path()`
+  - Motion info automatically distributed to scene descriptions
+  - New `avg_motion_magnitude` and `dominant_motion_type` fields on `SceneDescription`
+- New dataclass: `MotionInfo`
+
 ## 0.8.0
 
 - Added `AudioClassifier` for sound event detection using PANNs (Pretrained Audio Neural Networks)

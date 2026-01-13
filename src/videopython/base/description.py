@@ -15,6 +15,7 @@ __all__ = [
     "DetectedObject",
     "AudioEvent",
     "AudioClassification",
+    "MotionInfo",
 ]
 
 
@@ -117,6 +118,36 @@ class AudioClassification:
 
 
 @dataclass
+class MotionInfo:
+    """Motion characteristics between consecutive frames.
+
+    Attributes:
+        motion_type: Classification of camera/scene motion
+            - "static": No significant motion
+            - "pan": Horizontal camera movement
+            - "tilt": Vertical camera movement
+            - "zoom": Camera zoom in/out
+            - "complex": Mixed or irregular motion
+        magnitude: Normalized motion magnitude (0.0 = no motion, 1.0 = high motion)
+        raw_magnitude: Raw optical flow magnitude (pixels/frame)
+    """
+
+    motion_type: str
+    magnitude: float
+    raw_magnitude: float
+
+    @property
+    def is_static(self) -> bool:
+        """Check if this frame has no significant motion."""
+        return self.motion_type == "static"
+
+    @property
+    def is_dynamic(self) -> bool:
+        """Check if this frame has significant motion."""
+        return self.motion_type != "static"
+
+
+@dataclass
 class FrameDescription:
     """Represents a description of a video frame.
 
@@ -130,6 +161,7 @@ class FrameDescription:
         detected_faces: Optional count of faces detected in the frame
         shot_type: Optional shot classification (e.g., "close-up", "medium", "wide")
         camera_motion: Optional camera motion type (e.g., "static", "pan", "tilt", "zoom")
+        motion: Optional motion info with type and magnitude
     """
 
     frame_index: int
@@ -141,6 +173,7 @@ class FrameDescription:
     detected_faces: int | None = None
     shot_type: str | None = None
     camera_motion: str | None = None
+    motion: MotionInfo | None = None
 
 
 @dataclass
@@ -162,6 +195,9 @@ class SceneDescription:
         scene_type: Optional classification (e.g., "dialogue", "action", "transition")
         detected_entities: Optional list of entities/objects detected in the scene
         dominant_colors: Optional dominant colors aggregated across the scene
+        audio_events: Optional list of audio events detected in this scene
+        avg_motion_magnitude: Optional average motion magnitude across the scene (0.0-1.0)
+        dominant_motion_type: Optional most common motion type in the scene
     """
 
     start: float
@@ -175,6 +211,8 @@ class SceneDescription:
     detected_entities: list[str] | None = None
     dominant_colors: list[tuple[int, int, int]] | None = None
     audio_events: list[AudioEvent] | None = None
+    avg_motion_magnitude: float | None = None
+    dominant_motion_type: str | None = None
 
     @property
     def duration(self) -> float:

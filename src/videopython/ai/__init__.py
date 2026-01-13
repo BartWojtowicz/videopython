@@ -7,6 +7,7 @@ from .understanding import (
     FaceDetector,
     ImageToText,
     LLMSummarizer,
+    MotionAnalyzer,
     ObjectDetector,
     ShotTypeClassifier,
     TextDetector,
@@ -33,4 +34,6 @@ __all__ = [
     "ShotTypeClassifier",
     "CameraMotionDetector",
     "CombinedFrameAnalyzer",
+    # Motion
+    "MotionAnalyzer",
 ]

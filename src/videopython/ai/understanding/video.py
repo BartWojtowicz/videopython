@@ -197,6 +197,25 @@ def _distribute_audio_events(
         scene_desc.audio_events = scene_events if scene_events else None
 
 
+def _aggregate_motion(frame_descriptions: list[FrameDescription]) -> tuple[float | None, str | None]:
+    """Aggregate motion info from frame descriptions into scene-level stats.
+
+    Args:
+        frame_descriptions: List of FrameDescription objects with motion info.
+
+    Returns:
+        Tuple of (avg_motion_magnitude, dominant_motion_type), or (None, None) if no motion data.
+    """
+    from videopython.ai.understanding.motion import MotionAnalyzer
+
+    motions = [fd.motion for fd in frame_descriptions if fd.motion is not None]
+    if not motions:
+        return None, None
+
+    avg_magnitude, dominant_type = MotionAnalyzer.aggregate_motion(motions)
+    return avg_magnitude, dominant_type
+
+
 class VideoAnalyzer:
     """Comprehensive video analysis combining scene detection, frame understanding, and transcription."""
 
@@ -238,6 +257,7 @@ class VideoAnalyzer:
         generate_summaries: bool = False,
         classify_audio: bool = False,
         audio_classifier_threshold: float = 0.3,
+        analyze_motion: bool = False,
     ) -> VideoDescription:
         """Perform comprehensive video analysis.
 
@@ -256,6 +276,7 @@ class VideoAnalyzer:
             generate_summaries: Whether to generate LLM summaries for scenes (default: False)
             classify_audio: Whether to classify audio events/sounds (default: False)
             audio_classifier_threshold: Minimum confidence for audio events (default: 0.3)
+            analyze_motion: Whether to analyze motion between frames (default: False)
 
         Returns:
             VideoDescription object with complete analysis
@@ -275,6 +296,13 @@ class VideoAnalyzer:
                 shot_type_detection=detect_shot_type,
             )
 
+        # Set up motion analyzer if enabled
+        motion_analyzer = None
+        if analyze_motion:
+            from videopython.ai.understanding.motion import MotionAnalyzer
+
+            motion_analyzer = MotionAnalyzer()
+
         # Step 3: Analyze frames from each scene and populate frame_descriptions
         for scene_desc in scene_descriptions:
             frame_descriptions = self.image_to_text.describe_scene(
@@ -292,6 +320,17 @@ class VideoAnalyzer:
                     frame = video.frames[fd.frame_index]
                     frame_analyzer.analyze_frame(frame, fd)
 
+            # Run motion analysis between consecutive frames
+            if motion_analyzer and len(frame_descriptions) >= 2:
+                for i in range(len(frame_descriptions) - 1):
+                    fd_curr = frame_descriptions[i]
+                    fd_next = frame_descriptions[i + 1]
+                    frame_curr = video.frames[fd_curr.frame_index]
+                    frame_next = video.frames[fd_next.frame_index]
+                    motion_info = motion_analyzer.analyze_frames(frame_curr, frame_next)
+                    # Assign motion to the current frame (motion leading into next frame)
+                    fd_curr.motion = motion_info
+
             scene_desc.frame_descriptions = frame_descriptions
 
             # Populate scene-level aggregations
@@ -300,6 +339,11 @@ class VideoAnalyzer:
 
             if extract_colors:
                 scene_desc.dominant_colors = _aggregate_dominant_colors(frame_descriptions)
+
+            if analyze_motion:
+                avg_mag, dom_type = _aggregate_motion(frame_descriptions)
+                scene_desc.avg_motion_magnitude = avg_mag
+                scene_desc.dominant_motion_type = dom_type
 
         # Step 4: Optional transcription
         transcription = None
@@ -360,6 +404,7 @@ class VideoAnalyzer:
         generate_summaries: bool = False,
         classify_audio: bool = False,
         audio_classifier_threshold: float = 0.3,
+        analyze_motion: bool = False,
     ) -> VideoDescription:
         """Analyze video from path with minimal memory usage.
 
@@ -386,6 +431,7 @@ class VideoAnalyzer:
             generate_summaries: Whether to generate LLM summaries for scenes (default: False)
             classify_audio: Whether to classify audio events/sounds (default: False)
             audio_classifier_threshold: Minimum confidence for audio events (default: 0.3)
+            analyze_motion: Whether to analyze motion between frames (default: False)
 
         Returns:
             VideoDescription object with complete analysis
@@ -412,6 +458,13 @@ class VideoAnalyzer:
                 text_detection=detect_text,
                 shot_type_detection=detect_shot_type,
             )
+
+        # Set up motion analyzer if enabled
+        motion_analyzer = None
+        if analyze_motion:
+            from videopython.ai.understanding.motion import MotionAnalyzer
+
+            motion_analyzer = MotionAnalyzer()
 
         # Step 3: Process each scene, loading only sampled frames
         for scene_desc in scene_descriptions:
@@ -457,6 +510,13 @@ class VideoAnalyzer:
 
                 frame_descriptions.append(fd)
 
+            # Run motion analysis between consecutive frames
+            if motion_analyzer and len(scene_frames) >= 2:
+                for i in range(len(frame_descriptions) - 1):
+                    if i < len(scene_frames) - 1:
+                        motion_info = motion_analyzer.analyze_frames(scene_frames[i], scene_frames[i + 1])
+                        frame_descriptions[i].motion = motion_info
+
             scene_desc.frame_descriptions = frame_descriptions
 
             # Aggregate scene-level data
@@ -465,6 +525,11 @@ class VideoAnalyzer:
 
             if extract_colors:
                 scene_desc.dominant_colors = _aggregate_dominant_colors(frame_descriptions)
+
+            if analyze_motion:
+                avg_mag, dom_type = _aggregate_motion(frame_descriptions)
+                scene_desc.avg_motion_magnitude = avg_mag
+                scene_desc.dominant_motion_type = dom_type
 
         # Step 4: Optional transcription (audio-only, already memory efficient)
         transcription = None
