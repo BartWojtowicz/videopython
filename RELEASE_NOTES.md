@@ -1,5 +1,10 @@
 # Release Notes
 
+## 0.8.2
+
+- Fixed missing `MotionInfo` export from `videopython.base`
+- Added documentation build check to CI pipeline
+
 ## 0.8.1
 
 - Added `MotionAnalyzer` for motion detection via optical flow analysis (Farneback method)
