@@ -69,3 +69,31 @@ jobs:
         run: uv sync --group dev
       - name: Build documentation
         run: uv run mkdocs build --strict
+
+  version_check:
+    name: Version consistency
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check if version files changed
+        id: changed
+        run: |
+          if git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -qE '^(RELEASE_NOTES\.md|pyproject\.toml)$'; then
+            echo "check=true" >> $GITHUB_OUTPUT
+          else
+            echo "check=false" >> $GITHUB_OUTPUT
+          fi
+      - name: Validate version consistency
+        if: steps.changed.outputs.check == 'true'
+        run: |
+          PYPROJECT_VERSION=$(grep '^version' pyproject.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          RELEASE_VERSION=$(grep -m1 '^## [0-9]' RELEASE_NOTES.md | sed 's/## //')
+
+          if [ "$PYPROJECT_VERSION" != "$RELEASE_VERSION" ]; then
+            echo "::error::Version mismatch! pyproject.toml has '$PYPROJECT_VERSION' but RELEASE_NOTES.md has '$RELEASE_VERSION'"
+            exit 1
+          fi
+          echo "Versions match: $PYPROJECT_VERSION"
