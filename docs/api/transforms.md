@@ -2,21 +2,31 @@
 
 Transformations modify video frames (cutting, resizing, resampling).
 
-## TransformationPipeline
+## Fluent API
 
-Chain multiple transformations together:
+Chain transformations directly on Video objects:
 
 ```python
-from videopython.base import TransformationPipeline, CutSeconds, Resize
+from videopython.base import Video
 
-pipeline = TransformationPipeline([
-    CutSeconds(start=0, end=10),
-    Resize(width=1280, height=720),
-])
-video = pipeline.run(video)
+# Chain multiple transformations
+video = Video.from_path("input.mp4").cut(0, 10).resize(1280, 720).resample_fps(30)
+
+# Validate operations before executing (using metadata)
+output_meta = video.metadata.cut(0, 10).resize(1280, 720).resample_fps(30)
+print(f"Output will be: {output_meta}")
 ```
 
-::: videopython.base.TransformationPipeline
+## Available Methods
+
+| Video Method | VideoMetadata Method | Description |
+|--------------|---------------------|-------------|
+| `video.cut(start, end)` | `meta.cut(start, end)` | Cut by time range (seconds) |
+| `video.cut_frames(start, end)` | `meta.cut_frames(start, end)` | Cut by frame range |
+| `video.resize(width, height)` | `meta.resize(width, height)` | Resize dimensions |
+| `video.crop(width, height)` | `meta.crop(width, height)` | Center crop |
+| `video.resample_fps(fps)` | `meta.resample_fps(fps)` | Change frame rate |
+| `video.transition_to(other, t)` | `meta.transition_to(other, time)` | Combine videos |
 
 ## Transformation (Base Class)
 

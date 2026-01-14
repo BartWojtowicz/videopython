@@ -143,6 +143,58 @@ class VideoMetadata:
             and round(self.fps) == round(other_format.fps)
         )
 
+    def with_duration(self, seconds: float) -> VideoMetadata:
+        """Return new metadata with updated duration.
+
+        Args:
+            seconds: New duration in seconds.
+
+        Returns:
+            New VideoMetadata with updated duration and frame count.
+        """
+        return VideoMetadata(
+            height=self.height,
+            width=self.width,
+            fps=self.fps,
+            frame_count=round(self.fps * seconds),
+            total_seconds=seconds,
+        )
+
+    def with_dimensions(self, width: int, height: int) -> VideoMetadata:
+        """Return new metadata with updated dimensions.
+
+        Args:
+            width: New width in pixels.
+            height: New height in pixels.
+
+        Returns:
+            New VideoMetadata with updated dimensions.
+        """
+        return VideoMetadata(
+            height=height,
+            width=width,
+            fps=self.fps,
+            frame_count=self.frame_count,
+            total_seconds=self.total_seconds,
+        )
+
+    def with_fps(self, fps: float) -> VideoMetadata:
+        """Return new metadata with updated fps.
+
+        Args:
+            fps: New frames per second.
+
+        Returns:
+            New VideoMetadata with updated fps (duration stays same).
+        """
+        return VideoMetadata(
+            height=self.height,
+            width=self.width,
+            fps=fps,
+            frame_count=round(fps * self.total_seconds),
+            total_seconds=self.total_seconds,
+        )
+
     def can_be_downsampled_to(self, target_format: VideoMetadata) -> bool:
         """Checks if video can be downsampled to target_format."""
         return (
@@ -151,6 +203,123 @@ class VideoMetadata:
             and round(self.fps) >= round(target_format.fps)
             and self.total_seconds >= target_format.total_seconds
         )
+
+    # Fluent API for operation validation
+    # These methods mirror the Video fluent API but only transform metadata
+
+    def cut(self, start: float, end: float) -> VideoMetadata:
+        """Predict metadata after cutting by time range.
+
+        Args:
+            start: Start time in seconds.
+            end: End time in seconds.
+
+        Returns:
+            New VideoMetadata with updated duration.
+        """
+        if end <= start:
+            raise ValueError(f"End time ({end}) must be greater than start time ({start})")
+        if start < 0:
+            raise ValueError(f"Start time ({start}) cannot be negative")
+        if end > self.total_seconds:
+            raise ValueError(f"End time ({end}) exceeds video duration ({self.total_seconds})")
+        return self.with_duration(end - start)
+
+    def cut_frames(self, start: int, end: int) -> VideoMetadata:
+        """Predict metadata after cutting by frame range.
+
+        Args:
+            start: Start frame index (inclusive).
+            end: End frame index (exclusive).
+
+        Returns:
+            New VideoMetadata with updated duration.
+        """
+        if end <= start:
+            raise ValueError(f"End frame ({end}) must be greater than start frame ({start})")
+        if start < 0:
+            raise ValueError(f"Start frame ({start}) cannot be negative")
+        if end > self.frame_count:
+            raise ValueError(f"End frame ({end}) exceeds frame count ({self.frame_count})")
+        duration = (end - start) / self.fps
+        return self.with_duration(duration)
+
+    def resize(self, width: int | None = None, height: int | None = None) -> VideoMetadata:
+        """Predict metadata after resizing.
+
+        If only width or height is provided, the other dimension is calculated
+        to preserve aspect ratio.
+
+        Args:
+            width: Target width in pixels.
+            height: Target height in pixels.
+
+        Returns:
+            New VideoMetadata with updated dimensions.
+        """
+        if width is None and height is None:
+            raise ValueError("Must provide width or height")
+
+        if width and height:
+            return self.with_dimensions(width, height)
+        elif width:
+            ratio = width / self.width
+            new_height = round(self.height * ratio)
+            return self.with_dimensions(width, new_height)
+        else:  # height only
+            ratio = height / self.height  # type: ignore[operator]
+            new_width = round(self.width * ratio)
+            return self.with_dimensions(new_width, height)  # type: ignore[arg-type]
+
+    def crop(self, width: int, height: int) -> VideoMetadata:
+        """Predict metadata after cropping.
+
+        Args:
+            width: Target width in pixels.
+            height: Target height in pixels.
+
+        Returns:
+            New VideoMetadata with updated dimensions.
+        """
+        if width > self.width:
+            raise ValueError(f"Crop width ({width}) exceeds video width ({self.width})")
+        if height > self.height:
+            raise ValueError(f"Crop height ({height}) exceeds video height ({self.height})")
+        return self.with_dimensions(width, height)
+
+    def resample_fps(self, fps: float) -> VideoMetadata:
+        """Predict metadata after resampling frame rate.
+
+        Args:
+            fps: Target frames per second.
+
+        Returns:
+            New VideoMetadata with updated fps.
+        """
+        if fps <= 0:
+            raise ValueError(f"FPS ({fps}) must be positive")
+        return self.with_fps(fps)
+
+    def transition_to(self, other: VideoMetadata, effect_time: float = 0.0) -> VideoMetadata:
+        """Predict metadata after transition to another video.
+
+        Args:
+            other: Metadata of the video to transition to.
+            effect_time: Duration of the transition effect in seconds.
+
+        Returns:
+            New VideoMetadata for the combined video.
+
+        Raises:
+            ValueError: If videos have incompatible dimensions or fps.
+        """
+        if not self.can_be_merged_with(other):
+            raise ValueError(
+                f"Cannot merge videos: {self.width}x{self.height}@{round(self.fps)}fps "
+                f"vs {other.width}x{other.height}@{round(other.fps)}fps"
+            )
+        combined_duration = self.total_seconds + other.total_seconds - effect_time
+        return self.with_duration(combined_duration)
 
 
 class FrameIterator:
@@ -831,3 +1000,94 @@ class Video:
     @property
     def metadata(self) -> VideoMetadata:
         return VideoMetadata.from_video(self)
+
+    # Fluent API for video transformations
+    # These methods mirror the VideoMetadata fluent API
+
+    def cut(self, start: float, end: float) -> Video:
+        """Cut video to a time range.
+
+        Args:
+            start: Start time in seconds.
+            end: End time in seconds.
+
+        Returns:
+            New Video with the specified time range.
+        """
+        from videopython.base.transforms import CutSeconds
+
+        return CutSeconds(start, end).apply(self)
+
+    def cut_frames(self, start: int, end: int) -> Video:
+        """Cut video to a frame range.
+
+        Args:
+            start: Start frame index (inclusive).
+            end: End frame index (exclusive).
+
+        Returns:
+            New Video with the specified frame range.
+        """
+        from videopython.base.transforms import CutFrames
+
+        return CutFrames(start, end).apply(self)
+
+    def resize(self, width: int | None = None, height: int | None = None) -> Video:
+        """Resize video.
+
+        If only width or height is provided, the other dimension is calculated
+        to preserve aspect ratio.
+
+        Args:
+            width: Target width in pixels.
+            height: Target height in pixels.
+
+        Returns:
+            New Video with the specified dimensions.
+        """
+        from videopython.base.transforms import Resize
+
+        return Resize(width=width, height=height).apply(self)
+
+    def crop(self, width: int, height: int) -> Video:
+        """Crop video to specified dimensions (center crop).
+
+        Args:
+            width: Target width in pixels.
+            height: Target height in pixels.
+
+        Returns:
+            New Video with the specified dimensions.
+        """
+        from videopython.base.transforms import Crop
+
+        return Crop(width=width, height=height).apply(self)
+
+    def resample_fps(self, fps: float) -> Video:
+        """Resample video to a different frame rate.
+
+        Args:
+            fps: Target frames per second.
+
+        Returns:
+            New Video with the specified frame rate.
+        """
+        from videopython.base.transforms import ResampleFPS
+
+        return ResampleFPS(fps=fps).apply(self)
+
+    def transition_to(self, other: Video, transition: object) -> Video:
+        """Combine with another video using a transition.
+
+        Args:
+            other: Video to transition to.
+            transition: Transition to apply (e.g., FadeTransition, BlurTransition).
+
+        Returns:
+            New Video combining both videos with the transition effect.
+        """
+        from videopython.base.transitions import Transition
+
+        if not isinstance(transition, Transition):
+            raise TypeError(f"Expected Transition, got {type(transition).__name__}")
+        return transition.apply((self, other))

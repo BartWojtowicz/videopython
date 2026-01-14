@@ -28,7 +28,6 @@ from .transforms import (
     ResampleFPS,
     Resize,
     Transformation,
-    TransformationPipeline,
 )
 from .transitions import BlurTransition, FadeTransition, InstantTransition, Transition
 from .video import FrameIterator, Video, VideoMetadata
@@ -43,7 +42,6 @@ __all__ = [
     "AudioMetadata",
     # Transforms
     "Transformation",
-    "TransformationPipeline",
     "CutFrames",
     "CutSeconds",
     "Resize",

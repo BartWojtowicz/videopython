@@ -1,5 +1,47 @@
 # Release Notes
 
+## 0.10.0
+
+### Breaking Changes
+
+- Removed `TransformationPipeline` class - use the new fluent API instead
+
+### New Features
+
+- **Fluent API for Video**: Chain transformations directly on Video objects
+  - `video.cut(start, end)` - cut by time range
+  - `video.cut_frames(start, end)` - cut by frame range
+  - `video.resize(width, height)` - resize (aspect ratio preserved if only one dimension given)
+  - `video.crop(width, height)` - center crop
+  - `video.resample_fps(fps)` - change frame rate
+  - `video.transition_to(other, transition)` - combine with another video
+
+- **Fluent API for VideoMetadata**: Validate operations before execution
+  - Same methods as Video, but only transforms metadata (fast, no frame processing)
+  - Raises `ValueError` for invalid operations (e.g., incompatible dimensions for transitions)
+  - Example: `video.metadata.cut(0, 10).resize(1280, 720)` validates the operation chain
+
+- **Transcription**: Added `words` property to access all words across segments
+
+### Fixed
+
+- Fixed PyTorch 2.6+ compatibility for speaker diarization (omegaconf serialization)
+
+### Migration Guide
+
+```python
+# Before (0.9.x)
+from videopython.base import TransformationPipeline, CutSeconds, Resize
+pipeline = TransformationPipeline([CutSeconds(0, 10), Resize(1280, 720)])
+result = pipeline.run(video)
+
+# After (0.10.0)
+result = video.cut(0, 10).resize(1280, 720)
+
+# Validate before executing (optional)
+output_meta = video.metadata.cut(0, 10).resize(1280, 720)
+```
+
 ## 0.9.1
 
 - Re-release of 0.9.0 (PyPI publish failed)

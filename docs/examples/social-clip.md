@@ -9,28 +9,14 @@ Take a landscape video, extract a segment, convert to vertical 9:16 format, add 
 ## Full Example
 
 ```python
-from videopython.base import (
-    Video,
-    CutSeconds,
-    Resize,
-    Crop,
-    ResampleFPS,
-    TransformationPipeline,
-    FadeTransition,
-)
-from videopython.base.effects import FullImageOverlay
-from videopython.base.text import ImageText
+from videopython.base import Video, Crop, FadeTransition
 import numpy as np
 
 # Load source video
 video = Video.from_path("raw_footage.mp4")
 
-# Extract a 15-second segment and standardize
-pipeline = TransformationPipeline([
-    CutSeconds(start=30, end=45),
-    ResampleFPS(fps=30),
-])
-video = pipeline.run(video)
+# Extract a 15-second segment and standardize using fluent API
+video = video.cut(30, 45).resample_fps(30)
 
 # Convert landscape to vertical (9:16)
 # First resize height, then crop width to center
@@ -41,7 +27,7 @@ target_width = 1080
 # Scale to target height, then center-crop width
 scale_factor = target_height / height
 new_width = int(width * scale_factor)
-video = Resize(width=new_width, height=target_height).apply(video)
+video = video.resize(width=new_width, height=target_height)
 
 # Center crop to 9:16
 crop_x = (new_width - target_width) // 2
@@ -52,8 +38,7 @@ title_frame = np.full((target_height, target_width, 3), [20, 20, 20], dtype=np.u
 title_card = Video.from_image(title_frame, fps=30, length_seconds=2.0)
 
 # Combine with fade transition
-fade = FadeTransition(effect_time_seconds=0.5)
-final = fade.apply((title_card, video))
+final = title_card.transition_to(video, FadeTransition(effect_time_seconds=0.5))
 
 # Add background music
 final = final.add_audio_from_file("upbeat_music.mp3")
@@ -67,11 +52,12 @@ final.save("social_clip.mp4")
 ### 1. Extract Segment
 
 ```python
-pipeline = TransformationPipeline([
-    CutSeconds(start=30, end=45),  # 15-second clip
-    ResampleFPS(fps=30),           # Consistent framerate
-])
-video = pipeline.run(video)
+# Chain transforms with fluent API
+video = video.cut(30, 45).resample_fps(30)
+
+# Validate the operations first (optional)
+meta = video.metadata.cut(30, 45).resample_fps(30)
+print(f"Output: {meta}")  # Check duration, fps
 ```
 
 ### 2. Convert to Vertical
@@ -99,8 +85,7 @@ title_card = Video.from_image(title_frame, fps=30, length_seconds=2.0)
 ### 4. Smooth Transition
 
 ```python
-fade = FadeTransition(effect_time_seconds=0.5)
-final = fade.apply((title_card, video))
+final = title_card.transition_to(video, FadeTransition(effect_time_seconds=0.5))
 ```
 
 ## Tips

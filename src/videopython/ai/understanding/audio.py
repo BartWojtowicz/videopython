@@ -84,7 +84,12 @@ class AudioToText:
 
     def _process_whisperx_result(self, whisperx_result: dict, audio_data) -> Transcription:
         """Process whisperx result with diarization."""
+        import torch.serialization
         import whisperx  # type: ignore
+        from omegaconf import DictConfig, ListConfig, OmegaConf
+
+        # PyTorch 2.6+ defaults weights_only=True which breaks pyannote's omegaconf serialization
+        torch.serialization.add_safe_globals([DictConfig, ListConfig, OmegaConf])
 
         model_a, metadata = whisperx.load_align_model(language_code=whisperx_result["language"], device=self.device)
         aligned_result = whisperx.align(

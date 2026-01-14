@@ -28,24 +28,16 @@ pip install videopython
 ## Quick Example
 
 ```python
-from videopython.base import Video, CutSeconds, Resize, TransformationPipeline, FadeTransition
+from videopython.base import Video, FadeTransition
 from videopython.ai import TextToImage, ImageToVideo, AudioToText
 from videopython.base.text import TranscriptionOverlay
 
-# Load and transform videos
-video1 = Video.from_path("clip1.mp4")
-video2 = Video.from_path("clip2.mp4")
-
-pipeline = TransformationPipeline([
-    CutSeconds(start=0, end=5),
-    Resize(width=1080, height=1920),
-])
-video1 = pipeline.run(video1)
-video2 = pipeline.run(video2)
+# Load and transform videos using fluent API
+video1 = Video.from_path("clip1.mp4").cut(0, 5).resize(1080, 1920)
+video2 = Video.from_path("clip2.mp4").cut(0, 5).resize(1080, 1920)
 
 # Combine with fade transition
-fade = FadeTransition(effect_time_seconds=1.0)
-video = fade.apply((video1, video2))
+video = video1.transition_to(video2, FadeTransition(effect_time_seconds=1.0))
 
 # Generate and add AI content
 def add_ai_content(video):
