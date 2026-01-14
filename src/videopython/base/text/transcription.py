@@ -47,6 +47,14 @@ class Transcription:
             self.segments = self._words_to_segments(words)  # type: ignore
             self.speakers = {w.speaker for w in words if w.speaker is not None}  # type: ignore
 
+    @property
+    def words(self) -> list[TranscriptionWord]:
+        """Return all words from all segments."""
+        all_words = []
+        for segment in self.segments:
+            all_words.extend(segment.words)
+        return all_words
+
     def _words_to_segments(self, words: list[TranscriptionWord]) -> list[TranscriptionSegment]:
         """Group words into segments based on speaker changes."""
         if not words:

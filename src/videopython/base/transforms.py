@@ -12,7 +12,6 @@ from videopython.base.video import Video
 
 __all__ = [
     "Transformation",
-    "TransformationPipeline",
     "CutFrames",
     "CutSeconds",
     "Resize",
@@ -28,40 +27,6 @@ class Transformation(ABC):
     @abstractmethod
     def apply(self, video: Video) -> Video:
         pass
-
-
-class TransformationPipeline:
-    def __init__(self, transformations: list[Transformation] | None):
-        """Initializes pipeline."""
-        self.transformations = transformations if transformations else []
-
-    def add(self, transformation: Transformation) -> TransformationPipeline:
-        """Adds transformation to the pipeline.
-
-        Args:
-            transformation: Transformation to add.
-
-        Returns:
-            Pipeline with added transformation.
-        """
-        self.transformations.append(transformation)
-        return self
-
-    def run(self, video: Video) -> Video:
-        """Applies pipeline to the video.
-
-        Args:
-            video: Video to transform.
-
-        Returns:
-            Transformed video.
-        """
-        for transformation in self.transformations:
-            video = transformation.apply(video)
-        return video
-
-    def __call__(self, video: Video) -> Video:
-        return self.run(video)
 
 
 class CutFrames(Transformation):

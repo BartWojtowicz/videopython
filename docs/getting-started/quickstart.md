@@ -30,33 +30,28 @@ print(video.frame_shape)  # (height, width, channels)
 ## Basic Transformations
 
 ```python
-from videopython.base import (
-    Video,
-    CutSeconds,
-    Resize,
-    ResampleFPS,
-    TransformationPipeline,
-)
+from videopython.base import Video
 
 video = Video.from_path("input.mp4")
 
-# Apply individual transforms
-cut = CutSeconds(start=1.5, end=6.5)
-video = cut.apply(video)
+# Chain transformations with fluent API
+video = video.cut(0, 10).resize(1280, 720).resample_fps(30)
 
-# Or use a pipeline for multiple transforms
-pipeline = TransformationPipeline([
-    CutSeconds(start=0, end=10),
-    ResampleFPS(fps=30),
-    Resize(width=1280, height=720),
-])
-video = pipeline.run(video)
+# Or apply transforms one at a time
+video = Video.from_path("input.mp4")
+video = video.cut(1.5, 6.5)
+video = video.resize(width=1280)  # Height calculated to preserve aspect ratio
+
+# Validate operations before executing (fast, metadata only)
+meta = Video.from_path("input.mp4").metadata
+output_meta = meta.cut(0, 10).resize(1280, 720)
+print(f"Output will be: {output_meta}")  # Check dimensions, duration, fps
 ```
 
 ## Combining Videos
 
 !!! warning "Matching Dimensions"
-    Videos must have the same dimensions and FPS to be combined. Use `Resize` and `ResampleFPS` transforms first if needed.
+    Videos must have the same dimensions and FPS to be combined. Use `.resize()` and `.resample_fps()` first if needed.
 
 ```python
 from videopython.base import Video, FadeTransition, BlurTransition
@@ -67,13 +62,16 @@ video2 = Video.from_path("clip2.mp4")
 # Simple concatenation (videos must have same dimensions and FPS)
 combined = video1 + video2
 
-# With fade transition
-fade = FadeTransition(effect_time_seconds=1.5)
-combined = fade.apply((video1, video2))
+# With fade transition (fluent API)
+combined = video1.transition_to(video2, FadeTransition(effect_time_seconds=1.5))
 
 # With blur transition
-blur = BlurTransition(effect_time_seconds=1.0)
-combined = blur.apply((video1, video2))
+combined = video1.transition_to(video2, BlurTransition(effect_time_seconds=1.0))
+
+# Validate transition compatibility first
+meta1 = video1.metadata
+meta2 = video2.metadata
+combined_meta = meta1.transition_to(meta2, effect_time=1.5)  # Raises if incompatible
 ```
 
 ## Working with Audio
