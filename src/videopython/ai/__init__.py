@@ -1,4 +1,5 @@
 from .generation import ImageToVideo, TextToImage, TextToMusic, TextToSpeech, TextToVideo
+from .transforms import AutoFramingCrop, FaceTracker, FaceTrackingCrop, SplitScreenComposite
 from .understanding import (
     AudioClassifier,
     AudioToText,
@@ -36,4 +37,9 @@ __all__ = [
     "CombinedFrameAnalyzer",
     # Motion
     "MotionAnalyzer",
+    # Transforms (AI-powered)
+    "FaceTracker",
+    "FaceTrackingCrop",
+    "SplitScreenComposite",
+    "AutoFramingCrop",
 ]

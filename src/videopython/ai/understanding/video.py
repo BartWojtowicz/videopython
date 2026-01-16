@@ -125,7 +125,7 @@ class FrameAnalyzer:
                 frame_description.detected_objects = self._object_detector.detect(frame)
 
             if self._face_detector:
-                frame_description.detected_faces = self._face_detector.detect(frame)
+                frame_description.detected_faces = self._face_detector.count(frame)
 
             if self._text_detector:
                 frame_description.detected_text = self._text_detector.detect(frame)

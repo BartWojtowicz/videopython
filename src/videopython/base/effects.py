@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from multiprocessing import Pool
-from typing import Literal, final
+from typing import TYPE_CHECKING, Literal, final
 
 import cv2
 import numpy as np
@@ -9,7 +11,10 @@ from tqdm import tqdm
 
 from videopython.base.video import Video
 
-__all__ = ["Effect", "FullImageOverlay", "Blur", "Zoom"]
+if TYPE_CHECKING:
+    from videopython.base.description import BoundingBox
+
+__all__ = ["Effect", "FullImageOverlay", "Blur", "Zoom", "ColorGrading", "Vignette", "KenBurns"]
 
 
 class Effect(ABC):
@@ -228,4 +233,246 @@ class Zoom(Effect):
         else:
             raise ValueError(f"Unknown mode: `{self.mode}`.")
         video.frames = np.asarray(new_frames)
+        return video
+
+
+class ColorGrading(Effect):
+    """Adjusts color properties: brightness, contrast, saturation, and temperature."""
+
+    def __init__(
+        self,
+        brightness: float = 0.0,
+        contrast: float = 1.0,
+        saturation: float = 1.0,
+        temperature: float = 0.0,
+    ):
+        """Initialize color grading effect.
+
+        Args:
+            brightness: Brightness adjustment (-1.0 to 1.0, default 0).
+            contrast: Contrast multiplier (0.5 to 2.0, default 1.0).
+            saturation: Saturation multiplier (0.0 to 2.0, default 1.0).
+            temperature: Color temperature shift (-1.0=cooler/blue to 1.0=warmer/orange, default 0).
+        """
+        if not -1.0 <= brightness <= 1.0:
+            raise ValueError("Brightness must be between -1.0 and 1.0!")
+        if not 0.5 <= contrast <= 2.0:
+            raise ValueError("Contrast must be between 0.5 and 2.0!")
+        if not 0.0 <= saturation <= 2.0:
+            raise ValueError("Saturation must be between 0.0 and 2.0!")
+        if not -1.0 <= temperature <= 1.0:
+            raise ValueError("Temperature must be between -1.0 and 1.0!")
+
+        self.brightness = brightness
+        self.contrast = contrast
+        self.saturation = saturation
+        self.temperature = temperature
+
+    def _grade_frame(self, frame: np.ndarray) -> np.ndarray:
+        """Apply color grading to a single frame."""
+        # Convert to float for processing
+        img = frame.astype(np.float32) / 255.0
+
+        # Apply brightness
+        if self.brightness != 0:
+            img = img + self.brightness
+
+        # Apply contrast (around midpoint 0.5)
+        if self.contrast != 1.0:
+            img = (img - 0.5) * self.contrast + 0.5
+
+        # Apply saturation in HSV space
+        if self.saturation != 1.0:
+            hsv = cv2.cvtColor(np.clip(img, 0, 1).astype(np.float32), cv2.COLOR_RGB2HSV)
+            hsv[:, :, 1] = hsv[:, :, 1] * self.saturation
+            hsv[:, :, 1] = np.clip(hsv[:, :, 1], 0, 1)
+            img = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB).astype(np.float64)  # type: ignore[attr-defined]
+
+        # Apply temperature (shift red/blue channels)
+        if self.temperature != 0:
+            # Warm = more red/yellow, less blue
+            # Cool = more blue, less red/yellow
+            temp_shift = self.temperature * 0.1
+            img[:, :, 0] = img[:, :, 0] + temp_shift  # Red
+            img[:, :, 2] = img[:, :, 2] - temp_shift  # Blue
+
+        # Clip and convert back to uint8
+        img = np.clip(img * 255, 0, 255).astype(np.uint8)
+        return img
+
+    def _apply(self, video: Video) -> Video:
+        print("Applying color grading...")
+        with Pool() as pool:
+            new_frames = pool.map(self._grade_frame, video.frames)
+        video.frames = np.array(new_frames, dtype=np.uint8)
+        return video
+
+
+class Vignette(Effect):
+    """Applies a vignette effect (darkening at edges)."""
+
+    def __init__(self, strength: float = 0.5, radius: float = 1.0):
+        """Initialize vignette effect.
+
+        Args:
+            strength: How dark the edges become (0.0 to 1.0, default 0.5).
+            radius: How far the vignette extends from center (0.5 to 2.0, default 1.0).
+        """
+        if not 0.0 <= strength <= 1.0:
+            raise ValueError("Strength must be between 0.0 and 1.0!")
+        if not 0.5 <= radius <= 2.0:
+            raise ValueError("Radius must be between 0.5 and 2.0!")
+
+        self.strength = strength
+        self.radius = radius
+        self._mask: np.ndarray | None = None
+
+    def _create_mask(self, height: int, width: int) -> np.ndarray:
+        """Create vignette mask for given dimensions."""
+        # Create coordinate grids
+        y = np.linspace(-1, 1, height)
+        x = np.linspace(-1, 1, width)
+        X, Y = np.meshgrid(x, y)
+
+        # Calculate distance from center
+        distance = np.sqrt(X**2 + Y**2) / self.radius
+
+        # Create smooth falloff
+        mask = 1.0 - np.clip(distance - 0.5, 0, 1) * 2 * self.strength
+
+        return mask.astype(np.float32)
+
+    def _apply(self, video: Video) -> Video:
+        print("Applying vignette effect...")
+        height, width = video.frame_shape[:2]
+
+        # Create mask once for the video dimensions
+        if self._mask is None or self._mask.shape != (height, width):
+            self._mask = self._create_mask(height, width)
+
+        # Apply mask to all frames
+        mask_3d = self._mask[:, :, np.newaxis]  # Add channel dimension
+        new_frames = []
+        for frame in tqdm(video.frames):
+            graded = (frame.astype(np.float32) * mask_3d).astype(np.uint8)
+            new_frames.append(graded)
+
+        video.frames = np.array(new_frames, dtype=np.uint8)
+        return video
+
+
+class KenBurns(Effect):
+    """Cinematic pan-and-zoom effect that animates between two regions.
+
+    Named after documentarian Ken Burns who popularized the technique. The effect
+    smoothly transitions from a start region to an end region over the duration
+    of the video, creating dynamic movement from static content.
+    """
+
+    def __init__(
+        self,
+        start_region: "BoundingBox",
+        end_region: "BoundingBox",
+        easing: Literal["linear", "ease_in", "ease_out", "ease_in_out"] = "linear",
+    ):
+        """Initialize Ken Burns effect.
+
+        Args:
+            start_region: Starting crop region (normalized 0-1 coordinates).
+            end_region: Ending crop region (normalized 0-1 coordinates).
+            easing: Animation easing function - "linear", "ease_in", "ease_out", or "ease_in_out".
+        """
+        from videopython.base.description import BoundingBox
+
+        if not isinstance(start_region, BoundingBox) or not isinstance(end_region, BoundingBox):
+            raise TypeError("start_region and end_region must be BoundingBox instances!")
+
+        # Validate regions are within bounds
+        for name, region in [("start_region", start_region), ("end_region", end_region)]:
+            if not (0 <= region.x <= 1 and 0 <= region.y <= 1):
+                raise ValueError(f"{name} position must be in range [0, 1]!")
+            if not (0 < region.width <= 1 and 0 < region.height <= 1):
+                raise ValueError(f"{name} dimensions must be in range (0, 1]!")
+            if region.x + region.width > 1 or region.y + region.height > 1:
+                raise ValueError(f"{name} extends beyond image bounds!")
+
+        if easing not in ("linear", "ease_in", "ease_out", "ease_in_out"):
+            raise ValueError(f"Unknown easing function: {easing}!")
+
+        self.start_region = start_region
+        self.end_region = end_region
+        self.easing = easing
+
+    def _ease(self, t: float) -> float:
+        """Apply easing function to normalized time value.
+
+        Args:
+            t: Normalized time value in range [0, 1].
+
+        Returns:
+            Eased value in range [0, 1].
+        """
+        if self.easing == "linear":
+            return t
+        elif self.easing == "ease_in":
+            return t * t
+        elif self.easing == "ease_out":
+            return 1 - (1 - t) * (1 - t)
+        elif self.easing == "ease_in_out":
+            if t < 0.5:
+                return 2 * t * t
+            else:
+                return 1 - 2 * (1 - t) * (1 - t)
+        return t
+
+    def _crop_and_scale_frame(
+        self,
+        frame: np.ndarray,
+        x: int,
+        y: int,
+        crop_w: int,
+        crop_h: int,
+        target_w: int,
+        target_h: int,
+    ) -> np.ndarray:
+        """Crop region from frame and scale to target size."""
+        cropped = frame[y : y + crop_h, x : x + crop_w]
+        return cv2.resize(cropped, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+
+    def _apply(self, video: Video) -> Video:
+        n_frames = len(video.frames)
+        height, width = video.frame_shape[:2]
+        target_h, target_w = height, width
+
+        # Convert normalized coordinates to pixel values
+        start_x = int(self.start_region.x * width)
+        start_y = int(self.start_region.y * height)
+        start_w = int(self.start_region.width * width)
+        start_h = int(self.start_region.height * height)
+
+        end_x = int(self.end_region.x * width)
+        end_y = int(self.end_region.y * height)
+        end_w = int(self.end_region.width * width)
+        end_h = int(self.end_region.height * height)
+
+        print("Applying Ken Burns effect...")
+        new_frames = []
+        for i, frame in enumerate(tqdm(video.frames)):
+            t = i / max(1, n_frames - 1)  # Normalized time [0, 1]
+            eased_t = self._ease(t)
+
+            # Interpolate region parameters
+            x = int(start_x + (end_x - start_x) * eased_t)
+            y = int(start_y + (end_y - start_y) * eased_t)
+            crop_w = int(start_w + (end_w - start_w) * eased_t)
+            crop_h = int(start_h + (end_h - start_h) * eased_t)
+
+            # Ensure crop region stays within bounds
+            x = max(0, min(x, width - crop_w))
+            y = max(0, min(y, height - crop_h))
+
+            new_frame = self._crop_and_scale_frame(frame, x, y, crop_w, crop_h, target_w, target_h)
+            new_frames.append(new_frame)
+
+        video.frames = np.array(new_frames, dtype=np.uint8)
         return video

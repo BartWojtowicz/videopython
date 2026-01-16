@@ -33,3 +33,15 @@ video = zoom.apply(video)
 ## FullImageOverlay
 
 ::: videopython.base.FullImageOverlay
+
+## ColorGrading
+
+::: videopython.base.ColorGrading
+
+## Vignette
+
+::: videopython.base.Vignette
+
+## KenBurns
+
+::: videopython.base.KenBurns

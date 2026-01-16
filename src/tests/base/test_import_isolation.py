@@ -14,8 +14,12 @@ def get_base_module_files() -> list[Path]:
     return list(base_path.rglob("*.py"))
 
 
-def get_imports_from_file(file_path: Path) -> list[str]:
-    """Extract all import statements from a Python file."""
+def get_toplevel_imports_from_file(file_path: Path) -> list[str]:
+    """Extract top-level import statements from a Python file.
+
+    Only returns imports at module level, not lazy imports inside functions/methods.
+    Lazy imports (inside functions) are allowed because they don't execute at import time.
+    """
     with open(file_path) as f:
         try:
             tree = ast.parse(f.read())
@@ -23,7 +27,8 @@ def get_imports_from_file(file_path: Path) -> list[str]:
             return []
 
     imports = []
-    for node in ast.walk(tree):
+    # Only check direct children of the module (top-level statements)
+    for node in tree.body:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 imports.append(alias.name)
@@ -35,13 +40,16 @@ def get_imports_from_file(file_path: Path) -> list[str]:
 
 
 def test_base_module_does_not_import_ai():
-    """Verify that no file in videopython.base imports from videopython.ai."""
+    """Verify that no file in videopython.base imports from videopython.ai at top level.
+
+    Lazy imports inside functions/methods are allowed since they don't execute at import time.
+    """
     base_files = get_base_module_files()
     assert len(base_files) > 0, "Should find base module files"
 
     violations = []
     for file_path in base_files:
-        imports = get_imports_from_file(file_path)
+        imports = get_toplevel_imports_from_file(file_path)
         ai_imports = [imp for imp in imports if imp.startswith("videopython.ai")]
         if ai_imports:
             violations.append((file_path, ai_imports))

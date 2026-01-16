@@ -55,3 +55,15 @@ print(f"Output will be: {output_meta}")
 ## CropMode
 
 ::: videopython.base.CropMode
+
+## SpeedChange
+
+::: videopython.base.SpeedChange
+
+## PictureInPicture
+
+::: videopython.base.PictureInPicture
+
+---
+
+For AI-powered transforms (face tracking, auto-framing), see [AI Transforms](ai/transforms.md).

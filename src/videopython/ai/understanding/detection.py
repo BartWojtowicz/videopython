@@ -13,7 +13,7 @@ from PIL import Image
 
 from videopython.ai.backends import ImageToTextBackend, UnsupportedBackendError, get_api_key
 from videopython.ai.config import get_default_backend
-from videopython.base.description import BoundingBox, DetectedObject
+from videopython.base.description import BoundingBox, DetectedFace, DetectedObject
 
 
 class ObjectDetector:
@@ -228,44 +228,35 @@ Return ONLY the JSON array, no other text."""
 
 
 class FaceDetector:
-    """Detects faces in images using OpenCV DNN."""
+    """Detects faces in images using OpenCV Haar cascade."""
 
-    def __init__(self, confidence_threshold: float = 0.5):
+    def __init__(self, confidence_threshold: float = 0.5, min_face_size: int = 30):
         """Initialize face detector.
 
         Args:
             confidence_threshold: Minimum confidence for detections (0-1).
+            min_face_size: Minimum face size in pixels.
         """
         self.confidence_threshold = confidence_threshold
-        self._net: Any = None
+        self.min_face_size = min_face_size
+        self._cascade: Any = None
         self._model_loaded = False
 
-    def _init_model(self) -> None:
-        """Initialize OpenCV DNN face detector."""
-        import cv2
-
-        # Use OpenCV's built-in DNN face detector
-        self._net = cv2.dnn.readNetFromCaffe(
-            cv2.data.haarcascades + "/../deploy.prototxt",
-            cv2.data.haarcascades + "/../res10_300x300_ssd_iter_140000.caffemodel",
-        )
-        self._model_loaded = True
-
     def _init_cascade(self) -> None:
-        """Initialize OpenCV Haar cascade as fallback."""
+        """Initialize OpenCV Haar cascade."""
         import cv2
 
         self._cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
         self._model_loaded = True
 
-    def detect(self, image: np.ndarray | Image.Image) -> int:
+    def detect(self, image: np.ndarray | Image.Image) -> list[DetectedFace]:
         """Detect faces in an image.
 
         Args:
             image: Image as numpy array (H, W, 3) in RGB format or PIL Image.
 
         Returns:
-            Number of faces detected.
+            List of DetectedFace objects with bounding boxes.
         """
         import cv2
 
@@ -275,13 +266,14 @@ class FaceDetector:
         else:
             img_array = image
 
+        img_h, img_w = img_array.shape[:2]
+
         # Convert RGB to BGR for OpenCV
         if len(img_array.shape) == 3 and img_array.shape[2] == 3:
             img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
         else:
             img_bgr = img_array
 
-        # Use Haar cascade (simpler, more reliable)
         if not self._model_loaded:
             self._init_cascade()
 
@@ -290,10 +282,34 @@ class FaceDetector:
             gray,
             scaleFactor=1.1,
             minNeighbors=5,
-            minSize=(30, 30),
+            minSize=(self.min_face_size, self.min_face_size),
         )
 
-        return len(faces)
+        detected_faces = []
+        for x, y, w, h in faces:
+            # Normalize coordinates to [0, 1]
+            bbox = BoundingBox(
+                x=x / img_w,
+                y=y / img_h,
+                width=w / img_w,
+                height=h / img_h,
+            )
+            detected_faces.append(DetectedFace(bounding_box=bbox, confidence=1.0))
+
+        # Sort by area (largest first)
+        detected_faces.sort(key=lambda f: f.area, reverse=True)
+        return detected_faces
+
+    def count(self, image: np.ndarray | Image.Image) -> int:
+        """Count faces in an image (convenience method).
+
+        Args:
+            image: Image as numpy array (H, W, 3) in RGB format or PIL Image.
+
+        Returns:
+            Number of faces detected.
+        """
+        return len(self.detect(image))
 
 
 class TextDetector:

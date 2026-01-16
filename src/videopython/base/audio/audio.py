@@ -548,6 +548,119 @@ class Audio:
 
         return Audio(sliced_data, new_metadata)
 
+    def scale_volume(self, factor: float) -> Audio:
+        """
+        Scale audio volume by a factor.
+
+        Args:
+            factor: Volume multiplier. 1.0 = no change, 0.5 = half volume,
+                    2.0 = double volume (may clip).
+
+        Returns:
+            Audio: New Audio object with scaled volume.
+
+        Raises:
+            ValueError: If factor is negative.
+        """
+        if factor < 0:
+            raise ValueError("Volume factor must be non-negative")
+
+        scaled_data = self.data * factor
+        # Clip to prevent overflow
+        scaled_data = np.clip(scaled_data, -1.0, 1.0)
+
+        return Audio(scaled_data.astype(np.float32), self.metadata)
+
+    def time_stretch(self, speed: float) -> Audio:
+        """
+        Time-stretch audio by a speed factor (pitch-preserving).
+
+        Uses ffmpeg's atempo filter for high-quality time stretching.
+        For speeds outside the 0.5-2.0 range, multiple atempo filters are chained.
+
+        Args:
+            speed: Speed multiplier. 2.0 = twice as fast (half duration),
+                   0.5 = half speed (double duration).
+
+        Returns:
+            Audio: New Audio object with time-stretched audio.
+
+        Raises:
+            ValueError: If speed is not positive.
+            AudioLoadError: If ffmpeg fails.
+        """
+        if speed <= 0:
+            raise ValueError("Speed must be positive")
+
+        if abs(speed - 1.0) < 0.001:
+            # No change needed
+            return Audio(self.data.copy(), self.metadata)
+
+        # Build atempo filter string, chaining for extreme speeds
+        # atempo only supports range [0.5, 2.0], so we chain multiple filters
+        filters = []
+        remaining_speed = speed
+
+        while remaining_speed > 2.0:
+            filters.append("atempo=2.0")
+            remaining_speed /= 2.0
+        while remaining_speed < 0.5:
+            filters.append("atempo=0.5")
+            remaining_speed /= 0.5
+
+        if abs(remaining_speed - 1.0) > 0.001:
+            filters.append(f"atempo={remaining_speed}")
+
+        filter_str = ",".join(filters) if filters else "anull"
+
+        # Save current audio to temp WAV, process with ffmpeg, read back
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as input_file:
+            input_path = input_file.name
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as output_file:
+            output_path = output_file.name
+
+        try:
+            # Save current audio to temp file
+            self.save(input_path, format="wav")
+
+            # Run ffmpeg with atempo filter
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-i",
+                input_path,
+                "-af",
+                filter_str,
+                "-ar",
+                str(self.metadata.sample_rate),
+                "-ac",
+                str(self.metadata.channels),
+                output_path,
+            ]
+
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            _, stderr = process.communicate()
+
+            if process.returncode != 0:
+                raise AudioLoadError(f"FFmpeg time stretch failed: {stderr.decode()}")
+
+            # Load the result
+            result = Audio.from_path(output_path)
+            return result
+
+        finally:
+            # Clean up temp files
+            import os
+
+            for path in [input_path, output_path]:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+
     def overlay(self, other: Audio, position: float = 0.0) -> Audio:
         """
         Overlay another audio segment on top of this one, mixing both signals.

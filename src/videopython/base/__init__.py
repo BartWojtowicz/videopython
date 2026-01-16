@@ -3,13 +3,14 @@ from .description import (
     AudioClassification,
     AudioEvent,
     BoundingBox,
+    DetectedFace,
     DetectedObject,
     FrameDescription,
     MotionInfo,
     SceneDescription,
     VideoDescription,
 )
-from .effects import Blur, Effect, FullImageOverlay, Zoom
+from .effects import Blur, ColorGrading, Effect, FullImageOverlay, KenBurns, Vignette, Zoom
 from .scene import SceneDetector
 from .text import (
     AnchorPoint,
@@ -25,8 +26,10 @@ from .transforms import (
     CropMode,
     CutFrames,
     CutSeconds,
+    PictureInPicture,
     ResampleFPS,
     Resize,
+    SpeedChange,
     Transformation,
 )
 from .transitions import BlurTransition, FadeTransition, InstantTransition, Transition
@@ -48,6 +51,8 @@ __all__ = [
     "ResampleFPS",
     "Crop",
     "CropMode",
+    "SpeedChange",
+    "PictureInPicture",
     # Transitions
     "Transition",
     "InstantTransition",
@@ -58,6 +63,9 @@ __all__ = [
     "FullImageOverlay",
     "Blur",
     "Zoom",
+    "ColorGrading",
+    "Vignette",
+    "KenBurns",
     # Text & Transcription
     "Transcription",
     "TranscriptionSegment",
@@ -74,6 +82,7 @@ __all__ = [
     "VideoDescription",
     "BoundingBox",
     "DetectedObject",
+    "DetectedFace",
     "AudioEvent",
     "AudioClassification",
     "MotionInfo",
