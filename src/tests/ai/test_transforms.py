@@ -247,7 +247,8 @@ class TestFaceTrackingCrop:
         )
 
         # For 9:16 from 1920x1080: crop_h = 1080, crop_w = 1080 * 9/16 = 607.5
-        assert w == 607  # or 608 depending on rounding
+        # Rounded down to even for H.264 compatibility
+        assert w == 606
         assert h == 1080
 
     def test_calculate_crop_region_clamped_to_bounds(self):

@@ -15,6 +15,12 @@ from videopython.base.video import Video
 if TYPE_CHECKING:
     pass
 
+
+def _make_even(value: int) -> int:
+    """Round down to nearest even number for H.264 compatibility."""
+    return value - (value % 2)
+
+
 __all__ = [
     "FaceTracker",
     "FaceTrackingCrop",
@@ -244,14 +250,15 @@ class FaceTrackingCrop(Transformation):
         frame_ratio = frame_w / frame_h
 
         # Calculate crop size to achieve target aspect ratio
+        # Use _make_even to ensure H.264 compatibility
         if target_ratio < frame_ratio:
             # Target is taller (e.g., 9:16) - height limited
-            crop_h = frame_h
-            crop_w = int(crop_h * target_ratio)
+            crop_h = _make_even(frame_h)
+            crop_w = _make_even(int(crop_h * target_ratio))
         else:
             # Target is wider - width limited
-            crop_w = frame_w
-            crop_h = int(crop_w / target_ratio)
+            crop_w = _make_even(frame_w)
+            crop_h = _make_even(int(crop_w / target_ratio))
 
         # Calculate minimum crop size based on face + padding
         min_face_dim = max(face_w * frame_w, face_h * frame_h)
@@ -259,8 +266,8 @@ class FaceTrackingCrop(Transformation):
 
         # Ensure crop is at least large enough for face with padding
         if crop_w < min_crop_dim * target_ratio:
-            crop_w = min(int(min_crop_dim * target_ratio), frame_w)
-            crop_h = min(int(crop_w / target_ratio), frame_h)
+            crop_w = _make_even(min(int(min_crop_dim * target_ratio), frame_w))
+            crop_h = _make_even(min(int(crop_w / target_ratio), frame_h))
 
         # Center crop on face with vertical offset
         center_x = face_cx * frame_w
@@ -295,13 +302,13 @@ class FaceTrackingCrop(Transformation):
         target_ratio = self.target_aspect[0] / self.target_aspect[1]
 
         # Calculate output dimensions maintaining target aspect ratio
-        # Use full frame height, adjust width for target ratio
+        # Use _make_even to ensure H.264 compatibility (requires even dimensions)
         if target_ratio < w / h:
-            out_h = h
-            out_w = int(h * target_ratio)
+            out_h = _make_even(h)
+            out_w = _make_even(int(out_h * target_ratio))
         else:
-            out_w = w
-            out_h = int(w / target_ratio)
+            out_w = _make_even(w)
+            out_h = _make_even(int(out_w / target_ratio))
 
         # Default crop region (center)
         default_x = (w - out_w) // 2
@@ -516,12 +523,12 @@ class SplitScreenComposite(Transformation):
 
                     if cell_aspect < src_aspect:
                         # Cell is taller - crop width
-                        crop_h = src_h
-                        crop_w = int(crop_h * cell_aspect)
+                        crop_h = _make_even(src_h)
+                        crop_w = _make_even(int(crop_h * cell_aspect))
                     else:
                         # Cell is wider - crop height
-                        crop_w = src_w
-                        crop_h = int(crop_w / cell_aspect)
+                        crop_w = _make_even(src_w)
+                        crop_h = _make_even(int(crop_w / cell_aspect))
 
                     # Center on face with padding consideration
                     center_x = int(fcx * src_w)
@@ -537,13 +544,13 @@ class SplitScreenComposite(Transformation):
                     src_aspect = src_w / src_h
 
                     if cell_aspect < src_aspect:
-                        crop_h = src_h
-                        crop_w = int(crop_h * cell_aspect)
+                        crop_h = _make_even(src_h)
+                        crop_w = _make_even(int(crop_h * cell_aspect))
                         crop_x = (src_w - crop_w) // 2
                         crop_y = 0
                     else:
-                        crop_w = src_w
-                        crop_h = int(crop_w / cell_aspect)
+                        crop_w = _make_even(src_w)
+                        crop_h = _make_even(int(crop_w / cell_aspect))
                         crop_x = 0
                         crop_y = (src_h - crop_h) // 2
 
@@ -696,12 +703,13 @@ class AutoFramingCrop(Transformation):
         target_ratio = self.target_aspect[0] / self.target_aspect[1]
 
         # Calculate output dimensions
+        # Use _make_even to ensure H.264 compatibility (requires even dimensions)
         if target_ratio < w / h:
-            out_h = h
-            out_w = int(h * target_ratio)
+            out_h = _make_even(h)
+            out_w = _make_even(int(out_h * target_ratio))
         else:
-            out_w = w
-            out_h = int(w / target_ratio)
+            out_w = _make_even(w)
+            out_h = _make_even(int(out_w / target_ratio))
 
         # Crop size for extracting from source
         crop_w = out_w
