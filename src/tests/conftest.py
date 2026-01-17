@@ -2,7 +2,14 @@
 
 Test structure:
 - tests/base/ - No AI dependencies, runs in CI
-- tests/ai/ - Requires AI extras, excluded from CI
+- tests/ai/ - Requires AI extras, mostly runs in CI
+
+AI test markers:
+- @pytest.mark.requires_model_download - Tests that download models 100MB+
+  (e.g., EasyOCR). These are skipped in CI.
+
+CI runs: uv run pytest src/tests/ai -m "not requires_model_download"
+Local runs: uv run pytest src/tests/ai -v (all tests including model downloads)
 """
 
 import numpy as np
@@ -13,6 +20,14 @@ from tests.test_config import (
     SMALL_VIDEO_PATH,
 )
 from videopython.base.video import Video
+
+
+def pytest_configure(config):
+    """Register custom pytest markers."""
+    config.addinivalue_line(
+        "markers",
+        "requires_model_download: marks tests that download heavy AI models (YOLO, EasyOCR, PANNs) - skipped in CI",
+    )
 
 
 def pytest_collection_modifyitems(config, items):

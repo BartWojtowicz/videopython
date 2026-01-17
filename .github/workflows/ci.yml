@@ -23,6 +23,25 @@ jobs:
       - name: Run base tests
         run: uv run pytest src/tests/base --cov=src/videopython/base --cov-report=term --cov-report=term-missing
 
+  ai_tests:
+    name: AI tests (lightweight)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install ffmpeg -y
+      - name: Set up Python
+        run: uv python install 312
+      - name: Install all dependencies
+        run: uv sync --all-extras --group ai
+      - name: Run AI tests (skip heavy model downloads)
+        run: uv run pytest src/tests/ai -m "not requires_model_download" -v
+
   static_checks:
     name: Linting and formatting
     runs-on: ubuntu-latest

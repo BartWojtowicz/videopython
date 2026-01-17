@@ -9,6 +9,11 @@
   - AI module: `BackendError`, `MissingAPIKeyError`, `UnsupportedBackendError`, `GenerationError`, `LumaGenerationError`, `RunwayGenerationError`, `ConfigError`
   - All exceptions exported from `videopython.base` and `videopython.ai`
 
+- **AI module tests in CI**: Added lightweight AI tests to CI pipeline
+  - Tests for models <100MB run in CI (YOLO, PANNs, OpenCV)
+  - Tests for models 100MB+ excluded via `@pytest.mark.requires_model_download` marker
+  - New `ai_tests` job in CI workflow
+
 ### Fixed
 
 - Replaced broad `except Exception` patterns with specific exception types

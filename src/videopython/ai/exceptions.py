@@ -1,7 +1,5 @@
 """Exception hierarchy for videopython.ai module."""
 
-
-
 # Environment variable names per provider
 API_KEY_ENV_VARS: dict[str, str] = {
     "openai": "OPENAI_API_KEY",

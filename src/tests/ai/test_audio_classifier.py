@@ -1,8 +1,6 @@
 """Tests for AudioClassifier with PANNs backend.
 
-These tests are excluded from CI as they require:
-- PANNs model download (~80MB+)
-- Significant CPU/GPU time
+All tests run in CI since PANNs model is ~80MB (under the 100MB threshold).
 
 Run locally with: uv run pytest src/tests/ai/test_audio_classifier.py -v
 """
@@ -20,8 +18,27 @@ TEST_AUDIO_PATH = os.path.join(TEST_DATA_DIR, "test_audio.mp3")
 SMALL_VIDEO_PATH = os.path.join(TEST_DATA_DIR, "small_video.mp4")
 
 
+class TestAudioClassifierInit:
+    """Lightweight tests for AudioClassifier initialization (no model download needed)."""
+
+    def test_classifier_unsupported_backend(self):
+        """Test classifier raises error for unsupported backend."""
+        from videopython.ai.backends import UnsupportedBackendError
+        from videopython.ai.understanding.audio import AudioClassifier
+
+        with pytest.raises(UnsupportedBackendError):
+            AudioClassifier(backend="invalid_backend")
+
+    def test_classifier_unsupported_model(self):
+        """Test classifier raises error for unsupported model."""
+        from videopython.ai.understanding.audio import AudioClassifier
+
+        with pytest.raises(ValueError, match="not supported"):
+            AudioClassifier(model_name="InvalidModel")
+
+
 class TestAudioClassifier:
-    """Tests for AudioClassifier with PANNs backend."""
+    """Tests for AudioClassifier with PANNs backend (~80MB model download)."""
 
     @pytest.fixture
     def classifier(self):
@@ -42,7 +59,7 @@ class TestAudioClassifier:
         """Load test audio file."""
         from videopython.base.audio import Audio
 
-        return Audio.from_file(TEST_AUDIO_PATH)
+        return Audio.from_path(TEST_AUDIO_PATH)
 
     @pytest.fixture
     def test_video(self):
@@ -73,21 +90,6 @@ class TestAudioClassifier:
         assert classifier.confidence_threshold == 0.3
         assert classifier.model_name == "Cnn14"
         assert classifier.device == "cpu"
-
-    def test_classifier_unsupported_backend(self):
-        """Test classifier raises error for unsupported backend."""
-        from videopython.ai.backends import UnsupportedBackendError
-        from videopython.ai.understanding.audio import AudioClassifier
-
-        with pytest.raises(UnsupportedBackendError):
-            AudioClassifier(backend="invalid_backend")
-
-    def test_classifier_unsupported_model(self):
-        """Test classifier raises error for unsupported model."""
-        from videopython.ai.understanding.audio import AudioClassifier
-
-        with pytest.raises(ValueError, match="not supported"):
-            AudioClassifier(model_name="InvalidModel")
 
     def test_classify_returns_audio_classification(self, classifier, test_audio):
         """Test classification returns AudioClassification object."""
