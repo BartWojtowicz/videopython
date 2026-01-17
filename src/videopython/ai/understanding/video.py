@@ -9,6 +9,7 @@ from videopython.ai.backends import ImageToTextBackend
 from videopython.ai.understanding.image import ImageToText
 from videopython.base.description import (
     AudioClassification,
+    DetectedFace,
     FrameDescription,
     SceneDescription,
     VideoDescription,
@@ -114,7 +115,8 @@ class FrameAnalyzer:
             if self.object_detection:
                 frame_description.detected_objects = result.detected_objects
             if self.face_detection:
-                frame_description.detected_faces = result.face_count
+                # Cloud backends return count only, create DetectedFace objects without bounding boxes
+                frame_description.detected_faces = [DetectedFace() for _ in range(result.face_count)]
             if self.text_detection:
                 frame_description.detected_text = result.detected_text
             if self.shot_type_detection:
@@ -125,7 +127,7 @@ class FrameAnalyzer:
                 frame_description.detected_objects = self._object_detector.detect(frame)
 
             if self._face_detector:
-                frame_description.detected_faces = self._face_detector.count(frame)
+                frame_description.detected_faces = self._face_detector.detect(frame)
 
             if self._text_detector:
                 frame_description.detected_text = self._text_detector.detect(frame)
@@ -537,7 +539,7 @@ class VideoAnalyzer:
             from videopython.ai.understanding.audio import AudioToText
             from videopython.base.audio import Audio
 
-            audio = Audio.from_file(str(path))
+            audio = Audio.from_path(str(path))
             transcriber = AudioToText(model_name=transcription_model)
             transcription = transcriber.transcribe(audio)
 
@@ -554,7 +556,7 @@ class VideoAnalyzer:
             from videopython.ai.understanding.audio import AudioClassifier
             from videopython.base.audio import Audio
 
-            audio = Audio.from_file(str(path))
+            audio = Audio.from_path(str(path))
             classifier = AudioClassifier(confidence_threshold=audio_classifier_threshold)
             audio_classification = classifier.classify(audio)
             _distribute_audio_events(scene_descriptions, audio_classification)

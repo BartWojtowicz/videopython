@@ -155,12 +155,6 @@ class TestFaceDetector:
         faces = detector.detect(blank_image)
         assert len(faces) == 0
 
-    def test_count_method(self, detector, blank_image):
-        """Test count() returns integer."""
-        count = detector.count(blank_image)
-        assert isinstance(count, int)
-        assert count == 0
-
     def test_detect_on_real_video_frame(self, detector, video_frames):
         """Test face detection on actual video frames from big_video.mp4."""
         for frame in video_frames:

@@ -30,7 +30,7 @@ class AudioLevels:
         db_peak: Peak level in decibels (relative to full scale)
 
     Example:
-        >>> audio = Audio.from_file("audio.mp3")
+        >>> audio = Audio.from_path("audio.mp3")
         >>> levels = audio.get_levels()
         >>> print(f"Peak: {levels.db_peak:.1f} dB, RMS: {levels.db_rms:.1f} dB")
     """

@@ -11,6 +11,9 @@ from tqdm import tqdm
 
 from videopython.base.video import Video
 
+# Minimum frames before using multiprocessing (Pool overhead isn't worth it below this)
+MIN_FRAMES_FOR_MULTIPROCESSING = 100
+
 if TYPE_CHECKING:
     from videopython.base.description import BoundingBox
 
@@ -177,12 +180,15 @@ class Blur(Effect):
             raise ValueError(f"Unknown mode: `{self.mode}`.")
 
         print(f"Applying {self.mode} blur...")
-        # Use multiprocessing to blur frames in parallel
-        with Pool() as pool:
-            new_frames = pool.starmap(
-                self._blur_frame,
-                [(frame, sigma) for frame, sigma in zip(video.frames, sigmas)],
-            )
+
+        if n_frames >= MIN_FRAMES_FOR_MULTIPROCESSING:
+            with Pool() as pool:
+                new_frames = pool.starmap(
+                    self._blur_frame,
+                    [(frame, sigma) for frame, sigma in zip(video.frames, sigmas)],
+                )
+        else:
+            new_frames = [self._blur_frame(frame, sigma) for frame, sigma in zip(video.frames, sigmas)]
 
         video.frames = np.array(new_frames, dtype=np.uint8)
         return video
@@ -302,8 +308,14 @@ class ColorGrading(Effect):
 
     def _apply(self, video: Video) -> Video:
         print("Applying color grading...")
-        with Pool() as pool:
-            new_frames = pool.map(self._grade_frame, video.frames)
+        n_frames = len(video.frames)
+
+        if n_frames >= MIN_FRAMES_FOR_MULTIPROCESSING:
+            with Pool() as pool:
+                new_frames = pool.map(self._grade_frame, video.frames)
+        else:
+            new_frames = [self._grade_frame(frame) for frame in video.frames]
+
         video.frames = np.array(new_frames, dtype=np.uint8)
         return video
 
@@ -350,14 +362,11 @@ class Vignette(Effect):
         if self._mask is None or self._mask.shape != (height, width):
             self._mask = self._create_mask(height, width)
 
-        # Apply mask to all frames
-        mask_3d = self._mask[:, :, np.newaxis]  # Add channel dimension
-        new_frames = []
-        for frame in tqdm(video.frames):
-            graded = (frame.astype(np.float32) * mask_3d).astype(np.uint8)
-            new_frames.append(graded)
-
-        video.frames = np.array(new_frames, dtype=np.uint8)
+        # Apply mask to all frames using vectorized operation
+        # mask_3d shape: (height, width, 1), frames shape: (n_frames, height, width, 3)
+        # Broadcasting handles the multiplication across all frames and channels
+        mask_3d = self._mask[:, :, np.newaxis]
+        video.frames = (video.frames.astype(np.float32) * mask_3d).astype(np.uint8)
         return video
 
 

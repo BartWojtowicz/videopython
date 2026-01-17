@@ -567,6 +567,39 @@ class Audio:
 
         return Audio(scaled_data.astype(np.float32), self.metadata)
 
+    def fit_to_duration(self, target_duration: float) -> "Audio":
+        """
+        Adjust audio duration to match a target, slicing or padding with silence.
+
+        If audio is longer than target, it will be sliced.
+        If audio is shorter than target, silence will be appended.
+
+        Args:
+            target_duration: Target duration in seconds.
+
+        Returns:
+            Audio: New Audio object with the target duration.
+
+        Raises:
+            ValueError: If target_duration is not positive.
+        """
+        if target_duration <= 0:
+            raise ValueError("Target duration must be positive")
+
+        current_duration = self.metadata.duration_seconds
+
+        if current_duration > target_duration:
+            return self.slice(0, target_duration)
+        elif current_duration < target_duration:
+            silence = Audio.create_silent(
+                target_duration - current_duration,
+                stereo=self.metadata.channels == 2,
+                sample_rate=self.metadata.sample_rate,
+                sample_width=self.metadata.sample_width,
+            )
+            return self.concat(silence)
+        return self
+
     def time_stretch(self, speed: float) -> Audio:
         """
         Time-stretch audio by a speed factor (pitch-preserving).
@@ -813,7 +846,7 @@ class Audio:
             AudioLevels with RMS, peak, and dB measurements
 
         Example:
-            >>> audio = Audio.from_file("audio.mp3")
+            >>> audio = Audio.from_path("audio.mp3")
             >>> levels = audio.get_levels()
             >>> print(f"Peak: {levels.db_peak:.1f} dB")
         """

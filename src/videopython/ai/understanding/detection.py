@@ -296,20 +296,9 @@ class FaceDetector:
             )
             detected_faces.append(DetectedFace(bounding_box=bbox, confidence=1.0))
 
-        # Sort by area (largest first)
-        detected_faces.sort(key=lambda f: f.area, reverse=True)
+        # Sort by area (largest first) - all faces from local detector have bounding boxes
+        detected_faces.sort(key=lambda f: f.area or 0, reverse=True)
         return detected_faces
-
-    def count(self, image: np.ndarray | Image.Image) -> int:
-        """Count faces in an image (convenience method).
-
-        Args:
-            image: Image as numpy array (H, W, 3) in RGB format or PIL Image.
-
-        Returns:
-            Number of faces detected.
-        """
-        return len(self.detect(image))
 
 
 class TextDetector:

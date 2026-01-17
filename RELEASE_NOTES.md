@@ -1,5 +1,23 @@
 # Release Notes
 
+## 0.12.0
+
+### Breaking Changes
+
+- **FrameDescription**: Removed `camera_motion` field - use `motion.motion_type` instead
+- **FrameDescription**: Changed `detected_faces` from `int | None` to `list[DetectedFace] | None`
+  - Use `len(detected_faces)` to get the count
+  - Local backend now returns faces with bounding boxes
+  - Cloud backends return faces without bounding boxes (count only)
+- **DetectedFace**: Made `bounding_box` optional (can be `None` for cloud backends)
+- **FaceDetector**: Removed `count()` method - use `len(detect(image))` instead
+
+### Changed
+
+- Extracted duplicate `_adjust_audio_duration` methods to `Audio.fit_to_duration()`
+- Vectorized `Vignette` effect (removed per-frame loop)
+- Added `MIN_FRAMES_FOR_MULTIPROCESSING` threshold (100 frames) to `Resize`, `Blur`, and `ColorGrading` to avoid multiprocessing overhead for short videos
+
 ## 0.11.1
 
 ### New Features
