@@ -27,6 +27,8 @@ print(f"Output will be: {output_meta}")
 | `video.crop(width, height)` | `meta.crop(width, height)` | Center crop |
 | `video.resample_fps(fps)` | `meta.resample_fps(fps)` | Change frame rate |
 | `video.transition_to(other, t)` | `meta.transition_to(other, time)` | Combine videos |
+| `video.ken_burns(start, end, easing)` | - | Pan-and-zoom effect |
+| `video.picture_in_picture(overlay, ...)` | - | Overlay video as PiP |
 
 ## Transformation (Base Class)
 

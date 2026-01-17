@@ -21,6 +21,14 @@ The `Video` class is the core data structure in videopython.
         - frame_shape
         - total_seconds
         - metadata
+        - cut
+        - cut_frames
+        - resize
+        - crop
+        - resample_fps
+        - transition_to
+        - ken_burns
+        - picture_in_picture
 
 ## VideoMetadata
 

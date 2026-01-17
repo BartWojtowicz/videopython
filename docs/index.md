@@ -5,7 +5,7 @@ A minimal Python library for video generation and editing, built for short-form 
 ## Quick Example
 
 ```python
-from videopython.base import Video, Resize, FadeTransition
+from videopython.base import Video, FadeTransition
 from videopython.ai import TextToImage, ImageToVideo, TextToSpeech
 
 def create_video():
@@ -14,7 +14,7 @@ def create_video():
         "A cozy coffee shop on a rainy evening, warm lighting"
     )
     video = ImageToVideo().generate_video(image=image, fps=24)
-    video = Resize(width=1080, height=1920).apply(video)  # Vertical format
+    video = video.resize(1080, 1920)  # Vertical format
 
     # Add narration
     audio = TextToSpeech(backend="openai").generate_audio(

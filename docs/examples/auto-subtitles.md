@@ -114,7 +114,7 @@ overlay = TranscriptionOverlay(
 For long videos, transcription can take time. Consider processing in segments:
 
 ```python
-from videopython.base import CutSeconds
+from videopython.base import Video
 
 # Process first 5 minutes
 video = Video.from_path("long_video.mp4", start_second=0, end_second=300)
