@@ -136,28 +136,38 @@ class TestFaceDetector:
         """Test detector initializes correctly."""
         assert detector.confidence_threshold == 0.5
 
-    def test_detect_returns_int(self, detector, blank_image):
-        """Test detection returns an integer count."""
-        count = detector.detect(blank_image)
-        assert isinstance(count, int)
-        assert count >= 0
+    def test_detect_returns_list(self, detector, blank_image):
+        """Test detection returns a list of DetectedFace."""
+        faces = detector.detect(blank_image)
+        assert isinstance(faces, list)
 
     def test_detect_with_pil_image(self, detector, pil_blank_image):
         """Test detection works with PIL Image input."""
-        count = detector.detect(pil_blank_image)
-        assert isinstance(count, int)
+        faces = detector.detect(pil_blank_image)
+        assert isinstance(faces, list)
 
     def test_blank_image_no_faces(self, detector, blank_image):
-        """Test that blank image returns 0 faces."""
-        count = detector.detect(blank_image)
+        """Test that blank image returns empty list."""
+        faces = detector.detect(blank_image)
+        assert len(faces) == 0
+
+    def test_count_method(self, detector, blank_image):
+        """Test count() returns integer."""
+        count = detector.count(blank_image)
+        assert isinstance(count, int)
         assert count == 0
 
     def test_detect_on_real_video_frame(self, detector, video_frames):
         """Test face detection on actual video frames from big_video.mp4."""
         for frame in video_frames:
-            count = detector.detect(frame)
-            assert isinstance(count, int)
-            assert count >= 0
+            faces = detector.detect(frame)
+            assert isinstance(faces, list)
+            # If faces detected, check bounding boxes are valid
+            for face in faces:
+                assert 0 <= face.bounding_box.x <= 1
+                assert 0 <= face.bounding_box.y <= 1
+                assert face.bounding_box.width > 0
+                assert face.bounding_box.height > 0
 
 
 class TestTextDetectorLocal:

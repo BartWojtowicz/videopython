@@ -1094,3 +1094,163 @@ def test_normalize_invalid_method():
 
     with pytest.raises(ValueError, match="Unknown method"):
         audio.normalize(method="invalid")
+
+
+# =============================================================================
+# Scale Volume Tests
+# =============================================================================
+
+
+def test_scale_volume_double():
+    """Test doubling volume"""
+    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+
+    # Scale to double volume
+    scaled = audio.scale_volume(2.0)
+
+    # Check that volume increased (accounting for clipping)
+    original_rms = np.sqrt(np.mean(audio.data**2))
+    scaled_rms = np.sqrt(np.mean(scaled.data**2))
+    assert scaled_rms >= original_rms  # Should be louder or same (if clipped)
+
+    # Check metadata unchanged
+    assert scaled.metadata.sample_rate == audio.metadata.sample_rate
+    assert scaled.metadata.channels == audio.metadata.channels
+
+    # Check data is clipped to [-1, 1]
+    assert np.all(scaled.data >= -1.0)
+    assert np.all(scaled.data <= 1.0)
+
+
+def test_scale_volume_half():
+    """Test halving volume"""
+    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+
+    # Scale to half volume
+    scaled = audio.scale_volume(0.5)
+
+    # Check that data is halved
+    np.testing.assert_allclose(scaled.data, audio.data * 0.5, rtol=1e-5)
+
+
+def test_scale_volume_zero():
+    """Test scaling to zero volume (silence)"""
+    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+
+    # Scale to zero
+    scaled = audio.scale_volume(0.0)
+
+    # Should be silent
+    assert np.all(scaled.data == 0.0)
+
+
+def test_scale_volume_negative_raises():
+    """Test that negative factor raises error"""
+    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+
+    with pytest.raises(ValueError, match="non-negative"):
+        audio.scale_volume(-1.0)
+
+
+def test_scale_volume_stereo():
+    """Test scaling stereo audio"""
+    audio = Audio.from_file(TEST_DATA_DIR / "test_stereo.mp3")
+
+    scaled = audio.scale_volume(0.5)
+
+    # Check both channels are scaled
+    assert scaled.metadata.channels == 2
+    np.testing.assert_allclose(scaled.data, audio.data * 0.5, rtol=1e-5)
+
+
+# =============================================================================
+# Time Stretch Tests
+# =============================================================================
+
+
+def test_time_stretch_2x():
+    """Test time stretching at 2x speed (half duration)"""
+    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+
+    # Speed up 2x
+    stretched = audio.time_stretch(2.0)
+
+    # Duration should be approximately halved
+    expected_duration = audio.metadata.duration_seconds / 2.0
+    assert abs(stretched.metadata.duration_seconds - expected_duration) < 0.2
+
+    # Check metadata
+    assert stretched.metadata.sample_rate == audio.metadata.sample_rate
+    assert stretched.metadata.channels == audio.metadata.channels
+
+
+def test_time_stretch_half():
+    """Test time stretching at 0.5x speed (double duration)"""
+    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+
+    # Slow down to 0.5x
+    stretched = audio.time_stretch(0.5)
+
+    # Duration should be approximately doubled
+    expected_duration = audio.metadata.duration_seconds * 2.0
+    assert abs(stretched.metadata.duration_seconds - expected_duration) < 0.5
+
+
+def test_time_stretch_no_change():
+    """Test time stretching at 1.0x (no change)"""
+    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+
+    # No speed change
+    stretched = audio.time_stretch(1.0)
+
+    # Duration should be the same
+    assert abs(stretched.metadata.duration_seconds - audio.metadata.duration_seconds) < 0.1
+
+
+def test_time_stretch_extreme_4x():
+    """Test time stretching at 4x speed (requires chained atempo)"""
+    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+
+    # Speed up 4x (requires chaining atempo=2.0,atempo=2.0)
+    stretched = audio.time_stretch(4.0)
+
+    # Duration should be approximately quartered
+    expected_duration = audio.metadata.duration_seconds / 4.0
+    assert abs(stretched.metadata.duration_seconds - expected_duration) < 0.2
+
+
+def test_time_stretch_extreme_quarter():
+    """Test time stretching at 0.25x speed (requires chained atempo)"""
+    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+
+    # Slow down to 0.25x (requires chaining atempo=0.5,atempo=0.5)
+    stretched = audio.time_stretch(0.25)
+
+    # Duration should be approximately quadrupled
+    expected_duration = audio.metadata.duration_seconds * 4.0
+    assert abs(stretched.metadata.duration_seconds - expected_duration) < 1.0
+
+
+def test_time_stretch_stereo():
+    """Test time stretching stereo audio"""
+    audio = Audio.from_file(TEST_DATA_DIR / "test_stereo.mp3")
+
+    stretched = audio.time_stretch(2.0)
+
+    # Check stereo is preserved
+    assert stretched.metadata.channels == 2
+
+    # Duration should be halved
+    expected_duration = audio.metadata.duration_seconds / 2.0
+    assert abs(stretched.metadata.duration_seconds - expected_duration) < 0.2
+
+
+def test_time_stretch_invalid_speed():
+    """Test that invalid speed raises error"""
+    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+
+    with pytest.raises(ValueError, match="positive"):
+        audio.time_stretch(0.0)
+
+    with pytest.raises(ValueError, match="positive"):
+        audio.time_stretch(-1.0)

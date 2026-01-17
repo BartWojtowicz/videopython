@@ -13,6 +13,7 @@ __all__ = [
     "ColorHistogram",
     "BoundingBox",
     "DetectedObject",
+    "DetectedFace",
     "AudioEvent",
     "AudioClassification",
     "MotionInfo",
@@ -80,6 +81,29 @@ class DetectedObject:
     label: str
     confidence: float
     bounding_box: BoundingBox | None = None
+
+
+@dataclass
+class DetectedFace:
+    """A face detected in a video frame.
+
+    Attributes:
+        bounding_box: Bounding box location of the face (normalized 0-1 coordinates)
+        confidence: Detection confidence score between 0 and 1
+    """
+
+    bounding_box: BoundingBox
+    confidence: float = 1.0
+
+    @property
+    def center(self) -> tuple[float, float]:
+        """Center point of the face bounding box."""
+        return self.bounding_box.center
+
+    @property
+    def area(self) -> float:
+        """Area of the face bounding box (normalized)."""
+        return self.bounding_box.area
 
 
 @dataclass

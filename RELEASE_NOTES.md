@@ -1,5 +1,70 @@
 # Release Notes
 
+## 0.11.0
+
+### New Features
+
+- **SpeedChange transform**: Change video playback speed
+  - Constant speed changes (e.g., 2x faster, 0.5x slower)
+  - Smooth speed ramping for cinematic effects
+
+- **ColorGrading effect**: Adjust video color properties
+  - Brightness, contrast, saturation adjustments
+  - Color temperature control (warm/cool tones)
+
+- **Vignette effect**: Add darkened edges to frames
+  - Configurable strength and radius
+
+- **KenBurns effect**: Cinematic pan-and-zoom effect
+  - Animate between two regions using normalized BoundingBox coordinates
+  - Easing functions: linear, ease_in, ease_out, ease_in_out
+  - Fluent API: `video.ken_burns(start_region, end_region, easing="ease_in_out")`
+
+- **PictureInPicture transform**: Overlay video on main video
+  - Configurable position (normalized 0-1), scale, border, rounded corners, opacity
+  - Overlay loops automatically if shorter than main video
+  - Fluent API: `video.picture_in_picture(overlay, position=(0.7, 0.7), scale=0.25)`
+
+- **FaceDetector bounding boxes**: Now returns detailed face information
+  - Returns `list[DetectedFace]` with normalized bounding box coordinates
+  - Use `.count()` for backward compatibility with previous API
+
+- **SpeedChange audio synchronization**: Audio now adjusts with video speed
+  - Pitch-preserving time stretch using FFmpeg atempo filter
+  - New `adjust_audio: bool = True` parameter (enabled by default)
+  - For speed ramps, uses average speed for audio adjustment
+
+- **PictureInPicture audio mixing**: Configurable audio handling for overlays
+  - New `audio_mode` parameter: `"main"` (default), `"overlay"`, or `"mix"`
+  - New `audio_mix` parameter for volume factors in mix mode, e.g. `(0.8, 0.5)`
+  - Overlay audio loops automatically if shorter than main video
+
+- **FaceTrackingCrop transform** (in `videopython.ai`): Crop video to follow detected faces
+  - Create vertical (9:16) content from horizontal (16:9) by tracking speaker
+  - Configurable face selection: largest, centered, or by index
+  - Smooth position tracking with exponential moving average
+  - Fallback options when face not detected: center, last_position, full_frame
+
+- **SplitScreenComposite transform** (in `videopython.ai`): Arrange multiple videos in grid layouts
+  - Layouts: 2x1, 1x2, 2x2, 1+2, 2+1
+  - Face tracking for each cell to keep subjects centered
+  - Configurable gap, border, and colors
+
+- **AutoFramingCrop transform** (in `videopython.ai`): Intelligent cropping with cinematographic rules
+  - Framing rules: thirds, center, headroom, dynamic
+  - Configurable headroom and lead room
+  - Smooth camera movement with speed limiting
+
+- **FaceTracker utility** (in `videopython.ai`): Frame-by-frame face tracking with smoothing
+  - Selection strategies: largest, centered, by index
+  - Detection interval to reduce processing load
+  - Exponential moving average for jitter-free tracking
+
+- **Audio.time_stretch()**: New method for pitch-preserving time stretching
+  - Supports extreme speeds via chained atempo filters (e.g., 4x, 0.25x)
+
+- **Audio.scale_volume()**: New method for volume adjustment
+
 ## 0.10.0
 
 ### Breaking Changes

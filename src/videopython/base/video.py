@@ -15,7 +15,7 @@ from videopython.base.audio import Audio, AudioLoadError
 from videopython.base.utils import generate_random_name
 
 if TYPE_CHECKING:
-    pass
+    from videopython.base.description import BoundingBox
 
 __all__ = [
     "Video",
@@ -1091,3 +1091,73 @@ class Video:
         if not isinstance(transition, Transition):
             raise TypeError(f"Expected Transition, got {type(transition).__name__}")
         return transition.apply((self, other))
+
+    def ken_burns(
+        self,
+        start_region: "BoundingBox",
+        end_region: "BoundingBox",
+        easing: Literal["linear", "ease_in", "ease_out", "ease_in_out"] = "linear",
+        start: float | None = None,
+        stop: float | None = None,
+    ) -> Video:
+        """Apply Ken Burns pan-and-zoom effect.
+
+        Creates cinematic movement by smoothly transitioning between two regions.
+
+        Args:
+            start_region: Starting crop region (BoundingBox with normalized 0-1 coordinates).
+            end_region: Ending crop region (BoundingBox with normalized 0-1 coordinates).
+            easing: Animation easing - "linear", "ease_in", "ease_out", or "ease_in_out".
+            start: Optional start time in seconds for the effect.
+            stop: Optional stop time in seconds for the effect.
+
+        Returns:
+            New Video with Ken Burns effect applied.
+        """
+        from videopython.base.effects import KenBurns
+
+        return KenBurns(start_region=start_region, end_region=end_region, easing=easing).apply(
+            self, start=start, stop=stop
+        )
+
+    def picture_in_picture(
+        self,
+        overlay: Video,
+        position: tuple[float, float] = (0.7, 0.7),
+        scale: float = 0.25,
+        border_width: int = 0,
+        border_color: tuple[int, int, int] = (255, 255, 255),
+        corner_radius: int = 0,
+        opacity: float = 1.0,
+        audio_mode: Literal["main", "overlay", "mix"] = "main",
+        audio_mix: tuple[float, float] = (1.0, 1.0),
+    ) -> Video:
+        """Overlay another video as picture-in-picture.
+
+        Args:
+            overlay: Video to overlay on this video.
+            position: Normalized (x, y) center position, (0,0)=top-left, (1,1)=bottom-right.
+            scale: Overlay size relative to main video width (0.25 = 25%).
+            border_width: Border width in pixels (default 0).
+            border_color: Border color as RGB tuple (default white).
+            corner_radius: Rounded corner radius in pixels (default 0).
+            opacity: Overlay transparency from 0 to 1 (default 1.0).
+            audio_mode: Audio handling - "main" (default), "overlay", or "mix".
+            audio_mix: Volume factors (main, overlay) for mix mode, default (1.0, 1.0).
+
+        Returns:
+            New Video with picture-in-picture overlay.
+        """
+        from videopython.base.transforms import PictureInPicture
+
+        return PictureInPicture(
+            overlay=overlay,
+            position=position,
+            scale=scale,
+            border_width=border_width,
+            border_color=border_color,
+            corner_radius=corner_radius,
+            opacity=opacity,
+            audio_mode=audio_mode,
+            audio_mix=audio_mix,
+        ).apply(self)
