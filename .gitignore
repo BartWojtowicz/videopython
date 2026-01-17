@@ -145,3 +145,5 @@ data/exported/*.mp4
 # Model weights
 *.pt
 
+# Local notes
+IMPROVEMENTS.md

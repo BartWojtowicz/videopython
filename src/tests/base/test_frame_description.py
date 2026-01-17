@@ -2,8 +2,10 @@ import pytest
 
 from videopython.base.description import (
     BoundingBox,
+    DetectedFace,
     DetectedObject,
     FrameDescription,
+    MotionInfo,
     SceneDescription,
 )
 from videopython.base.text.transcription import Transcription, TranscriptionSegment, TranscriptionWord
@@ -68,12 +70,12 @@ class TestFrameDescription:
         assert fd.frame_index == 42
         assert fd.timestamp == 1.75
         assert fd.description == "A dog playing in a park"
-        # New fields should default to None
+        # Optional fields should default to None
         assert fd.detected_objects is None
         assert fd.detected_text is None
         assert fd.detected_faces is None
         assert fd.shot_type is None
-        assert fd.camera_motion is None
+        assert fd.motion is None
 
     def test_frame_description_with_detected_objects(self):
         """Test frame description with detected objects."""
@@ -106,46 +108,62 @@ class TestFrameDescription:
         assert "STOP" in fd.detected_text
 
     def test_frame_description_with_faces(self):
-        """Test frame description with face count."""
+        """Test frame description with detected faces."""
+        faces = [
+            DetectedFace(bounding_box=BoundingBox(0.1, 0.1, 0.2, 0.2), confidence=0.95),
+            DetectedFace(bounding_box=BoundingBox(0.5, 0.3, 0.15, 0.18), confidence=0.88),
+            DetectedFace(),  # Face without bounding box (e.g., from cloud backend)
+        ]
         fd = FrameDescription(
             frame_index=30,
             timestamp=1.5,
             description="A group of people",
-            detected_faces=5,
+            detected_faces=faces,
         )
-        assert fd.detected_faces == 5
+        assert fd.detected_faces is not None
+        assert len(fd.detected_faces) == 3
+        assert fd.detected_faces[0].bounding_box is not None
+        assert fd.detected_faces[0].confidence == 0.95
+        assert fd.detected_faces[2].bounding_box is None  # Cloud backend face
 
     def test_frame_description_with_shot_analysis(self):
-        """Test frame description with shot type and camera motion."""
+        """Test frame description with shot type and motion info."""
+        motion = MotionInfo(motion_type="static", magnitude=0.05, raw_magnitude=1.2)
         fd = FrameDescription(
             frame_index=40,
             timestamp=2.0,
             description="Close-up of a face",
             shot_type="close-up",
-            camera_motion="static",
+            motion=motion,
         )
         assert fd.shot_type == "close-up"
-        assert fd.camera_motion == "static"
+        assert fd.motion is not None
+        assert fd.motion.motion_type == "static"
+        assert fd.motion.is_static
 
     def test_frame_description_fully_populated(self):
         """Test frame description with all fields populated."""
         objects = [DetectedObject(label="car", confidence=0.92)]
+        faces = [DetectedFace(bounding_box=BoundingBox(0.3, 0.2, 0.1, 0.15))]
+        motion = MotionInfo(motion_type="pan", magnitude=0.4, raw_magnitude=8.5)
         fd = FrameDescription(
             frame_index=50,
             timestamp=2.5,
             description="A car on a highway",
             detected_objects=objects,
             detected_text=["EXIT 42"],
-            detected_faces=0,
+            detected_faces=faces,
             shot_type="wide",
-            camera_motion="pan",
+            motion=motion,
         )
         assert fd.frame_index == 50
         assert fd.detected_objects is not None
         assert fd.detected_text == ["EXIT 42"]
-        assert fd.detected_faces == 0
+        assert fd.detected_faces is not None
+        assert len(fd.detected_faces) == 1
         assert fd.shot_type == "wide"
-        assert fd.camera_motion == "pan"
+        assert fd.motion is not None
+        assert fd.motion.motion_type == "pan"
 
 
 class TestSceneDescription:

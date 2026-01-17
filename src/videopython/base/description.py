@@ -88,22 +88,23 @@ class DetectedFace:
     """A face detected in a video frame.
 
     Attributes:
-        bounding_box: Bounding box location of the face (normalized 0-1 coordinates)
+        bounding_box: Bounding box location of the face (normalized 0-1 coordinates).
+            May be None for cloud backends that only return face counts.
         confidence: Detection confidence score between 0 and 1
     """
 
-    bounding_box: BoundingBox
+    bounding_box: BoundingBox | None = None
     confidence: float = 1.0
 
     @property
-    def center(self) -> tuple[float, float]:
-        """Center point of the face bounding box."""
-        return self.bounding_box.center
+    def center(self) -> tuple[float, float] | None:
+        """Center point of the face bounding box, or None if no bounding box."""
+        return self.bounding_box.center if self.bounding_box else None
 
     @property
-    def area(self) -> float:
-        """Area of the face bounding box (normalized)."""
-        return self.bounding_box.area
+    def area(self) -> float | None:
+        """Area of the face bounding box (normalized), or None if no bounding box."""
+        return self.bounding_box.area if self.bounding_box else None
 
 
 @dataclass
@@ -182,10 +183,9 @@ class FrameDescription:
         color_histogram: Optional color features extracted from the frame
         detected_objects: Optional list of objects detected in the frame
         detected_text: Optional list of text strings found via OCR
-        detected_faces: Optional count of faces detected in the frame
+        detected_faces: Optional list of faces detected in the frame with bounding boxes
         shot_type: Optional shot classification (e.g., "close-up", "medium", "wide")
-        camera_motion: Optional camera motion type (e.g., "static", "pan", "tilt", "zoom")
-        motion: Optional motion info with type and magnitude
+        motion: Optional motion info with type and magnitude (includes camera motion type)
     """
 
     frame_index: int
@@ -194,9 +194,8 @@ class FrameDescription:
     color_histogram: ColorHistogram | None = None
     detected_objects: list[DetectedObject] | None = None
     detected_text: list[str] | None = None
-    detected_faces: int | None = None
+    detected_faces: list[DetectedFace] | None = None
     shot_type: str | None = None
-    camera_motion: str | None = None
     motion: MotionInfo | None = None
 
 
