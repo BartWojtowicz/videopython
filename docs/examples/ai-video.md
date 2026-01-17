@@ -83,12 +83,12 @@ Available backends:
 ### 2. Animate to Video
 
 ```python
-video_gen = ImageToVideo(backend="local")  # Uses Stable Video Diffusion
+video_gen = ImageToVideo(backend="local")  # Uses CogVideoX1.5-5B-I2V
 video = video_gen.generate_video(image=image, fps=24)
 ```
 
 !!! note "Local Models"
-    Local backends (`ImageToVideo`, `TextToVideo`) require significant GPU memory. Expect 8GB+ VRAM for smooth operation.
+    Local backends (`ImageToVideo`, `TextToVideo`) require significant GPU memory (CUDA). An NVIDIA A40 or better is recommended for video generation.
 
 ### 3. Generate Speech
 

@@ -104,6 +104,54 @@ normalized = audio.normalize(target_db=-18.0, method="rms")
 print(f"New peak: {normalized.get_levels().db_peak:.1f} dB")
 ```
 
+## Audio Manipulation
+
+### Volume Scaling
+
+```python
+from videopython.base import Audio
+
+audio = Audio.from_path("audio.mp3")
+
+# Scale volume (1.0 = no change, 0.5 = half, 2.0 = double)
+quieter = audio.scale_volume(0.5)
+louder = audio.scale_volume(1.5)
+```
+
+### Time Stretching
+
+Pitch-preserving time stretching using ffmpeg's atempo filter.
+
+```python
+from videopython.base import Audio
+
+audio = Audio.from_path("audio.mp3")
+
+# Speed up 2x (half duration, same pitch)
+faster = audio.time_stretch(2.0)
+
+# Slow down 0.5x (double duration, same pitch)
+slower = audio.time_stretch(0.5)
+
+# Extreme speeds are supported via chained filters
+very_fast = audio.time_stretch(4.0)
+```
+
+### Duration Fitting
+
+Adjust audio to match a target duration by slicing or padding with silence.
+
+```python
+from videopython.base import Audio
+
+audio = Audio.from_path("audio.mp3")
+
+# Fit to exactly 10 seconds
+# - If longer: slices to 10s
+# - If shorter: pads with silence
+fitted = audio.fit_to_duration(10.0)
+```
+
 ## Data Classes
 
 ### AudioMetadata
@@ -142,4 +190,4 @@ Enum for audio segment classification: `SILENCE`, `SPEECH`, `MUSIC`, `NOISE`.
 
 Exception raised when there's an error loading or saving audio files.
 
-::: videopython.base.audio.AudioLoadError
+::: videopython.base.AudioLoadError
