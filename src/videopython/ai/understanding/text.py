@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 from videopython.ai.backends import LLMBackend, UnsupportedBackendError, get_api_key
 from videopython.ai.config import get_default_backend
 from videopython.base.description import SceneDescription, VideoDescription
@@ -141,8 +143,10 @@ Summary:"""
 
         try:
             return self._generate(prompt)
-        except Exception:
-            # Fallback: return concatenated descriptions
+        except (ConnectionError, TimeoutError):
+            return " ".join([desc for _, desc in frame_descriptions])
+        except Exception as e:
+            warnings.warn(f"LLM summarization failed: {e}", RuntimeWarning)
             return " ".join([desc for _, desc in frame_descriptions])
 
     def summarize_video(self, scene_summaries: list[tuple[float, float, str]]) -> str:
@@ -177,8 +181,10 @@ Summary:"""
 
         try:
             return self._generate(prompt)
-        except Exception:
-            # Fallback: return concatenated scene summaries
+        except (ConnectionError, TimeoutError):
+            return " ".join([summary for _, _, summary in scene_summaries])
+        except Exception as e:
+            warnings.warn(f"LLM video summarization failed: {e}", RuntimeWarning)
             return " ".join([summary for _, _, summary in scene_summaries])
 
     def summarize_scene_description(self, scene_description: SceneDescription) -> str:

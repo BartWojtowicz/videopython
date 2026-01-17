@@ -1,5 +1,34 @@
 # Release Notes
 
+## 0.11.1
+
+### New Features
+
+- **Exception hierarchy**: Proper exception classes for better error handling
+  - Base module: `VideoPythonError`, `VideoError`, `VideoLoadError`, `VideoMetadataError`, `AudioError`, `AudioLoadError`, `TransformError`, `InsufficientDurationError`, `IncompatibleVideoError`, `TextRenderError`, `OutOfBoundsError`
+  - AI module: `BackendError`, `MissingAPIKeyError`, `UnsupportedBackendError`, `GenerationError`, `LumaGenerationError`, `RunwayGenerationError`, `ConfigError`
+  - All exceptions exported from `videopython.base` and `videopython.ai`
+
+- **AI module tests in CI**: Added lightweight AI tests to CI pipeline
+  - Tests for models <100MB run in CI (YOLO, PANNs, OpenCV)
+  - Tests for models 100MB+ excluded via `@pytest.mark.requires_model_download` marker
+  - New `ai_tests` job in CI workflow
+
+### Fixed
+
+- Replaced broad `except Exception` patterns with specific exception types
+- Config file parsing errors now emit warnings instead of failing silently
+- LLM summarization failures now emit warnings with fallback behavior
+
+### Changed
+
+- Moved `VideoMetadataError` from `video.py` to `exceptions.py`
+- Moved `AudioLoadError` from `audio/audio.py` to `exceptions.py`
+- Moved AI backend exceptions from `backends.py` to `exceptions.py`
+- Transitions now raise `InsufficientDurationError` instead of `RuntimeError`
+- Transitions now raise `IncompatibleVideoError` instead of `ValueError`
+- Video loading now raises `VideoLoadError` instead of `ValueError`
+
 ## 0.11.0
 
 ### New Features

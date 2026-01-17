@@ -14,6 +14,7 @@ from videopython.ai.backends import (
     get_api_key,
 )
 from videopython.ai.config import get_default_backend
+from videopython.ai.exceptions import LumaGenerationError, RunwayGenerationError
 from videopython.base.video import Video
 
 if TYPE_CHECKING:
@@ -122,14 +123,14 @@ class TextToVideo:
             generation = client.generations.get(generation.id)
 
         if generation.state == "failed":
-            raise RuntimeError(f"Luma generation failed: {generation.failure_reason}")
+            raise LumaGenerationError(f"Luma generation failed: {generation.failure_reason}")
 
         # Download the video
         if generation.assets is None:
-            raise RuntimeError("Luma generation completed but no assets returned")
+            raise LumaGenerationError("Luma generation completed but no assets returned")
         video_url = generation.assets.video
         if not video_url:
-            raise RuntimeError("Luma generation completed but no video URL returned")
+            raise LumaGenerationError("Luma generation completed but no video URL returned")
 
         with httpx.Client() as http_client:
             response = http_client.get(video_url)
@@ -263,12 +264,12 @@ class ImageToVideo:
 
         if task.status == "FAILED":
             failure_msg = getattr(task, "failure", "Unknown error")
-            raise RuntimeError(f"Runway generation failed: {failure_msg}")
+            raise RunwayGenerationError(f"Runway generation failed: {failure_msg}")
 
         # Download the video - task.status is "SUCCEEDED" at this point
         output = getattr(task, "output", None)
         if not output:
-            raise RuntimeError("Runway generation completed but no video URL returned")
+            raise RunwayGenerationError("Runway generation completed but no video URL returned")
         video_url: str = output[0]
 
         with httpx.Client() as http_client:
@@ -315,14 +316,14 @@ class ImageToVideo:
             generation = client.generations.get(generation.id)
 
         if generation.state == "failed":
-            raise RuntimeError(f"Luma generation failed: {generation.failure_reason}")
+            raise LumaGenerationError(f"Luma generation failed: {generation.failure_reason}")
 
         # Download the video
         if generation.assets is None:
-            raise RuntimeError("Luma generation completed but no assets returned")
+            raise LumaGenerationError("Luma generation completed but no assets returned")
         video_url = generation.assets.video
         if not video_url:
-            raise RuntimeError("Luma generation completed but no video URL returned")
+            raise LumaGenerationError("Luma generation completed but no video URL returned")
 
         with httpx.Client() as http_client:
             response = http_client.get(video_url)

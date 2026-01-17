@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -85,7 +86,11 @@ def _get_cached_config() -> dict[str, Any]:
     try:
         data = _load_toml(config_path)
         return _extract_config(data, config_path.name)
-    except Exception:
+    except tomllib.TOMLDecodeError as e:
+        warnings.warn(f"Invalid TOML in config file {config_path}: {e}", RuntimeWarning)
+        return {}
+    except (OSError, IOError) as e:
+        warnings.warn(f"Cannot read config file {config_path}: {e}", RuntimeWarning)
         return {}
 
 

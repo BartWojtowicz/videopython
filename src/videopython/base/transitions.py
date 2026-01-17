@@ -5,6 +5,7 @@ from typing import final
 import numpy as np
 
 from videopython.base.effects import Blur
+from videopython.base.exceptions import IncompatibleVideoError, InsufficientDurationError
 from videopython.base.video import Video
 
 __all__ = [
@@ -25,7 +26,7 @@ class Transition(ABC):
     @final
     def apply(self, videos: tuple[Video, Video]) -> Video:
         if not videos[0].metadata.can_be_merged_with(videos[1].metadata):
-            raise ValueError("Videos have incompatible metadata and cannot be merged")
+            raise IncompatibleVideoError("Videos have incompatible metadata and cannot be merged")
         return self._apply(videos)
 
     @abstractmethod
@@ -62,7 +63,7 @@ class FadeTransition(Transition):
         video_fps = videos[0].fps
         for video in videos:
             if video.total_seconds < self.effect_time_seconds:
-                raise RuntimeError("Not enough space to make transition!")
+                raise InsufficientDurationError("Not enough space to make transition!")
 
         effect_time_fps = math.floor(self.effect_time_seconds * video_fps)
         transition = self.fade(videos[0].frames[-effect_time_fps:], videos[1].frames[:effect_time_fps])
@@ -92,7 +93,7 @@ class BlurTransition(Transition):
         video_fps = videos[0].fps
         for video in videos:
             if video.total_seconds < self.effect_time_seconds:
-                raise RuntimeError("Not enough space to make transition!")
+                raise InsufficientDurationError("Not enough space to make transition!")
 
         effect_time_fps = math.floor(self.effect_time_seconds * video_fps)
 

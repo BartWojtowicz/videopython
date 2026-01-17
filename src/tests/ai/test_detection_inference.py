@@ -1,11 +1,15 @@
 """Tests for detection backends that run actual AI inference.
 
-These tests are excluded from CI as they require:
-- YOLO model download (~6MB)
-- EasyOCR model download (~100MB+)
-- Significant CPU/GPU time
+Tests marked with @pytest.mark.requires_model_download are excluded from CI:
+- TextDetector tests (EasyOCR, ~100MB+ download)
+
+Tests that run in CI (models <100MB or bundled):
+- ObjectDetector tests (YOLO, ~6MB download)
+- FaceDetector tests (OpenCV cascade, bundled with opencv-python)
+- CameraMotionDetector tests (OpenCV optical flow, no model download)
 
 Run locally with: uv run pytest src/tests/ai -v
+CI runs: uv run pytest src/tests/ai -m "not requires_model_download"
 """
 
 import os
@@ -33,7 +37,7 @@ def video_frames():
 
 
 class TestObjectDetectorLocal:
-    """Tests for ObjectDetector with YOLO backend."""
+    """Tests for ObjectDetector with YOLO backend (~6MB model download)."""
 
     @pytest.fixture
     def detector(self):
@@ -170,8 +174,9 @@ class TestFaceDetector:
                 assert face.bounding_box.height > 0
 
 
+@pytest.mark.requires_model_download
 class TestTextDetectorLocal:
-    """Tests for TextDetector with EasyOCR backend."""
+    """Tests for TextDetector with EasyOCR backend (requires ~100MB+ model download)."""
 
     @pytest.fixture
     def detector(self):

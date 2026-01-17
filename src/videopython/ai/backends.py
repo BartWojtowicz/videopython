@@ -5,6 +5,13 @@ from __future__ import annotations
 import os
 from typing import Literal
 
+from videopython.ai.exceptions import (
+    API_KEY_ENV_VARS,
+    BackendError,
+    MissingAPIKeyError,
+    UnsupportedBackendError,
+)
+
 # Backend type definitions per task
 TextToVideoBackend = Literal["local", "luma"]
 ImageToVideoBackend = Literal["local", "luma", "runway"]
@@ -16,40 +23,22 @@ AudioToTextBackend = Literal["local", "openai", "gemini"]
 AudioClassifierBackend = Literal["local"]
 LLMBackend = Literal["local", "openai", "gemini"]
 
-# Environment variable names per provider
-API_KEY_ENV_VARS: dict[str, str] = {
-    "openai": "OPENAI_API_KEY",
-    "gemini": "GOOGLE_API_KEY",
-    "elevenlabs": "ELEVENLABS_API_KEY",
-    "runway": "RUNWAYML_API_KEY",
-    "luma": "LUMAAI_API_KEY",
-}
-
-
-class BackendError(Exception):
-    """Base exception for backend-related errors."""
-
-    pass
-
-
-class MissingAPIKeyError(BackendError):
-    """Raised when a required API key is not found."""
-
-    def __init__(self, provider: str):
-        env_var = API_KEY_ENV_VARS.get(provider, f"{provider.upper()}_API_KEY")
-        super().__init__(
-            f"API key for '{provider}' not found. Set the {env_var} environment variable or pass api_key parameter."
-        )
-        self.provider = provider
-
-
-class UnsupportedBackendError(BackendError):
-    """Raised when an unsupported backend is requested."""
-
-    def __init__(self, backend: str, supported: list[str]):
-        super().__init__(f"Backend '{backend}' is not supported. Supported backends: {', '.join(supported)}")
-        self.backend = backend
-        self.supported = supported
+# Re-export for backward compatibility
+__all__ = [
+    "TextToVideoBackend",
+    "ImageToVideoBackend",
+    "TextToSpeechBackend",
+    "TextToMusicBackend",
+    "TextToImageBackend",
+    "ImageToTextBackend",
+    "AudioToTextBackend",
+    "AudioClassifierBackend",
+    "LLMBackend",
+    "BackendError",
+    "MissingAPIKeyError",
+    "UnsupportedBackendError",
+    "get_api_key",
+]
 
 
 def get_api_key(provider: str, api_key: str | None = None) -> str:
