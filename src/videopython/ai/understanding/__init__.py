@@ -9,6 +9,7 @@ from .detection import (
 )
 from .image import ImageToText
 from .motion import MotionAnalyzer
+from .temporal import ActionRecognizer, SemanticSceneDetector
 from .text import LLMSummarizer
 from .video import VideoAnalyzer
 
@@ -27,4 +28,7 @@ __all__ = [
     "CombinedFrameAnalyzer",
     # Motion
     "MotionAnalyzer",
+    # Temporal
+    "ActionRecognizer",
+    "SemanticSceneDetector",
 ]

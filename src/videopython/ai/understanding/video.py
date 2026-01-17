@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
@@ -16,6 +16,9 @@ from videopython.base.description import (
 )
 from videopython.base.scene import SceneDetector
 from videopython.base.video import Video, VideoMetadata, extract_frames_at_indices
+
+if TYPE_CHECKING:
+    from videopython.ai.understanding.temporal import SemanticSceneDetector
 
 
 class FrameAnalyzer:
@@ -228,6 +231,7 @@ class VideoAnalyzer:
         device: str | None = None,
         detection_backend: ImageToTextBackend | None = None,
         api_key: str | None = None,
+        use_semantic_scenes: bool = False,
     ):
         """Initialize the video analyzer.
 
@@ -237,11 +241,28 @@ class VideoAnalyzer:
             device: Device for ImageToText model ('cuda', 'cpu', or None for auto)
             detection_backend: Backend for object/text detection ('local', 'openai', 'gemini')
             api_key: API key for cloud backends
+            use_semantic_scenes: Use ML-based scene detection (SemanticSceneDetector)
+                instead of histogram-based detection. More accurate but requires
+                additional dependencies.
         """
-        self.scene_detector = SceneDetector(threshold=scene_threshold, min_scene_length=min_scene_length)
+        self.scene_threshold = scene_threshold
+        self.min_scene_length = min_scene_length
+        self.use_semantic_scenes = use_semantic_scenes
+
+        self.scene_detector: SceneDetector | SemanticSceneDetector
+        if use_semantic_scenes:
+            from videopython.ai.understanding.temporal import SemanticSceneDetector
+
+            self.scene_detector = SemanticSceneDetector(
+                threshold=scene_threshold, min_scene_length=min_scene_length, device=device
+            )
+        else:
+            self.scene_detector = SceneDetector(threshold=scene_threshold, min_scene_length=min_scene_length)
+
         self.image_to_text = ImageToText(device=device)
         self.detection_backend = detection_backend
         self.api_key = api_key
+        self._device = device
 
     def analyze(
         self,
@@ -260,6 +281,8 @@ class VideoAnalyzer:
         classify_audio: bool = False,
         audio_classifier_threshold: float = 0.3,
         analyze_motion: bool = False,
+        recognize_actions: bool = False,
+        action_confidence_threshold: float = 0.1,
     ) -> VideoDescription:
         """Perform comprehensive video analysis.
 
@@ -279,6 +302,8 @@ class VideoAnalyzer:
             classify_audio: Whether to classify audio events/sounds (default: False)
             audio_classifier_threshold: Minimum confidence for audio events (default: 0.3)
             analyze_motion: Whether to analyze motion between frames (default: False)
+            recognize_actions: Whether to recognize actions/activities in scenes (default: False)
+            action_confidence_threshold: Minimum confidence for action recognition (default: 0.1)
 
         Returns:
             VideoDescription object with complete analysis
@@ -376,6 +401,16 @@ class VideoAnalyzer:
             for scene_desc in scene_descriptions:
                 scene_desc.summary = summarizer.summarize_scene_description(scene_desc)
 
+        # Step 7: Recognize actions in each scene if requested
+        if recognize_actions:
+            from videopython.ai.understanding.temporal import ActionRecognizer
+
+            action_recognizer = ActionRecognizer(
+                device=self._device,
+                confidence_threshold=action_confidence_threshold,
+            )
+            action_recognizer.recognize_scenes(video, scene_descriptions)
+
         return video_description
 
     def analyze_scenes_only(self, video: Video) -> list[SceneDescription]:
@@ -407,6 +442,8 @@ class VideoAnalyzer:
         classify_audio: bool = False,
         audio_classifier_threshold: float = 0.3,
         analyze_motion: bool = False,
+        recognize_actions: bool = False,
+        action_confidence_threshold: float = 0.1,
     ) -> VideoDescription:
         """Analyze video from path with minimal memory usage.
 
@@ -434,6 +471,8 @@ class VideoAnalyzer:
             classify_audio: Whether to classify audio events/sounds (default: False)
             audio_classifier_threshold: Minimum confidence for audio events (default: 0.3)
             analyze_motion: Whether to analyze motion between frames (default: False)
+            recognize_actions: Whether to recognize actions/activities in scenes (default: False)
+            action_confidence_threshold: Minimum confidence for action recognition (default: 0.1)
 
         Returns:
             VideoDescription object with complete analysis
@@ -568,5 +607,23 @@ class VideoAnalyzer:
             summarizer = LLMSummarizer(backend=self.detection_backend, api_key=self.api_key)
             for scene_desc in scene_descriptions:
                 scene_desc.summary = summarizer.summarize_scene_description(scene_desc)
+
+        # Step 7: Recognize actions in each scene if requested
+        if recognize_actions:
+            from videopython.ai.understanding.temporal import ActionRecognizer
+
+            action_recognizer = ActionRecognizer(
+                device=self._device,
+                confidence_threshold=action_confidence_threshold,
+            )
+            # For path-based analysis, process each scene by loading its frames
+            for scene_desc in scene_descriptions:
+                actions = action_recognizer.recognize_path(
+                    path,
+                    start_second=scene_desc.start,
+                    end_second=scene_desc.end,
+                    top_k=3,
+                )
+                scene_desc.detected_actions = actions
 
         return video_description

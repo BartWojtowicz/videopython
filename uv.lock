@@ -733,6 +733,18 @@ wheels = [
 ]
 
 [[package]]
+name = "ffmpeg-python"
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "future" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/dd/5e/d5f9105d59c1325759d838af4e973695081fbbc97182baf73afc78dec266/ffmpeg-python-0.2.0.tar.gz", hash = "sha256:65225db34627c578ef0e11c8b1eb528bb35e024752f6f10b78c011f6f64c4127", size = 21543, upload-time = "2019-07-06T00:19:08.989Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d7/0c/56be52741f75bad4dc6555991fabd2e07b432d333da82c11ad701123888a/ffmpeg_python-0.2.0-py3-none-any.whl", hash = "sha256:ac441a0404e053f8b6a1113a77c0f452f1cfc62f6344a769475ffdc0f56c23c5", size = 25024, upload-time = "2019-07-06T00:19:07.215Z" },
+]
+
+[[package]]
 name = "filelock"
 version = "3.20.3"
 source = { registry = "https://pypi.org/simple" }
@@ -851,6 +863,15 @@ wheels = [
 [package.optional-dependencies]
 http = [
     { name = "aiohttp" },
+]
+
+[[package]]
+name = "future"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a7/b2/4140c69c6a66432916b26158687e821ba631a4c9273c474343badf84d3ba/future-1.0.0.tar.gz", hash = "sha256:bd2968309307861edae1458a4f8a4f3598c03be43b97521076aebf5d94c07b05", size = 1228490, upload-time = "2024-02-21T11:52:38.461Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/da/71/ae30dadffc90b9006d77af76b393cb9dfbfc9629f339fc1574a1c52e6806/future-1.0.0-py3-none-any.whl", hash = "sha256:929292d34f5872e70396626ef385ec22355a1fae8ad29e1a734c3e43f9fbc216", size = 491326, upload-time = "2024-02-21T11:52:35.956Z" },
 ]
 
 [[package]]
@@ -4243,6 +4264,24 @@ wheels = [
 ]
 
 [[package]]
+name = "transnetv2-pytorch"
+version = "1.0.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "ffmpeg-python" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "pandas" },
+    { name = "pillow" },
+    { name = "torch" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ea/3b/ae96f6c8d60a66cddce6b2994a3f35f38bc04dbdbfe0bfa8939d7d11543e/transnetv2_pytorch-1.0.5.tar.gz", hash = "sha256:72af739d55481e68782b096349cbf8e3ee76b09f1b676ebacd06aebd11eeda90", size = 32720839, upload-time = "2025-06-01T11:19:52.16Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/85/be/bb14f9015d357c9dff395a065bd658d1f7a199eb1f8d3abb9f4792416f11/transnetv2_pytorch-1.0.5-py3-none-any.whl", hash = "sha256:9f8e72085526aaa95383d219b6750b1fa45b865fd10d840cafa12ef78ab3bf27", size = 32720474, upload-time = "2025-06-01T11:19:47.257Z" },
+]
+
+[[package]]
 name = "triton"
 version = "3.5.1"
 source = { registry = "https://pypi.org/simple" }
@@ -4392,7 +4431,7 @@ wheels = [
 
 [[package]]
 name = "videopython"
-version = "0.12.0"
+version = "0.13.0"
 source = { editable = "." }
 dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -4424,6 +4463,7 @@ ai = [
     { name = "scipy", version = "1.16.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "torch" },
     { name = "transformers" },
+    { name = "transnetv2-pytorch" },
     { name = "ultralytics" },
     { name = "whisperx" },
 ]
@@ -4458,6 +4498,7 @@ ai = [
     { name = "scipy", version = "1.16.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "torch" },
     { name = "transformers" },
+    { name = "transnetv2-pytorch" },
     { name = "ultralytics" },
     { name = "whisperx" },
 ]
@@ -4502,6 +4543,7 @@ requires-dist = [
     { name = "torch", marker = "extra == 'ai'", specifier = ">=2.1.0" },
     { name = "tqdm", specifier = ">=4.66.3" },
     { name = "transformers", marker = "extra == 'ai'", specifier = ">=4.38.1" },
+    { name = "transnetv2-pytorch", marker = "extra == 'ai'", specifier = ">=1.0.5" },
     { name = "types-pillow", marker = "extra == 'dev'", specifier = ">=10.2.0.20240213" },
     { name = "types-tqdm", marker = "extra == 'dev'", specifier = ">=4.66.0.20240106" },
     { name = "ultralytics", marker = "extra == 'ai'", specifier = ">=8.0.0" },
@@ -4529,6 +4571,7 @@ ai = [
     { name = "scipy", specifier = ">=1.10.0" },
     { name = "torch", specifier = ">=2.1.0" },
     { name = "transformers", specifier = ">=4.38.1" },
+    { name = "transnetv2-pytorch", specifier = ">=1.0.5" },
     { name = "ultralytics", specifier = ">=8.0.0" },
     { name = "whisperx", specifier = ">=3.4.2" },
 ]

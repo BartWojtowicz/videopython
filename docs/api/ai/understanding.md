@@ -16,6 +16,8 @@ Analyze videos, transcribe audio, and describe visual content.
 | ShotTypeClassifier | - | GPT-4o | Gemini | - |
 | CameraMotionDetector | OpenCV | - | - | - |
 | MotionAnalyzer | OpenCV | - | - | - |
+| ActionRecognizer | VideoMAE | - | - | - |
+| SemanticSceneDetector | TransNetV2 | - | - | - |
 
 ## AudioToText
 
@@ -172,6 +174,73 @@ for scene in result.scene_descriptions:
 
 ::: videopython.ai.MotionAnalyzer
 
+### ActionRecognizer
+
+Recognize actions and activities in video clips using VideoMAE, a masked autoencoder fine-tuned on Kinetics-400 (400 action classes like "walking", "running", "dancing", "answering questions").
+
+```python
+from videopython.ai import ActionRecognizer
+
+recognizer = ActionRecognizer(model_size="base", confidence_threshold=0.1)
+
+# Recognize actions in entire video
+actions = recognizer.recognize_path("video.mp4", top_k=5)
+for action in actions:
+    print(f"{action.label}: {action.confidence:.1%}")
+
+# Output: answering questions: 37.2%
+#         using computer: 12.2%
+```
+
+With VideoAnalyzer:
+
+```python
+from videopython.ai import VideoAnalyzer
+
+analyzer = VideoAnalyzer()
+result = analyzer.analyze_path(
+    "video.mp4",
+    recognize_actions=True,
+    action_confidence_threshold=0.1,
+)
+
+for scene in result.scene_descriptions:
+    print(f"Scene {scene.start:.1f}s - {scene.end:.1f}s:")
+    if scene.detected_actions:
+        for action in scene.detected_actions:
+            print(f"  {action.label}: {action.confidence:.1%}")
+```
+
+::: videopython.ai.ActionRecognizer
+
+### SemanticSceneDetector
+
+ML-based scene boundary detection using TransNetV2. More accurate than histogram-based detection, especially for gradual transitions like fades and dissolves.
+
+```python
+from videopython.ai import SemanticSceneDetector
+
+detector = SemanticSceneDetector(threshold=0.5, min_scene_length=1.0)
+scenes = detector.detect_streaming("video.mp4")
+
+for scene in scenes:
+    print(f"Scene: {scene.start:.1f}s - {scene.end:.1f}s ({scene.duration:.1f}s)")
+```
+
+With VideoAnalyzer (use `use_semantic_scenes=True`):
+
+```python
+from videopython.ai import VideoAnalyzer
+
+# Use ML-based scene detection instead of histogram-based
+analyzer = VideoAnalyzer(use_semantic_scenes=True)
+result = analyzer.analyze_path("video.mp4")
+
+print(f"Detected {result.num_scenes} scenes")
+```
+
+::: videopython.ai.SemanticSceneDetector
+
 ### CombinedFrameAnalyzer
 
 ::: videopython.ai.CombinedFrameAnalyzer
@@ -211,3 +280,7 @@ These classes are used by `SceneDetector` and `VideoAnalyzer` to represent analy
 ### MotionInfo
 
 ::: videopython.base.MotionInfo
+
+### DetectedAction
+
+::: videopython.base.DetectedAction

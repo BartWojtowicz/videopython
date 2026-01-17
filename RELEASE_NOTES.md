@@ -1,5 +1,43 @@
 # Release Notes
 
+## 0.13.0
+
+### New Features
+
+- **ActionRecognizer**: Recognize actions and activities in video clips
+  - Uses VideoMAE model fine-tuned on Kinetics-400 (400 action classes)
+  - Supports both "base" and "large" model variants
+  - Per-scene action recognition via `recognize_scenes()`
+  - Memory-efficient `recognize_path()` for file-based analysis
+  - Example actions: "walking", "running", "dancing", "answering questions", "using computer"
+
+- **SemanticSceneDetector**: ML-based scene boundary detection using TransNetV2
+  - More accurate than histogram-based detection, especially for gradual transitions
+  - Uses pretrained weights from `transnetv2-pytorch` package
+  - Competitive F1 scores: 77.9 (ClipShots), 96.2 (BBC Planet Earth), 93.9 (RAI)
+
+- **VideoAnalyzer enhancements**:
+  - New `use_semantic_scenes` parameter to use ML-based scene detection
+  - New `recognize_actions` parameter to enable action recognition per scene
+  - New `action_confidence_threshold` parameter (default: 0.1)
+
+- **MPS (Apple Silicon) support**: Automatic device detection for CUDA, MPS, and CPU
+  - ActionRecognizer and SemanticSceneDetector work on Apple Silicon Macs
+
+### New Data Structures
+
+- **DetectedAction**: Action detected in a video segment
+  - `label`: Action name (e.g., "running", "talking")
+  - `confidence`: Detection confidence (0-1)
+  - `start_frame`, `end_frame`: Frame range
+  - `start_time`, `end_time`: Time range in seconds
+
+- **SceneDescription**: Added `detected_actions` field for per-scene actions
+
+### Dependencies
+
+- Added `transnetv2-pytorch>=1.0.5` to AI optional dependencies
+
 ## 0.12.0
 
 ### Breaking Changes
