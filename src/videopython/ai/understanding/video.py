@@ -539,7 +539,7 @@ class VideoAnalyzer:
             from videopython.ai.understanding.audio import AudioToText
             from videopython.base.audio import Audio
 
-            audio = Audio.from_file(str(path))
+            audio = Audio.from_path(str(path))
             transcriber = AudioToText(model_name=transcription_model)
             transcription = transcriber.transcribe(audio)
 
@@ -556,7 +556,7 @@ class VideoAnalyzer:
             from videopython.ai.understanding.audio import AudioClassifier
             from videopython.base.audio import Audio
 
-            audio = Audio.from_file(str(path))
+            audio = Audio.from_path(str(path))
             classifier = AudioClassifier(confidence_threshold=audio_classifier_threshold)
             audio_classification = classifier.classify(audio)
             _distribute_audio_events(scene_descriptions, audio_classification)

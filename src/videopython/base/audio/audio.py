@@ -846,7 +846,7 @@ class Audio:
             AudioLevels with RMS, peak, and dB measurements
 
         Example:
-            >>> audio = Audio.from_file("audio.mp3")
+            >>> audio = Audio.from_path("audio.mp3")
             >>> levels = audio.get_levels()
             >>> print(f"Peak: {levels.db_peak:.1f} dB")
         """

@@ -18,7 +18,7 @@ TEST_DATA_DIR: Path = TEST_ROOT_DIR / "test_data"
 def test_mono_mp3_metadata():
     """Test loading a mono MP3 file and verify its metadata"""
     # Load the test file
-    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+    audio = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
 
     # Check metadata values
     assert audio.metadata.sample_rate == MONO_SAMPLE_RATE, "Sample rate should be 22.05kHz"
@@ -41,12 +41,12 @@ def test_mono_mp3_metadata():
 def test_file_not_found():
     """Test that appropriate error is raised for missing files"""
     with pytest.raises(FileNotFoundError):
-        Audio.from_file("nonexistent.mp3")
+        Audio.from_path("nonexistent.mp3")
 
 
 def test_get_channel_mono():
     """Test that get_channel on mono audio returns the same audio"""
-    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+    audio = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
     channel = audio.get_channel(0)
 
     # Should be the same data
@@ -56,7 +56,7 @@ def test_get_channel_mono():
 
 def test_to_mono_on_mono():
     """Test that to_mono on mono audio returns the same audio"""
-    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+    audio = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
     mono = audio.to_mono()
 
     # Should be the same data
@@ -66,7 +66,7 @@ def test_to_mono_on_mono():
 
 def test_audio_representation():
     """Test the string representation of the Audio object"""
-    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+    audio = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
     repr_str = repr(audio)
 
     assert "44100Hz" in repr_str, "Sample rate should be in string representation"
@@ -76,14 +76,14 @@ def test_audio_representation():
 
 def test_length():
     """Test the __len__ method returns correct frame count"""
-    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+    audio = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
     assert len(audio) == audio.metadata.frame_count
 
 
 def test_stereo_mp3_metadata():
     """Test loading a stereo MP3 file and verify its metadata"""
     # Load the test file
-    audio = Audio.from_file(TEST_DATA_DIR / "test_stereo.mp3")
+    audio = Audio.from_path(TEST_DATA_DIR / "test_stereo.mp3")
 
     # Check metadata values
     assert audio.metadata.sample_rate == STEREO_SAMPLE_RATE, "Sample rate should be 44.1kHz"
@@ -106,7 +106,7 @@ def test_stereo_mp3_metadata():
 
 def test_stereo_channel_separation():
     """Test that stereo channels can be correctly separated"""
-    audio = Audio.from_file(TEST_DATA_DIR / "test_stereo.mp3")
+    audio = Audio.from_path(TEST_DATA_DIR / "test_stereo.mp3")
 
     # Get individual channels
     left = audio.get_channel(0)
@@ -127,7 +127,7 @@ def test_stereo_channel_separation():
 
 def test_stereo_to_mono_conversion():
     """Test converting stereo to mono"""
-    audio = Audio.from_file(TEST_DATA_DIR / "test_stereo.mp3")
+    audio = Audio.from_path(TEST_DATA_DIR / "test_stereo.mp3")
     mono = audio.to_mono()
 
     # Check that output is mono
@@ -190,7 +190,7 @@ def assert_audios_equal(audio1, audio2, check_data=True, is_lossy=False):
 # Fix 1: Update test_save_and_load_mono
 def test_save_and_load_mono():
     """Test saving and loading mono audio preserves the data"""
-    original = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+    original = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
 
     with (
         tempfile.NamedTemporaryFile(suffix=".wav") as temp_wav,
@@ -198,18 +198,18 @@ def test_save_and_load_mono():
     ):
         # Test WAV format
         original.save(temp_wav.name)
-        loaded_wav = Audio.from_file(temp_wav.name)
+        loaded_wav = Audio.from_path(temp_wav.name)
         assert_audios_equal(original, loaded_wav)
 
         # Test MP3 format - note is_lossy=True here
         original.save(temp_mp3.name)
-        loaded_mp3 = Audio.from_file(temp_mp3.name)
+        loaded_mp3 = Audio.from_path(temp_mp3.name)
         assert_audios_equal(original, loaded_mp3, is_lossy=True)
 
 
 def test_save_and_load_stereo():
     """Test saving and loading stereo audio preserves the data"""
-    original = Audio.from_file(TEST_DATA_DIR / "test_stereo.mp3")
+    original = Audio.from_path(TEST_DATA_DIR / "test_stereo.mp3")
 
     with (
         tempfile.NamedTemporaryFile(suffix=".wav") as temp_wav,
@@ -217,18 +217,18 @@ def test_save_and_load_stereo():
     ):
         # Test WAV format (lossless)
         original.save(temp_wav.name)
-        loaded_wav = Audio.from_file(temp_wav.name)
+        loaded_wav = Audio.from_path(temp_wav.name)
         assert_audios_equal(original, loaded_wav, is_lossy=False)
 
         # Test MP3 format (lossy)
         original.save(temp_mp3.name)
-        loaded_mp3 = Audio.from_file(temp_mp3.name)
+        loaded_mp3 = Audio.from_path(temp_mp3.name)
         assert_audios_equal(original, loaded_mp3, is_lossy=True)
 
 
 def test_save_invalid_format():
     """Test that saving with invalid format raises error"""
-    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+    audio = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
 
     with tempfile.NamedTemporaryFile(suffix=".xyz") as temp_file:
         with pytest.raises(ValueError):
@@ -238,8 +238,8 @@ def test_save_invalid_format():
 def test_concat_mono():
     """Test concatenating two mono audio files"""
     # Load same file twice for testing
-    audio1 = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
-    audio2 = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+    audio1 = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
+    audio2 = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
 
     # Concatenate
     result = audio1.concat(audio2)
@@ -262,8 +262,8 @@ def test_concat_mono():
 def test_concat_stereo():
     """Test concatenating two stereo audio files"""
     # Load same file twice for testing
-    audio1 = Audio.from_file(TEST_DATA_DIR / "test_stereo.mp3")
-    audio2 = Audio.from_file(TEST_DATA_DIR / "test_stereo.mp3")
+    audio1 = Audio.from_path(TEST_DATA_DIR / "test_stereo.mp3")
+    audio2 = Audio.from_path(TEST_DATA_DIR / "test_stereo.mp3")
 
     # Concatenate
     result = audio1.concat(audio2)
@@ -285,7 +285,7 @@ def test_concat_stereo():
 
 def test_concat_invalid():
     """Test concatenating incompatible audio files"""
-    mono = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+    mono = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
 
     # Create audio with different sample rate for testing
     different_rate = Audio(
@@ -307,7 +307,7 @@ def test_concat_invalid():
 def test_slice():
     """Test slicing audio by time"""
     # Load test file
-    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+    audio = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
 
     # Test slicing the middle portion
     start_time = 0.5
@@ -345,7 +345,7 @@ def test_slice():
 
 def test_slice_stereo():
     """Test slicing stereo audio"""
-    audio = Audio.from_file(TEST_DATA_DIR / "test_stereo.mp3")
+    audio = Audio.from_path(TEST_DATA_DIR / "test_stereo.mp3")
 
     # Slice a portion
     sliced = audio.slice(0.5, 1.5)
@@ -438,8 +438,8 @@ def test_create_silent_invalid_params():
 def test_concat_with_crossfade_mono():
     """Test concatenating two mono audio files with crossfade"""
     # Load same file twice for testing
-    audio1 = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
-    audio2 = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+    audio1 = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
+    audio2 = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
 
     # Test with 0.5 second crossfade
     crossfade_duration = 0.5
@@ -474,8 +474,8 @@ def test_concat_with_crossfade_mono():
 def test_concat_with_crossfade_stereo():
     """Test concatenating two stereo audio files with crossfade"""
     # Load same file twice for testing
-    audio1 = Audio.from_file(TEST_DATA_DIR / "test_stereo.mp3")
-    audio2 = Audio.from_file(TEST_DATA_DIR / "test_stereo.mp3")
+    audio1 = Audio.from_path(TEST_DATA_DIR / "test_stereo.mp3")
+    audio2 = Audio.from_path(TEST_DATA_DIR / "test_stereo.mp3")
 
     # Test with 0.5 second crossfade
     crossfade_duration = 0.5
@@ -511,7 +511,7 @@ def test_concat_with_crossfade_stereo():
 
 def test_concat_crossfade_invalid():
     """Test concatenating with invalid crossfade parameters"""
-    mono = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+    mono = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
     # Create audio with different sample rate
     different_rate = Audio(
         mono.data,
@@ -531,8 +531,8 @@ def test_concat_crossfade_invalid():
 
 def test_concat_zero_crossfade():
     """Test that concat with zero crossfade is same as regular concat"""
-    audio1 = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
-    audio2 = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+    audio1 = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
+    audio2 = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
 
     # Get results both ways
     result_no_crossfade = audio1.concat(audio2)
@@ -545,8 +545,8 @@ def test_concat_zero_crossfade():
 def test_overlay_stereo_with_stereo():
     """Test overlaying two stereo tracks"""
     # Load test files
-    base = Audio.from_file(TEST_DATA_DIR / "test_stereo.mp3")
-    overlay = Audio.from_file(TEST_DATA_DIR / "test_stereo.mp3")
+    base = Audio.from_path(TEST_DATA_DIR / "test_stereo.mp3")
+    overlay = Audio.from_path(TEST_DATA_DIR / "test_stereo.mp3")
 
     # Test basic overlay at beginning
     result = base.overlay(overlay, position=0.0)
@@ -564,8 +564,8 @@ def test_overlay_stereo_with_stereo():
 
 def test_overlay_amplitude_scaling():
     """Test that overlaid audio is properly scaled to prevent clipping"""
-    base = Audio.from_file(TEST_DATA_DIR / "test_stereo.mp3")
-    overlay = Audio.from_file(TEST_DATA_DIR / "test_stereo.mp3")
+    base = Audio.from_path(TEST_DATA_DIR / "test_stereo.mp3")
+    overlay = Audio.from_path(TEST_DATA_DIR / "test_stereo.mp3")
 
     result = base.overlay(overlay, position=0.0)
     assert np.max(np.abs(result.data)) <= 1.0
@@ -573,8 +573,8 @@ def test_overlay_amplitude_scaling():
 
 def test_overlay_position_validation():
     """Test position parameter validation"""
-    base = Audio.from_file(TEST_DATA_DIR / "test_stereo.mp3")
-    overlay = Audio.from_file(TEST_DATA_DIR / "test_stereo.mp3")
+    base = Audio.from_path(TEST_DATA_DIR / "test_stereo.mp3")
+    overlay = Audio.from_path(TEST_DATA_DIR / "test_stereo.mp3")
 
     # Test negative position
     with pytest.raises(ValueError, match="Position cannot be negative"):
@@ -583,8 +583,8 @@ def test_overlay_position_validation():
 
 def test_overlay_end_alignment():
     """Test overlaying track near the end of base track"""
-    base = Audio.from_file(TEST_DATA_DIR / "test_stereo.mp3")
-    overlay = Audio.from_file(TEST_DATA_DIR / "test_stereo.mp3")
+    base = Audio.from_path(TEST_DATA_DIR / "test_stereo.mp3")
+    overlay = Audio.from_path(TEST_DATA_DIR / "test_stereo.mp3")
 
     # Position overlay near end of base track
     position = base.metadata.duration_seconds - 0.5  # 0.5 seconds before end
@@ -596,8 +596,8 @@ def test_overlay_end_alignment():
 
 def test_overlay_mono_with_mono():
     """Test overlaying two mono tracks"""
-    base = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
-    overlay = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+    base = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
+    overlay = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
 
     result = base.overlay(overlay, position=0.0)
     assert result.metadata.channels == 1
@@ -618,7 +618,7 @@ def test_overlay_sample_rate_mismatch():
         ),
     )
 
-    base = Audio.from_file(TEST_DATA_DIR / "test_stereo.mp3")
+    base = Audio.from_path(TEST_DATA_DIR / "test_stereo.mp3")
 
     with pytest.raises(ValueError, match="Sample rates must match"):
         base.overlay(mock_overlay, position=0.0)
@@ -626,7 +626,7 @@ def test_overlay_sample_rate_mismatch():
 
 def test_overlay_different_durations():
     """Test overlaying tracks of different durations"""
-    base = Audio.from_file(TEST_DATA_DIR / "test_stereo.mp3")
+    base = Audio.from_path(TEST_DATA_DIR / "test_stereo.mp3")
 
     # Create shorter overlay
     short_duration = 1.0  # 1 second
@@ -643,7 +643,7 @@ def test_overlay_different_durations():
 
 def test_overlay_identical_position():
     """Test overlaying the same track at the same position"""
-    base = Audio.from_file(TEST_DATA_DIR / "test_stereo.mp3")
+    base = Audio.from_path(TEST_DATA_DIR / "test_stereo.mp3")
 
     result = base.overlay(base, position=0.0)
 
@@ -660,7 +660,7 @@ def test_is_silent():
     assert silent_audio.is_silent, "Created silent audio should be detected as silent"
 
     # Test non-silent audio
-    non_silent = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+    non_silent = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
     assert not non_silent.is_silent, "Regular audio file should not be detected as silent"
 
     # Test near-zero but not quite silent audio
@@ -696,7 +696,7 @@ def test_is_silent():
 def test_to_stereo():
     """Test internal _to_stereo method"""
     # Load mono audio
-    mono = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+    mono = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
 
     # Convert to stereo
     stereo = mono._to_stereo()
@@ -710,15 +710,15 @@ def test_to_stereo():
     np.testing.assert_array_equal(stereo.data[:, 0], stereo.data[:, 1])
 
     # Test that stereo audio remains unchanged
-    original_stereo = Audio.from_file(TEST_DATA_DIR / "test_stereo.mp3")
+    original_stereo = Audio.from_path(TEST_DATA_DIR / "test_stereo.mp3")
     result = original_stereo._to_stereo()
     np.testing.assert_array_equal(original_stereo.data, result.data)
 
 
 def test_overlay_mono_with_stereo():
     """Test overlaying mono track with stereo track"""
-    mono = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
-    stereo = Audio.from_file(TEST_DATA_DIR / "test_stereo.mp3")
+    mono = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
+    stereo = Audio.from_path(TEST_DATA_DIR / "test_stereo.mp3")
 
     # Test both ways
     result1 = mono.overlay(stereo, position=0.0)
@@ -735,8 +735,8 @@ def test_overlay_mono_with_stereo():
 
 def test_concat_mono_with_stereo():
     """Test concatenating mono track with stereo track"""
-    mono = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
-    stereo = Audio.from_file(TEST_DATA_DIR / "test_stereo.mp3")
+    mono = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
+    stereo = Audio.from_path(TEST_DATA_DIR / "test_stereo.mp3")
 
     # Test both ways
     result1 = mono.concat(stereo)
@@ -758,8 +758,8 @@ def test_concat_mono_with_stereo():
 
 def test_concat_crossfade_mono_stereo():
     """Test concatenating mono and stereo tracks with crossfade"""
-    mono = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
-    stereo = Audio.from_file(TEST_DATA_DIR / "test_stereo.mp3")
+    mono = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
+    stereo = Audio.from_path(TEST_DATA_DIR / "test_stereo.mp3")
 
     # Test with crossfade
     crossfade_duration = 0.5
@@ -782,8 +782,8 @@ def test_concat_crossfade_mono_stereo():
 
 def test_overlay_position_mono_stereo():
     """Test overlaying mono on stereo at different positions"""
-    mono = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
-    stereo = Audio.from_file(TEST_DATA_DIR / "test_stereo.mp3")
+    mono = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
+    stereo = Audio.from_path(TEST_DATA_DIR / "test_stereo.mp3")
 
     # Test overlay at different positions
     positions = [0.0, 0.5, 1.0]
@@ -799,7 +799,7 @@ def test_overlay_position_mono_stereo():
 
 def test_resample_mono():
     """Test resampling mono audio"""
-    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+    audio = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
 
     # Resample to 16kHz
     resampled = audio.resample(NEW_SAMPLE_RATE)
@@ -817,7 +817,7 @@ def test_resample_mono():
 
 def test_resample_stereo():
     """Test resampling stereo audio"""
-    audio = Audio.from_file(TEST_DATA_DIR / "test_stereo.mp3")
+    audio = Audio.from_path(TEST_DATA_DIR / "test_stereo.mp3")
 
     # Resample to 16kHz
     resampled = audio.resample(NEW_SAMPLE_RATE)
@@ -876,7 +876,7 @@ def test_get_levels_full_scale_sine():
 
 def test_get_levels_partial():
     """Test level calculation on a portion of the audio"""
-    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+    audio = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
 
     full_levels = audio.get_levels()
     partial_levels = audio.get_levels(start_seconds=0.0, end_seconds=0.5)
@@ -888,7 +888,7 @@ def test_get_levels_partial():
 
 def test_get_levels_over_time():
     """Test sliding window level analysis"""
-    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+    audio = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
 
     levels_over_time = audio.get_levels_over_time(window_seconds=0.1)
 
@@ -949,7 +949,7 @@ def test_detect_silence_with_gaps():
 
 def test_detect_silence_no_silence():
     """Test silence detection on continuous audio"""
-    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+    audio = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
 
     # Use a very low threshold to ensure nothing is detected as silent
     silent_segments = audio.detect_silence(threshold_db=-100.0, min_duration=0.5)
@@ -1008,7 +1008,7 @@ def test_classify_segments_synthetic_noise():
 
 def test_classify_segments_returns_valid_structure():
     """Test that classify_segments returns valid AudioSegment objects"""
-    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+    audio = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
 
     # Only classify if audio is long enough
     if audio.metadata.duration_seconds >= 2.0:
@@ -1090,7 +1090,7 @@ def test_normalize_silent_audio():
 
 def test_normalize_invalid_method():
     """Test that invalid normalization method raises error"""
-    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+    audio = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
 
     with pytest.raises(ValueError, match="Unknown method"):
         audio.normalize(method="invalid")
@@ -1103,7 +1103,7 @@ def test_normalize_invalid_method():
 
 def test_scale_volume_double():
     """Test doubling volume"""
-    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+    audio = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
 
     # Scale to double volume
     scaled = audio.scale_volume(2.0)
@@ -1124,7 +1124,7 @@ def test_scale_volume_double():
 
 def test_scale_volume_half():
     """Test halving volume"""
-    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+    audio = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
 
     # Scale to half volume
     scaled = audio.scale_volume(0.5)
@@ -1135,7 +1135,7 @@ def test_scale_volume_half():
 
 def test_scale_volume_zero():
     """Test scaling to zero volume (silence)"""
-    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+    audio = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
 
     # Scale to zero
     scaled = audio.scale_volume(0.0)
@@ -1146,7 +1146,7 @@ def test_scale_volume_zero():
 
 def test_scale_volume_negative_raises():
     """Test that negative factor raises error"""
-    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+    audio = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
 
     with pytest.raises(ValueError, match="non-negative"):
         audio.scale_volume(-1.0)
@@ -1154,7 +1154,7 @@ def test_scale_volume_negative_raises():
 
 def test_scale_volume_stereo():
     """Test scaling stereo audio"""
-    audio = Audio.from_file(TEST_DATA_DIR / "test_stereo.mp3")
+    audio = Audio.from_path(TEST_DATA_DIR / "test_stereo.mp3")
 
     scaled = audio.scale_volume(0.5)
 
@@ -1170,7 +1170,7 @@ def test_scale_volume_stereo():
 
 def test_time_stretch_2x():
     """Test time stretching at 2x speed (half duration)"""
-    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+    audio = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
 
     # Speed up 2x
     stretched = audio.time_stretch(2.0)
@@ -1186,7 +1186,7 @@ def test_time_stretch_2x():
 
 def test_time_stretch_half():
     """Test time stretching at 0.5x speed (double duration)"""
-    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+    audio = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
 
     # Slow down to 0.5x
     stretched = audio.time_stretch(0.5)
@@ -1198,7 +1198,7 @@ def test_time_stretch_half():
 
 def test_time_stretch_no_change():
     """Test time stretching at 1.0x (no change)"""
-    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+    audio = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
 
     # No speed change
     stretched = audio.time_stretch(1.0)
@@ -1209,7 +1209,7 @@ def test_time_stretch_no_change():
 
 def test_time_stretch_extreme_4x():
     """Test time stretching at 4x speed (requires chained atempo)"""
-    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+    audio = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
 
     # Speed up 4x (requires chaining atempo=2.0,atempo=2.0)
     stretched = audio.time_stretch(4.0)
@@ -1221,7 +1221,7 @@ def test_time_stretch_extreme_4x():
 
 def test_time_stretch_extreme_quarter():
     """Test time stretching at 0.25x speed (requires chained atempo)"""
-    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+    audio = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
 
     # Slow down to 0.25x (requires chaining atempo=0.5,atempo=0.5)
     stretched = audio.time_stretch(0.25)
@@ -1233,7 +1233,7 @@ def test_time_stretch_extreme_quarter():
 
 def test_time_stretch_stereo():
     """Test time stretching stereo audio"""
-    audio = Audio.from_file(TEST_DATA_DIR / "test_stereo.mp3")
+    audio = Audio.from_path(TEST_DATA_DIR / "test_stereo.mp3")
 
     stretched = audio.time_stretch(2.0)
 
@@ -1247,7 +1247,7 @@ def test_time_stretch_stereo():
 
 def test_time_stretch_invalid_speed():
     """Test that invalid speed raises error"""
-    audio = Audio.from_file(TEST_DATA_DIR / "test_mono.mp3")
+    audio = Audio.from_path(TEST_DATA_DIR / "test_mono.mp3")
 
     with pytest.raises(ValueError, match="positive"):
         audio.time_stretch(0.0)
