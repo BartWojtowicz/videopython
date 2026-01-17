@@ -11,6 +11,9 @@ from tqdm import tqdm
 
 from videopython.base.video import Video
 
+# Minimum frames before using multiprocessing (Pool overhead isn't worth it below this)
+MIN_FRAMES_FOR_MULTIPROCESSING = 100
+
 if TYPE_CHECKING:
     from videopython.base.audio import Audio
 
@@ -133,11 +136,17 @@ class Resize(Transformation):
             new_height = self.height
 
         print(f"Resizing video to: {new_width}x{new_height}!")
-        with Pool() as pool:
-            frames_copy = pool.starmap(
-                self._resize_frame,
-                [(frame, new_width, new_height) for frame in video.frames],
-            )
+        n_frames = len(video.frames)
+
+        if n_frames >= MIN_FRAMES_FOR_MULTIPROCESSING:
+            with Pool() as pool:
+                frames_copy = pool.starmap(
+                    self._resize_frame,
+                    [(frame, new_width, new_height) for frame in video.frames],
+                )
+        else:
+            frames_copy = [self._resize_frame(frame, new_width, new_height) for frame in video.frames]
+
         video.frames = np.array(frames_copy)
         return video
 
@@ -355,28 +364,12 @@ class SpeedChange(Transformation):
                 video.audio = video.audio.time_stretch(effective_speed)
 
             # Ensure audio duration matches video duration
-            video.audio = self._adjust_audio_duration(video.audio, target_duration)
+            video.audio = video.audio.fit_to_duration(target_duration)
         elif video.audio is not None:
             # Silent audio - just adjust duration
-            video.audio = self._adjust_audio_duration(video.audio, target_duration)
+            video.audio = video.audio.fit_to_duration(target_duration)
 
         return video
-
-    def _adjust_audio_duration(self, audio: "Audio", target_duration: float) -> "Audio":
-        """Adjust audio duration to match target, slicing or padding as needed."""
-        from videopython.base.audio import Audio
-
-        if audio.metadata.duration_seconds > target_duration:
-            return audio.slice(0, target_duration)
-        elif audio.metadata.duration_seconds < target_duration:
-            silence = Audio.create_silent(
-                target_duration - audio.metadata.duration_seconds,
-                stereo=audio.metadata.channels == 2,
-                sample_rate=audio.metadata.sample_rate,
-                sample_width=audio.metadata.sample_width,
-            )
-            return audio.concat(silence)
-        return audio
 
 
 class PictureInPicture(Transformation):
@@ -577,7 +570,7 @@ class PictureInPicture(Transformation):
 
         if self.audio_mode == "main":
             # Keep main video audio (current behavior)
-            return self._adjust_audio_duration(main_audio, target_duration)
+            return main_audio.fit_to_duration(target_duration)
 
         elif self.audio_mode == "overlay":
             # Use only overlay video audio (looped if necessary)
@@ -595,22 +588,6 @@ class PictureInPicture(Transformation):
 
             # Mix using overlay at position 0
             return scaled_main.overlay(scaled_overlay, position=0.0)
-
-    def _adjust_audio_duration(self, audio: "Audio", target_duration: float) -> "Audio":
-        """Adjust audio duration to match target, slicing or padding as needed."""
-        from videopython.base.audio import Audio
-
-        if audio.metadata.duration_seconds > target_duration:
-            return audio.slice(0, target_duration)
-        elif audio.metadata.duration_seconds < target_duration:
-            silence = Audio.create_silent(
-                target_duration - audio.metadata.duration_seconds,
-                stereo=audio.metadata.channels == 2,
-                sample_rate=audio.metadata.sample_rate,
-                sample_width=audio.metadata.sample_width,
-            )
-            return audio.concat(silence)
-        return audio
 
     def _prepare_overlay_audio(self, target_duration: float) -> "Audio":
         """Prepare overlay audio, looping if shorter than target duration."""
