@@ -81,6 +81,8 @@ Cloud backends require API keys: `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `ELEVENLABS
 | ShotTypeClassifier | - | GPT-4o | Gemini | - | - | - |
 | CameraMotionDetector | OpenCV | - | - | - | - | - |
 | MotionAnalyzer | OpenCV | - | - | - | - | - |
+| ActionRecognizer | VideoMAE | - | - | - | - | - |
+| SemanticSceneDetector | TransNetV2 | - | - | - | - | - |
 
 ## Development
 

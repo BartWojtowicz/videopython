@@ -17,6 +17,7 @@ __all__ = [
     "AudioEvent",
     "AudioClassification",
     "MotionInfo",
+    "DetectedAction",
 ]
 
 
@@ -173,6 +174,34 @@ class MotionInfo:
 
 
 @dataclass
+class DetectedAction:
+    """An action/activity detected in a video segment.
+
+    Attributes:
+        label: Name of the detected action (e.g., "walking", "running", "dancing")
+        confidence: Detection confidence score between 0 and 1
+        start_frame: Start frame index of the action
+        end_frame: End frame index of the action (exclusive)
+        start_time: Start time in seconds
+        end_time: End time in seconds
+    """
+
+    label: str
+    confidence: float
+    start_frame: int | None = None
+    end_frame: int | None = None
+    start_time: float | None = None
+    end_time: float | None = None
+
+    @property
+    def duration(self) -> float | None:
+        """Duration of the action in seconds."""
+        if self.start_time is not None and self.end_time is not None:
+            return self.end_time - self.start_time
+        return None
+
+
+@dataclass
 class FrameDescription:
     """Represents a description of a video frame.
 
@@ -236,6 +265,7 @@ class SceneDescription:
     audio_events: list[AudioEvent] | None = None
     avg_motion_magnitude: float | None = None
     dominant_motion_type: str | None = None
+    detected_actions: list[DetectedAction] | None = None
 
     @property
     def duration(self) -> float:

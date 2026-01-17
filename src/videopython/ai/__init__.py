@@ -10,6 +10,7 @@ from .exceptions import (
 from .generation import ImageToVideo, TextToImage, TextToMusic, TextToSpeech, TextToVideo
 from .transforms import AutoFramingCrop, FaceTracker, FaceTrackingCrop, SplitScreenComposite
 from .understanding import (
+    ActionRecognizer,
     AudioClassifier,
     AudioToText,
     CameraMotionDetector,
@@ -19,6 +20,7 @@ from .understanding import (
     LLMSummarizer,
     MotionAnalyzer,
     ObjectDetector,
+    SemanticSceneDetector,
     ShotTypeClassifier,
     TextDetector,
     VideoAnalyzer,
@@ -54,6 +56,9 @@ __all__ = [
     "CombinedFrameAnalyzer",
     # Motion
     "MotionAnalyzer",
+    # Temporal
+    "ActionRecognizer",
+    "SemanticSceneDetector",
     # Transforms (AI-powered)
     "FaceTracker",
     "FaceTrackingCrop",
