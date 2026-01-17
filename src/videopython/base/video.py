@@ -11,7 +11,8 @@ from typing import TYPE_CHECKING, Generator, Literal, get_args
 
 import numpy as np
 
-from videopython.base.audio import Audio, AudioLoadError
+from videopython.base.audio import Audio
+from videopython.base.exceptions import AudioLoadError, VideoLoadError, VideoMetadataError
 from videopython.base.utils import generate_random_name
 
 if TYPE_CHECKING:
@@ -34,12 +35,6 @@ ALLOWED_VIDEO_PRESETS = Literal[
 # Used to pre-allocate frame array with safety margin for frame rate variations
 FRAME_BUFFER_MULTIPLIER = 1.1  # 10% buffer for frame rate estimation errors
 FRAME_BUFFER_PADDING = 10  # Additional fixed frame padding
-
-
-class VideoMetadataError(Exception):
-    """Raised when there's an error getting video metadata"""
-
-    pass
 
 
 @dataclass
@@ -124,8 +119,8 @@ class VideoMetadata:
 
         except KeyError as e:
             raise VideoMetadataError(f"Missing required metadata field: {e}")
-        except Exception as e:
-            raise VideoMetadataError(f"Error extracting video metadata: {e}")
+        except (TypeError, IndexError) as e:
+            raise VideoMetadataError(f"Invalid metadata structure: {e}")
 
     @classmethod
     def from_video(cls, video: Video) -> VideoMetadata:
@@ -743,12 +738,12 @@ class Video:
 
             return cls(frames=frames, fps=fps, audio=audio)
 
-        except VideoMetadataError as e:
-            raise ValueError(f"Error getting video metadata: {e}")
+        except VideoMetadataError:
+            raise
         except subprocess.CalledProcessError as e:
-            raise ValueError(f"Error processing video file: {e}")
-        except Exception as e:
-            raise ValueError(f"Error loading video: {e}")
+            raise VideoLoadError(f"FFmpeg failed: {e}")
+        except (OSError, IOError) as e:
+            raise VideoLoadError(f"I/O error: {e}")
 
     @classmethod
     def from_frames(cls, frames: np.ndarray, fps: float) -> Video:

@@ -783,8 +783,8 @@ class ImageText:
             # Find the smallest rectangle containing text
             try:
                 xmin, xmax, ymin, ymax = self._find_smallest_bounding_rect(text_mask)
-            except Exception:
-                # If bounding rectangle calculation fails, use the whole box
+            except ValueError:
+                # _find_smallest_bounding_rect raises ValueError for empty mask
                 xmin, xmax, ymin, ymax = 0, box_slice.shape[1] - 1, 0, box_slice.shape[0] - 1
 
             # Get global bounding box position

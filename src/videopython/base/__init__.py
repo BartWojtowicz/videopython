@@ -11,6 +11,19 @@ from .description import (
     VideoDescription,
 )
 from .effects import Blur, ColorGrading, Effect, FullImageOverlay, KenBurns, Vignette, Zoom
+from .exceptions import (
+    AudioError,
+    AudioLoadError,
+    IncompatibleVideoError,
+    InsufficientDurationError,
+    OutOfBoundsError,
+    TextRenderError,
+    TransformError,
+    VideoError,
+    VideoLoadError,
+    VideoMetadataError,
+    VideoPythonError,
+)
 from .scene import SceneDetector
 from .text import (
     AnchorPoint,
@@ -43,6 +56,18 @@ __all__ = [
     # Audio
     "Audio",
     "AudioMetadata",
+    # Exceptions
+    "VideoPythonError",
+    "VideoError",
+    "VideoLoadError",
+    "VideoMetadataError",
+    "AudioError",
+    "AudioLoadError",
+    "TransformError",
+    "InsufficientDurationError",
+    "IncompatibleVideoError",
+    "TextRenderError",
+    "OutOfBoundsError",
     # Transforms
     "Transformation",
     "CutFrames",

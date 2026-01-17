@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from videopython.base.exceptions import AudioLoadError
+
 if TYPE_CHECKING:
     from videopython.base.audio.analysis import AudioLevels, AudioSegment, AudioSegmentType, SilentSegment
 
@@ -28,12 +30,6 @@ class AudioMetadata:
     def bits_per_sample(self) -> int:
         """Returns the number of bits per sample"""
         return self.sample_width * 8
-
-
-class AudioLoadError(Exception):
-    """Raised when there's an error loading audio"""
-
-    pass
 
 
 class Audio:
