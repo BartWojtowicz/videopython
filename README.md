@@ -83,6 +83,38 @@ Cloud backends require API keys: `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `ELEVENLABS
 | MotionAnalyzer | OpenCV | - | - | - | - | - |
 | ActionRecognizer | VideoMAE | - | - | - | - | - |
 | SemanticSceneDetector | TransNetV2 | - | - | - | - | - |
+| VideoDubber | Local Pipeline | - | - | Dubbing API | - | - |
+| TextTranslator | Helsinki-NLP | GPT-4o | Gemini | - | - | - |
+| AudioSeparator | Demucs | - | - | - | - | - |
+
+## Video Dubbing
+
+Translate and re-voice videos while preserving speaker characteristics:
+
+```python
+from videopython.ai.dubbing import VideoDubber
+from videopython.base.video import Video
+
+# Load video
+video = Video.from_path("video.mp4")
+
+# ElevenLabs cloud dubbing (end-to-end solution)
+dubber = VideoDubber(backend="elevenlabs")
+dubbed_video = dubber.dub_and_replace(video, target_lang="es")
+
+# Local pipeline with voice cloning
+dubber = VideoDubber(backend="local")
+result = dubber.dub(
+    video,
+    target_lang="es",
+    preserve_background=True,  # Keep music/sfx
+    voice_clone=True,          # Clone original voices with XTTS
+)
+dubbed_video = video.add_audio(result.dubbed_audio, overlay=False)
+dubbed_video.save("dubbed_video.mp4")
+```
+
+Supported languages: English, Spanish, French, German, Italian, Portuguese, Chinese, Japanese, Korean, and 20+ more.
 
 ## Development
 
