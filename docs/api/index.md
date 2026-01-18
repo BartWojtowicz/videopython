@@ -20,6 +20,7 @@ AI-powered generation and understanding (requires `[ai]` extra):
 
 - [**Generation**](ai/generation.md) - Generate videos, images, music, and speech from text
 - [**Understanding**](ai/understanding.md) - Transcribe audio, describe images, detect scenes
+- [**Dubbing**](ai/dubbing.md) - Dub videos into different languages or revoice with custom text
 
 ## Import Patterns
 
@@ -44,5 +45,12 @@ from videopython.ai import (
     TextToImage,
     AudioToText,
     VideoAnalyzer,
+)
+
+# Import dubbing classes
+from videopython.ai.dubbing import (
+    VideoDubber,
+    DubbingResult,
+    RevoiceResult,
 )
 ```

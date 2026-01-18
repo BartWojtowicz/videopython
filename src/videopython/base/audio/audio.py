@@ -257,6 +257,40 @@ class Audio:
         )
         return cls.from_path(file_path)
 
+    @classmethod
+    def silence(
+        cls,
+        duration: float,
+        sample_rate: int = 44100,
+        channels: int = 2,
+    ) -> Audio:
+        """Create a silent audio track.
+
+        Args:
+            duration: Duration in seconds.
+            sample_rate: Sample rate in Hz. Default: 44100.
+            channels: Number of channels (1 for mono, 2 for stereo). Default: 2.
+
+        Returns:
+            Audio: Silent audio track with the specified parameters.
+
+        Example:
+            >>> silence = Audio.silence(duration=5.0)  # 5 seconds of silence
+            >>> silence = Audio.silence(duration=2.0, sample_rate=22050, channels=1)
+        """
+        frame_count = int(duration * sample_rate)
+        data = np.zeros((frame_count, channels), dtype=np.float32)
+
+        metadata = AudioMetadata(
+            sample_rate=sample_rate,
+            channels=channels,
+            sample_width=2,
+            duration_seconds=duration,
+            frame_count=frame_count,
+        )
+
+        return cls(data, metadata)
+
     def to_mono(self) -> Audio:
         """
         Convert stereo audio to mono by averaging channels
