@@ -454,12 +454,12 @@ class ObjectSegmenter:
             temp_video_path = Path(f.name)
 
         h, w = frames.shape[1:3]
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # type: ignore[attr-defined]
-        writer = cv2.VideoWriter(str(temp_video_path), fourcc, 30, (w, h))  # type: ignore[attr-defined]
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(str(temp_video_path), fourcc, 30, (w, h))
 
         for frame in frames:
             # Convert RGB to BGR for OpenCV
-            bgr_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)  # type: ignore[attr-defined]
+            bgr_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
             writer.write(bgr_frame)
         writer.release()
 

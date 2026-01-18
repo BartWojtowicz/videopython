@@ -1,5 +1,6 @@
 __all__ = [
     "VideoCapture",
+    "VideoWriter",
     "CascadeClassifier",
     "data",
     "dnn",
@@ -16,8 +17,10 @@ __all__ = [
     "COLOR_RGB2BGR",
     "COLOR_BGR2RGB",
     "COLOR_RGB2HSV",
+    "COLOR_HSV2RGB",
     "COLOR_BGR2GRAY",
     "COLOR_RGB2GRAY",
+    "MORPH_ELLIPSE",
     "HISTCMP_CORREL",
     "NORM_MINMAX",
     # Functions
@@ -29,9 +32,12 @@ __all__ = [
     "normalize",
     "compareHist",
     "calcOpticalFlowFarneback",
+    "VideoWriter_fourcc",
+    "getStructuringElement",
+    "dilate",
 ]
 
-from .classes import CascadeClassifier, VideoCapture, data, dnn
+from .classes import CascadeClassifier, VideoCapture, VideoWriter, data, dnn
 from .constants import (
     CAP_PROP_FPS,
     CAP_PROP_FRAME_COUNT,
@@ -39,6 +45,7 @@ from .constants import (
     CAP_PROP_FRAME_WIDTH,
     COLOR_BGR2GRAY,
     COLOR_BGR2RGB,
+    COLOR_HSV2RGB,
     COLOR_RGB2BGR,
     COLOR_RGB2GRAY,
     COLOR_RGB2HSV,
@@ -48,14 +55,18 @@ from .constants import (
     INTER_LANCZOS4,
     INTER_LINEAR,
     INTER_NEAREST,
+    MORPH_ELLIPSE,
     NORM_MINMAX,
 )
 from .functions import (
     GaussianBlur,
+    VideoWriter_fourcc,
     calcHist,
     calcOpticalFlowFarneback,
     compareHist,
     cvtColor,
+    dilate,
+    getStructuringElement,
     imwrite,
     normalize,
     resize,

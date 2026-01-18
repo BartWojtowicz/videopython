@@ -108,8 +108,8 @@ class VideoInpainter:
 
         import cv2
 
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))  # type: ignore[attr-defined]
-        dilated = cv2.dilate(mask.astype(np.uint8), kernel, iterations=1)  # type: ignore[attr-defined]
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+        dilated = cv2.dilate(mask.astype(np.uint8), kernel, iterations=1)
         return dilated.astype(bool)
 
     def _inpaint_frame_local(
