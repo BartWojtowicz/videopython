@@ -1,5 +1,28 @@
 # Release Notes
 
+## 0.14.1
+
+### New Features
+
+- **Voice Revoicing**: Replace speech with custom text using voice cloning
+  - `VideoDubber.revoice()` - Generate new speech with cloned voice
+  - `VideoDubber.revoice_and_replace()` - Convenience method returning video with new audio
+  - Extracts voice sample from original speaker automatically
+  - Preserves background audio (music, sound effects) via Demucs separation
+  - Natural pacing - speech duration matches text length
+
+- **Audio.silence()**: New class method to create silent audio tracks
+  - Configurable duration, sample rate, and channels
+  - Useful for padding audio tracks
+
+### New Data Structures
+
+- **RevoiceResult**: Result of voice replacement operation
+  - `revoiced_audio`: Final audio with new speech
+  - `text`: The text that was spoken
+  - `voice_sample`: Voice sample used for cloning
+  - `speech_duration`: Duration of generated speech
+
 ## 0.14.0
 
 ### New Features
