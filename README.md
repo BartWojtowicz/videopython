@@ -25,40 +25,33 @@ uv add videopython
 pip install videopython
 ```
 
-## Quick Example
+## Features
 
-```python
-from videopython.base import Video, FadeTransition
-from videopython.ai import TextToImage, ImageToVideo, AudioToText
-from videopython.base.text import TranscriptionOverlay
+**Core Video Processing**
+- Load, cut, resize, crop, and resample videos
+- Fluent API for chaining transformations
+- Transitions (fade, blur) and effects (zoom, vignette, ken burns)
+- Audio manipulation, mixing, and analysis
 
-# Load and transform videos using fluent API
-video1 = Video.from_path("clip1.mp4").cut(0, 5).resize(1080, 1920)
-video2 = Video.from_path("clip2.mp4").cut(0, 5).resize(1080, 1920)
+**AI Generation**
+- Text/image to video (CogVideoX, Luma, Runway)
+- Text to speech (Bark, OpenAI, ElevenLabs)
+- Text to music (MusicGen)
+- Image generation (SDXL, DALL-E)
 
-# Combine with fade transition
-video = video1.transition_to(video2, FadeTransition(effect_time_seconds=1.0))
+**AI Understanding**
+- Speech transcription and auto-subtitles (Whisper)
+- Video analysis with scene detection
+- Object, face, and text detection
+- Action recognition and motion analysis
 
-# Generate and add AI content
-def add_ai_content(video):
-    # Generate an image and animate it
-    image = TextToImage(backend="openai").generate_image("A sunset over mountains")
-    intro = ImageToVideo().generate_video(image=image, prompt="Sunset animation")
+**Video Dubbing**
+- Translate videos into 30+ languages
+- Voice cloning with XTTS or ElevenLabs
+- Replace speech with custom text (revoicing)
+- Background audio preservation with Demucs
 
-    # Transcribe and add subtitles
-    transcription = AudioToText(backend="openai").transcribe(video)
-    overlay = TranscriptionOverlay()
-    video = overlay.apply(video, transcription)
-
-    return intro + video
-
-video = add_ai_content(video)
-video.save("output.mp4")
-```
-
-## Documentation
-
-For more examples and API reference, see the [full documentation](docs/index.md).
+See the [full documentation](https://videopython.com) for examples and API reference.
 
 ## AI Backend Support
 
@@ -86,35 +79,6 @@ Cloud backends require API keys: `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `ELEVENLABS
 | VideoDubber | Local Pipeline | - | - | Dubbing API | - | - |
 | TextTranslator | Helsinki-NLP | GPT-4o | Gemini | - | - | - |
 | AudioSeparator | Demucs | - | - | - | - | - |
-
-## Video Dubbing
-
-Translate and re-voice videos while preserving speaker characteristics:
-
-```python
-from videopython.ai.dubbing import VideoDubber
-from videopython.base.video import Video
-
-# Load video
-video = Video.from_path("video.mp4")
-
-# ElevenLabs cloud dubbing (end-to-end solution)
-dubber = VideoDubber(backend="elevenlabs")
-dubbed_video = dubber.dub_and_replace(video, target_lang="es")
-
-# Local pipeline with voice cloning
-dubber = VideoDubber(backend="local")
-result = dubber.dub(
-    video,
-    target_lang="es",
-    preserve_background=True,  # Keep music/sfx
-    voice_clone=True,          # Clone original voices with XTTS
-)
-dubbed_video = video.add_audio(result.dubbed_audio, overlay=False)
-dubbed_video.save("dubbed_video.mp4")
-```
-
-Supported languages: English, Spanish, French, German, Italian, Portuguese, Chinese, Japanese, Korean, and 20+ more.
 
 ## Development
 
