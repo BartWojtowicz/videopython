@@ -7,6 +7,7 @@ API_KEY_ENV_VARS: dict[str, str] = {
     "elevenlabs": "ELEVENLABS_API_KEY",
     "runway": "RUNWAYML_API_KEY",
     "luma": "LUMAAI_API_KEY",
+    "replicate": "REPLICATE_API_TOKEN",
 }
 
 
