@@ -61,3 +61,18 @@ def calcOpticalFlowFarneback(
     poly_sigma: float,
     flags: int,
 ) -> npt.NDArray[np.float32]: ...
+def VideoWriter_fourcc(c1: str, c2: str, c3: str, c4: str) -> int: ...
+def getStructuringElement(
+    shape: int,
+    ksize: _TSize,
+    anchor: _TSize = ...,
+) -> npt.NDArray[np.uint8]: ...
+def dilate(
+    src: npt.NDArray[_TImg],
+    kernel: npt.NDArray[np.uint8],
+    dst: npt.NDArray[_TImg] = ...,
+    anchor: _TSize = ...,
+    iterations: int = ...,
+    borderType: int = ...,
+    borderValue: float = ...,
+) -> npt.NDArray[_TImg]: ...

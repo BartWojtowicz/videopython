@@ -34,3 +34,16 @@ class _Dnn:
     def readNetFromCaffe(self, prototxt: str, caffeModel: str) -> Any: ...
 
 dnn: _Dnn
+
+class VideoWriter(builtins.object):
+    def __init__(
+        self,
+        filename: str,
+        fourcc: int,
+        fps: float,
+        frameSize: tuple[int, int],
+        isColor: bool = ...,
+    ) -> None: ...
+    def write(self, image: npt.NDArray[np.uint8]) -> None: ...
+    def release(self) -> None: ...
+    def isOpened(self) -> bool: ...
