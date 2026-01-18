@@ -8,6 +8,7 @@ from .exceptions import (
     UnsupportedBackendError,
 )
 from .generation import ImageToVideo, TextToImage, TextToMusic, TextToSpeech, TextToVideo
+from .swapping import ObjectSwapper
 from .transforms import AutoFramingCrop, FaceTracker, FaceTrackingCrop, SplitScreenComposite
 from .understanding import (
     ActionRecognizer,
@@ -64,4 +65,6 @@ __all__ = [
     "FaceTrackingCrop",
     "SplitScreenComposite",
     "AutoFramingCrop",
+    # Swapping
+    "ObjectSwapper",
 ]

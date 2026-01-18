@@ -25,6 +25,7 @@ LLMBackend = Literal["local", "openai", "gemini"]
 TextTranslatorBackend = Literal["openai", "gemini", "local"]
 AudioSeparatorBackend = Literal["local"]
 VideoDubberBackend = Literal["elevenlabs", "local"]
+ObjectSwapperBackend = Literal["local", "replicate"]
 
 # Re-export for backward compatibility
 __all__ = [
@@ -40,6 +41,7 @@ __all__ = [
     "TextTranslatorBackend",
     "AudioSeparatorBackend",
     "VideoDubberBackend",
+    "ObjectSwapperBackend",
     "BackendError",
     "MissingAPIKeyError",
     "UnsupportedBackendError",

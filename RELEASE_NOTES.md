@@ -1,5 +1,43 @@
 # Release Notes
 
+## 0.15.0
+
+### New Features
+
+- **ObjectSwapper**: Replace objects in videos using AI-powered segmentation and inpainting
+  - `ObjectSwapper.swap()` - Replace object with AI-generated content from text prompt
+  - `ObjectSwapper.swap_with_image()` - Replace object with provided image
+  - `ObjectSwapper.remove_object()` - Remove object and fill with background
+  - `ObjectSwapper.segment_only()` - Get object masks without modification
+  - `ObjectSwapper.visualize_track()` - Debug visualization of tracked object
+
+- **ObjectSegmenter**: SAM2-based video object segmentation
+  - Text prompts via GroundingDINO (e.g., "red car", "person")
+  - Point and bounding box prompt support
+  - Automatic tracking across video frames
+
+- **VideoInpainter**: SDXL-based video inpainting
+  - Remove objects and fill with generated background
+  - Mask dilation for cleaner edges
+  - Optional temporal consistency blending
+
+### New Data Structures
+
+- **ObjectMask**: Single-frame object mask with confidence and bounding box
+- **ObjectTrack**: Tracked object across multiple frames
+- **SwapResult**: Result containing swapped frames and metadata
+- **SegmentationConfig**: Configuration for SAM2 segmentation
+- **InpaintingConfig**: Configuration for SDXL inpainting
+- **SwapConfig**: Combined configuration for full pipeline
+
+### New Backends
+
+- Added Replicate backend for ObjectSwapper (cloud-based, no local GPU required)
+
+### Dependencies
+
+- Added `replicate>=0.20.0` for cloud backend
+
 ## 0.14.1
 
 ### New Features
