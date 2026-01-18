@@ -124,9 +124,9 @@ class TextToSpeech:
         import TTS.tts.models.xtts as xtts_module
 
         def load_audio_soundfile(audiopath: str, sampling_rate: int):
-            import soundfile as sf
+            import soundfile as sf  # type: ignore[import-untyped]
             import torch
-            import torchaudio.functional as F
+            import torchaudio.functional as F  # type: ignore[import-untyped]
 
             # Load audio with soundfile
             audio_np, sr = sf.read(audiopath, dtype="float32")

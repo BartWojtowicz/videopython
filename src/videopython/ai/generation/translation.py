@@ -170,7 +170,7 @@ class TextTranslator:
     def _init_local(self, source_lang: str, target_lang: str) -> None:
         """Initialize local Helsinki-NLP model."""
         import torch
-        from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+        from transformers import AutoModelForSeq2SeqLM, AutoTokenizer  # type: ignore[attr-defined]
 
         model_name = self._get_local_model_name(source_lang, target_lang)
 

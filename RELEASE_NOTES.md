@@ -1,5 +1,56 @@
 # Release Notes
 
+## 0.14.0
+
+### New Features
+
+- **VideoDubber**: Automatic video dubbing with translation and voice synthesis
+  - Transcribes speech using Whisper
+  - Translates text to target language (OpenAI GPT-4o or local Ollama)
+  - Generates dubbed speech with natural timing
+  - Supports 50+ languages
+
+- **Voice Cloning**: Clone original speaker's voice for dubbed audio
+  - Uses XTTS-v2 model from Coqui TTS
+  - Extracts voice samples from separated vocals
+  - Preserves speaker characteristics in translated speech
+
+- **Background Preservation**: Keep music and sound effects while replacing speech
+  - Uses Demucs for audio source separation (vocals vs background)
+  - Mixes dubbed speech with original background audio
+  - Maintains audio atmosphere of original video
+
+- **Multiple Backends**:
+  - **ElevenLabs**: Cloud-based dubbing with professional voice quality
+  - **Local Pipeline**: Fully offline dubbing using Whisper + XTTS + Demucs
+  - Configurable translation backend (OpenAI or Ollama)
+
+- **Timing Synchronization**: Dubbed speech matches original timing
+  - Analyzes original segment durations
+  - Adjusts speech speed to fit within segment boundaries
+  - Maintains natural pacing and pauses
+
+### New Modules
+
+- `videopython.ai.dubbing` - Video dubbing pipeline
+  - `VideoDubber` - Main API for dubbing videos
+  - `DubbingResult` - Result with dubbed audio and metadata
+  - `TranslatedSegment` - Individual translated speech segment
+
+- `videopython.ai.generation.translation` - Text translation
+  - `TextTranslator` - Translate text between languages
+  - Backends: OpenAI (gpt-4o-mini) and Ollama (local models)
+
+- `videopython.ai.understanding.separation` - Audio source separation
+  - `AudioSeparator` - Separate vocals from background using Demucs
+  - `SeparatedAudio` - Container for separated audio tracks
+
+### Dependencies
+
+- Added `coqui-tts>=0.24.0` for voice cloning TTS
+- Added `demucs>=4.0.0` for audio source separation
+- Added `requests>=2.28.0` for ElevenLabs API
+
 ## 0.13.0
 
 ### New Features

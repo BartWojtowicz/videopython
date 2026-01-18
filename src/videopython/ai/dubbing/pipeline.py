@@ -265,6 +265,7 @@ class LocalDubbingPipeline:
         report_progress("Synchronizing timing", 0.85)
         if self._synchronizer is None:
             self._init_synchronizer()
+        assert self._synchronizer is not None
 
         synchronized_segments, _ = self._synchronizer.synchronize_segments(dubbed_segments, target_durations)
 

@@ -119,7 +119,7 @@ class AudioSeparator:
             sources = apply_model(self._model, wav, device=self.device)
 
         # sources shape: (batch, stems, channels, samples)
-        sources = sources[0].cpu().numpy()  # Remove batch dimension
+        sources_np = sources[0].cpu().numpy()  # Remove batch dimension
 
         # Determine stem names based on model
         if self.model_name == "htdemucs_6s":
@@ -130,7 +130,7 @@ class AudioSeparator:
         # Create stem dictionary
         stems = {}
         for i, name in enumerate(stem_names):
-            stem_data = sources[i]  # (channels, samples)
+            stem_data = sources_np[i]  # (channels, samples)
             stem_data = stem_data.T  # (samples, channels)
 
             metadata = AudioMetadata(
