@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from videopython.ai.backends import UnsupportedBackendError, VideoDubberBackend, get_api_key
 from videopython.ai.config import get_default_backend
-from videopython.ai.dubbing.models import DubbingResult
+from videopython.ai.dubbing.models import DubbingResult, RevoiceResult
 
 if TYPE_CHECKING:
     from videopython.base.video import Video
@@ -341,6 +341,94 @@ class VideoDubber:
 
         # Replace audio in video (overlay=False to replace, not overlay)
         return video.add_audio(result.dubbed_audio, overlay=False)
+
+    def revoice(
+        self,
+        video: Video,
+        text: str,
+        preserve_background: bool = True,
+        progress_callback: Callable[[str, float], None] | None = None,
+    ) -> RevoiceResult:
+        """Replace speech in a video with new text using voice cloning.
+
+        Uses the original speaker's voice to generate new speech with the
+        provided text. Background audio (music, effects) can be preserved.
+
+        Only available with the local backend.
+
+        Args:
+            video: The video to revoice.
+            text: New text for the speaker to say.
+            preserve_background: Keep background audio (music, sound effects).
+            progress_callback: Optional callback for progress updates.
+                Called with (stage_name, progress_fraction).
+
+        Returns:
+            RevoiceResult containing the revoiced audio and metadata.
+
+        Raises:
+            UnsupportedBackendError: If using a backend other than 'local'.
+
+        Example:
+            >>> dubber = VideoDubber(backend="local")
+            >>> result = dubber.revoice(video, "Hello, this is my new message!")
+            >>> new_video = video.add_audio(result.revoiced_audio, overlay=False)
+        """
+        if self.backend != "local":
+            raise UnsupportedBackendError(self.backend, ["local"])
+
+        if self._local_pipeline is None:
+            self._init_local_pipeline()
+
+        return self._local_pipeline.revoice(
+            video=video,
+            text=text,
+            preserve_background=preserve_background,
+            progress_callback=progress_callback,
+        )
+
+    def revoice_and_replace(
+        self,
+        video: Video,
+        text: str,
+        preserve_background: bool = True,
+        progress_callback: Callable[[str, float], None] | None = None,
+    ) -> Video:
+        """Revoice a video and return a new video with the revoiced audio.
+
+        Convenience method that combines revoicing with audio replacement.
+        The output video duration matches the generated speech duration.
+
+        Only available with the local backend.
+
+        Args:
+            video: The video to revoice.
+            text: New text for the speaker to say.
+            preserve_background: Keep background audio (music, sound effects).
+            progress_callback: Optional progress callback.
+
+        Returns:
+            New Video with revoiced audio track. Duration matches speech length.
+        """
+        result = self.revoice(
+            video=video,
+            text=text,
+            preserve_background=preserve_background,
+            progress_callback=progress_callback,
+        )
+
+        # Trim or extend video to match audio duration
+        speech_duration = result.speech_duration
+        video_duration = video.total_seconds
+
+        if video_duration > speech_duration:
+            # Trim video to match speech
+            output_video = video.cut(0, speech_duration)
+        else:
+            # Use full video (speech will extend beyond video if longer)
+            output_video = video
+
+        return output_video.add_audio(result.revoiced_audio, overlay=False)
 
     @staticmethod
     def get_supported_languages() -> dict[str, str]:

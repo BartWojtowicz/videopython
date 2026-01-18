@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Callable
 
-from videopython.ai.dubbing.models import DubbingResult, SeparatedAudio
+from videopython.ai.dubbing.models import DubbingResult, RevoiceResult, SeparatedAudio
 from videopython.ai.dubbing.timing import TimingSynchronizer
 
 if TYPE_CHECKING:
@@ -297,4 +297,115 @@ class LocalDubbingPipeline:
             target_lang=target_lang,
             separated_audio=separated_audio,
             voice_samples=voice_samples,
+        )
+
+    def revoice(
+        self,
+        video: Video,
+        text: str,
+        preserve_background: bool = True,
+        progress_callback: Callable[[str, float], None] | None = None,
+    ) -> RevoiceResult:
+        """Replace speech in a video with new text using voice cloning.
+
+        Extracts the original speaker's voice and generates new speech
+        with the provided text while preserving background audio.
+
+        Args:
+            video: Video to revoice.
+            text: New text for the speaker to say.
+            preserve_background: Preserve background audio (music, effects).
+            progress_callback: Optional progress callback (stage_name, progress).
+
+        Returns:
+            RevoiceResult with revoiced audio and metadata.
+        """
+        from videopython.base.audio import Audio
+
+        def report_progress(stage: str, progress: float) -> None:
+            if progress_callback:
+                progress_callback(stage, progress)
+
+        source_audio = video.audio
+        original_duration = source_audio.metadata.duration_seconds
+
+        # Step 1: Transcribe to find speech segments for voice extraction
+        report_progress("Analyzing audio", 0.05)
+        if self._transcriber is None:
+            self._init_transcriber()
+
+        transcription = self._transcriber.transcribe(source_audio)
+
+        # Step 2: Separate audio (if preserving background)
+        separated_audio: SeparatedAudio | None = None
+        vocal_audio = source_audio
+
+        if preserve_background:
+            report_progress("Separating audio", 0.20)
+            if self._separator is None:
+                self._init_separator()
+
+            separated_audio = self._separator.separate(source_audio)
+            vocal_audio = separated_audio.vocals
+
+        # Step 3: Extract voice sample
+        report_progress("Extracting voice sample", 0.40)
+        voice_sample: Audio | None = None
+
+        if transcription.segments:
+            voice_samples = self._extract_voice_samples(vocal_audio, transcription)
+            # Use first speaker's voice sample
+            if voice_samples:
+                voice_sample = next(iter(voice_samples.values()))
+
+        if voice_sample is None:
+            # Fallback: use first few seconds of audio as voice sample
+            sample_duration = min(6.0, original_duration)
+            voice_sample = vocal_audio.slice(0, sample_duration)
+
+        # Step 4: Generate new speech with cloned voice
+        report_progress("Generating speech", 0.60)
+        if self._tts is None:
+            self._init_tts(voice_clone=True)
+
+        generated_speech = self._tts.generate_audio(text, voice_sample=voice_sample)
+        speech_duration = generated_speech.metadata.duration_seconds
+
+        # Step 5: Mix with background if available
+        report_progress("Assembling audio", 0.85)
+
+        if separated_audio is not None:
+            # Resample speech to match background sample rate if needed
+            background_sr = separated_audio.background.metadata.sample_rate
+            if generated_speech.metadata.sample_rate != background_sr:
+                generated_speech = generated_speech.resample(background_sr)
+
+            # Trim or extend background to match speech duration
+            background = separated_audio.background
+            if background.metadata.duration_seconds > speech_duration:
+                background = background.slice(0, speech_duration)
+            elif background.metadata.duration_seconds < speech_duration:
+                # Pad background with silence
+                silence_duration = speech_duration - background.metadata.duration_seconds
+                silence = Audio.silence(
+                    duration=silence_duration,
+                    sample_rate=background_sr,
+                    channels=background.metadata.channels,
+                )
+                background = background.concat(silence)
+
+            # Overlay speech on background
+            final_audio = background.overlay(generated_speech, position=0.0)
+        else:
+            final_audio = generated_speech
+
+        report_progress("Complete", 1.0)
+
+        return RevoiceResult(
+            revoiced_audio=final_audio,
+            text=text,
+            separated_audio=separated_audio,
+            voice_sample=voice_sample,
+            original_duration=original_duration,
+            speech_duration=speech_duration,
         )

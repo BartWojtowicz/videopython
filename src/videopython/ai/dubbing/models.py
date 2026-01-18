@@ -118,3 +118,29 @@ class DubbingResult:
                 segments_by_speaker[speaker] = []
             segments_by_speaker[speaker].append(segment)
         return segments_by_speaker
+
+
+@dataclass
+class RevoiceResult:
+    """Result of a voice replacement operation.
+
+    Attributes:
+        revoiced_audio: The final audio with new speech.
+        text: The text that was spoken.
+        separated_audio: Separated audio components (if preserve_background=True).
+        voice_sample: Voice sample used for cloning.
+        original_duration: Duration of the original audio.
+        speech_duration: Duration of the generated speech.
+    """
+
+    revoiced_audio: Audio
+    text: str
+    separated_audio: SeparatedAudio | None = None
+    voice_sample: Audio | None = None
+    original_duration: float = 0.0
+    speech_duration: float = 0.0
+
+    @property
+    def total_duration(self) -> float:
+        """Total duration of the revoiced audio."""
+        return self.revoiced_audio.metadata.duration_seconds
