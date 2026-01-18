@@ -22,6 +22,9 @@ ImageToTextBackend = Literal["local", "openai", "gemini"]
 AudioToTextBackend = Literal["local", "openai", "gemini"]
 AudioClassifierBackend = Literal["local"]
 LLMBackend = Literal["local", "openai", "gemini"]
+TextTranslatorBackend = Literal["openai", "gemini", "local"]
+AudioSeparatorBackend = Literal["local"]
+VideoDubberBackend = Literal["elevenlabs", "local"]
 
 # Re-export for backward compatibility
 __all__ = [
@@ -34,6 +37,9 @@ __all__ = [
     "AudioToTextBackend",
     "AudioClassifierBackend",
     "LLMBackend",
+    "TextTranslatorBackend",
+    "AudioSeparatorBackend",
+    "VideoDubberBackend",
     "BackendError",
     "MissingAPIKeyError",
     "UnsupportedBackendError",

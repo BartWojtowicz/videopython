@@ -1,6 +1,6 @@
 [project]
 name = "videopython"
-version = "0.13.0"
+version = "0.14.0"
 description = "Minimal video generation and processing library."
 authors = [
     { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
@@ -34,6 +34,7 @@ dependencies = [
     "numpy>=1.25.2",
     "opencv-python>=4.9.0.80",
     "pillow>=10.3.0",
+    "torchcodec>=0.9.1",
     "tqdm>=4.66.3",
 ]
 
@@ -76,6 +77,12 @@ ai = [
     "panns-inference>=0.1.0",
     # Scene detection
     "transnetv2-pytorch>=1.0.5",
+    # Voice cloning TTS (coqui-tts is the maintained fork of TTS)
+    "coqui-tts>=0.24.0",
+    # Audio source separation
+    "demucs>=4.0.0",
+    # HTTP requests for dubbing API
+    "requests>=2.28.0",
 ]
 
 # Required for pip install videopython[ai] - pip uses optional-dependencies, not dependency-groups
@@ -114,6 +121,12 @@ ai = [
     "panns-inference>=0.1.0",
     # Scene detection
     "transnetv2-pytorch>=1.0.5",
+    # Voice cloning TTS (coqui-tts is the maintained fork of TTS)
+    "coqui-tts>=0.24.0",
+    # Audio source separation
+    "demucs>=4.0.0",
+    # HTTP requests for dubbing API
+    "requests>=2.28.0",
 ]
 
 [project.urls]
@@ -136,6 +149,8 @@ module = [
     "panns_inference", "panns_inference.*",
     "transformers", "transformers.*",
     "transnetv2_pytorch", "transnetv2_pytorch.*",
+    "TTS", "TTS.*", "coqui", "coqui.*",
+    "demucs", "demucs.*",
 ]
 ignore_missing_imports = true
 
