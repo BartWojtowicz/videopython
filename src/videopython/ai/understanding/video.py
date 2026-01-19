@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -19,6 +20,9 @@ from videopython.base.video import Video, VideoMetadata, extract_frames_at_indic
 
 if TYPE_CHECKING:
     from videopython.ai.understanding.temporal import SemanticSceneDetector
+
+# Sampling strategy type
+SamplingStrategy = Literal["fixed", "adaptive"]
 
 
 class FrameAnalyzer:
@@ -221,6 +225,64 @@ def _aggregate_motion(frame_descriptions: list[FrameDescription]) -> tuple[float
     return avg_magnitude, dominant_type
 
 
+def _get_frame_indices_for_scene(
+    scene: SceneDescription,
+    fps: float,
+    strategy: SamplingStrategy,
+    frames_per_second: float,
+) -> list[int]:
+    """Get frame indices to sample for a scene based on sampling strategy.
+
+    Args:
+        scene: SceneDescription with start/end frame info.
+        fps: Video frames per second.
+        strategy: Sampling strategy ('fixed' or 'adaptive').
+        frames_per_second: Frame sampling rate (used for 'fixed' strategy).
+
+    Returns:
+        List of frame indices to sample.
+    """
+    start_frame = scene.start_frame
+    end_frame = scene.end_frame - 1  # last frame of scene
+
+    if end_frame <= start_frame:
+        return [start_frame]
+
+    if strategy == "fixed":
+        # Original behavior: sample at fixed fps rate
+        frame_interval = max(1, int(fps / frames_per_second))
+        indices = list(range(start_frame, scene.end_frame, frame_interval))
+        return indices if indices else [start_frame]
+
+    # Adaptive strategy: start + ln(1 + duration) + end
+    # For short scenes (<=2s): 1 fps sampling
+    if scene.duration <= 2:
+        n_frames = max(1, int(scene.duration))
+        if n_frames == 1:
+            return [(start_frame + end_frame) // 2]
+        # Evenly distribute frames
+        indices = []
+        for i in range(n_frames):
+            t = (i + 0.5) / n_frames
+            idx = int(start_frame + t * (end_frame - start_frame))
+            indices.append(idx)
+        return indices
+
+    # For longer scenes: start + floor(ln(1 + duration)) middle frames + end
+    n_middle = int(math.log(1 + scene.duration))
+
+    if n_middle == 0:
+        return [start_frame, end_frame]
+
+    middle_frames = []
+    for i in range(1, n_middle + 1):
+        t = i / (n_middle + 1)
+        frame_idx = int(start_frame + t * (end_frame - start_frame))
+        middle_frames.append(frame_idx)
+
+    return [start_frame] + middle_frames + [end_frame]
+
+
 class VideoAnalyzer:
     """Comprehensive video analysis combining scene detection, frame understanding, and transcription."""
 
@@ -232,6 +294,7 @@ class VideoAnalyzer:
         detection_backend: ImageToTextBackend | None = None,
         api_key: str | None = None,
         use_semantic_scenes: bool = False,
+        sampling_strategy: SamplingStrategy = "fixed",
     ):
         """Initialize the video analyzer.
 
@@ -244,10 +307,15 @@ class VideoAnalyzer:
             use_semantic_scenes: Use ML-based scene detection (SemanticSceneDetector)
                 instead of histogram-based detection. More accurate but requires
                 additional dependencies.
+            sampling_strategy: Frame sampling strategy for scene analysis:
+                - 'fixed': Sample at fixed fps rate (default, uses frames_per_second param)
+                - 'adaptive': Smart sampling using start + ln(1+duration) + end formula.
+                  For scenes <=2s uses 1fps, for longer scenes samples logarithmically.
         """
         self.scene_threshold = scene_threshold
         self.min_scene_length = min_scene_length
         self.use_semantic_scenes = use_semantic_scenes
+        self.sampling_strategy: SamplingStrategy = sampling_strategy
 
         self.scene_detector: SceneDetector | SemanticSceneDetector
         if use_semantic_scenes:
@@ -332,20 +400,39 @@ class VideoAnalyzer:
 
         # Step 3: Analyze frames from each scene and populate frame_descriptions
         for scene_desc in scene_descriptions:
-            frame_descriptions = self.image_to_text.describe_scene(
-                video,
-                scene_desc,
-                frames_per_second=frames_per_second,
-                prompt=description_prompt,
-                extract_colors=extract_colors,
-                include_full_histogram=include_full_histogram,
+            # Calculate which frames to sample based on strategy
+            frame_indices = _get_frame_indices_for_scene(
+                scene_desc, video.fps, self.sampling_strategy, frames_per_second
             )
 
-            # Run detection on each frame if enabled
-            if frame_analyzer:
-                for fd in frame_descriptions:
-                    frame = video.frames[fd.frame_index]
+            # Generate frame descriptions
+            frame_descriptions = []
+            for frame_idx in frame_indices:
+                if frame_idx >= len(video.frames):
+                    continue
+
+                frame = video.frames[frame_idx]
+                description = self.image_to_text.describe_image(frame, description_prompt)
+                timestamp = frame_idx / video.fps
+
+                color_histogram = None
+                if extract_colors:
+                    color_histogram = self.image_to_text.color_analyzer.extract_color_features(
+                        frame, include_full_histogram
+                    )
+
+                fd = FrameDescription(
+                    frame_index=frame_idx,
+                    timestamp=timestamp,
+                    description=description,
+                    color_histogram=color_histogram,
+                )
+
+                # Run detection on frame if enabled
+                if frame_analyzer:
                     frame_analyzer.analyze_frame(frame, fd)
+
+                frame_descriptions.append(fd)
 
             # Run motion analysis between consecutive frames
             if motion_analyzer and len(frame_descriptions) >= 2:
@@ -509,12 +596,10 @@ class VideoAnalyzer:
 
         # Step 3: Process each scene, loading only sampled frames
         for scene_desc in scene_descriptions:
-            # Calculate which frames to sample
-            frame_interval = max(1, int(metadata.fps / frames_per_second))
-            frame_indices = list(range(scene_desc.start_frame, scene_desc.end_frame, frame_interval))
-
-            if not frame_indices:
-                frame_indices = [scene_desc.start_frame]
+            # Calculate which frames to sample based on strategy
+            frame_indices = _get_frame_indices_for_scene(
+                scene_desc, metadata.fps, self.sampling_strategy, frames_per_second
+            )
 
             # Extract only needed frames from file
             scene_frames = extract_frames_at_indices(path, frame_indices)
