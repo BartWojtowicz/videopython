@@ -1,5 +1,16 @@
 # Release Notes
 
+## 0.15.1
+
+### New Features
+
+- **Adaptive Frame Sampling**: New `sampling_strategy` parameter for `VideoAnalyzer`
+  - `'fixed'`: Original behavior - sample at fixed FPS rate
+  - `'adaptive'`: Smart sampling using start + ln(1+duration) + end formula
+  - Reduces frames by ~27% while maintaining scene coverage
+  - Short scenes (<=2s): 1-2 frames
+  - Longer scenes: start frame + logarithmic middle frames + end frame
+
 ## 0.15.0
 
 ### New Features
