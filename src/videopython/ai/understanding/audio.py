@@ -256,22 +256,23 @@ class AudioToText:
 
 
 class AudioClassifier:
-    """Audio event and sound classification using PANNs.
+    """Audio event and sound classification using AST (Audio Spectrogram Transformer).
 
     Detects and classifies sounds, music, and audio events with timestamps.
-    Uses PANNs (Pretrained Audio Neural Networks) trained on AudioSet with
-    527 sound classes.
+    Uses AST trained on AudioSet with 527 sound classes.
     """
 
     SUPPORTED_BACKENDS: list[str] = ["local"]
-    SUPPORTED_MODELS: list[str] = ["Cnn14", "Cnn10", "Cnn6", "ResNet38", "MobileNetV2"]
-    PANNS_SAMPLE_RATE: int = 32000
-    PANNS_HOP_SAMPLES: int = 320  # ~10ms hop at 32kHz
+    SUPPORTED_MODELS: list[str] = ["MIT/ast-finetuned-audioset-10-10-0.4593"]
+    AST_SAMPLE_RATE: int = 16000
+    # AST processes ~10 second chunks, we use sliding window for longer audio
+    AST_CHUNK_SECONDS: float = 10.0
+    AST_HOP_SECONDS: float = 5.0  # 50% overlap between chunks
 
     def __init__(
         self,
         backend: AudioClassifierBackend | None = None,
-        model_name: str = "Cnn14",
+        model_name: str = "MIT/ast-finetuned-audioset-10-10-0.4593",
         confidence_threshold: float = 0.3,
         top_k: int = 10,
         device: str = "cpu",
@@ -280,7 +281,7 @@ class AudioClassifier:
 
         Args:
             backend: Backend to use. If None, uses config default or 'local'.
-            model_name: PANNs model architecture for local backend.
+            model_name: HuggingFace model ID for AST.
             confidence_threshold: Minimum confidence to include an event.
             top_k: Maximum number of classes to consider per time frame.
             device: Device for local backend ('cuda', 'mps', or 'cpu').
@@ -299,14 +300,20 @@ class AudioClassifier:
         self.device = device
 
         self._model: Any = None
+        self._processor: Any = None
         self._labels: list[str] = []
 
     def _init_local(self) -> None:
-        """Initialize local PANNs model."""
-        from panns_inference import SoundEventDetection, labels
+        """Initialize local AST model from HuggingFace."""
+        from transformers import ASTFeatureExtractor, ASTForAudioClassification
 
-        self._model = SoundEventDetection(checkpoint_path=None, device=self.device)
-        self._labels = labels
+        self._processor = ASTFeatureExtractor.from_pretrained(self.model_name)
+        self._model = ASTForAudioClassification.from_pretrained(self.model_name)
+        self._model.to(self.device)
+        self._model.eval()
+
+        # Get labels from model config (527 AudioSet classes)
+        self._labels = [self._model.config.id2label[i] for i in range(len(self._model.config.id2label))]
 
     def _merge_events(self, events: list[AudioEvent], gap_threshold: float = 0.5) -> list[AudioEvent]:
         """Merge consecutive events of the same class.
@@ -352,50 +359,79 @@ class AudioClassifier:
         return sorted(merged, key=lambda e: e.start)
 
     def _classify_local(self, audio: Audio) -> AudioClassification:
-        """Classify audio using local PANNs model."""
+        """Classify audio using local AST model with sliding window for temporal events."""
         import numpy as np
+        import torch
 
         if self._model is None:
             self._init_local()
 
-        # Resample to PANNs expected sample rate (32kHz mono)
-        audio_processed = audio.to_mono().resample(self.PANNS_SAMPLE_RATE)
+        # Resample to AST expected sample rate (16kHz mono)
+        audio_processed = audio.to_mono().resample(self.AST_SAMPLE_RATE)
         audio_data = audio_processed.data.astype(np.float32)
 
-        # Add batch dimension
-        if audio_data.ndim == 1:
-            audio_data = audio_data[np.newaxis, :]
+        # Calculate chunk and hop sizes in samples
+        chunk_samples = int(self.AST_CHUNK_SECONDS * self.AST_SAMPLE_RATE)
+        hop_samples = int(self.AST_HOP_SECONDS * self.AST_SAMPLE_RATE)
+        total_samples = len(audio_data)
 
-        # Run sound event detection (frame-level predictions)
-        framewise_output = self._model.inference(audio_data)
+        # Process audio in overlapping chunks for temporal resolution
+        all_chunk_probs = []
+        chunk_times = []
 
-        # framewise_output shape: (batch, time_frames, num_classes)
-        framewise_output = framewise_output[0]  # Remove batch dimension
-        num_frames, num_classes = framewise_output.shape
+        # If audio is shorter than one chunk, just process it directly
+        if total_samples <= chunk_samples:
+            chunks = [(0, audio_data)]
+        else:
+            chunks = []
+            start = 0
+            while start < total_samples:
+                end = min(start + chunk_samples, total_samples)
+                chunk = audio_data[start:end]
+                # Pad short final chunk
+                if len(chunk) < chunk_samples:
+                    chunk = np.pad(chunk, (0, chunk_samples - len(chunk)))
+                chunks.append((start, chunk))
+                start += hop_samples
 
-        # Calculate frame duration in seconds
-        # PANNs uses 32ms frames with 10ms hop
-        frame_duration = self.PANNS_HOP_SAMPLES / self.PANNS_SAMPLE_RATE
+        for start_sample, chunk in chunks:
+            start_time = start_sample / self.AST_SAMPLE_RATE
 
-        # Extract events from frame-level predictions
+            # Process through AST
+            inputs = self._processor(
+                chunk,
+                sampling_rate=self.AST_SAMPLE_RATE,
+                return_tensors="pt",
+            )
+            inputs = {k: v.to(self.device) for k, v in inputs.items()}
+
+            with torch.no_grad():
+                outputs = self._model(**inputs)
+                logits = outputs.logits[0]  # Remove batch dimension
+                probs = torch.sigmoid(logits).cpu().numpy()
+
+            all_chunk_probs.append(probs)
+            chunk_times.append(start_time)
+
+        # Convert to numpy array for easier processing
+        all_chunk_probs = np.array(all_chunk_probs)  # shape: (num_chunks, num_classes)
+
+        # Extract events from chunk-level predictions
         events = []
-        for frame_idx in range(num_frames):
-            frame_preds = framewise_output[frame_idx]
+        for chunk_idx, (start_time, probs) in enumerate(zip(chunk_times, all_chunk_probs)):
+            end_time = start_time + self.AST_CHUNK_SECONDS
 
-            # Get top-k classes for this frame
-            top_indices = np.argsort(frame_preds)[-self.top_k :][::-1]
+            # Get top-k classes for this chunk
+            top_indices = np.argsort(probs)[-self.top_k :][::-1]
 
             for class_idx in top_indices:
-                confidence = float(frame_preds[class_idx])
+                confidence = float(probs[class_idx])
                 if confidence >= self.confidence_threshold:
-                    start_time = frame_idx * frame_duration
-                    end_time = (frame_idx + 1) * frame_duration
                     label = self._labels[class_idx]
-
                     events.append(
                         AudioEvent(
                             start=start_time,
-                            end=end_time,
+                            end=min(end_time, total_samples / self.AST_SAMPLE_RATE),
                             label=label,
                             confidence=confidence,
                         )
@@ -404,8 +440,8 @@ class AudioClassifier:
         # Merge consecutive events of the same class
         merged_events = self._merge_events(events)
 
-        # Calculate clip-level predictions (average across all frames)
-        clip_preds = np.mean(framewise_output, axis=0)
+        # Calculate clip-level predictions (average across all chunks)
+        clip_preds = np.mean(all_chunk_probs, axis=0)
         top_clip_indices = np.argsort(clip_preds)[-self.top_k :][::-1]
         clip_predictions = {
             self._labels[idx]: float(clip_preds[idx])

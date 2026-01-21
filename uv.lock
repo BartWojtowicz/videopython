@@ -2838,20 +2838,6 @@ wheels = [
 ]
 
 [[package]]
-name = "panns-inference"
-version = "0.1.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "librosa" },
-    { name = "matplotlib" },
-    { name = "torchlibrosa" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/42/aa/308a94956501bf8a9a3d389e2c0e5cb405acc81780f7c16ba3898ae08fc3/panns-inference-0.1.1.tar.gz", hash = "sha256:f8074268513571775e154294729b66fc0ccbdbeceb5c8f6eaa9670664e40c03d", size = 6340, upload-time = "2023-03-26T15:37:18.254Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ad/ac/0558484d9b5383125912b1cedeb95b1f7e928c2b0781f52d77b068f0ba3d/panns_inference-0.1.1-py3-none-any.whl", hash = "sha256:97f6b56b6c9467cf00e21f041e1f88933188c65c1b5ca64eeb3c92e37fb27fc2", size = 8267, upload-time = "2023-03-26T15:37:16.277Z" },
-]
-
-[[package]]
 name = "pathspec"
 version = "1.0.1"
 source = { registry = "https://pypi.org/simple" }
@@ -4630,20 +4616,6 @@ wheels = [
 ]
 
 [[package]]
-name = "torchlibrosa"
-version = "0.1.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "librosa" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/a4/67/e4c79da3f15777b9bc2b655d47dac553fc31e40360500fef5e66d6877ce8/torchlibrosa-0.1.0.tar.gz", hash = "sha256:62a8beedf9c9b4141a06234df3f10229f7ba86e67678ccee02489ec4ef044028", size = 11719, upload-time = "2023-02-21T09:40:54.968Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/3e/af/ccf007edf442c3c0cd3a98be2c82bc99edc957c04436a759b6e1e01077e0/torchlibrosa-0.1.0-py3-none-any.whl", hash = "sha256:89b65fd28b833ceb6bc74a3d0d87e2924ddc5a845d0a246b194952a4e12a38cb", size = 11741, upload-time = "2023-02-21T09:40:52.58Z" },
-]
-
-[[package]]
 name = "torchmetrics"
 version = "1.8.2"
 source = { registry = "https://pypi.org/simple" }
@@ -4946,7 +4918,6 @@ ai = [
     { name = "ollama" },
     { name = "openai" },
     { name = "openai-whisper" },
-    { name = "panns-inference" },
     { name = "replicate" },
     { name = "requests" },
     { name = "runwayml" },
@@ -4985,7 +4956,6 @@ ai = [
     { name = "ollama" },
     { name = "openai" },
     { name = "openai-whisper" },
-    { name = "panns-inference" },
     { name = "replicate" },
     { name = "requests" },
     { name = "runwayml" },
@@ -5031,7 +5001,6 @@ requires-dist = [
     { name = "openai", marker = "extra == 'ai'", specifier = ">=1.0.0" },
     { name = "openai-whisper", marker = "extra == 'ai'", specifier = ">=20240930" },
     { name = "opencv-python", specifier = ">=4.9.0.80" },
-    { name = "panns-inference", marker = "extra == 'ai'", specifier = ">=0.1.0" },
     { name = "pillow", specifier = ">=10.3.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6.1.1" },
@@ -5069,7 +5038,6 @@ ai = [
     { name = "ollama", specifier = ">=0.4.5" },
     { name = "openai", specifier = ">=1.0.0" },
     { name = "openai-whisper", specifier = ">=20240930" },
-    { name = "panns-inference", specifier = ">=0.1.0" },
     { name = "replicate", specifier = ">=0.20.0" },
     { name = "requests", specifier = ">=2.28.0" },
     { name = "runwayml", specifier = ">=0.10.0" },
