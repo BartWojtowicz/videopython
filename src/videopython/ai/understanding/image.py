@@ -63,7 +63,7 @@ class ImageToText:
                 device = "cpu"
 
         model_name = "Salesforce/blip-image-captioning-large"
-        self._processor = BlipProcessor.from_pretrained(model_name)
+        self._processor = BlipProcessor.from_pretrained(model_name, use_fast=True)
         self._model = BlipForConditionalGeneration.from_pretrained(model_name)
         self._model.to(device)
 
