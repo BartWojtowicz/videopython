@@ -1,5 +1,19 @@
 # Release Notes
 
+## 0.15.3
+
+### Changed
+
+- **Audio Classification Backend**: Replaced PANNs with Audio Spectrogram Transformer (AST)
+  - Uses `MIT/ast-finetuned-audioset-10-10-0.4593` model from HuggingFace
+  - Same 527 AudioSet classes with state-of-the-art performance (0.485 mAP)
+  - More reliable model downloads (PANNs used Zenodo which had timeout issues in CI)
+  - Uses sliding window approach for temporal event detection
+
+### Dependencies
+
+- Removed `panns-inference` dependency (AST uses `transformers` which is already included)
+
 ## 0.15.2
 
 ### New Features

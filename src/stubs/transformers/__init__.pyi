@@ -1,4 +1,6 @@
 from .models import (
+    ASTFeatureExtractor,
+    ASTForAudioClassification,
     AutoModel,
     AutoProcessor,
     AutoTokenizer,
@@ -9,6 +11,8 @@ from .models import (
 )
 
 __all__ = [
+    "ASTFeatureExtractor",
+    "ASTForAudioClassification",
     "AutoModel",
     "AutoProcessor",
     "AutoTokenizer",

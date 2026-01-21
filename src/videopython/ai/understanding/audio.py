@@ -414,11 +414,11 @@ class AudioClassifier:
             chunk_times.append(start_time)
 
         # Convert to numpy array for easier processing
-        all_chunk_probs = np.array(all_chunk_probs)  # shape: (num_chunks, num_classes)
+        chunk_probs_array = np.array(all_chunk_probs)  # shape: (num_chunks, num_classes)
 
         # Extract events from chunk-level predictions
         events = []
-        for chunk_idx, (start_time, probs) in enumerate(zip(chunk_times, all_chunk_probs)):
+        for chunk_idx, (start_time, probs) in enumerate(zip(chunk_times, chunk_probs_array)):
             end_time = start_time + self.AST_CHUNK_SECONDS
 
             # Get top-k classes for this chunk
@@ -441,7 +441,7 @@ class AudioClassifier:
         merged_events = self._merge_events(events)
 
         # Calculate clip-level predictions (average across all chunks)
-        clip_preds = np.mean(all_chunk_probs, axis=0)
+        clip_preds = np.mean(chunk_probs_array, axis=0)
         top_clip_indices = np.argsort(clip_preds)[-self.top_k :][::-1]
         clip_predictions = {
             self._labels[idx]: float(clip_preds[idx])
