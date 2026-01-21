@@ -1,8 +1,8 @@
 """Tests for AudioClassifier with PANNs backend.
 
-All tests run in CI since PANNs model is ~80MB (under the 100MB threshold).
-
-Run locally with: uv run pytest src/tests/ai/test_audio_classifier.py -v
+Tests marked with @pytest.mark.requires_model_download are skipped in CI
+due to flaky model downloads. Run locally with:
+    uv run pytest src/tests/ai/test_audio_classifier.py -v
 """
 
 import os
@@ -11,6 +11,9 @@ import numpy as np
 import pytest
 
 from videopython.base.description import AudioClassification, AudioEvent
+
+# Mark for tests that require PANNs model download (~80MB)
+requires_model_download = pytest.mark.requires_model_download
 
 # Path to test data (one level up from ai/ directory)
 TEST_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "test_data")
@@ -37,6 +40,7 @@ class TestAudioClassifierInit:
             AudioClassifier(model_name="InvalidModel")
 
 
+@requires_model_download
 class TestAudioClassifier:
     """Tests for AudioClassifier with PANNs backend (~80MB model download)."""
 
@@ -166,6 +170,7 @@ class TestAudioClassifier:
             assert event.confidence >= 0.8
 
 
+@requires_model_download
 class TestAudioEventMerging:
     """Tests for the event merging logic."""
 

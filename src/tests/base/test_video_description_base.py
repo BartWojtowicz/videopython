@@ -164,3 +164,58 @@ def test_get_scene_summary_with_scene_transcription():
     summary = understanding.get_scene_summary(0)
     assert "A person speaking." in summary
     assert "[Speech: hello]" in summary
+
+
+def test_video_description_roundtrip():
+    """Test VideoDescription serialization roundtrip."""
+    frame_desc1 = FrameDescription(frame_index=0, timestamp=0.0, description="Scene 1 start")
+    frame_desc2 = FrameDescription(frame_index=60, timestamp=2.5, description="Scene 1 end")
+    scene_desc1 = SceneDescription(
+        start=0.0,
+        end=5.0,
+        start_frame=0,
+        end_frame=120,
+        frame_descriptions=[frame_desc1, frame_desc2],
+        summary="First scene",
+    )
+
+    frame_desc3 = FrameDescription(frame_index=120, timestamp=5.0, description="Scene 2")
+    scene_desc2 = SceneDescription(
+        start=5.0,
+        end=10.0,
+        start_frame=120,
+        end_frame=240,
+        frame_descriptions=[frame_desc3],
+    )
+
+    word = TranscriptionWord(start=0.0, end=1.0, word="hello")
+    segment = TranscriptionSegment(start=0.0, end=1.0, text="hello", words=[word])
+    transcription = Transcription(segments=[segment])
+
+    understanding = VideoDescription(
+        scene_descriptions=[scene_desc1, scene_desc2],
+        transcription=transcription,
+    )
+
+    data = understanding.to_dict()
+    restored = VideoDescription.from_dict(data)
+
+    assert restored.num_scenes == 2
+    assert restored.total_frames_analyzed == 3
+    assert restored.transcription is not None
+    assert restored.transcription.segments[0].text == "hello"
+    assert restored.scene_descriptions[0].summary == "First scene"
+    assert restored.scene_descriptions[0].frame_descriptions[0].description == "Scene 1 start"
+
+
+def test_video_description_minimal_roundtrip():
+    """Test VideoDescription serialization with minimal data."""
+    scene_desc = SceneDescription(start=0.0, end=5.0, start_frame=0, end_frame=120)
+    understanding = VideoDescription(scene_descriptions=[scene_desc])
+
+    data = understanding.to_dict()
+    restored = VideoDescription.from_dict(data)
+
+    assert restored.num_scenes == 1
+    assert restored.transcription is None
+    assert len(restored.scene_descriptions[0].frame_descriptions) == 0

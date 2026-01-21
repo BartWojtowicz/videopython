@@ -18,12 +18,11 @@ class ColorAnalyzer:
         """
         self.num_dominant_colors = num_dominant_colors
 
-    def extract_color_features(self, frame: np.ndarray, include_full_histogram: bool = False) -> ColorHistogram:
+    def extract_color_features(self, frame: np.ndarray) -> ColorHistogram:
         """Extract color features from a frame.
 
         Args:
             frame: Frame as numpy array (H, W, 3) in RGB format
-            include_full_histogram: Whether to include full HSV histogram in result
 
         Returns:
             ColorHistogram object with extracted features
@@ -39,17 +38,11 @@ class ColorAnalyzer:
         # Extract dominant colors
         dominant_colors = self._extract_dominant_colors(frame)
 
-        # Optionally calculate full histogram
-        hsv_histogram = None
-        if include_full_histogram:
-            hsv_histogram = self._calculate_hsv_histogram(hsv)
-
         return ColorHistogram(
             dominant_colors=dominant_colors,
             avg_hue=avg_hue,
             avg_saturation=avg_saturation,
             avg_value=avg_value,
-            hsv_histogram=hsv_histogram,
         )
 
     def _extract_dominant_colors(self, frame: np.ndarray) -> list[tuple[int, int, int]]:

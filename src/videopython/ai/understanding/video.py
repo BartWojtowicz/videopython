@@ -340,7 +340,6 @@ class VideoAnalyzer:
         transcription_model: Literal["tiny", "base", "small", "medium", "large", "turbo"] = "base",
         description_prompt: str | None = None,
         extract_colors: bool = False,
-        include_full_histogram: bool = False,
         detect_objects: bool = False,
         detect_faces: bool = False,
         detect_text: bool = False,
@@ -361,7 +360,6 @@ class VideoAnalyzer:
             transcription_model: Whisper model to use if transcribe=True (default: "base")
             description_prompt: Optional prompt to guide frame descriptions
             extract_colors: Whether to extract color features from frames (default: False)
-            include_full_histogram: Whether to include full HSV histogram in color features (default: False)
             detect_objects: Whether to detect objects in frames (default: False)
             detect_faces: Whether to detect faces in frames (default: False)
             detect_text: Whether to detect text (OCR) in frames (default: False)
@@ -417,9 +415,7 @@ class VideoAnalyzer:
 
                 color_histogram = None
                 if extract_colors:
-                    color_histogram = self.image_to_text.color_analyzer.extract_color_features(
-                        frame, include_full_histogram
-                    )
+                    color_histogram = self.image_to_text.color_analyzer.extract_color_features(frame)
 
                 fd = FrameDescription(
                     frame_index=frame_idx,
@@ -520,7 +516,6 @@ class VideoAnalyzer:
         transcription_model: Literal["tiny", "base", "small", "medium", "large", "turbo"] = "base",
         description_prompt: str | None = None,
         extract_colors: bool = False,
-        include_full_histogram: bool = False,
         detect_objects: bool = False,
         detect_faces: bool = False,
         detect_text: bool = False,
@@ -549,7 +544,6 @@ class VideoAnalyzer:
             transcription_model: Whisper model to use if transcribe=True (default: "base")
             description_prompt: Optional prompt to guide frame descriptions
             extract_colors: Whether to extract color features from frames (default: False)
-            include_full_histogram: Whether to include full HSV histogram (default: False)
             detect_objects: Whether to detect objects in frames (default: False)
             detect_faces: Whether to detect faces in frames (default: False)
             detect_text: Whether to detect text (OCR) in frames (default: False)
@@ -619,9 +613,7 @@ class VideoAnalyzer:
                 # Color features if requested
                 color_histogram = None
                 if extract_colors:
-                    color_histogram = self.image_to_text.color_analyzer.extract_color_features(
-                        frame, include_full_histogram
-                    )
+                    color_histogram = self.image_to_text.color_analyzer.extract_color_features(frame)
 
                 fd = FrameDescription(
                     frame_index=frame_idx,

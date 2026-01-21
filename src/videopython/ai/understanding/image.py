@@ -183,7 +183,6 @@ class ImageToText:
         frame_index: int,
         prompt: str | None = None,
         extract_colors: bool = False,
-        include_full_histogram: bool = False,
     ) -> FrameDescription:
         """Describe a specific frame from a video.
 
@@ -192,7 +191,6 @@ class ImageToText:
             frame_index: Index of the frame to describe.
             prompt: Optional text prompt to guide the description.
             extract_colors: Whether to extract color features from the frame.
-            include_full_histogram: Whether to include full HSV histogram.
 
         Returns:
             FrameDescription object with the frame description.
@@ -206,7 +204,7 @@ class ImageToText:
 
         color_histogram = None
         if extract_colors:
-            color_histogram = self.color_analyzer.extract_color_features(frame, include_full_histogram)
+            color_histogram = self.color_analyzer.extract_color_features(frame)
 
         return FrameDescription(
             frame_index=frame_index,
@@ -221,7 +219,6 @@ class ImageToText:
         frame_indices: list[int],
         prompt: str | None = None,
         extract_colors: bool = False,
-        include_full_histogram: bool = False,
     ) -> list[FrameDescription]:
         """Describe multiple frames from a video.
 
@@ -230,15 +227,12 @@ class ImageToText:
             frame_indices: List of frame indices to describe.
             prompt: Optional text prompt to guide the descriptions.
             extract_colors: Whether to extract color features.
-            include_full_histogram: Whether to include full HSV histogram.
 
         Returns:
             List of FrameDescription objects.
         """
         # Process frames sequentially (thread parallelism causes issues with model initialization)
-        return [
-            self.describe_frame(video, idx, prompt, extract_colors, include_full_histogram) for idx in frame_indices
-        ]
+        return [self.describe_frame(video, idx, prompt, extract_colors) for idx in frame_indices]
 
     def describe_scene(
         self,
@@ -247,7 +241,6 @@ class ImageToText:
         frames_per_second: float = 1.0,
         prompt: str | None = None,
         extract_colors: bool = False,
-        include_full_histogram: bool = False,
     ) -> list[FrameDescription]:
         """Describe frames from a scene, sampling at the specified rate.
 
@@ -257,7 +250,6 @@ class ImageToText:
             frames_per_second: Frame sampling rate.
             prompt: Optional text prompt to guide the descriptions.
             extract_colors: Whether to extract color features.
-            include_full_histogram: Whether to include full HSV histogram.
 
         Returns:
             List of FrameDescription objects for the sampled frames.
@@ -271,4 +263,4 @@ class ImageToText:
         if not frame_indices:
             frame_indices = [scene.start_frame]
 
-        return self.describe_frames(video, frame_indices, prompt, extract_colors, include_full_histogram)
+        return self.describe_frames(video, frame_indices, prompt, extract_colors)

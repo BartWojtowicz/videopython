@@ -1,6 +1,6 @@
 [project]
 name = "videopython"
-version = "0.15.1"
+version = "0.15.2"
 description = "Minimal video generation and processing library."
 authors = [
     { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
@@ -170,11 +170,14 @@ packages = ["src/videopython"]
 [tool.hatch.build.targets.sdist]
 include = ["src/videopython", "src/videopython/py.typed"]
 
-[tool.pytest]
+[tool.pytest.ini_options]
 pythonpath = ["src/"]
 testpaths = ["src/tests"]
 python_files = ["test_*.py"]
 addopts = ["-v", "--tb=short"]
+markers = [
+    "requires_model_download: marks tests that require downloading ML models (skipped in CI)",
+]
 
 [tool.ruff]
 line-length = 120
