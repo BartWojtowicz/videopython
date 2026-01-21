@@ -565,3 +565,87 @@ def test_slice_across_multiple_segments(dummy_transcription):
     assert "world" in all_words  # From first segment
     assert "Second" in all_words  # From second segment
     assert "Final" in all_words  # From third segment
+
+
+class TestTranscriptionSerialization:
+    """Tests for to_dict/from_dict serialization methods."""
+
+    def test_transcription_word_roundtrip(self):
+        """Test TranscriptionWord serialization roundtrip."""
+        word = TranscriptionWord(start=0.0, end=0.5, word="hello", speaker="SPEAKER_00")
+        data = word.to_dict()
+        restored = TranscriptionWord.from_dict(data)
+
+        assert restored.start == word.start
+        assert restored.end == word.end
+        assert restored.word == word.word
+        assert restored.speaker == word.speaker
+
+    def test_transcription_word_without_speaker(self):
+        """Test TranscriptionWord serialization without speaker."""
+        word = TranscriptionWord(start=1.0, end=1.5, word="world")
+        data = word.to_dict()
+        restored = TranscriptionWord.from_dict(data)
+
+        assert restored.word == word.word
+        assert restored.speaker is None
+
+    def test_transcription_segment_roundtrip(self):
+        """Test TranscriptionSegment serialization roundtrip."""
+        words = [
+            TranscriptionWord(start=0.0, end=0.5, word="hello", speaker="SPEAKER_00"),
+            TranscriptionWord(start=0.5, end=1.0, word="world", speaker="SPEAKER_00"),
+        ]
+        segment = TranscriptionSegment(
+            start=0.0,
+            end=1.0,
+            text="hello world",
+            words=words,
+            speaker="SPEAKER_00",
+        )
+        data = segment.to_dict()
+        restored = TranscriptionSegment.from_dict(data)
+
+        assert restored.start == segment.start
+        assert restored.end == segment.end
+        assert restored.text == segment.text
+        assert restored.speaker == segment.speaker
+        assert len(restored.words) == 2
+        assert restored.words[0].word == "hello"
+        assert restored.words[1].word == "world"
+
+    def test_transcription_roundtrip(self, dummy_transcription):
+        """Test Transcription serialization roundtrip."""
+        data = dummy_transcription.to_dict()
+        restored = Transcription.from_dict(data)
+
+        assert len(restored.segments) == len(dummy_transcription.segments)
+        for orig_seg, rest_seg in zip(dummy_transcription.segments, restored.segments):
+            assert rest_seg.start == orig_seg.start
+            assert rest_seg.end == orig_seg.end
+            assert rest_seg.text == orig_seg.text
+            assert len(rest_seg.words) == len(orig_seg.words)
+
+    def test_transcription_with_speakers_roundtrip(self):
+        """Test Transcription with speaker info serialization roundtrip."""
+        words = [
+            TranscriptionWord(start=0.0, end=0.5, word="Hello", speaker="SPEAKER_00"),
+            TranscriptionWord(start=0.5, end=1.0, word="world", speaker="SPEAKER_00"),
+            TranscriptionWord(start=1.0, end=1.5, word="Hi", speaker="SPEAKER_01"),
+        ]
+        transcription = Transcription(words=words)
+
+        data = transcription.to_dict()
+        restored = Transcription.from_dict(data)
+
+        assert len(restored.segments) == len(transcription.segments)
+        assert restored.segments[0].speaker == "SPEAKER_00"
+        assert restored.segments[1].speaker == "SPEAKER_01"
+
+    def test_empty_transcription_roundtrip(self):
+        """Test empty Transcription serialization roundtrip."""
+        transcription = Transcription(segments=[])
+        data = transcription.to_dict()
+        restored = Transcription.from_dict(data)
+
+        assert len(restored.segments) == 0

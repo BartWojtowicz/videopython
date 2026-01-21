@@ -241,3 +241,148 @@ class TestSceneDescription:
         """Test getting transcription text when no transcription exists."""
         sd = SceneDescription(start=0.0, end=5.0, start_frame=0, end_frame=120)
         assert sd.get_transcription_text() == ""
+
+
+class TestSerialization:
+    """Tests for to_dict/from_dict serialization methods."""
+
+    def test_bounding_box_roundtrip(self):
+        """Test BoundingBox serialization roundtrip."""
+        bbox = BoundingBox(x=0.1, y=0.2, width=0.3, height=0.4)
+        data = bbox.to_dict()
+        restored = BoundingBox.from_dict(data)
+
+        assert restored.x == bbox.x
+        assert restored.y == bbox.y
+        assert restored.width == bbox.width
+        assert restored.height == bbox.height
+
+    def test_detected_object_roundtrip(self):
+        """Test DetectedObject serialization roundtrip."""
+        obj = DetectedObject(
+            label="person",
+            confidence=0.95,
+            bounding_box=BoundingBox(x=0.1, y=0.2, width=0.3, height=0.4),
+        )
+        data = obj.to_dict()
+        restored = DetectedObject.from_dict(data)
+
+        assert restored.label == obj.label
+        assert restored.confidence == obj.confidence
+        assert restored.bounding_box is not None
+        assert restored.bounding_box.x == obj.bounding_box.x
+
+    def test_detected_object_without_bbox(self):
+        """Test DetectedObject serialization without bounding box."""
+        obj = DetectedObject(label="car", confidence=0.8)
+        data = obj.to_dict()
+        restored = DetectedObject.from_dict(data)
+
+        assert restored.label == obj.label
+        assert restored.bounding_box is None
+
+    def test_detected_face_roundtrip(self):
+        """Test DetectedFace serialization roundtrip."""
+        face = DetectedFace(
+            bounding_box=BoundingBox(x=0.2, y=0.3, width=0.1, height=0.15),
+            confidence=0.92,
+        )
+        data = face.to_dict()
+        restored = DetectedFace.from_dict(data)
+
+        assert restored.confidence == face.confidence
+        assert restored.bounding_box is not None
+        assert restored.bounding_box.width == face.bounding_box.width
+
+    def test_motion_info_roundtrip(self):
+        """Test MotionInfo serialization roundtrip."""
+        motion = MotionInfo(motion_type="pan", magnitude=0.5, raw_magnitude=10.0)
+        data = motion.to_dict()
+        restored = MotionInfo.from_dict(data)
+
+        assert restored.motion_type == motion.motion_type
+        assert restored.magnitude == motion.magnitude
+        assert restored.raw_magnitude == motion.raw_magnitude
+
+    def test_frame_description_roundtrip(self):
+        """Test FrameDescription serialization roundtrip."""
+        fd = FrameDescription(
+            frame_index=42,
+            timestamp=1.75,
+            description="A person walking",
+            detected_objects=[
+                DetectedObject(label="person", confidence=0.9),
+                DetectedObject(label="dog", confidence=0.85, bounding_box=BoundingBox(0.5, 0.5, 0.2, 0.3)),
+            ],
+            detected_text=["STOP", "Main St"],
+            detected_faces=[DetectedFace(bounding_box=BoundingBox(0.1, 0.1, 0.2, 0.2))],
+            shot_type="medium",
+            motion=MotionInfo(motion_type="static", magnitude=0.1, raw_magnitude=2.0),
+        )
+        data = fd.to_dict()
+        restored = FrameDescription.from_dict(data)
+
+        assert restored.frame_index == fd.frame_index
+        assert restored.timestamp == fd.timestamp
+        assert restored.description == fd.description
+        assert restored.detected_text == fd.detected_text
+        assert restored.shot_type == fd.shot_type
+        assert len(restored.detected_objects) == 2
+        assert restored.detected_objects[0].label == "person"
+        assert len(restored.detected_faces) == 1
+        assert restored.motion.motion_type == "static"
+
+    def test_scene_description_roundtrip(self):
+        """Test SceneDescription serialization roundtrip."""
+        frame_descriptions = [
+            FrameDescription(frame_index=0, timestamp=0.0, description="Scene start"),
+            FrameDescription(frame_index=60, timestamp=2.5, description="Scene middle"),
+        ]
+
+        word = TranscriptionWord(start=0.0, end=0.5, word="hello")
+        segment = TranscriptionSegment(start=0.0, end=0.5, text="hello", words=[word])
+        transcription = Transcription(segments=[segment])
+
+        sd = SceneDescription(
+            start=0.0,
+            end=5.0,
+            start_frame=0,
+            end_frame=120,
+            frame_descriptions=frame_descriptions,
+            transcription=transcription,
+            summary="A short scene",
+            scene_type="dialogue",
+            detected_entities=["person", "car"],
+            dominant_colors=[(255, 0, 0), (0, 255, 0)],
+            avg_motion_magnitude=0.3,
+            dominant_motion_type="pan",
+        )
+        data = sd.to_dict()
+        restored = SceneDescription.from_dict(data)
+
+        assert restored.start == sd.start
+        assert restored.end == sd.end
+        assert restored.start_frame == sd.start_frame
+        assert restored.end_frame == sd.end_frame
+        assert len(restored.frame_descriptions) == 2
+        assert restored.frame_descriptions[0].description == "Scene start"
+        assert restored.transcription is not None
+        assert restored.transcription.segments[0].text == "hello"
+        assert restored.summary == sd.summary
+        assert restored.scene_type == sd.scene_type
+        assert restored.detected_entities == sd.detected_entities
+        assert restored.dominant_colors == [(255, 0, 0), (0, 255, 0)]
+        assert restored.avg_motion_magnitude == sd.avg_motion_magnitude
+        assert restored.dominant_motion_type == sd.dominant_motion_type
+
+    def test_scene_description_minimal_roundtrip(self):
+        """Test SceneDescription serialization with minimal fields."""
+        sd = SceneDescription(start=0.0, end=5.0, start_frame=0, end_frame=120)
+        data = sd.to_dict()
+        restored = SceneDescription.from_dict(data)
+
+        assert restored.start == sd.start
+        assert restored.end == sd.end
+        assert restored.transcription is None
+        assert restored.summary is None
+        assert restored.detected_entities is None

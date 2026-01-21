@@ -12,6 +12,25 @@ class TranscriptionWord:
     word: str
     speaker: str | None = None
 
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "start": self.start,
+            "end": self.end,
+            "word": self.word,
+            "speaker": self.speaker,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> TranscriptionWord:
+        """Create TranscriptionWord from dictionary."""
+        return cls(
+            start=data["start"],
+            end=data["end"],
+            word=data["word"],
+            speaker=data.get("speaker"),
+        )
+
 
 @dataclass
 class TranscriptionSegment:
@@ -20,6 +39,27 @@ class TranscriptionSegment:
     text: str
     words: list[TranscriptionWord]
     speaker: str | None = None
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "start": self.start,
+            "end": self.end,
+            "text": self.text,
+            "words": [w.to_dict() for w in self.words],
+            "speaker": self.speaker,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> TranscriptionSegment:
+        """Create TranscriptionSegment from dictionary."""
+        return cls(
+            start=data["start"],
+            end=data["end"],
+            text=data["text"],
+            words=[TranscriptionWord.from_dict(w) for w in data["words"]],
+            speaker=data.get("speaker"),
+        )
 
 
 class Transcription:
@@ -295,3 +335,14 @@ class Transcription:
             )
 
         return Transcription(segments=sliced_segments)
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "segments": [s.to_dict() for s in self.segments],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> Transcription:
+        """Create Transcription from dictionary."""
+        return cls(segments=[TranscriptionSegment.from_dict(s) for s in data["segments"]])

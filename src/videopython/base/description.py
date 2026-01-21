@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-import numpy as np
-
 from videopython.base.text.transcription import Transcription
 
 __all__ = [
@@ -30,14 +28,31 @@ class ColorHistogram:
         avg_hue: Average hue value (0-180 in OpenCV HSV)
         avg_saturation: Average saturation value (0-255)
         avg_value: Average value/brightness (0-255)
-        hsv_histogram: Optional full HSV histogram for advanced analysis
     """
 
     dominant_colors: list[tuple[int, int, int]]
     avg_hue: float
     avg_saturation: float
     avg_value: float
-    hsv_histogram: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "dominant_colors": [list(c) for c in self.dominant_colors],
+            "avg_hue": self.avg_hue,
+            "avg_saturation": self.avg_saturation,
+            "avg_value": self.avg_value,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> ColorHistogram:
+        """Create ColorHistogram from dictionary."""
+        return cls(
+            dominant_colors=[tuple(c) for c in data["dominant_colors"]],  # type: ignore[misc]
+            avg_hue=data["avg_hue"],
+            avg_saturation=data["avg_saturation"],
+            avg_value=data["avg_value"],
+        )
 
 
 @dataclass
@@ -68,6 +83,15 @@ class BoundingBox:
         """Area of the bounding box (normalized)."""
         return self.width * self.height
 
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {"x": self.x, "y": self.y, "width": self.width, "height": self.height}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> BoundingBox:
+        """Create BoundingBox from dictionary."""
+        return cls(x=data["x"], y=data["y"], width=data["width"], height=data["height"])
+
 
 @dataclass
 class DetectedObject:
@@ -82,6 +106,23 @@ class DetectedObject:
     label: str
     confidence: float
     bounding_box: BoundingBox | None = None
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "label": self.label,
+            "confidence": self.confidence,
+            "bounding_box": self.bounding_box.to_dict() if self.bounding_box else None,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> DetectedObject:
+        """Create DetectedObject from dictionary."""
+        return cls(
+            label=data["label"],
+            confidence=data["confidence"],
+            bounding_box=BoundingBox.from_dict(data["bounding_box"]) if data.get("bounding_box") else None,
+        )
 
 
 @dataclass
@@ -107,6 +148,21 @@ class DetectedFace:
         """Area of the face bounding box (normalized), or None if no bounding box."""
         return self.bounding_box.area if self.bounding_box else None
 
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "bounding_box": self.bounding_box.to_dict() if self.bounding_box else None,
+            "confidence": self.confidence,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> DetectedFace:
+        """Create DetectedFace from dictionary."""
+        return cls(
+            bounding_box=BoundingBox.from_dict(data["bounding_box"]) if data.get("bounding_box") else None,
+            confidence=data.get("confidence", 1.0),
+        )
+
 
 @dataclass
 class AudioEvent:
@@ -128,6 +184,25 @@ class AudioEvent:
     def duration(self) -> float:
         """Duration of the audio event in seconds."""
         return self.end - self.start
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "start": self.start,
+            "end": self.end,
+            "label": self.label,
+            "confidence": self.confidence,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> AudioEvent:
+        """Create AudioEvent from dictionary."""
+        return cls(
+            start=data["start"],
+            end=data["end"],
+            label=data["label"],
+            confidence=data["confidence"],
+        )
 
 
 @dataclass
@@ -172,6 +247,23 @@ class MotionInfo:
         """Check if this frame has significant motion."""
         return self.motion_type != "static"
 
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "motion_type": self.motion_type,
+            "magnitude": self.magnitude,
+            "raw_magnitude": self.raw_magnitude,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> MotionInfo:
+        """Create MotionInfo from dictionary."""
+        return cls(
+            motion_type=data["motion_type"],
+            magnitude=data["magnitude"],
+            raw_magnitude=data["raw_magnitude"],
+        )
+
 
 @dataclass
 class DetectedAction:
@@ -200,6 +292,29 @@ class DetectedAction:
             return self.end_time - self.start_time
         return None
 
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "label": self.label,
+            "confidence": self.confidence,
+            "start_frame": self.start_frame,
+            "end_frame": self.end_frame,
+            "start_time": self.start_time,
+            "end_time": self.end_time,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> DetectedAction:
+        """Create DetectedAction from dictionary."""
+        return cls(
+            label=data["label"],
+            confidence=data["confidence"],
+            start_frame=data.get("start_frame"),
+            end_frame=data.get("end_frame"),
+            start_time=data.get("start_time"),
+            end_time=data.get("end_time"),
+        )
+
 
 @dataclass
 class FrameDescription:
@@ -226,6 +341,39 @@ class FrameDescription:
     detected_faces: list[DetectedFace] | None = None
     shot_type: str | None = None
     motion: MotionInfo | None = None
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "frame_index": self.frame_index,
+            "timestamp": self.timestamp,
+            "description": self.description,
+            "color_histogram": self.color_histogram.to_dict() if self.color_histogram else None,
+            "detected_objects": [obj.to_dict() for obj in self.detected_objects] if self.detected_objects else None,
+            "detected_text": self.detected_text,
+            "detected_faces": [face.to_dict() for face in self.detected_faces] if self.detected_faces else None,
+            "shot_type": self.shot_type,
+            "motion": self.motion.to_dict() if self.motion else None,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> FrameDescription:
+        """Create FrameDescription from dictionary."""
+        return cls(
+            frame_index=data["frame_index"],
+            timestamp=data["timestamp"],
+            description=data["description"],
+            color_histogram=ColorHistogram.from_dict(data["color_histogram"]) if data.get("color_histogram") else None,
+            detected_objects=[DetectedObject.from_dict(obj) for obj in data["detected_objects"]]
+            if data.get("detected_objects")
+            else None,
+            detected_text=data.get("detected_text"),
+            detected_faces=[DetectedFace.from_dict(face) for face in data["detected_faces"]]
+            if data.get("detected_faces")
+            else None,
+            shot_type=data.get("shot_type"),
+            motion=MotionInfo.from_dict(data["motion"]) if data.get("motion") else None,
+        )
 
 
 @dataclass
@@ -320,6 +468,49 @@ class SceneDescription:
             return ""
         return " ".join(segment.text for segment in self.transcription.segments)
 
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "start": self.start,
+            "end": self.end,
+            "start_frame": self.start_frame,
+            "end_frame": self.end_frame,
+            "frame_descriptions": [fd.to_dict() for fd in self.frame_descriptions],
+            "transcription": self.transcription.to_dict() if self.transcription else None,
+            "summary": self.summary,
+            "scene_type": self.scene_type,
+            "detected_entities": self.detected_entities,
+            "dominant_colors": [list(c) for c in self.dominant_colors] if self.dominant_colors else None,
+            "audio_events": [ae.to_dict() for ae in self.audio_events] if self.audio_events else None,
+            "avg_motion_magnitude": self.avg_motion_magnitude,
+            "dominant_motion_type": self.dominant_motion_type,
+            "detected_actions": [da.to_dict() for da in self.detected_actions] if self.detected_actions else None,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> SceneDescription:
+        """Create SceneDescription from dictionary."""
+        return cls(
+            start=data["start"],
+            end=data["end"],
+            start_frame=data["start_frame"],
+            end_frame=data["end_frame"],
+            frame_descriptions=[FrameDescription.from_dict(fd) for fd in data.get("frame_descriptions", [])],
+            transcription=Transcription.from_dict(data["transcription"]) if data.get("transcription") else None,
+            summary=data.get("summary"),
+            scene_type=data.get("scene_type"),
+            detected_entities=data.get("detected_entities"),
+            dominant_colors=[tuple(c) for c in data["dominant_colors"]] if data.get("dominant_colors") else None,  # type: ignore[misc]
+            audio_events=[AudioEvent.from_dict(ae) for ae in data["audio_events"]]
+            if data.get("audio_events")
+            else None,
+            avg_motion_magnitude=data.get("avg_motion_magnitude"),
+            dominant_motion_type=data.get("dominant_motion_type"),
+            detected_actions=[DetectedAction.from_dict(da) for da in data["detected_actions"]]
+            if data.get("detected_actions")
+            else None,
+        )
+
 
 @dataclass
 class VideoDescription:
@@ -396,3 +587,18 @@ class VideoDescription:
                 lines.append(f"  [{segment.start:.2f}s - {segment.end:.2f}s]: {segment.text}")
 
         return "\n".join(lines)
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "scene_descriptions": [sd.to_dict() for sd in self.scene_descriptions],
+            "transcription": self.transcription.to_dict() if self.transcription else None,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> VideoDescription:
+        """Create VideoDescription from dictionary."""
+        return cls(
+            scene_descriptions=[SceneDescription.from_dict(sd) for sd in data["scene_descriptions"]],
+            transcription=Transcription.from_dict(data["transcription"]) if data.get("transcription") else None,
+        )

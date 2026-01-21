@@ -1,5 +1,21 @@
 # Release Notes
 
+## 0.15.2
+
+### New Features
+
+- **JSON Serialization**: Added `to_dict()` and `from_dict()` methods to all description and transcription classes for easy JSON serialization of analysis results
+  - `VideoDescription.to_dict()` / `VideoDescription.from_dict()` - Full video analysis roundtrip
+  - `SceneDescription.to_dict()` / `SceneDescription.from_dict()` - Scene-level serialization
+  - `FrameDescription.to_dict()` / `FrameDescription.from_dict()` - Frame-level serialization
+  - `Transcription.to_dict()` / `Transcription.from_dict()` - Audio transcription serialization
+  - All nested dataclasses (`BoundingBox`, `DetectedObject`, `DetectedFace`, `ColorHistogram`, `AudioEvent`, `MotionInfo`, `DetectedAction`, `TranscriptionSegment`, `TranscriptionWord`) also support serialization
+
+### Removed
+
+- **`ColorHistogram.hsv_histogram`**: Removed unused field that stored raw HSV histogram numpy arrays. The field was never read after being set. Color analysis still provides `dominant_colors`, `avg_hue`, `avg_saturation`, and `avg_value`.
+- **`include_full_histogram` parameter**: Removed from `VideoAnalyzer.analyze()`, `VideoAnalyzer.analyze_path()`, `ImageAnalyzer.describe_frame()`, `ImageAnalyzer.describe_frames()`, `ImageAnalyzer.describe_scene()`, and `ColorAnalyzer.extract_color_features()`.
+
 ## 0.15.1
 
 ### New Features
