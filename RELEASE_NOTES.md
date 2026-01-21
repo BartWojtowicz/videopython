@@ -1,5 +1,11 @@
 # Release Notes
 
+## 0.15.4
+
+### Fixed
+
+- Suppress `use_fast` deprecation warning from BlipProcessor by explicitly setting `use_fast=True`
+
 ## 0.15.3
 
 ### Changed
