@@ -1,6 +1,6 @@
 [project]
 name = "videopython"
-version = "0.15.2"
+version = "0.15.3"
 description = "Minimal video generation and processing library."
 authors = [
     { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
@@ -73,8 +73,7 @@ ai = [
     # Detection backends
     "ultralytics>=8.0.0",
     "easyocr>=1.7.0",
-    # Audio classification
-    "panns-inference>=0.1.0",
+    # Audio classification (AST via transformers - no separate dep needed)
     # Scene detection
     "transnetv2-pytorch>=1.0.5",
     # Voice cloning TTS (coqui-tts is the maintained fork of TTS)
@@ -119,8 +118,7 @@ ai = [
     # Detection backends
     "ultralytics>=8.0.0",
     "easyocr>=1.7.0",
-    # Audio classification
-    "panns-inference>=0.1.0",
+    # Audio classification (AST via transformers - no separate dep needed)
     # Scene detection
     "transnetv2-pytorch>=1.0.5",
     # Voice cloning TTS (coqui-tts is the maintained fork of TTS)
@@ -150,7 +148,6 @@ module = [
     "google.generativeai", "google.generativeai.*",
     "ultralytics", "ultralytics.*",
     "easyocr", "easyocr.*",
-    "panns_inference", "panns_inference.*",
     "transformers", "transformers.*",
     "transnetv2_pytorch", "transnetv2_pytorch.*",
     "TTS", "TTS.*", "coqui", "coqui.*",

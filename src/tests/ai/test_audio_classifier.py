@@ -1,7 +1,7 @@
-"""Tests for AudioClassifier with PANNs backend.
+"""Tests for AudioClassifier with AST (Audio Spectrogram Transformer) backend.
 
 Tests marked with @pytest.mark.requires_model_download are skipped in CI
-due to flaky model downloads. Run locally with:
+due to model downloads. Run locally with:
     uv run pytest src/tests/ai/test_audio_classifier.py -v
 """
 
@@ -12,7 +12,7 @@ import pytest
 
 from videopython.base.description import AudioClassification, AudioEvent
 
-# Mark for tests that require PANNs model download (~80MB)
+# Mark for tests that require AST model download
 requires_model_download = pytest.mark.requires_model_download
 
 # Path to test data (one level up from ai/ directory)
@@ -42,7 +42,7 @@ class TestAudioClassifierInit:
 
 @requires_model_download
 class TestAudioClassifier:
-    """Tests for AudioClassifier with PANNs backend (~80MB model download)."""
+    """Tests for AudioClassifier with AST backend."""
 
     @pytest.fixture
     def classifier(self):
@@ -77,14 +77,14 @@ class TestAudioClassifier:
         """Create silent audio."""
         from videopython.base.audio import Audio, AudioMetadata
 
-        # 1 second of silence at 32kHz
-        silent_data = np.zeros(32000, dtype=np.float32)
+        # 1 second of silence at 16kHz (AST sample rate)
+        silent_data = np.zeros(16000, dtype=np.float32)
         metadata = AudioMetadata(
-            sample_rate=32000,
+            sample_rate=16000,
             channels=1,
             sample_width=4,  # float32
             duration_seconds=1.0,
-            frame_count=32000,
+            frame_count=16000,
         )
         return Audio(data=silent_data, metadata=metadata)
 
@@ -92,7 +92,7 @@ class TestAudioClassifier:
         """Test classifier initializes correctly."""
         assert classifier.backend == "local"
         assert classifier.confidence_threshold == 0.3
-        assert classifier.model_name == "Cnn14"
+        assert classifier.model_name == "MIT/ast-finetuned-audioset-10-10-0.4593"
         assert classifier.device == "cpu"
 
     def test_classify_returns_audio_classification(self, classifier, test_audio):
