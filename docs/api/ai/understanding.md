@@ -8,7 +8,7 @@ Analyze videos, transcribe audio, and describe visual content.
 |-------|-------|--------|--------|------------|
 | ImageToText | BLIP | GPT-4o | Gemini | - |
 | AudioToText | Whisper | Whisper API | Gemini | - |
-| AudioClassifier | PANNs | - | - | - |
+| AudioClassifier | AST | - | - | - |
 | LLMSummarizer | Ollama | GPT-4o | Gemini | - |
 | ObjectDetector | YOLO | GPT-4o | Gemini | - |
 | TextDetector | EasyOCR | GPT-4o | Gemini | - |
@@ -25,7 +25,7 @@ Analyze videos, transcribe audio, and describe visual content.
 
 ## AudioClassifier
 
-Detect and classify sounds, music, and audio events with timestamps using PANNs (Pretrained Audio Neural Networks).
+Detect and classify sounds, music, and audio events with timestamps using Audio Spectrogram Transformer (AST), a state-of-the-art model achieving 0.485 mAP on AudioSet.
 
 ### Basic Usage
 
@@ -113,6 +113,58 @@ result = analyzer.analyze_path(
 
 print(f"Detected {len(result.scene_descriptions)} scenes")
 print(f"Summary: {result.get_full_summary()}")
+```
+
+### Key Frame Extraction
+
+Extract representative frames from each scene for thumbnails or previews:
+
+```python
+result = analyzer.analyze_path(
+    "video.mp4",
+    extract_key_frames=True,
+    key_frame_width=640,  # Width in pixels, height auto-scaled
+)
+
+for scene in result.scene_descriptions:
+    if scene.key_frame:
+        # scene.key_frame contains JPEG bytes
+        with open(f"scene_{scene.scene_index}.jpg", "wb") as f:
+            f.write(scene.key_frame)
+        print(f"Scene {scene.scene_index}: key frame at {scene.key_frame_timestamp:.1f}s")
+```
+
+### Adaptive Frame Sampling
+
+Use adaptive sampling to intelligently reduce frame count while maintaining coverage:
+
+```python
+result = analyzer.analyze_path(
+    "video.mp4",
+    sampling_strategy="adaptive",  # "fixed" or "adaptive"
+)
+# Uses start + ln(1+duration) + end formula per scene
+# Reduces frames by ~27% compared to fixed sampling
+```
+
+### JSON Serialization
+
+Export and import analysis results for caching or API responses:
+
+```python
+# Export to JSON-compatible dict
+result = analyzer.analyze_path("video.mp4")
+data = result.to_dict()
+
+import json
+with open("analysis.json", "w") as f:
+    json.dump(data, f)
+
+# Import from dict
+from videopython.base import VideoDescription
+with open("analysis.json") as f:
+    data = json.load(f)
+result = VideoDescription.from_dict(data)
 ```
 
 ::: videopython.ai.VideoAnalyzer

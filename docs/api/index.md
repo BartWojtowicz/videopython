@@ -21,6 +21,8 @@ AI-powered generation and understanding (requires `[ai]` extra):
 - [**Generation**](ai/generation.md) - Generate videos, images, music, and speech from text
 - [**Understanding**](ai/understanding.md) - Transcribe audio, describe images, detect scenes
 - [**Dubbing**](ai/dubbing.md) - Dub videos into different languages or revoice with custom text
+- [**Object Swapping**](ai/swapping.md) - Replace, remove, or modify objects in videos
+- [**AI Transforms**](ai/transforms.md) - Face tracking crops, split-screen, and auto-framing
 
 ## Import Patterns
 

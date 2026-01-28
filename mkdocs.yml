@@ -82,3 +82,5 @@ nav:
       - AI Generation: api/ai/generation.md
       - AI Understanding: api/ai/understanding.md
       - AI Dubbing: api/ai/dubbing.md
+      - AI Object Swapping: api/ai/swapping.md
+      - AI Transforms: api/ai/transforms.md
