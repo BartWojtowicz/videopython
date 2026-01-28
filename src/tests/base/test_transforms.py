@@ -3,6 +3,8 @@ import numpy as np
 import pytest
 
 from videopython.base.transforms import (
+    Crop,
+    CropMode,
     CutFrames,
     CutSeconds,
     PictureInPicture,
@@ -74,6 +76,81 @@ def test_video_resize(height, width, small_video):
             interpolation=cv2.INTER_AREA,
         )
     )
+
+
+class TestCrop:
+    """Tests for Crop transformation."""
+
+    @pytest.fixture
+    def video(self):
+        """Create a fresh test video for each test."""
+        return Video.from_image(np.zeros((500, 800, 3), dtype=np.uint8), fps=30, length_seconds=1.0)
+
+    def test_crop_center_pixels(self, video):
+        """Test center crop with pixel values."""
+        crop_width, crop_height = 100, 80
+
+        transform = Crop(width=crop_width, height=crop_height, mode=CropMode.CENTER)
+        result = transform.apply(video)
+
+        assert result.frame_shape[0] == crop_height
+        assert result.frame_shape[1] == crop_width
+
+    def test_crop_center_normalized(self, video):
+        """Test center crop with normalized (0-1) values."""
+        original_height, original_width = video.frame_shape[:2]
+
+        # Crop to 50% of original size
+        transform = Crop(width=0.5, height=0.5, mode=CropMode.CENTER)
+        result = transform.apply(video)
+
+        expected_width = int(original_width * 0.5)
+        expected_height = int(original_height * 0.5)
+        assert result.frame_shape[0] == expected_height
+        assert result.frame_shape[1] == expected_width
+
+    def test_crop_custom_position_pixels(self, video):
+        """Test custom position crop with pixel values."""
+        crop_width, crop_height = 50, 40
+        crop_x, crop_y = 10, 20
+
+        transform = Crop(width=crop_width, height=crop_height, x=crop_x, y=crop_y, mode=CropMode.CUSTOM)
+        result = transform.apply(video)
+
+        assert result.frame_shape[0] == crop_height
+        assert result.frame_shape[1] == crop_width
+
+    def test_crop_custom_position_normalized(self, video):
+        """Test custom position crop with normalized values."""
+        original_height, original_width = video.frame_shape[:2]
+
+        # Crop right half of video (x=0.5, width=0.5)
+        transform = Crop(width=0.5, height=1.0, x=0.5, y=0.0, mode=CropMode.CUSTOM)
+        result = transform.apply(video)
+
+        expected_width = int(original_width * 0.5)
+        expected_height = int(original_height * 1.0)
+        assert result.frame_shape[0] == expected_height
+        assert result.frame_shape[1] == expected_width
+
+    def test_crop_mixed_values(self, video):
+        """Test crop with mixed pixel and normalized values."""
+        original_height, original_width = video.frame_shape[:2]
+
+        # Width in pixels, height normalized
+        transform = Crop(width=100, height=0.5, mode=CropMode.CENTER)
+        result = transform.apply(video)
+
+        assert result.frame_shape[1] == 100
+        assert result.frame_shape[0] == int(original_height * 0.5)
+
+    def test_crop_preserves_frame_count(self, video):
+        """Test that crop preserves the number of frames."""
+        original_frames = len(video.frames)
+        transform = Crop(width=0.5, height=0.5, mode=CropMode.CENTER)
+        result = transform.apply(video)
+
+        assert len(result.frames) == original_frames
 
 
 class TestSpeedChange:
