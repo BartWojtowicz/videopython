@@ -1,5 +1,17 @@
 # Release Notes
 
+## 0.15.6
+
+### New Features
+
+- **Key Frame Extraction**: Extract representative frames from each scene during video analysis
+  - New `extract_key_frames` parameter in `VideoAnalyzer.analyze_path()` (default: False)
+  - New `key_frame_width` parameter to control output size (default: 640px, height auto-scaled)
+  - Extracts middle frame of each scene as JPEG (quality 85)
+  - New `SceneDescription.key_frame` field containing JPEG bytes
+  - New `SceneDescription.key_frame_timestamp` field with frame timestamp
+  - Serialization support: `to_dict()` encodes as base64, `from_dict()` decodes back to bytes
+
 ## 0.15.5
 
 ### New Features

@@ -23,6 +23,7 @@ __all__ = [
     "MORPH_ELLIPSE",
     "HISTCMP_CORREL",
     "NORM_MINMAX",
+    "IMWRITE_JPEG_QUALITY",
     # Functions
     "resize",
     "GaussianBlur",
@@ -35,6 +36,7 @@ __all__ = [
     "VideoWriter_fourcc",
     "getStructuringElement",
     "dilate",
+    "imencode",
 ]
 
 from .classes import CascadeClassifier, VideoCapture, VideoWriter, data, dnn
@@ -50,6 +52,7 @@ from .constants import (
     COLOR_RGB2GRAY,
     COLOR_RGB2HSV,
     HISTCMP_CORREL,
+    IMWRITE_JPEG_QUALITY,
     INTER_AREA,
     INTER_CUBIC,
     INTER_LANCZOS4,
@@ -67,6 +70,7 @@ from .functions import (
     cvtColor,
     dilate,
     getStructuringElement,
+    imencode,
     imwrite,
     normalize,
     resize,
