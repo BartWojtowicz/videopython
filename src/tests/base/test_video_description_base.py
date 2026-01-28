@@ -219,3 +219,37 @@ def test_video_description_minimal_roundtrip():
     assert restored.num_scenes == 1
     assert restored.transcription is None
     assert len(restored.scene_descriptions[0].frame_descriptions) == 0
+
+
+def test_scene_description_key_frame_roundtrip():
+    """Test SceneDescription key frame serialization roundtrip."""
+    jpeg_bytes = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
+    scene_desc = SceneDescription(
+        start=0.0,
+        end=5.0,
+        start_frame=0,
+        end_frame=120,
+        key_frame=jpeg_bytes,
+        key_frame_timestamp=2.5,
+    )
+
+    data = scene_desc.to_dict()
+    assert data["key_frame_base64"] is not None
+    assert data["key_frame_timestamp"] == 2.5
+
+    restored = SceneDescription.from_dict(data)
+    assert restored.key_frame == jpeg_bytes
+    assert restored.key_frame_timestamp == 2.5
+
+
+def test_scene_description_key_frame_none_roundtrip():
+    """Test SceneDescription serialization with no key frame."""
+    scene_desc = SceneDescription(start=0.0, end=5.0, start_frame=0, end_frame=120)
+
+    data = scene_desc.to_dict()
+    assert data["key_frame_base64"] is None
+    assert data["key_frame_timestamp"] is None
+
+    restored = SceneDescription.from_dict(data)
+    assert restored.key_frame is None
+    assert restored.key_frame_timestamp is None

@@ -29,3 +29,6 @@ HISTCMP_CORREL: Final[int]
 
 # Normalization types
 NORM_MINMAX: Final[int]
+
+# Image encoding parameters
+IMWRITE_JPEG_QUALITY: Final[int]

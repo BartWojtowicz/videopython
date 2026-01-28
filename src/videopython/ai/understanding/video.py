@@ -4,6 +4,7 @@ import math
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+import cv2
 import numpy as np
 
 from videopython.ai.backends import ImageToTextBackend
@@ -526,6 +527,8 @@ class VideoAnalyzer:
         analyze_motion: bool = False,
         recognize_actions: bool = False,
         action_confidence_threshold: float = 0.1,
+        extract_key_frames: bool = False,
+        key_frame_width: int = 640,
     ) -> VideoDescription:
         """Analyze video from path with minimal memory usage.
 
@@ -554,6 +557,8 @@ class VideoAnalyzer:
             analyze_motion: Whether to analyze motion between frames (default: False)
             recognize_actions: Whether to recognize actions/activities in scenes (default: False)
             action_confidence_threshold: Minimum confidence for action recognition (default: 0.1)
+            extract_key_frames: Whether to extract a representative frame from each scene (default: False)
+            key_frame_width: Width to resize key frames to (height auto-scaled, default: 640)
 
         Returns:
             VideoDescription object with complete analysis
@@ -648,6 +653,23 @@ class VideoAnalyzer:
                 avg_mag, dom_type = _aggregate_motion(frame_descriptions)
                 scene_desc.avg_motion_magnitude = avg_mag
                 scene_desc.dominant_motion_type = dom_type
+
+            if extract_key_frames:
+                mid_time = (scene_desc.start + scene_desc.end) / 2
+                mid_frame_idx = int(mid_time * metadata.fps)
+                mid_frame_idx = max(scene_desc.start_frame, min(mid_frame_idx, scene_desc.end_frame - 1))
+                key_frames = extract_frames_at_indices(path, [mid_frame_idx])
+                if len(key_frames) > 0:
+                    frame = key_frames[0]
+                    h, w = frame.shape[:2]
+                    if w > key_frame_width:
+                        scale = key_frame_width / w
+                        new_h = int(h * scale)
+                        frame = cv2.resize(frame, (key_frame_width, new_h), interpolation=cv2.INTER_AREA)
+                    frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                    _, jpeg_data = cv2.imencode(".jpg", frame_bgr, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                    scene_desc.key_frame = jpeg_data.tobytes()
+                    scene_desc.key_frame_timestamp = mid_time
 
         # Step 4: Optional transcription (audio-only, already memory efficient)
         transcription = None

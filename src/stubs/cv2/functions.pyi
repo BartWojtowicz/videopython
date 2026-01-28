@@ -76,3 +76,8 @@ def dilate(
     borderType: int = ...,
     borderValue: float = ...,
 ) -> npt.NDArray[_TImg]: ...
+def imencode(
+    ext: str,
+    img: npt.NDArray[_TImg],
+    params: list[int] = ...,
+) -> tuple[bool, npt.NDArray[np.uint8]]: ...

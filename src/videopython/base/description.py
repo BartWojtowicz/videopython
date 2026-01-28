@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass, field
 
 from videopython.base.text.transcription import Transcription
@@ -414,6 +415,8 @@ class SceneDescription:
     avg_motion_magnitude: float | None = None
     dominant_motion_type: str | None = None
     detected_actions: list[DetectedAction] | None = None
+    key_frame: bytes | None = None
+    key_frame_timestamp: float | None = None
 
     @property
     def duration(self) -> float:
@@ -485,6 +488,8 @@ class SceneDescription:
             "avg_motion_magnitude": self.avg_motion_magnitude,
             "dominant_motion_type": self.dominant_motion_type,
             "detected_actions": [da.to_dict() for da in self.detected_actions] if self.detected_actions else None,
+            "key_frame_base64": base64.b64encode(self.key_frame).decode("utf-8") if self.key_frame else None,
+            "key_frame_timestamp": self.key_frame_timestamp,
         }
 
     @classmethod
@@ -509,6 +514,8 @@ class SceneDescription:
             detected_actions=[DetectedAction.from_dict(da) for da in data["detected_actions"]]
             if data.get("detected_actions")
             else None,
+            key_frame=base64.b64decode(data["key_frame_base64"]) if data.get("key_frame_base64") else None,
+            key_frame_timestamp=data.get("key_frame_timestamp"),
         )
 
 
