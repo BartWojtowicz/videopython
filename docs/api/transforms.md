@@ -52,6 +52,23 @@ print(f"Output will be: {output_meta}")
 
 ## Crop
 
+Supports both pixel values and normalized coordinates (0-1):
+
+```python
+from videopython.base import Video, Crop, CropMode
+
+video = Video.from_path("input.mp4")
+
+# Pixel values - crop to exact dimensions
+video.crop(640, 480)
+
+# Normalized coordinates - crop to 50% of original size (centered)
+Crop(width=0.5, height=0.5).apply(video)
+
+# Custom position - crop right half of video
+Crop(width=0.5, height=1.0, x=0.5, y=0.0, mode=CropMode.CUSTOM).apply(video)
+```
+
 ::: videopython.base.Crop
 
 ## CropMode

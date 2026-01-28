@@ -42,7 +42,7 @@ Cloud backends require API keys: `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `ELEVENLABS
 | TextToImage | SDXL | DALL-E 3 | - | - | - | - | - |
 | ImageToText | BLIP | GPT-4o | Gemini | - | - | - | - |
 | AudioToText | Whisper | Whisper API | Gemini | - | - | - | - |
-| AudioClassifier | PANNs | - | - | - | - | - | - |
+| AudioClassifier | AST | - | - | - | - | - | - |
 | LLMSummarizer | Ollama | GPT-4o | Gemini | - | - | - | - |
 | ObjectDetector | YOLO | GPT-4o | Gemini | - | - | - | - |
 | TextDetector | EasyOCR | GPT-4o | Gemini | - | - | - | - |

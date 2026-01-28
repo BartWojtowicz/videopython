@@ -28,11 +28,13 @@ create_video()
 
 ## What You Can Do
 
-- **Edit videos** - Cut, resize, crop, resample FPS, combine clips
+- **Edit videos** - Cut, resize, crop, resample FPS, combine clips with effects
 - **Add transitions** - Fade, blur, or instant transitions between segments
 - **Generate content** - Create images, videos, speech, and music from text prompts
 - **Transcribe and subtitle** - Auto-generate word-level subtitles from speech
-- **Analyze video** - Detect objects, faces, text, scenes, and camera motion
+- **Analyze video** - Detect objects, faces, text, scenes, actions, and motion
+- **Dub and revoice** - Translate speech to 50+ languages with voice cloning
+- **Swap objects** - Replace or remove objects using AI segmentation
 
 ## Installation
 
