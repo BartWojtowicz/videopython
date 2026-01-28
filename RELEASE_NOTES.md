@@ -1,5 +1,17 @@
 # Release Notes
 
+## 0.15.5
+
+### New Features
+
+- **Crop transform**: Enhanced with normalized coordinates and custom positioning
+  - Now accepts both pixel values (int) and normalized coordinates (float 0-1)
+  - Float values in range (0, 1] are interpreted as percentages of video dimensions
+  - New `x` and `y` parameters for custom crop positioning
+  - New `CropMode.CUSTOM` mode for arbitrary crop regions
+  - Example: `Crop(width=0.5, height=0.5)` crops to 50% of original size
+  - Example: `Crop(width=0.5, height=1.0, x=0.5, y=0.0, mode=CropMode.CUSTOM)` crops right half
+
 ## 0.15.4
 
 ### Fixed

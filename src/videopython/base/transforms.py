@@ -206,22 +206,49 @@ class ResampleFPS(Transformation):
 
 class CropMode(Enum):
     CENTER = "center"
+    CUSTOM = "custom"  # Use x, y coordinates for positioning
 
 
 class Crop(Transformation):
-    """Crops video to specified dimensions."""
+    """Crops video to specified dimensions.
 
-    def __init__(self, width: int, height: int, mode: CropMode = CropMode.CENTER):
+    Supports both pixel values (int) and normalized coordinates (float 0-1).
+    When using normalized coordinates, values are converted to pixels based on
+    the input video dimensions.
+    """
+
+    def __init__(
+        self,
+        width: int | float,
+        height: int | float,
+        x: int | float = 0,
+        y: int | float = 0,
+        mode: CropMode = CropMode.CENTER,
+    ):
         """Initialize cropper.
 
         Args:
-            width: Target crop width in pixels.
-            height: Target crop height in pixels.
+            width: Target crop width. If int, interpreted as pixels.
+                If float in range (0, 1], interpreted as normalized (e.g., 0.5 = 50% of width).
+            height: Target crop height. If int, interpreted as pixels.
+                If float in range (0, 1], interpreted as normalized (e.g., 0.5 = 50% of height).
+            x: Left edge X coordinate. If int, pixels. If float in [0, 1], normalized.
+                Only used when mode is not CENTER. Defaults to 0.
+            y: Top edge Y coordinate. If int, pixels. If float in [0, 1], normalized.
+                Only used when mode is not CENTER. Defaults to 0.
             mode: Crop mode, defaults to center crop.
         """
         self.width = width
         self.height = height
+        self.x = x
+        self.y = y
         self.mode = mode
+
+    def _to_pixels(self, value: int | float, dimension: int) -> int:
+        """Convert value to pixels. Floats in (0, 1] are treated as normalized."""
+        if isinstance(value, float) and 0 < value <= 1:
+            return int(value * dimension)
+        return int(value)
 
     def apply(self, video: Video) -> Video:
         """Crop video to target dimensions.
@@ -232,12 +259,19 @@ class Crop(Transformation):
         Returns:
             Cropped video.
         """
+        current_height, current_width = video.frame_shape[:2]
+
+        # Convert to pixels (handles both int and normalized float)
+        crop_width = self._to_pixels(self.width, current_width)
+        crop_height = self._to_pixels(self.height, current_height)
+        crop_x = self._to_pixels(self.x, current_width)
+        crop_y = self._to_pixels(self.y, current_height)
+
         if self.mode == CropMode.CENTER:
-            current_shape = video.frame_shape[:2]
-            center_height = current_shape[0] // 2
-            center_width = current_shape[1] // 2
-            width_offset = self.width // 2
-            height_offset = self.height // 2
+            center_height = current_height // 2
+            center_width = current_width // 2
+            width_offset = crop_width // 2
+            height_offset = crop_height // 2
             video.frames = video.frames[
                 :,
                 center_height - height_offset : center_height + height_offset,
@@ -245,7 +279,13 @@ class Crop(Transformation):
                 :,
             ]
         else:
-            raise ValueError(f"Unknown mode: {self.mode}")
+            # Custom position crop using x, y coordinates
+            video.frames = video.frames[
+                :,
+                crop_y : crop_y + crop_height,
+                crop_x : crop_x + crop_width,
+                :,
+            ]
         return video
 
 
