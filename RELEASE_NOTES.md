@@ -1,5 +1,19 @@
 # Release Notes
 
+## 0.16.0
+
+### Breaking Changes
+
+- **VideoAnalyzer removed**: The `VideoAnalyzer` class and all orchestration types have been extracted to a separate package. Use individual backbone tools directly:
+  - Scene detection: `SceneDetector`, `SemanticSceneDetector` (now return `SceneBoundary`)
+  - Image analysis: `ImageToText.describe_image()`
+  - Object detection: `ObjectDetector`, `FaceDetector`, `TextDetector`
+  - Audio: `AudioToText`, `AudioClassifier`
+  - Actions: `ActionRecognizer`
+
+- **Removed types**: `VideoDescription`, `SceneDescription`, `FrameDescription`, `SceneUnderstanding`, `VisualEvent`, `LLMSummarizer`
+- **New type**: `SceneBoundary` - lightweight timing structure for scene boundaries
+
 ## 0.15.6
 
 ### New Features

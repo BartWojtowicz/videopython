@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
-from videopython.base.description import DetectedAction, SceneDescription
+from videopython.base.description import DetectedAction, SceneBoundary
 
 if TYPE_CHECKING:
     from videopython.base.video import Video
@@ -202,67 +202,6 @@ class ActionRecognizer:
 
         return actions
 
-    def recognize_scenes(
-        self,
-        video: Video,
-        scenes: list[SceneDescription],
-        top_k: int = 3,
-    ) -> None:
-        """Recognize actions for each scene in place.
-
-        Modifies SceneDescription objects by populating detected_actions field.
-
-        Args:
-            video: Video object containing the frames.
-            scenes: List of SceneDescription objects to update.
-            top_k: Number of top predictions per scene.
-        """
-        self._load_model()
-
-        import torch
-
-        labels = _get_kinetics_labels()
-
-        for scene in scenes:
-            # Extract scene frames
-            scene_frames = video.frames[scene.start_frame : scene.end_frame]
-            if len(scene_frames) == 0:
-                scene.detected_actions = []
-                continue
-
-            # Sample frames for the model
-            sampled_frames = self._sample_frames(scene_frames, self.num_frames)
-            frames_list = [sampled_frames[i] for i in range(len(sampled_frames))]
-
-            # Process and run inference
-            inputs = self._processor(frames_list, return_tensors="pt")
-            inputs = {k: v.to(self._device) for k, v in inputs.items()}
-
-            with torch.no_grad():
-                outputs = self._model(**inputs)
-                logits = outputs.logits
-
-            # Get probabilities
-            probs = torch.nn.functional.softmax(logits, dim=-1)[0]
-            top_probs, top_indices = torch.topk(probs, min(top_k, len(probs)))
-
-            # Build results
-            actions = []
-            for prob, idx in zip(top_probs.cpu().numpy(), top_indices.cpu().numpy()):
-                if prob >= self.confidence_threshold:
-                    actions.append(
-                        DetectedAction(
-                            label=labels[idx],
-                            confidence=float(prob),
-                            start_frame=scene.start_frame,
-                            end_frame=scene.end_frame,
-                            start_time=scene.start,
-                            end_time=scene.end,
-                        )
-                    )
-
-            scene.detected_actions = actions
-
     def recognize_path(
         self,
         path: str | Path,
@@ -392,7 +331,7 @@ class SemanticSceneDetector:
         self._model = TransNetV2(device=device)
         self._model.eval()
 
-    def detect(self, video: Video) -> list[SceneDescription]:
+    def detect(self, video: Video) -> list[SceneBoundary]:
         """Detect scenes in a video using ML-based boundary detection.
 
         Note: This method requires saving video to a temporary file for
@@ -403,7 +342,7 @@ class SemanticSceneDetector:
             video: Video object to analyze.
 
         Returns:
-            List of SceneDescription objects representing detected scenes.
+            List of SceneBoundary objects representing detected scenes.
         """
         import tempfile
 
@@ -411,7 +350,7 @@ class SemanticSceneDetector:
             return []
 
         if len(video.frames) == 1:
-            return [SceneDescription(start=0.0, end=video.total_seconds, start_frame=0, end_frame=1)]
+            return [SceneBoundary(start=0.0, end=video.total_seconds, start_frame=0, end_frame=1)]
 
         # Save video to temp file for TransNetV2 processing
         with tempfile.NamedTemporaryFile(suffix=".mp4", delete=True) as tmp:
@@ -423,7 +362,7 @@ class SemanticSceneDetector:
         path: str | Path,
         start_second: float | None = None,
         end_second: float | None = None,
-    ) -> list[SceneDescription]:
+    ) -> list[SceneBoundary]:
         """Detect scenes from a video file.
 
         Uses TransNetV2 with pretrained weights for accurate shot boundary
@@ -435,7 +374,7 @@ class SemanticSceneDetector:
             end_second: Optional end time for analysis (not yet supported).
 
         Returns:
-            List of SceneDescription objects representing detected scenes.
+            List of SceneBoundary objects representing detected scenes.
         """
         if start_second is not None or end_second is not None:
             import warnings
@@ -451,7 +390,7 @@ class SemanticSceneDetector:
         # Use TransNetV2's detect_scenes which handles everything internally
         raw_scenes = self._model.detect_scenes(str(path), threshold=self.threshold)
 
-        # Convert to SceneDescription objects
+        # Convert to SceneBoundary objects
         scenes = []
         for scene_data in raw_scenes:
             start_frame = scene_data["start_frame"]
@@ -460,7 +399,7 @@ class SemanticSceneDetector:
             end_time = float(scene_data["end_time"])
 
             scenes.append(
-                SceneDescription(
+                SceneBoundary(
                     start=start_time,
                     end=end_time,
                     start_frame=start_frame,
@@ -473,7 +412,7 @@ class SemanticSceneDetector:
 
         return scenes
 
-    def _merge_short_scenes(self, scenes: list[SceneDescription]) -> list[SceneDescription]:
+    def _merge_short_scenes(self, scenes: list[SceneBoundary]) -> list[SceneBoundary]:
         """Merge scenes that are shorter than min_scene_length.
 
         Args:
@@ -491,7 +430,7 @@ class SemanticSceneDetector:
             last_scene = merged[-1]
 
             if last_scene.duration < self.min_scene_length:
-                merged[-1] = SceneDescription(
+                merged[-1] = SceneBoundary(
                     start=last_scene.start,
                     end=scene.end,
                     start_frame=last_scene.start_frame,
@@ -503,7 +442,7 @@ class SemanticSceneDetector:
         if len(merged) > 1 and merged[-1].duration < self.min_scene_length:
             second_last = merged[-2]
             last = merged[-1]
-            merged[-2] = SceneDescription(
+            merged[-2] = SceneBoundary(
                 start=second_last.start,
                 end=last.end,
                 start_frame=second_last.start_frame,
@@ -519,7 +458,7 @@ class SemanticSceneDetector:
         path: str | Path,
         threshold: float = 0.5,
         min_scene_length: float = 0.5,
-    ) -> list[SceneDescription]:
+    ) -> list[SceneBoundary]:
         """Convenience method for one-shot scene detection.
 
         Args:
@@ -528,7 +467,7 @@ class SemanticSceneDetector:
             min_scene_length: Minimum scene duration in seconds.
 
         Returns:
-            List of SceneDescription objects representing detected scenes.
+            List of SceneBoundary objects representing detected scenes.
         """
         detector = cls(threshold=threshold, min_scene_length=min_scene_length)
         return detector.detect_streaming(path)

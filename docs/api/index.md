@@ -46,7 +46,6 @@ from videopython.ai import (
     TextToVideo,
     TextToImage,
     AudioToText,
-    VideoAnalyzer,
 )
 
 # Import dubbing classes

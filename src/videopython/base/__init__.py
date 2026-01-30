@@ -6,10 +6,8 @@ from .description import (
     DetectedAction,
     DetectedFace,
     DetectedObject,
-    FrameDescription,
     MotionInfo,
-    SceneDescription,
-    VideoDescription,
+    SceneBoundary,
 )
 from .effects import Blur, ColorGrading, Effect, FullImageOverlay, KenBurns, Vignette, Zoom
 from .exceptions import (
@@ -102,10 +100,8 @@ __all__ = [
     "AnchorPoint",
     # Scene Detection
     "SceneDetector",
-    # Description types
-    "FrameDescription",
-    "SceneDescription",
-    "VideoDescription",
+    "SceneBoundary",
+    # Detection types
     "BoundingBox",
     "DetectedObject",
     "DetectedFace",
