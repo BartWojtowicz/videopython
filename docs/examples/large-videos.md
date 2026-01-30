@@ -83,27 +83,6 @@ for scene in scenes:
     print(f"Scene: {scene.start:.1f}s - {scene.end:.1f}s")
 ```
 
-## Video Analysis on Large Files
-
-Use `VideoAnalyzer.analyze_path()` instead of loading the video first:
-
-```python
-from videopython.ai import VideoAnalyzer
-
-analyzer = VideoAnalyzer()
-
-# Memory-efficient: streams frames, only loads sampled frames for AI analysis
-result = analyzer.analyze_path(
-    "long_documentary.mp4",
-    frames_per_second=0.1,  # Sample 1 frame every 10 seconds
-    transcribe=True,
-)
-
-print(f"Detected {len(result.scene_descriptions)} scenes")
-for scene in result.scene_descriptions:
-    print(f"{scene.start:.0f}s - {scene.end:.0f}s: {scene.frame_descriptions[0].description if scene.frame_descriptions else 'No description'}")
-```
-
 ## Processing a Segment
 
 Process only a portion of a large video:
@@ -125,7 +104,6 @@ with FrameIterator("movie.mp4", start_second=3600, end_second=4200) as frames:
 | `FrameIterator` | O(1) | Sequential | Long videos, single pass |
 | `SceneDetector.detect_streaming()` | O(1) | Slower | Memory-constrained |
 | `SceneDetector.detect_parallel()` | O(workers) | Fastest | Multi-core systems |
-| `VideoAnalyzer.analyze_path()` | O(sampled frames) | Depends on AI | Long videos with AI analysis |
 
 ## Tips
 

@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 import cv2
 import numpy as np
 
-from videopython.base.description import SceneDescription
+from videopython.base.description import SceneBoundary
 
 if TYPE_CHECKING:
     from videopython.base.video import Video
@@ -138,21 +138,21 @@ class SceneDetector:
 
         return 1.0 - avg_correlation
 
-    def detect(self, video: Video) -> list[SceneDescription]:
+    def detect(self, video: Video) -> list[SceneBoundary]:
         """Detect scenes in a video.
 
         Args:
             video: Video object to analyze
 
         Returns:
-            List of SceneDescription objects representing detected scenes, ordered by time.
-            Frame descriptions are not populated - use VideoAnalyzer for full analysis.
+            List of SceneBoundary objects representing detected scenes, ordered by time.
+            Returns SceneBoundary objects with timing info only.
         """
         if len(video.frames) == 0:
             return []
 
         if len(video.frames) == 1:
-            return [SceneDescription(start=0.0, end=video.total_seconds, start_frame=0, end_frame=1)]
+            return [SceneBoundary(start=0.0, end=video.total_seconds, start_frame=0, end_frame=1)]
 
         scene_boundaries = [0]
 
@@ -173,7 +173,7 @@ class SceneDetector:
             end_time = end_frame / video.fps
 
             scenes.append(
-                SceneDescription(
+                SceneBoundary(
                     start=start_time,
                     end=end_time,
                     start_frame=start_frame,
@@ -191,7 +191,7 @@ class SceneDetector:
         path: str | Path,
         start_second: float | None = None,
         end_second: float | None = None,
-    ) -> list[SceneDescription]:
+    ) -> list[SceneBoundary]:
         """Detect scenes by streaming frames from file.
 
         Memory usage is O(1) - only 2 frames in memory at any time.
@@ -204,7 +204,7 @@ class SceneDetector:
             end_second: Optional end time for analysis
 
         Returns:
-            List of SceneDescription objects representing detected scenes.
+            List of SceneBoundary objects representing detected scenes.
 
         Example:
             >>> detector = SceneDetector(threshold=0.3)
@@ -242,7 +242,7 @@ class SceneDetector:
         # Add end boundary (one past the last frame)
         scene_boundaries.append(last_frame_idx + 1)
 
-        # Build SceneDescription objects
+        # Build SceneBoundary objects
         scenes = []
         for i in range(len(scene_boundaries) - 1):
             start_frame = scene_boundaries[i]
@@ -252,7 +252,7 @@ class SceneDetector:
             end_time = end_frame / metadata.fps
 
             scenes.append(
-                SceneDescription(
+                SceneBoundary(
                     start=start_time,
                     end=end_time,
                     start_frame=start_frame,
@@ -271,7 +271,7 @@ class SceneDetector:
         num_workers: int | None = None,
         start_second: float | None = None,
         end_second: float | None = None,
-    ) -> list[SceneDescription]:
+    ) -> list[SceneBoundary]:
         """Detect scenes using parallel processing.
 
         Splits video into segments and processes them in parallel using
@@ -286,7 +286,7 @@ class SceneDetector:
             end_second: Optional end time for analysis
 
         Returns:
-            List of SceneDescription objects representing detected scenes.
+            List of SceneBoundary objects representing detected scenes.
 
         Example:
             >>> detector = SceneDetector(threshold=0.3)
@@ -365,7 +365,7 @@ class SceneDetector:
         # Deduplicate and sort
         all_boundaries = sorted(set(all_boundaries))
 
-        # Build SceneDescription objects
+        # Build SceneBoundary objects
         scenes = []
         for i in range(len(all_boundaries) - 1):
             start_frame = all_boundaries[i]
@@ -375,7 +375,7 @@ class SceneDetector:
             end_time = end_frame / metadata.fps
 
             scenes.append(
-                SceneDescription(
+                SceneBoundary(
                     start=start_time,
                     end=end_time,
                     start_frame=start_frame,
@@ -394,7 +394,7 @@ class SceneDetector:
         path: str | Path,
         threshold: float = 0.3,
         min_scene_length: float = 0.5,
-    ) -> list[SceneDescription]:
+    ) -> list[SceneBoundary]:
         """Convenience method for one-shot streaming scene detection.
 
         Creates a SceneDetector instance and runs streaming detection.
@@ -407,7 +407,7 @@ class SceneDetector:
             min_scene_length: Minimum scene duration in seconds. Default: 0.5
 
         Returns:
-            List of SceneDescription objects representing detected scenes.
+            List of SceneBoundary objects representing detected scenes.
 
         Example:
             >>> scenes = SceneDetector.detect_from_path("video.mp4", threshold=0.3)
@@ -416,7 +416,7 @@ class SceneDetector:
         detector = cls(threshold=threshold, min_scene_length=min_scene_length)
         return detector.detect_streaming(path)
 
-    def _merge_short_scenes(self, scenes: list[SceneDescription]) -> list[SceneDescription]:
+    def _merge_short_scenes(self, scenes: list[SceneBoundary]) -> list[SceneBoundary]:
         """Merge scenes that are shorter than min_scene_length.
 
         Args:
@@ -434,7 +434,7 @@ class SceneDetector:
             last_scene = merged[-1]
 
             if last_scene.duration < self.min_scene_length:
-                merged[-1] = SceneDescription(
+                merged[-1] = SceneBoundary(
                     start=last_scene.start,
                     end=scene.end,
                     start_frame=last_scene.start_frame,
@@ -446,7 +446,7 @@ class SceneDetector:
         if len(merged) > 1 and merged[-1].duration < self.min_scene_length:
             second_last = merged[-2]
             last = merged[-1]
-            merged[-2] = SceneDescription(
+            merged[-2] = SceneBoundary(
                 start=second_last.start,
                 end=last.end,
                 start_frame=second_last.start_frame,

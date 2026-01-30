@@ -11,9 +11,6 @@ from PIL import Image
 
 from videopython.ai.backends import ImageToTextBackend, UnsupportedBackendError, get_api_key
 from videopython.ai.config import get_default_backend
-from videopython.ai.understanding.color import ColorAnalyzer
-from videopython.base.description import FrameDescription, SceneDescription
-from videopython.base.video import Video
 
 
 class ImageToText:
@@ -25,7 +22,6 @@ class ImageToText:
         self,
         backend: ImageToTextBackend | None = None,
         device: str | None = None,
-        num_dominant_colors: int = 5,
         api_key: str | None = None,
     ):
         """Initialize image-to-text model.
@@ -33,7 +29,6 @@ class ImageToText:
         Args:
             backend: Backend to use. If None, uses config default or 'local'.
             device: Device for local backend ('cuda' or 'cpu').
-            num_dominant_colors: Number of dominant colors for color analysis.
             api_key: API key for cloud backends. If None, reads from environment.
         """
         resolved_backend: str = backend if backend is not None else get_default_backend("image_to_text")
@@ -43,7 +38,6 @@ class ImageToText:
         self.backend: ImageToTextBackend = resolved_backend  # type: ignore[assignment]
         self.device = device
         self.api_key = api_key
-        self.color_analyzer = ColorAnalyzer(num_dominant_colors=num_dominant_colors)
 
         self._processor: Any = None
         self._model: Any = None
@@ -176,91 +170,3 @@ class ImageToText:
             return self._describe_gemini(image, prompt)
         else:
             raise UnsupportedBackendError(self.backend, self.SUPPORTED_BACKENDS)
-
-    def describe_frame(
-        self,
-        video: Video,
-        frame_index: int,
-        prompt: str | None = None,
-        extract_colors: bool = False,
-    ) -> FrameDescription:
-        """Describe a specific frame from a video.
-
-        Args:
-            video: Video object.
-            frame_index: Index of the frame to describe.
-            prompt: Optional text prompt to guide the description.
-            extract_colors: Whether to extract color features from the frame.
-
-        Returns:
-            FrameDescription object with the frame description.
-        """
-        if frame_index < 0 or frame_index >= len(video.frames):
-            raise ValueError(f"frame_index {frame_index} out of bounds for video with {len(video.frames)} frames")
-
-        frame = video.frames[frame_index]
-        description = self.describe_image(frame, prompt)
-        timestamp = frame_index / video.fps
-
-        color_histogram = None
-        if extract_colors:
-            color_histogram = self.color_analyzer.extract_color_features(frame)
-
-        return FrameDescription(
-            frame_index=frame_index,
-            timestamp=timestamp,
-            description=description,
-            color_histogram=color_histogram,
-        )
-
-    def describe_frames(
-        self,
-        video: Video,
-        frame_indices: list[int],
-        prompt: str | None = None,
-        extract_colors: bool = False,
-    ) -> list[FrameDescription]:
-        """Describe multiple frames from a video.
-
-        Args:
-            video: Video object.
-            frame_indices: List of frame indices to describe.
-            prompt: Optional text prompt to guide the descriptions.
-            extract_colors: Whether to extract color features.
-
-        Returns:
-            List of FrameDescription objects.
-        """
-        # Process frames sequentially (thread parallelism causes issues with model initialization)
-        return [self.describe_frame(video, idx, prompt, extract_colors) for idx in frame_indices]
-
-    def describe_scene(
-        self,
-        video: Video,
-        scene: SceneDescription,
-        frames_per_second: float = 1.0,
-        prompt: str | None = None,
-        extract_colors: bool = False,
-    ) -> list[FrameDescription]:
-        """Describe frames from a scene, sampling at the specified rate.
-
-        Args:
-            video: Video object.
-            scene: SceneDescription to analyze.
-            frames_per_second: Frame sampling rate.
-            prompt: Optional text prompt to guide the descriptions.
-            extract_colors: Whether to extract color features.
-
-        Returns:
-            List of FrameDescription objects for the sampled frames.
-        """
-        if frames_per_second <= 0:
-            raise ValueError("frames_per_second must be positive")
-
-        frame_interval = max(1, int(video.fps / frames_per_second))
-        frame_indices = list(range(scene.start_frame, scene.end_frame, frame_interval))
-
-        if not frame_indices:
-            frame_indices = [scene.start_frame]
-
-        return self.describe_frames(video, frame_indices, prompt, extract_colors)

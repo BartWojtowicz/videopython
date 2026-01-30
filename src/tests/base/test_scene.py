@@ -200,11 +200,11 @@ class TestHistogramDifference:
         assert diff > 0.3  # Should be noticeably different
 
 
-class TestSceneDescriptionProperties:
-    """Test that returned SceneDescription objects have correct properties."""
+class TestSceneBoundaryProperties:
+    """Test that returned SceneBoundary objects have correct properties."""
 
-    def test_scene_description_fields(self):
-        """Test that SceneDescription objects have all required fields."""
+    def test_scene_boundary_fields(self):
+        """Test that SceneBoundary objects have all required fields."""
         frame = _create_solid_frame((255, 0, 0))
         frames = np.array([frame] * 48)
         video = _create_video(frames, fps=24.0)

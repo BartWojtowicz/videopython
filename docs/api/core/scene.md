@@ -79,8 +79,8 @@ scenes = detector.detect_streaming("very_long_video.mp4")
 
 ::: videopython.base.scene.SceneDetector
 
-## SceneDescription
+## SceneBoundary
 
-Returned by `SceneDetector.detect()`. Contains timing and frame information for each detected scene.
+Returned by `SceneDetector.detect()`. Contains timing information for each detected scene.
 
-::: videopython.base.SceneDescription
+::: videopython.base.SceneBoundary
