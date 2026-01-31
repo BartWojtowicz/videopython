@@ -308,3 +308,156 @@ class TestCameraMotionDetector:
             result = detector.detect(frame1, frame2)
             assert isinstance(result, str)
             assert result in detector.MOTION_TYPES
+
+
+class TestFaceDetectorBackends:
+    """Tests for FaceDetector with different backends."""
+
+    @pytest.fixture
+    def blank_image(self):
+        """Create a blank image with no faces."""
+        return np.ones((480, 640, 3), dtype=np.uint8) * 128
+
+    def test_cpu_backend_initialization(self):
+        """Test CPU backend initializes correctly."""
+        from videopython.ai.understanding.detection import FaceDetector
+
+        detector = FaceDetector(backend="cpu")
+        assert detector.backend == "cpu"
+
+    def test_gpu_backend_initialization(self):
+        """Test GPU backend initializes correctly."""
+        from videopython.ai.understanding.detection import FaceDetector
+
+        detector = FaceDetector(backend="gpu")
+        assert detector.backend == "gpu"
+
+    def test_auto_backend_initialization(self):
+        """Test auto backend initializes correctly."""
+        from videopython.ai.understanding.detection import FaceDetector
+
+        detector = FaceDetector(backend="auto")
+        assert detector.backend == "auto"
+
+    def test_valid_backend_values(self):
+        """Test that valid backend values are accepted."""
+        from videopython.ai.understanding.detection import FaceDetector
+
+        # These should all work without error
+        FaceDetector(backend="cpu")
+        FaceDetector(backend="gpu")
+        FaceDetector(backend="auto")
+
+    def test_cpu_backend_detect(self, blank_image):
+        """Test CPU backend detection works."""
+        from videopython.ai.understanding.detection import FaceDetector
+
+        detector = FaceDetector(backend="cpu")
+        faces = detector.detect(blank_image)
+        assert isinstance(faces, list)
+
+    def test_cpu_backend_detect_batch(self, blank_image):
+        """Test CPU backend batch detection works."""
+        from videopython.ai.understanding.detection import FaceDetector
+
+        detector = FaceDetector(backend="cpu")
+        images = [blank_image, blank_image, blank_image]
+        results = detector.detect_batch(images)
+
+        assert isinstance(results, list)
+        assert len(results) == 3
+        for faces in results:
+            assert isinstance(faces, list)
+
+    def test_detect_batch_with_numpy_array(self, blank_image):
+        """Test batch detection with numpy array input."""
+        from videopython.ai.understanding.detection import FaceDetector
+
+        detector = FaceDetector(backend="cpu")
+        # Stack as (N, H, W, C) array
+        images = np.stack([blank_image, blank_image], axis=0)
+        results = detector.detect_batch(images)
+
+        assert isinstance(results, list)
+        assert len(results) == 2
+
+    def test_detect_batch_empty(self):
+        """Test batch detection with empty list."""
+        from videopython.ai.understanding.detection import FaceDetector
+
+        detector = FaceDetector(backend="cpu")
+        results = detector.detect_batch([])
+        assert results == []
+
+    def test_auto_backend_resolves_correctly(self, blank_image):
+        """Test auto backend resolves and works."""
+        from videopython.ai.understanding.detection import FaceDetector
+
+        detector = FaceDetector(backend="auto")
+        faces = detector.detect(blank_image)
+        assert isinstance(faces, list)
+
+        # Verify backend was resolved
+        resolved = detector._resolve_backend()
+        assert resolved in ("cpu", "gpu")
+
+
+@pytest.mark.requires_model_download
+class TestFaceDetectorGPU:
+    """Tests for FaceDetector GPU backend with real YOLO model.
+
+    These tests require downloading YOLOv8-face model (~6MB).
+    Run with: uv run pytest src/tests/ai -m requires_model_download -v
+    """
+
+    @pytest.fixture
+    def detector(self):
+        """Create FaceDetector with GPU backend."""
+        from videopython.ai.understanding.detection import FaceDetector
+
+        return FaceDetector(backend="gpu")
+
+    @pytest.fixture
+    def blank_image(self):
+        """Create a blank image with no faces."""
+        return np.ones((480, 640, 3), dtype=np.uint8) * 128
+
+    def test_gpu_detect_returns_list(self, detector, blank_image):
+        """Test GPU detection returns a list."""
+        faces = detector.detect(blank_image)
+        assert isinstance(faces, list)
+
+    def test_gpu_detect_batch_returns_list(self, detector, blank_image):
+        """Test GPU batch detection returns list of lists."""
+        images = [blank_image] * 4
+        results = detector.detect_batch(images)
+
+        assert isinstance(results, list)
+        assert len(results) == 4
+        for faces in results:
+            assert isinstance(faces, list)
+
+    def test_gpu_detect_on_real_video_frames(self, detector, video_frames):
+        """Test GPU face detection on actual video frames."""
+        for frame in video_frames:
+            faces = detector.detect(frame)
+            assert isinstance(faces, list)
+            for face in faces:
+                assert 0 <= face.bounding_box.x <= 1
+                assert 0 <= face.bounding_box.y <= 1
+                assert face.bounding_box.width > 0
+                assert face.bounding_box.height > 0
+                assert 0 <= face.confidence <= 1
+
+    def test_gpu_batch_detect_on_real_video_frames(self, detector, video_frames):
+        """Test GPU batch face detection on actual video frames."""
+        results = detector.detect_batch(video_frames)
+
+        assert len(results) == len(video_frames)
+        for faces in results:
+            assert isinstance(faces, list)
+            for face in faces:
+                assert 0 <= face.bounding_box.x <= 1
+                assert 0 <= face.bounding_box.y <= 1
+                assert face.bounding_box.width > 0
+                assert face.bounding_box.height > 0

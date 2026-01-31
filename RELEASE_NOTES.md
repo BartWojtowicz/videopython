@@ -1,5 +1,34 @@
 # Release Notes
 
+## 0.16.1
+
+### New Features
+
+- **GPU-accelerated face detection**: `FaceDetector` now supports GPU acceleration via YOLOv8-face model
+  - New `backend` parameter: `"cpu"` (default, Haar cascade), `"gpu"` (YOLOv8-face), or `"auto"`
+  - New `detect_batch()` method for efficient batched detection on video frames
+  - Uses `arnabdhar/YOLOv8-Face-Detection` model from Hugging Face
+
+- **GPU support for face tracking transforms**: `FaceTrackingCrop`, `SplitScreenComposite`, `AutoFramingCrop`
+  - New `backend` parameter to enable GPU acceleration
+  - New `sample_rate` parameter for frame sampling with interpolation (GPU only)
+  - Backward compatible - defaults to CPU backend
+
+- **Video-level face tracking**: New `FaceTracker.track_video()` method
+  - Batched detection for optimal GPU utilization
+  - Frame sampling with smooth interpolation between detected frames
+  - Configurable `batch_size` parameter
+
+### Example
+
+```python
+# CPU (default, backward compatible)
+video = FaceTrackingCrop().apply(video)
+
+# GPU with frame sampling for speed
+video = FaceTrackingCrop(backend="gpu", sample_rate=5).apply(video)
+```
+
 ## 0.16.0
 
 ### Breaking Changes
