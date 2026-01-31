@@ -6,7 +6,7 @@ import base64
 import io
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 from PIL import Image
@@ -228,53 +228,123 @@ Return ONLY the JSON array, no other text."""
 
 
 class FaceDetector:
-    """Detects faces in images using OpenCV Haar cascade."""
+    """Detects faces in images using OpenCV Haar cascade (CPU) or YOLOv8-face (GPU).
 
-    def __init__(self, confidence_threshold: float = 0.5, min_face_size: int = 30):
+    The GPU backend uses YOLOv8-face for significantly faster detection, especially
+    useful for video processing. Supports batched detection for optimal GPU utilization.
+
+    Example:
+        >>> # CPU detection (default, backward compatible)
+        >>> detector = FaceDetector()
+        >>> faces = detector.detect(frame)
+        >>>
+        >>> # GPU detection with auto device selection
+        >>> detector = FaceDetector(backend="gpu")
+        >>> faces = detector.detect(frame)
+        >>>
+        >>> # Batched detection for video
+        >>> detector = FaceDetector(backend="gpu")
+        >>> batch_results = detector.detect_batch(frames)
+    """
+
+    def __init__(
+        self,
+        confidence_threshold: float = 0.5,
+        min_face_size: int = 30,
+        backend: Literal["cpu", "gpu", "auto"] = "cpu",
+        device: str | None = None,
+    ):
         """Initialize face detector.
 
         Args:
             confidence_threshold: Minimum confidence for detections (0-1).
             min_face_size: Minimum face size in pixels.
+            backend: Detection backend - "cpu" (Haar cascade), "gpu" (YOLOv8-face),
+                or "auto" (GPU if available, else CPU).
+            device: Device for GPU backend - "cuda", "mps", or "cpu".
+                If None, auto-detected.
         """
         self.confidence_threshold = confidence_threshold
         self.min_face_size = min_face_size
+        self.backend: Literal["cpu", "gpu", "auto"] = backend
+        self.device = device
+
+        # Lazy-loaded models
         self._cascade: Any = None
+        self._yolo_model: Any = None
         self._model_loaded = False
+        self._resolved_backend: Literal["cpu", "gpu"] | None = None
+
+    def _get_device(self) -> str:
+        """Get the device to use for GPU inference."""
+        if self.device:
+            return self.device
+
+        import torch
+
+        if torch.cuda.is_available():
+            return "cuda"
+        elif torch.backends.mps.is_available():
+            return "mps"
+        return "cpu"
+
+    def _resolve_backend(self) -> Literal["cpu", "gpu"]:
+        """Resolve 'auto' backend to actual backend."""
+        if self._resolved_backend is not None:
+            return self._resolved_backend
+
+        if self.backend == "auto":
+            device = self._get_device()
+            self._resolved_backend = "gpu" if device in ("cuda", "mps") else "cpu"
+        else:
+            self._resolved_backend = self.backend
+
+        return self._resolved_backend
 
     def _init_cascade(self) -> None:
-        """Initialize OpenCV Haar cascade."""
+        """Initialize OpenCV Haar cascade for CPU detection."""
         import cv2
 
         self._cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
         self._model_loaded = True
 
-    def detect(self, image: np.ndarray | Image.Image) -> list[DetectedFace]:
-        """Detect faces in an image.
+    def _init_yolo_face(self) -> None:
+        """Initialize YOLO face detection model for GPU detection.
 
-        Args:
-            image: Image as numpy array (H, W, 3) in RGB format or PIL Image.
-
-        Returns:
-            List of DetectedFace objects with bounding boxes.
+        Downloads the YOLOv8-Face-Detection model from Hugging Face.
+        This model is specifically trained for face detection.
         """
+        from huggingface_hub import hf_hub_download
+        from ultralytics import YOLO
+
+        # Download face detection model from Hugging Face
+        # Using arnabdhar/YOLOv8-Face-Detection which is trained on 10k+ face images
+        model_path = hf_hub_download(
+            repo_id="arnabdhar/YOLOv8-Face-Detection",
+            filename="model.pt",
+        )
+        self._yolo_model = YOLO(model_path)
+
+        # Move to appropriate device
+        device = self._get_device()
+        if device != "cpu":
+            self._yolo_model.to(device)
+
+        self._model_loaded = True
+
+    def _detect_cpu(self, image: np.ndarray) -> list[DetectedFace]:
+        """Detect faces using OpenCV Haar cascade (CPU)."""
         import cv2
 
-        # Convert PIL to numpy if needed
-        if isinstance(image, Image.Image):
-            img_array = np.array(image)
-        else:
-            img_array = image
-
-        img_h, img_w = img_array.shape[:2]
+        img_h, img_w = image.shape[:2]
 
         # Convert RGB to BGR for OpenCV
-        if len(img_array.shape) == 3 and img_array.shape[2] == 3:
-            img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+        if len(image.shape) == 3 and image.shape[2] == 3:
+            img_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         else:
-            img_bgr = img_array
+            img_bgr = image
 
-        if not self._model_loaded:
+        if self._cascade is None:
             self._init_cascade()
 
         gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
@@ -296,9 +366,138 @@ class FaceDetector:
             )
             detected_faces.append(DetectedFace(bounding_box=bbox, confidence=1.0))
 
-        # Sort by area (largest first) - all faces from local detector have bounding boxes
+        # Sort by area (largest first)
         detected_faces.sort(key=lambda f: f.area or 0, reverse=True)
         return detected_faces
+
+    def _detect_gpu(self, image: np.ndarray) -> list[DetectedFace]:
+        """Detect faces using YOLOv8-face model (GPU)."""
+        if self._yolo_model is None:
+            self._init_yolo_face()
+
+        img_h, img_w = image.shape[:2]
+
+        # Run YOLO inference
+        results = self._yolo_model(image, conf=self.confidence_threshold, verbose=False)
+
+        detected_faces = []
+        for result in results:
+            boxes = result.boxes
+            if boxes is None:
+                continue
+
+            for i in range(len(boxes)):
+                x1, y1, x2, y2 = boxes.xyxy[i].tolist()
+                conf = float(boxes.conf[i])
+
+                # Filter by minimum face size
+                face_w = x2 - x1
+                face_h = y2 - y1
+                if face_w < self.min_face_size or face_h < self.min_face_size:
+                    continue
+
+                # Normalize coordinates to [0, 1]
+                bbox = BoundingBox(
+                    x=x1 / img_w,
+                    y=y1 / img_h,
+                    width=face_w / img_w,
+                    height=face_h / img_h,
+                )
+                detected_faces.append(DetectedFace(bounding_box=bbox, confidence=conf))
+
+        # Sort by area (largest first)
+        detected_faces.sort(key=lambda f: f.area or 0, reverse=True)
+        return detected_faces
+
+    def detect(self, image: np.ndarray | Image.Image) -> list[DetectedFace]:
+        """Detect faces in an image.
+
+        Args:
+            image: Image as numpy array (H, W, 3) in RGB format or PIL Image.
+
+        Returns:
+            List of DetectedFace objects with bounding boxes.
+        """
+        # Convert PIL to numpy if needed
+        if isinstance(image, Image.Image):
+            img_array = np.array(image)
+        else:
+            img_array = image
+
+        backend = self._resolve_backend()
+        if backend == "gpu":
+            return self._detect_gpu(img_array)
+        else:
+            return self._detect_cpu(img_array)
+
+    def detect_batch(self, images: list[np.ndarray] | np.ndarray) -> list[list[DetectedFace]]:
+        """Detect faces in a batch of images (GPU-optimized).
+
+        This method is optimized for GPU inference, processing multiple images
+        in a single forward pass for better throughput.
+
+        Args:
+            images: List of images or numpy array of shape (N, H, W, 3) in RGB format.
+
+        Returns:
+            List of detection results, one list of DetectedFace per input image.
+        """
+        backend = self._resolve_backend()
+
+        # Convert numpy array to list if needed
+        if isinstance(images, np.ndarray):
+            if images.ndim == 4:
+                images = [images[i] for i in range(images.shape[0])]
+            else:
+                images = [images]
+
+        if not images:
+            return []
+
+        # For CPU backend, just loop over images
+        if backend == "cpu":
+            return [self._detect_cpu(img) for img in images]
+
+        # For GPU backend, use batched inference
+        if self._yolo_model is None:
+            self._init_yolo_face()
+
+        img_h, img_w = images[0].shape[:2]
+
+        # Run batched YOLO inference
+        results = self._yolo_model(images, conf=self.confidence_threshold, verbose=False)
+
+        batch_results = []
+        for result in results:
+            detected_faces = []
+            boxes = result.boxes
+            if boxes is not None:
+                result_h, result_w = result.orig_shape
+
+                for i in range(len(boxes)):
+                    x1, y1, x2, y2 = boxes.xyxy[i].tolist()
+                    conf = float(boxes.conf[i])
+
+                    # Filter by minimum face size
+                    face_w = x2 - x1
+                    face_h = y2 - y1
+                    if face_w < self.min_face_size or face_h < self.min_face_size:
+                        continue
+
+                    # Normalize coordinates to [0, 1]
+                    bbox = BoundingBox(
+                        x=x1 / result_w,
+                        y=y1 / result_h,
+                        width=face_w / result_w,
+                        height=face_h / result_h,
+                    )
+                    detected_faces.append(DetectedFace(bounding_box=bbox, confidence=conf))
+
+            # Sort by area (largest first)
+            detected_faces.sort(key=lambda f: f.area or 0, reverse=True)
+            batch_results.append(detected_faces)
+
+        return batch_results
 
 
 class TextDetector:

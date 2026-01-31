@@ -34,6 +34,19 @@ class FaceTracker:
 
     Provides frame-by-frame face detection with position smoothing using
     exponential moving average to prevent jitter in the tracked position.
+
+    Supports GPU acceleration via YOLOv8-face model for significantly faster
+    detection, with optional frame sampling and interpolation for video.
+
+    Example:
+        >>> # CPU tracking (default, backward compatible)
+        >>> tracker = FaceTracker()
+        >>> for i, frame in enumerate(frames):
+        ...     pos = tracker.detect_and_track(frame, i)
+        >>>
+        >>> # GPU tracking with frame sampling
+        >>> tracker = FaceTracker(backend="gpu", sample_rate=5)
+        >>> positions = tracker.track_video(frames)
     """
 
     def __init__(
@@ -43,6 +56,9 @@ class FaceTracker:
         smoothing: float = 0.8,
         detection_interval: int = 3,
         min_face_size: int = 30,
+        backend: Literal["cpu", "gpu", "auto"] = "cpu",
+        sample_rate: int = 1,
+        batch_size: int = 16,
     ):
         """Initialize face tracker.
 
@@ -55,12 +71,19 @@ class FaceTracker:
             smoothing: Exponential moving average factor (0-1). Higher = smoother.
             detection_interval: Run detection every N frames, interpolate between.
             min_face_size: Minimum face size in pixels for detection.
+            backend: Detection backend - "cpu", "gpu", or "auto".
+            sample_rate: For GPU backend, detect every Nth frame and interpolate.
+                Only used by track_video(). Default 1 (every frame).
+            batch_size: Batch size for GPU detection. Default 16.
         """
         self.selection_strategy = selection_strategy
         self.face_index = face_index
         self.smoothing = smoothing
         self.detection_interval = detection_interval
         self.min_face_size = min_face_size
+        self.backend: Literal["cpu", "gpu", "auto"] = backend
+        self.sample_rate = sample_rate
+        self.batch_size = batch_size
 
         self._detector: FaceDetector | None = None
         self._last_position: tuple[float, float] | None = None
@@ -70,7 +93,10 @@ class FaceTracker:
 
     def _init_detector(self) -> None:
         """Initialize face detector lazily."""
-        self._detector = FaceDetector(min_face_size=self.min_face_size)
+        self._detector = FaceDetector(
+            min_face_size=self.min_face_size,
+            backend=self.backend,
+        )
 
     def _select_face(
         self,
@@ -187,12 +213,189 @@ class FaceTracker:
         self._smoothed_position = None
         self._smoothed_size = None
 
+    @staticmethod
+    def _interpolate_bbox(
+        bbox1: tuple[float, float, float, float],
+        bbox2: tuple[float, float, float, float],
+        t: float,
+    ) -> tuple[float, float, float, float]:
+        """Linearly interpolate between two bounding boxes.
+
+        Args:
+            bbox1: First bounding box (cx, cy, w, h).
+            bbox2: Second bounding box (cx, cy, w, h).
+            t: Interpolation factor (0 = bbox1, 1 = bbox2).
+
+        Returns:
+            Interpolated bounding box (cx, cy, w, h).
+        """
+        return (
+            bbox1[0] + (bbox2[0] - bbox1[0]) * t,
+            bbox1[1] + (bbox2[1] - bbox1[1]) * t,
+            bbox1[2] + (bbox2[2] - bbox1[2]) * t,
+            bbox1[3] + (bbox2[3] - bbox1[3]) * t,
+        )
+
+    def track_video(
+        self,
+        frames: np.ndarray,
+    ) -> list[tuple[float, float, float, float] | None]:
+        """Track face through entire video using optimized batch detection.
+
+        This method is optimized for GPU backends with frame sampling and
+        interpolation for smooth tracking with reduced computation.
+
+        Args:
+            frames: Video frames array of shape (N, H, W, 3).
+
+        Returns:
+            List of face positions (cx, cy, w, h) for each frame, or None if
+            no face detected and no fallback available.
+        """
+        if self._detector is None:
+            self._init_detector()
+            assert self._detector is not None
+
+        n_frames = len(frames)
+        if n_frames == 0:
+            return []
+
+        h, w = frames[0].shape[:2]
+
+        # Determine which frames to sample
+        if self.sample_rate > 1 and self.backend in ("gpu", "auto"):
+            sample_indices = list(range(0, n_frames, self.sample_rate))
+            # Ensure last frame is included
+            if sample_indices[-1] != n_frames - 1:
+                sample_indices.append(n_frames - 1)
+        else:
+            sample_indices = list(range(n_frames))
+
+        # Batch detect on sampled frames
+        sampled_frames = [frames[i] for i in sample_indices]
+
+        # Process in batches
+        sampled_detections: list[list] = []
+        for batch_start in range(0, len(sampled_frames), self.batch_size):
+            batch_end = min(batch_start + self.batch_size, len(sampled_frames))
+            batch = sampled_frames[batch_start:batch_end]
+            batch_results = self._detector.detect_batch(batch)
+            sampled_detections.extend(batch_results)
+
+        # Extract face info from detections
+        sampled_faces: list[tuple[float, float, float, float] | None] = []
+        for faces in sampled_detections:
+            face_info = self._select_face(faces, w, h)
+            sampled_faces.append(face_info)
+
+        # If no sampling, apply smoothing directly
+        if self.sample_rate == 1 or self.backend == "cpu":
+            self.reset()
+            results: list[tuple[float, float, float, float] | None] = []
+            for i, face_info in enumerate(sampled_faces):
+                if face_info:
+                    cx, cy, fw, fh = face_info
+                    self._last_position = (cx, cy)
+                    self._last_size = (fw, fh)
+
+                    if self._smoothed_position is None:
+                        self._smoothed_position = (cx, cy)
+                        self._smoothed_size = (fw, fh)
+                    else:
+                        alpha = 1 - self.smoothing
+                        self._smoothed_position = (
+                            self._smoothed_position[0] * self.smoothing + cx * alpha,
+                            self._smoothed_position[1] * self.smoothing + cy * alpha,
+                        )
+                        assert self._smoothed_size is not None
+                        self._smoothed_size = (
+                            self._smoothed_size[0] * self.smoothing + fw * alpha,
+                            self._smoothed_size[1] * self.smoothing + fh * alpha,
+                        )
+
+                    results.append((*self._smoothed_position, *self._smoothed_size))
+                elif self._smoothed_position and self._smoothed_size:
+                    results.append((*self._smoothed_position, *self._smoothed_size))
+                else:
+                    results.append(None)
+            return results
+
+        # Interpolate between sampled frames
+        all_positions: list[tuple[float, float, float, float] | None] = [None] * n_frames
+
+        # Fill in sampled positions
+        for idx, sample_idx in enumerate(sample_indices):
+            all_positions[sample_idx] = sampled_faces[idx]
+
+        # Interpolate gaps
+        for i in range(len(sample_indices) - 1):
+            start_idx = sample_indices[i]
+            end_idx = sample_indices[i + 1]
+            start_face = sampled_faces[i]
+            end_face = sampled_faces[i + 1]
+
+            if start_face is None and end_face is None:
+                continue
+            elif start_face is None:
+                # Use end face for all
+                for j in range(start_idx, end_idx):
+                    all_positions[j] = end_face
+            elif end_face is None:
+                # Use start face for all
+                for j in range(start_idx + 1, end_idx + 1):
+                    all_positions[j] = start_face
+            else:
+                # Interpolate
+                gap = end_idx - start_idx
+                for j in range(start_idx + 1, end_idx):
+                    t = (j - start_idx) / gap
+                    all_positions[j] = self._interpolate_bbox(start_face, end_face, t)
+
+        # Apply smoothing to interpolated positions
+        self.reset()
+        results = []
+        for face_info in all_positions:
+            if face_info:
+                cx, cy, fw, fh = face_info
+
+                if self._smoothed_position is None:
+                    self._smoothed_position = (cx, cy)
+                    self._smoothed_size = (fw, fh)
+                else:
+                    alpha = 1 - self.smoothing
+                    self._smoothed_position = (
+                        self._smoothed_position[0] * self.smoothing + cx * alpha,
+                        self._smoothed_position[1] * self.smoothing + cy * alpha,
+                    )
+                    assert self._smoothed_size is not None
+                    self._smoothed_size = (
+                        self._smoothed_size[0] * self.smoothing + fw * alpha,
+                        self._smoothed_size[1] * self.smoothing + fh * alpha,
+                    )
+
+                results.append((*self._smoothed_position, *self._smoothed_size))
+            elif self._smoothed_position and self._smoothed_size:
+                results.append((*self._smoothed_position, *self._smoothed_size))
+            else:
+                results.append(None)
+
+        return results
+
 
 class FaceTrackingCrop(Transformation):
     """Crops video to follow detected faces.
 
     Useful for creating vertical (9:16) content from horizontal (16:9) video
     by tracking the speaker's face and keeping it centered.
+
+    Supports GPU acceleration for faster processing with optional frame sampling.
+
+    Example:
+        >>> # CPU (default, backward compatible)
+        >>> video = FaceTrackingCrop().apply(video)
+        >>>
+        >>> # GPU with frame sampling for speed
+        >>> video = FaceTrackingCrop(backend="gpu", sample_rate=5).apply(video)
     """
 
     def __init__(
@@ -205,6 +408,8 @@ class FaceTrackingCrop(Transformation):
         smoothing: float = 0.8,
         fallback: Literal["center", "last_position", "full_frame"] = "last_position",
         detection_interval: int = 3,
+        backend: Literal["cpu", "gpu", "auto"] = "cpu",
+        sample_rate: int = 1,
     ):
         """Initialize face tracking crop.
 
@@ -217,6 +422,8 @@ class FaceTrackingCrop(Transformation):
             smoothing: Position smoothing factor (0-1, higher = smoother).
             fallback: Behavior when no face detected.
             detection_interval: Frames between face detections.
+            backend: Detection backend - "cpu", "gpu", or "auto".
+            sample_rate: For GPU backend, detect every Nth frame and interpolate.
         """
         self.target_aspect = target_aspect
         self.face_selection = face_selection
@@ -226,6 +433,8 @@ class FaceTrackingCrop(Transformation):
         self.smoothing = smoothing
         self.fallback = fallback
         self.detection_interval = detection_interval
+        self.backend: Literal["cpu", "gpu", "auto"] = backend
+        self.sample_rate = sample_rate
 
     def _calculate_crop_region(
         self,
@@ -296,6 +505,8 @@ class FaceTrackingCrop(Transformation):
             face_index=self.face_index,
             smoothing=self.smoothing,
             detection_interval=self.detection_interval,
+            backend=self.backend,
+            sample_rate=self.sample_rate,
         )
 
         h, w = video.frame_shape[:2]
@@ -353,6 +564,8 @@ class SplitScreenComposite(Transformation):
 
     Useful for interview-style videos, reaction videos, or showing
     multiple perspectives simultaneously.
+
+    Supports GPU acceleration for faster face tracking.
     """
 
     def __init__(
@@ -367,6 +580,8 @@ class SplitScreenComposite(Transformation):
         smoothing: float = 0.8,
         detection_interval: int = 3,
         audio_source: Literal["main", "loudest", "mix"] = "main",
+        backend: Literal["cpu", "gpu", "auto"] = "cpu",
+        sample_rate: int = 1,
     ):
         """Initialize split screen composite.
 
@@ -386,6 +601,8 @@ class SplitScreenComposite(Transformation):
             smoothing: Position smoothing factor.
             detection_interval: Frames between face detections.
             audio_source: Audio handling ("main" uses first source).
+            backend: Detection backend - "cpu", "gpu", or "auto".
+            sample_rate: For GPU backend, detect every Nth frame and interpolate.
         """
         self.layout = layout
         self.output_size = output_size
@@ -397,6 +614,8 @@ class SplitScreenComposite(Transformation):
         self.smoothing = smoothing
         self.detection_interval = detection_interval
         self.audio_source = audio_source
+        self.backend: Literal["cpu", "gpu", "auto"] = backend
+        self.sample_rate = sample_rate
 
     def _get_cell_rects(self, width: int, height: int) -> list[tuple[int, int, int, int]]:
         """Calculate cell rectangles for the layout.
@@ -492,6 +711,8 @@ class SplitScreenComposite(Transformation):
                 selection_strategy="largest",
                 smoothing=self.smoothing,
                 detection_interval=self.detection_interval,
+                backend=self.backend,
+                sample_rate=self.sample_rate,
             )
             for _ in range(len(cell_rects))
         ]
@@ -584,6 +805,8 @@ class AutoFramingCrop(Transformation):
 
     Applies professional framing techniques like rule of thirds,
     headroom, and lead room when tracking subjects.
+
+    Supports GPU acceleration for faster face detection.
     """
 
     def __init__(
@@ -597,6 +820,8 @@ class AutoFramingCrop(Transformation):
         smoothing: float = 0.85,
         max_speed: float = 0.1,
         detection_interval: int = 5,
+        backend: Literal["cpu", "gpu", "auto"] = "cpu",
+        sample_rate: int = 1,
     ):
         """Initialize auto framing crop.
 
@@ -614,6 +839,8 @@ class AutoFramingCrop(Transformation):
             smoothing: Position smoothing factor (higher = smoother camera).
             max_speed: Maximum camera movement per frame (normalized).
             detection_interval: Frames between detections.
+            backend: Detection backend - "cpu", "gpu", or "auto".
+            sample_rate: For GPU backend, detect every Nth frame and interpolate.
         """
         self.target_aspect = target_aspect
         self.framing_rule = framing_rule
@@ -624,6 +851,8 @@ class AutoFramingCrop(Transformation):
         self.smoothing = smoothing
         self.max_speed = max_speed
         self.detection_interval = detection_interval
+        self.backend: Literal["cpu", "gpu", "auto"] = backend
+        self.sample_rate = sample_rate
 
     def _apply_framing_offset(
         self,
@@ -697,6 +926,8 @@ class AutoFramingCrop(Transformation):
             selection_strategy="largest" if self.multi_subject != "alternate" else "centered",
             smoothing=self.smoothing,
             detection_interval=self.detection_interval,
+            backend=self.backend,
+            sample_rate=self.sample_rate,
         )
 
         h, w = video.frame_shape[:2]

@@ -518,3 +518,182 @@ class TestAutoFramingCrop:
 
         # Should still produce valid output
         assert len(result.frames) == 10
+
+
+class TestGPUFaceTracking:
+    """Tests for GPU-accelerated face tracking features."""
+
+    def test_face_tracker_gpu_params(self):
+        """Test FaceTracker accepts GPU parameters."""
+        tracker = FaceTracker(
+            backend="gpu",
+            sample_rate=5,
+            batch_size=8,
+        )
+        assert tracker.backend == "gpu"
+        assert tracker.sample_rate == 5
+        assert tracker.batch_size == 8
+
+    def test_face_tracker_default_backend_is_cpu(self):
+        """Test FaceTracker defaults to CPU backend for backward compatibility."""
+        tracker = FaceTracker()
+        assert tracker.backend == "cpu"
+
+    def test_face_tracking_crop_gpu_params(self):
+        """Test FaceTrackingCrop accepts and stores GPU parameters."""
+        crop = FaceTrackingCrop(
+            backend="gpu",
+            sample_rate=5,
+        )
+        assert crop.backend == "gpu"
+        assert crop.sample_rate == 5
+
+    def test_split_screen_composite_gpu_params(self):
+        """Test SplitScreenComposite accepts GPU parameters."""
+        composite = SplitScreenComposite(
+            backend="gpu",
+            sample_rate=3,
+        )
+        assert composite.backend == "gpu"
+        assert composite.sample_rate == 3
+
+    def test_auto_framing_crop_gpu_params(self):
+        """Test AutoFramingCrop accepts GPU parameters."""
+        crop = AutoFramingCrop(
+            backend="auto",
+            sample_rate=10,
+        )
+        assert crop.backend == "auto"
+        assert crop.sample_rate == 10
+
+    def test_interpolate_bbox(self):
+        """Test bounding box interpolation."""
+        bbox1 = (0.0, 0.0, 0.1, 0.1)
+        bbox2 = (1.0, 1.0, 0.2, 0.2)
+
+        # t=0 should return bbox1
+        result = FaceTracker._interpolate_bbox(bbox1, bbox2, 0.0)
+        assert result == bbox1
+
+        # t=1 should return bbox2
+        result = FaceTracker._interpolate_bbox(bbox1, bbox2, 1.0)
+        assert result == bbox2
+
+        # t=0.5 should return midpoint
+        result = FaceTracker._interpolate_bbox(bbox1, bbox2, 0.5)
+        assert result[0] == pytest.approx(0.5)
+        assert result[1] == pytest.approx(0.5)
+        assert result[2] == pytest.approx(0.15)
+        assert result[3] == pytest.approx(0.15)
+
+    def test_interpolate_bbox_quarter(self):
+        """Test bounding box interpolation at t=0.25."""
+        bbox1 = (0.2, 0.2, 0.1, 0.1)
+        bbox2 = (0.6, 0.6, 0.2, 0.2)
+
+        result = FaceTracker._interpolate_bbox(bbox1, bbox2, 0.25)
+        assert result[0] == pytest.approx(0.3)  # 0.2 + 0.25 * 0.4
+        assert result[1] == pytest.approx(0.3)
+        assert result[2] == pytest.approx(0.125)  # 0.1 + 0.25 * 0.1
+        assert result[3] == pytest.approx(0.125)
+
+    @patch("videopython.ai.transforms.FaceTracker._init_detector")
+    def test_track_video_with_mock(self, mock_init):
+        """Test track_video with mocked detector."""
+        tracker = FaceTracker(smoothing=0.0, sample_rate=1, backend="cpu")
+
+        mock_detector = MagicMock()
+        # Return faces for batched detection
+        mock_detector.detect_batch.return_value = [
+            [MockDetectedFace((0.5, 0.5), 0.2, 0.2)],
+            [MockDetectedFace((0.5, 0.5), 0.2, 0.2)],
+            [MockDetectedFace((0.5, 0.5), 0.2, 0.2)],
+        ]
+        tracker._detector = mock_detector
+
+        frames = np.zeros((3, 1080, 1920, 3), dtype=np.uint8)
+        results = tracker.track_video(frames)
+
+        assert len(results) == 3
+        assert all(r is not None for r in results)
+        # Check detector was called with batched frames
+        mock_detector.detect_batch.assert_called_once()
+
+    @patch("videopython.ai.transforms.FaceTracker._init_detector")
+    def test_track_video_with_sampling(self, mock_init):
+        """Test track_video with frame sampling and interpolation."""
+        tracker = FaceTracker(smoothing=0.0, sample_rate=3, backend="gpu")
+
+        mock_detector = MagicMock()
+        # Return faces only for sampled frames (frames 0, 3, 6, 9)
+        # For 10 frames with sample_rate=3: indices 0, 3, 6, 9
+        mock_detector.detect_batch.return_value = [
+            [MockDetectedFace((0.3, 0.3), 0.1, 0.1)],  # frame 0
+            [MockDetectedFace((0.5, 0.5), 0.1, 0.1)],  # frame 3
+            [MockDetectedFace((0.7, 0.7), 0.1, 0.1)],  # frame 6
+            [MockDetectedFace((0.7, 0.7), 0.1, 0.1)],  # frame 9
+        ]
+        tracker._detector = mock_detector
+
+        frames = np.zeros((10, 1080, 1920, 3), dtype=np.uint8)
+        results = tracker.track_video(frames)
+
+        assert len(results) == 10
+        # Sampled frames should have exact values
+        assert results[0][0] == pytest.approx(0.3, abs=0.01)
+        # Interpolated frames should be between sampled values
+        # Frame 1 should be interpolated between frame 0 and 3
+        assert 0.3 < results[1][0] < 0.5
+
+    @patch("videopython.ai.transforms.FaceTracker._init_detector")
+    def test_track_video_empty_frames(self, mock_init):
+        """Test track_video with empty frame list."""
+        tracker = FaceTracker()
+        mock_detector = MagicMock()
+        tracker._detector = mock_detector
+
+        results = tracker.track_video(np.array([]))
+        assert results == []
+
+    @patch("videopython.ai.transforms.FaceDetector")
+    def test_face_tracker_passes_gpu_params_to_detector(self, mock_detector_class):
+        """Test FaceTracker passes GPU params to FaceDetector."""
+        mock_detector = MagicMock()
+        mock_detector.detect_batch.return_value = [[]]
+        mock_detector_class.return_value = mock_detector
+
+        tracker = FaceTracker(
+            backend="gpu",
+            min_face_size=50,
+        )
+
+        # Initialize detector by calling track_video
+        frames = np.zeros((1, 100, 100, 3), dtype=np.uint8)
+        tracker.track_video(frames)
+
+        # Verify FaceDetector was created with correct params
+        mock_detector_class.assert_called_once_with(
+            min_face_size=50,
+            backend="gpu",
+        )
+
+    @patch("videopython.ai.transforms.FaceTracker")
+    def test_face_tracking_crop_passes_params_to_tracker(self, mock_tracker_class):
+        """Test FaceTrackingCrop passes GPU params to FaceTracker."""
+        mock_tracker = MagicMock()
+        mock_tracker.detect_and_track.return_value = (0.5, 0.5, 0.1, 0.1)
+        mock_tracker_class.return_value = mock_tracker
+
+        frames = np.zeros((5, 480, 640, 3), dtype=np.uint8)
+        video = Video.from_frames(frames, fps=30)
+
+        crop = FaceTrackingCrop(
+            backend="gpu",
+            sample_rate=5,
+        )
+        crop.apply(video)
+
+        # Verify FaceTracker was created with GPU params
+        call_kwargs = mock_tracker_class.call_args[1]
+        assert call_kwargs["backend"] == "gpu"
+        assert call_kwargs["sample_rate"] == 5
