@@ -1,5 +1,11 @@
 # Release Notes
 
+## 0.16.2
+
+### Fixed
+
+- Prevent audio slicing near the end of a clip from failing due to floating point precision mismatch
+
 ## 0.16.1
 
 ### New Features
@@ -534,4 +540,3 @@ output_meta = video.metadata.cut(0, 10).resize(1280, 720)
 - Added Polish and German text-to-speech support
 - Dropped `soundpython` dependency - audio functionality now built into videopython
 - Extended documentation with new examples and API reference
-
