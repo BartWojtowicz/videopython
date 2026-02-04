@@ -343,6 +343,30 @@ def test_slice():
         audio.slice(0.0, audio.metadata.duration_seconds + 1)  # End after audio duration
 
 
+def test_slice_precision_tolerance():
+    """Slicing should tolerate tiny precision mismatches near the end."""
+    sample_rate = 1000
+    duration_seconds = 6.573333
+    data = np.zeros(int(duration_seconds * sample_rate), dtype=np.float32)
+
+    audio = Audio(
+        data=data,
+        metadata=AudioMetadata(
+            sample_rate=sample_rate,
+            channels=1,
+            sample_width=2,
+            duration_seconds=duration_seconds,
+            frame_count=len(data),
+        ),
+    )
+
+    end_seconds = 6.573333333333333
+    sliced = audio.slice(start_seconds=0.0, end_seconds=end_seconds)
+
+    assert sliced.metadata.duration_seconds <= duration_seconds
+    assert len(sliced) == len(data)
+
+
 def test_slice_stereo():
     """Test slicing stereo audio"""
     audio = Audio.from_path(TEST_DATA_DIR / "test_stereo.mp3")
