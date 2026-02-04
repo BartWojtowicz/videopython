@@ -549,13 +549,17 @@ class Audio:
         if start_seconds < 0:
             raise ValueError("start_seconds must be non-negative")
 
+        duration_seconds = self.metadata.duration_seconds
+        duration_tolerance = 1e-6
+
         if end_seconds is not None:
             if end_seconds < start_seconds:
                 raise ValueError("end_seconds must be greater than start_seconds")
-            if end_seconds > self.metadata.duration_seconds:
+            if end_seconds > duration_seconds + duration_tolerance:
                 raise ValueError("end_seconds cannot exceed audio duration")
+            end_seconds = min(end_seconds, duration_seconds)
         else:
-            end_seconds = self.metadata.duration_seconds
+            end_seconds = duration_seconds
 
         # Convert seconds to sample indices
         start_idx = int(start_seconds * self.metadata.sample_rate)
