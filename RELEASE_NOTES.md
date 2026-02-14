@@ -1,5 +1,11 @@
 # Release Notes
 
+## 0.16.3
+
+### Security
+
+- Upgrade Pillow minimum version to 12.1.1 to fix out-of-bounds write when loading PSD images (affects Pillow >= 10.3.0, < 12.1.1)
+
 ## 0.16.2
 
 ### Fixed

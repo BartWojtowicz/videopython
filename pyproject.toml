@@ -1,6 +1,6 @@
 [project]
 name = "videopython"
-version = "0.16.2"
+version = "0.16.3"
 description = "Minimal video generation and processing library."
 authors = [
     { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
@@ -33,7 +33,7 @@ classifiers = [
 dependencies = [
     "numpy>=1.25.2",
     "opencv-python>=4.9.0.80",
-    "pillow>=10.3.0",
+    "pillow>=12.1.1",
     "torchcodec>=0.9.1",
     "tqdm>=4.66.3",
 ]
