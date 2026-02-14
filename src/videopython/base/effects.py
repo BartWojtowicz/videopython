@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, Literal, final
 import cv2
 import numpy as np
 from PIL import Image
-from tqdm import tqdm
 
+from videopython.base.progress import log, progress_iter
 from videopython.base.video import Video
 
 # Minimum frames before using multiprocessing (Pool overhead isn't worth it below this)
@@ -103,14 +103,17 @@ class FullImageOverlay(Effect):
         elif not (0 <= 2 * self.fade_time <= video.total_seconds):
             raise ValueError(f"Video is only {video.total_seconds}s long, but fade time is {self.fade_time}s!")
 
-        print("Overlaying video...")
+        log("Overlaying video...")
         if self.fade_time == 0:
-            video.frames = np.array([self._overlay(frame) for frame in tqdm(video.frames)], dtype=np.uint8)
+            video.frames = np.array(
+                [self._overlay(frame) for frame in progress_iter(video.frames, desc="Overlaying frames")],
+                dtype=np.uint8,
+            )
         else:
             num_video_frames = len(video.frames)
             num_fade_frames = round(self.fade_time * video.fps)
             new_frames = []
-            for i, frame in enumerate(tqdm(video.frames)):
+            for i, frame in enumerate(progress_iter(video.frames, desc="Overlaying frames")):
                 frames_dist_from_end = min(i, num_video_frames - i)
                 if frames_dist_from_end >= num_fade_frames:
                     fade_alpha = 1.0
@@ -179,7 +182,7 @@ class Blur(Effect):
         else:
             raise ValueError(f"Unknown mode: `{self.mode}`.")
 
-        print(f"Applying {self.mode} blur...")
+        log(f"Applying {self.mode} blur...")
 
         if n_frames >= MIN_FRAMES_FOR_MULTIPROCESSING:
             with Pool() as pool:
@@ -221,7 +224,11 @@ class Zoom(Effect):
         )
 
         if self.mode == "in":
-            for frame, w, h in tqdm(zip(video.frames, reversed(crop_sizes_w), reversed(crop_sizes_h))):
+            for frame, w, h in progress_iter(
+                zip(video.frames, reversed(crop_sizes_w), reversed(crop_sizes_h)),
+                desc="Zooming",
+                total=n_frames,
+            ):
                 x = width / 2 - w / 2
                 y = height / 2 - h / 2
 
@@ -229,7 +236,11 @@ class Zoom(Effect):
                 zoomed_frame = cv2.resize(cropped_frame, (width, height))
                 new_frames.append(zoomed_frame)
         elif self.mode == "out":
-            for frame, w, h in tqdm(zip(video.frames, crop_sizes_w, crop_sizes_h)):
+            for frame, w, h in progress_iter(
+                zip(video.frames, crop_sizes_w, crop_sizes_h),
+                desc="Zooming",
+                total=n_frames,
+            ):
                 x = width / 2 - w / 2
                 y = height / 2 - h / 2
 
@@ -307,7 +318,7 @@ class ColorGrading(Effect):
         return img
 
     def _apply(self, video: Video) -> Video:
-        print("Applying color grading...")
+        log("Applying color grading...")
         n_frames = len(video.frames)
 
         if n_frames >= MIN_FRAMES_FOR_MULTIPROCESSING:
@@ -355,7 +366,7 @@ class Vignette(Effect):
         return mask.astype(np.float32)
 
     def _apply(self, video: Video) -> Video:
-        print("Applying vignette effect...")
+        log("Applying vignette effect...")
         height, width = video.frame_shape[:2]
 
         # Create mask once for the video dimensions
@@ -464,9 +475,9 @@ class KenBurns(Effect):
         end_w = int(self.end_region.width * width)
         end_h = int(self.end_region.height * height)
 
-        print("Applying Ken Burns effect...")
+        log("Applying Ken Burns effect...")
         new_frames = []
-        for i, frame in enumerate(tqdm(video.frames)):
+        for i, frame in enumerate(progress_iter(video.frames, desc="Ken Burns")):
             t = i / max(1, n_frames - 1)  # Normalized time [0, 1]
             eased_t = self._ease(t)
 

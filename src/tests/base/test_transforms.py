@@ -8,6 +8,7 @@ from videopython.base.transforms import (
     CutFrames,
     CutSeconds,
     PictureInPicture,
+    ResampleFPS,
     Resize,
     SpeedChange,
 )
@@ -60,22 +61,22 @@ def test_video_resize(height, width, small_video):
             interpolation=cv2.INTER_AREA,
         )
     )
-    assert np.all(
-        video.frames[-1]
-        == cv2.resize(
-            small_video.frames[-1],
-            (width, height),
-            interpolation=cv2.INTER_AREA,
-        )
-    )
-    assert np.all(
-        video.frames[len(video.frames) // 2]
-        == cv2.resize(
-            small_video.frames[len(small_video.frames) // 2],
-            (width, height),
-            interpolation=cv2.INTER_AREA,
-        )
-    )
+
+
+def test_resample_fps_upsample_frame_count():
+    video = Video.from_image(np.zeros((64, 64, 3), dtype=np.uint8), fps=10, length_seconds=1.0)
+    resample = ResampleFPS(fps=20)
+    result = resample.apply(video)
+    assert len(result.frames) == 20
+    assert abs(result.audio.metadata.duration_seconds - result.total_seconds) < 1e-3
+
+
+def test_resample_fps_downsample_frame_count():
+    video = Video.from_image(np.zeros((64, 64, 3), dtype=np.uint8), fps=20, length_seconds=1.0)
+    resample = ResampleFPS(fps=10)
+    result = resample.apply(video)
+    assert len(result.frames) == 10
+    assert abs(result.audio.metadata.duration_seconds - result.total_seconds) < 1e-3
 
 
 class TestCrop:

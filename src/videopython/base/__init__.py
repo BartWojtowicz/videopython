@@ -23,6 +23,7 @@ from .exceptions import (
     VideoMetadataError,
     VideoPythonError,
 )
+from .progress import configure, set_progress, set_verbose
 from .scene import SceneDetector
 from .text import (
     AnchorPoint,
@@ -109,4 +110,8 @@ __all__ = [
     "AudioEvent",
     "AudioClassification",
     "MotionInfo",
+    # Configuration
+    "configure",
+    "set_verbose",
+    "set_progress",
 ]
