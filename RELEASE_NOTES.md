@@ -1,5 +1,21 @@
 # Release Notes
 
+## 0.16.4
+
+### New Features
+
+- **Progress and verbosity configuration**: New `configure()`, `set_verbose()`, and `set_progress()` functions to control logging and progress bars in base operations (off by default)
+
+### Fixed
+
+- Fix off-by-one in `ResampleFPS` frame interpolation that dropped the last frame
+- Sync audio duration after FPS resampling to prevent audio/video drift
+
+### Changed
+
+- `Video.save()` now streams raw frames to FFmpeg via stdin pipe instead of writing a temporary file to disk
+- Suppress noisy FFmpeg output during save
+
 ## 0.16.3
 
 ### Security

@@ -11,9 +11,9 @@ from typing import TypeAlias
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
-from tqdm import tqdm
 
 from videopython.base.exceptions import OutOfBoundsError
+from videopython.base.progress import log, progress_iter
 from videopython.base.text.transcription import Transcription, TranscriptionSegment
 from videopython.base.video import Video
 
@@ -1061,11 +1061,11 @@ class TranscriptionOverlay:
 
     def apply(self, video: Video, transcription: Transcription) -> Video:
         """Apply transcription overlay to video frames."""
-        print("Applying transcription overlay...")
+        log("Applying transcription overlay...")
 
         new_frames = []
 
-        for frame_index, frame in enumerate(tqdm(video.frames)):
+        for frame_index, frame in enumerate(progress_iter(video.frames, desc="Transcription overlay")):
             # Calculate timestamp for this frame
             timestamp = frame_index / video.fps
 

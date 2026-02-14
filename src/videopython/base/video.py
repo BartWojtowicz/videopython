@@ -833,69 +833,87 @@ class Video:
             filename = Path(filename).with_suffix(f".{format}")
             filename.parent.mkdir(parents=True, exist_ok=True)
 
-        # Create a temporary raw video file
-        with tempfile.NamedTemporaryFile(suffix=".raw") as raw_video:
-            # Convert frames to raw video data
-            raw_data = self.frames.astype(np.uint8).tobytes()
-            raw_video.write(raw_data)
-            raw_video.flush()
+        # Save audio to temporary WAV file
+        with tempfile.NamedTemporaryFile(suffix=".wav") as temp_audio:
+            self.audio.save(temp_audio.name, format="wav")
 
-            # Save audio to temporary WAV file
-            with tempfile.NamedTemporaryFile(suffix=".wav") as temp_audio:
-                self.audio.save(temp_audio.name, format="wav")
+            # Calculate exact duration
+            duration = len(self.frames) / self.fps
 
-                # Calculate exact duration
-                duration = len(self.frames) / self.fps
+            # Construct FFmpeg command (stream raw video via stdin)
+            ffmpeg_command = [
+                "ffmpeg",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                # Raw video input settings
+                "-f",
+                "rawvideo",
+                "-pixel_format",
+                "rgb24",
+                "-video_size",
+                f"{self.frame_shape[1]}x{self.frame_shape[0]}",
+                "-framerate",
+                str(self.fps),
+                "-i",
+                "pipe:0",
+                # Audio input
+                "-i",
+                temp_audio.name,
+                # Video encoding settings
+                "-c:v",
+                "libx264",
+                "-preset",
+                preset,
+                "-crf",
+                str(crf),
+                # Audio settings
+                "-c:a",
+                "aac",
+                "-b:a",
+                "192k",
+                # Output settings
+                "-pix_fmt",
+                "yuv420p",
+                "-movflags",
+                "+faststart",  # Enable fast start for web playback
+                "-t",
+                str(duration),
+                "-vsync",
+                "cfr",
+                str(filename),
+            ]
 
-                # Construct FFmpeg command
-                ffmpeg_command = [
-                    "ffmpeg",
-                    "-y",
-                    # Raw video input settings
-                    "-f",
-                    "rawvideo",
-                    "-pixel_format",
-                    "rgb24",
-                    "-video_size",
-                    f"{self.frame_shape[1]}x{self.frame_shape[0]}",
-                    "-framerate",
-                    str(self.fps),
-                    "-i",
-                    raw_video.name,
-                    # Audio input
-                    "-i",
-                    temp_audio.name,
-                    # Video encoding settings
-                    "-c:v",
-                    "libx264",
-                    "-preset",
-                    preset,
-                    "-crf",
-                    str(crf),
-                    # Audio settings
-                    "-c:a",
-                    "aac",
-                    "-b:a",
-                    "192k",
-                    # Output settings
-                    "-pix_fmt",
-                    "yuv420p",
-                    "-movflags",
-                    "+faststart",  # Enable fast start for web playback
-                    "-t",
-                    str(duration),
-                    "-vsync",
-                    "cfr",
-                    str(filename),
-                ]
+            process = subprocess.Popen(
+                ffmpeg_command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
 
-                try:
-                    subprocess.run(ffmpeg_command, check=True, capture_output=True, text=True)
-                    return filename
-                except subprocess.CalledProcessError as e:
-                    print(f"Error saving video: {e}")
-                    print(f"FFmpeg stderr: {e.stderr}")
-                    raise
+            try:
+                if process.stdin is None:
+                    raise RuntimeError("Failed to open FFmpeg stdin pipe for video data")
+
+                frames = self.frames
+                if frames.dtype != np.uint8 or not frames.flags["C_CONTIGUOUS"]:
+                    frames = np.ascontiguousarray(frames, dtype=np.uint8)
+
+                buffer = memoryview(frames)
+                process.stdin.write(buffer)
+                process.stdin.close()
+
+                stderr = process.stderr.read() if process.stderr is not None else b""
+                returncode = process.wait()
+
+                if returncode != 0:
+                    raise RuntimeError(f"FFmpeg failed with code {returncode}: {stderr.decode(errors='ignore')}")
+
+                return filename
+            finally:
+                if process.poll() is None:
+                    process.kill()
 
     def add_audio(self, audio: Audio, overlay: bool = True) -> Video:
         """Add audio to video, returning a new Video instance.

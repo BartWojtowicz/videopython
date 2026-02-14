@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, Literal
 
 import cv2
 import numpy as np
-from tqdm import tqdm
 
+from videopython.base.progress import log, progress_iter
 from videopython.base.video import Video
 
 # Minimum frames before using multiprocessing (Pool overhead isn't worth it below this)
@@ -135,7 +135,7 @@ class Resize(Transformation):
             new_width = round(video_width * (self.height / video_height))
             new_height = self.height
 
-        print(f"Resizing video to: {new_width}x{new_height}!")
+        log(f"Resizing video to: {new_width}x{new_height}!")
         n_frames = len(video.frames)
 
         if n_frames >= MIN_FRAMES_FOR_MULTIPROCESSING:
@@ -173,7 +173,7 @@ class ResampleFPS(Transformation):
         target_frame_count = int(len(video.frames) * (self.fps / video.fps))
         new_frame_indices = np.linspace(0, len(video.frames) - 1, target_frame_count)
         new_frames = []
-        for i in tqdm(range(len(new_frame_indices) - 1)):
+        for i in progress_iter(range(len(new_frame_indices)), desc="Interpolating frames"):
             # Interpolate between the two nearest frames
             ratio = new_frame_indices[i] % 1
             new_frame = (1 - ratio) * video.frames[int(new_frame_indices[i])] + ratio * video.frames[
@@ -196,11 +196,14 @@ class ResampleFPS(Transformation):
         if video.fps == self.fps:
             return video
         elif video.fps > self.fps:
-            print(f"Downsampling video from {video.fps} to {self.fps} FPS.")
+            log(f"Downsampling video from {video.fps} to {self.fps} FPS.")
             video = self._downsample(video)
         else:
-            print(f"Upsampling video from {video.fps} to {self.fps} FPS.")
+            log(f"Upsampling video from {video.fps} to {self.fps} FPS.")
             video = self._upsample(video)
+        if video.audio is not None:
+            target_duration = len(video.frames) / video.fps
+            video.audio = video.audio.fit_to_duration(target_duration)
         return video
 
 
@@ -348,7 +351,7 @@ class SpeedChange(Transformation):
 
         if self.end_speed is None:
             # Constant speed change
-            print(f"Applying {self.speed}x speed change...")
+            log(f"Applying {self.speed}x speed change...")
             new_frame_count = int(n_frames / self.speed)
 
             if new_frame_count == 0:
@@ -358,7 +361,7 @@ class SpeedChange(Transformation):
             source_indices = np.linspace(0, n_frames - 1, new_frame_count)
         else:
             # Speed ramp: smoothly transition from speed to end_speed
-            print(f"Applying speed ramp from {self.speed}x to {self.end_speed}x...")
+            log(f"Applying speed ramp from {self.speed}x to {self.end_speed}x...")
 
             # Calculate frame positions with varying speed
             # Use cumulative sum of inverse speeds to get source positions
@@ -385,7 +388,7 @@ class SpeedChange(Transformation):
         if self.interpolate and (self.speed < 1.0 or (self.end_speed and self.end_speed < 1.0)):
             # Interpolate for smoother slow motion
             new_frames = []
-            for idx in tqdm(source_indices, desc="Interpolating frames"):
+            for idx in progress_iter(source_indices, desc="Interpolating frames"):
                 new_frames.append(self._interpolate_frame(video.frames, idx))
             video.frames = np.array(new_frames, dtype=np.uint8)
         else:
@@ -559,9 +562,9 @@ class PictureInPicture(Transformation):
         pos_y = max(0, min(pos_y, main_h - overlay_h))
 
         # Resize overlay frames once
-        print(f"Resizing overlay to {overlay_w}x{overlay_h}...")
+        log(f"Resizing overlay to {overlay_w}x{overlay_h}...")
         resized_overlay_frames = []
-        for frame in tqdm(self.overlay.frames, desc="Resizing overlay"):
+        for frame in progress_iter(self.overlay.frames, desc="Resizing overlay"):
             resized = cv2.resize(frame, (overlay_w, overlay_h), interpolation=cv2.INTER_AREA)
             resized_overlay_frames.append(resized)
 
@@ -572,9 +575,9 @@ class PictureInPicture(Transformation):
         if self.border_width > 0:
             resized_overlay_frames = [self._add_border(frame, mask) for frame in resized_overlay_frames]
 
-        print("Applying picture-in-picture...")
+        log("Applying picture-in-picture...")
         new_frames = []
-        for i in tqdm(range(n_main_frames)):
+        for i in progress_iter(range(n_main_frames), desc="Picture-in-picture"):
             main_frame = video.frames[i].copy()
 
             # Get overlay frame (loop if overlay is shorter)
