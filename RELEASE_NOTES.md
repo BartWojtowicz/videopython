@@ -1,5 +1,11 @@
 # Release Notes
 
+## 0.16.5
+
+### Security
+
+- Upgrade protobuf minimum version to 5.29.6 to fix DoS vulnerability via recursive `Any` messages in `json_format.ParseDict()` (affects protobuf < 5.29.6)
+
 ## 0.16.4
 
 ### New Features
