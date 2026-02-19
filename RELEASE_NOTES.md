@@ -1,5 +1,11 @@
 # Release Notes
 
+## 0.16.6
+
+### Fixed
+
+- `AudioToText` and `AudioClassifier` now auto-detect the best available device (CUDA, MPS, CPU) instead of defaulting to CPU
+
 ## 0.16.5
 
 ### Security
