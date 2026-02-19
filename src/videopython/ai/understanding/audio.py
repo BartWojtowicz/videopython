@@ -16,6 +16,17 @@ from videopython.base.text.transcription import Transcription, TranscriptionSegm
 from videopython.base.video import Video
 
 
+def _detect_device() -> str:
+    """Auto-detect the best available device for local inference."""
+    import torch
+
+    if torch.cuda.is_available():
+        return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
 class AudioToText:
     """Transcription service for audio and video."""
 
@@ -26,7 +37,7 @@ class AudioToText:
         backend: AudioToTextBackend | None = None,
         model_name: Literal["tiny", "base", "small", "medium", "large", "turbo"] = "small",
         enable_diarization: bool = False,
-        device: str = "cpu",
+        device: str | None = None,
         compute_type: str = "float32",
         api_key: str | None = None,
     ):
@@ -36,7 +47,7 @@ class AudioToText:
             backend: Backend to use. If None, uses config default or 'local'.
             model_name: Whisper model for local backend.
             enable_diarization: Enable speaker diarization (local backend only).
-            device: Device for local backend ('cuda' or 'cpu').
+            device: Device for local backend ('cuda', 'mps', or 'cpu'). If None, auto-detected.
             compute_type: Compute type for local backend.
             api_key: API key for cloud backends. If None, reads from environment.
         """
@@ -47,7 +58,7 @@ class AudioToText:
         self.backend: AudioToTextBackend = resolved_backend  # type: ignore[assignment]
         self.model_name = model_name
         self.enable_diarization = enable_diarization
-        self.device = device
+        self.device = device if device is not None else _detect_device()
         self.compute_type = compute_type
         self.api_key = api_key
 
@@ -275,7 +286,7 @@ class AudioClassifier:
         model_name: str = "MIT/ast-finetuned-audioset-10-10-0.4593",
         confidence_threshold: float = 0.3,
         top_k: int = 10,
-        device: str = "cpu",
+        device: str | None = None,
     ):
         """Initialize the audio classifier.
 
@@ -284,7 +295,7 @@ class AudioClassifier:
             model_name: HuggingFace model ID for AST.
             confidence_threshold: Minimum confidence to include an event.
             top_k: Maximum number of classes to consider per time frame.
-            device: Device for local backend ('cuda', 'mps', or 'cpu').
+            device: Device for local backend ('cuda', 'mps', or 'cpu'). If None, auto-detected.
         """
         resolved_backend: str = backend if backend is not None else get_default_backend("audio_classifier")
         if resolved_backend not in self.SUPPORTED_BACKENDS:
@@ -297,7 +308,7 @@ class AudioClassifier:
         self.model_name = model_name
         self.confidence_threshold = confidence_threshold
         self.top_k = top_k
-        self.device = device
+        self.device = device if device is not None else _detect_device()
 
         self._model: Any = None
         self._processor: Any = None
