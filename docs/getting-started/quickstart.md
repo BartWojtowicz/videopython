@@ -112,7 +112,9 @@ video.save("output.mp4", preset="ultrafast", crf=28)  # Faster encoding, lower q
 ## AI Features (Quick Preview)
 
 !!! note "API Keys Required"
-    AI features require API keys. Set `OPENAI_API_KEY`, `GOOGLE_API_KEY`, or `ELEVENLABS_API_KEY` depending on the backend you use.
+    AI features may require API keys depending on backend. Supported cloud keys:
+    `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `ELEVENLABS_API_KEY`, `RUNWAYML_API_KEY`,
+    `LUMAAI_API_KEY`, `REPLICATE_API_TOKEN`.
 
 ```python
 from videopython.ai import TextToImage, TextToSpeech
