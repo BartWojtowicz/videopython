@@ -13,6 +13,7 @@ Core video and audio processing functionality with no AI dependencies:
 - [**Transitions**](transitions.md) - Video transitions (fade, blur)
 - [**Effects**](effects.md) - Visual effects (blur, zoom, overlays)
 - [**Text & Transcription**](text.md) - Subtitle rendering and transcription data structures
+- [**Operation Registry**](registry.md) - Machine-readable operation metadata and discovery API
 
 ## `videopython.ai`
 
@@ -39,6 +40,14 @@ from videopython.base import (
     CutSeconds,
     FadeTransition,
     Transcription,
+)
+
+# Import registry API
+from videopython.base import (
+    get_operation_specs,
+    get_operation_spec,
+    get_specs_by_category,
+    OperationCategory,
 )
 
 # Import AI classes

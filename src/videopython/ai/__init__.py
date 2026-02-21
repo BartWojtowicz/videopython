@@ -1,3 +1,5 @@
+from videopython.ai import registry as _ai_registry  # noqa: F401
+
 from .exceptions import (
     BackendError,
     ConfigError,

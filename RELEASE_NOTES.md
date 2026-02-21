@@ -1,5 +1,25 @@
 # Release Notes
 
+## 0.17.0
+
+### New Features
+
+- **Operation Registry**: Machine-readable metadata for all video operations, enabling downstream tools to discover operations, parameters, and capabilities without importing internal modules
+  - `OperationSpec` dataclass with stable operation IDs, category, tags, and aliases
+  - `ParamSpec` dataclass for constructor and apply method parameter schemas
+  - JSON Schema generation via `to_json_schema()` (constructor args) and `to_apply_json_schema()` (apply args)
+  - Registry API: `get_operation_specs()`, `get_operation_spec()`, `get_specs_by_category()`, `get_specs_by_tag()`
+  - `spec_from_class()` helper to introspect class signatures and build specs automatically
+  - `register()` for adding custom operations with collision detection
+  - 18 base operations and 3 AI operations registered with stable IDs
+  - AI operations registered lazily on `import videopython.ai`
+
+### New Exports from `videopython.base`
+
+- `OperationCategory`, `OperationSpec`, `ParamSpec`
+- `get_operation_specs`, `get_operation_spec`, `get_specs_by_category`, `get_specs_by_tag`
+- `register`, `spec_from_class`
+
 ## 0.16.6
 
 ### Fixed
