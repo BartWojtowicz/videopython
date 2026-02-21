@@ -24,6 +24,17 @@ from .exceptions import (
     VideoPythonError,
 )
 from .progress import configure, set_progress, set_verbose
+from .registry import (
+    OperationCategory,
+    OperationSpec,
+    ParamSpec,
+    get_operation_spec,
+    get_operation_specs,
+    get_specs_by_category,
+    get_specs_by_tag,
+    register,
+    spec_from_class,
+)
 from .scene import SceneDetector
 from .text import (
     AnchorPoint,
@@ -110,6 +121,16 @@ __all__ = [
     "AudioEvent",
     "AudioClassification",
     "MotionInfo",
+    # Registry
+    "OperationCategory",
+    "OperationSpec",
+    "ParamSpec",
+    "get_operation_specs",
+    "get_operation_spec",
+    "get_specs_by_category",
+    "get_specs_by_tag",
+    "register",
+    "spec_from_class",
     # Configuration
     "configure",
     "set_verbose",
