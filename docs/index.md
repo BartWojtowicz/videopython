@@ -1,11 +1,11 @@
 # videopython
 
-A minimal Python library for video generation and editing, built for short-form content and AI workflows.
+A minimal Python library for video editing, processing, and AI workflows, built for short-form content.
 
 ## Quick Example
 
 ```python
-from videopython.base import Video, FadeTransition
+from videopython.base import Video
 from videopython.ai import TextToImage, ImageToVideo, TextToSpeech
 
 def create_video():
@@ -39,6 +39,10 @@ create_video()
 ## Installation
 
 ```bash
+# Base features
+pip install videopython
+
+# AI features
 pip install "videopython[ai]"
 ```
 

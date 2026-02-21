@@ -4,7 +4,7 @@ Create a vertical video clip optimized for TikTok, Instagram Reels, or YouTube S
 
 ## Goal
 
-Take a landscape video, extract a segment, convert to vertical 9:16 format, add a transition intro, and overlay text.
+Take a landscape video, extract a segment, convert to vertical 9:16 format, add an intro transition, and mix background audio.
 
 ## Full Example
 
@@ -91,5 +91,5 @@ final = title_card.transition_to(video, FadeTransition(effect_time_seconds=0.5))
 ## Tips
 
 - **Aspect Ratios**: TikTok/Reels use 9:16 (1080x1920). YouTube Shorts accepts 9:16 up to 1080x1920.
-- **Duration**: Keep clips under 60 seconds for Reels, under 3 minutes for TikTok.
+- **Duration**: Check each platform's latest limits before publishing, and trim your edit accordingly.
 - **Audio**: Always add music or narration. Silent videos perform poorly on social platforms.
