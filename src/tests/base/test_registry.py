@@ -11,8 +11,10 @@ from typing import Any
 import pytest
 
 from videopython.base.combine import StackVideos
-from videopython.base.effects import FullImageOverlay, KenBurns
+from videopython.base.effects import Blur, FullImageOverlay, KenBurns
+from videopython.base.text.overlay import TranscriptionOverlay
 from videopython.base.transforms import CutSeconds, PictureInPicture
+from videopython.base.transitions import FadeTransition
 
 BASE_OPERATION_IDS = {
     "cut_frames",
@@ -92,6 +94,18 @@ def test_to_json_schema_returns_object_schema_for_every_operation() -> None:
         assert schema.get("additionalProperties") is False
 
 
+def test_to_apply_json_schema_returns_object_schema_for_every_operation() -> None:
+    registry = _reload_registry()
+
+    for spec in registry.get_operation_specs().values():
+        schema = spec.to_apply_json_schema()
+        assert isinstance(schema, dict)
+        assert schema.get("type") == "object"
+        assert isinstance(schema.get("properties"), dict)
+        assert isinstance(schema.get("required"), list)
+        assert schema.get("additionalProperties") is False
+
+
 def test_register_raises_on_duplicate_id() -> None:
     registry = _reload_registry()
     existing_spec = next(iter(registry.get_operation_specs().values()))
@@ -128,6 +142,21 @@ def test_spec_from_class_introspects_cut_seconds() -> None:
     assert [param.name for param in spec.params] == ["start", "end"]
     assert all(param.required for param in spec.params)
     assert all(param.json_type == "number" for param in spec.params)
+    assert spec.apply_params == ()
+
+
+def test_effect_apply_schema_contains_start_stop() -> None:
+    registry = _reload_registry()
+
+    spec = registry.get_operation_spec("blur_effect")
+    assert spec is not None
+    assert [param.name for param in spec.apply_params] == ["start", "stop"]
+    assert all(not param.required for param in spec.apply_params)
+    assert all(param.json_type == "number" for param in spec.apply_params)
+
+    apply_schema = spec.to_apply_json_schema()
+    assert set(apply_schema["properties"]) == {"start", "stop"}
+    assert apply_schema["required"] == []
 
 
 def test_category_filtering_returns_expected_subset() -> None:
@@ -185,3 +214,28 @@ def test_paramspec_count_matches_init_signature(
         name for name in inspect.signature(cls.__init__).parameters if name != "self" and name not in excluded_params
     ]
     assert len(spec.params) == len(constructor_params)
+
+
+@pytest.mark.parametrize(
+    ("op_id", "cls", "excluded_apply_params"),
+    [
+        ("cut", CutSeconds, {"video"}),
+        ("blur_effect", Blur, {"video"}),
+        ("fade_transition", FadeTransition, {"videos"}),
+        ("add_subtitles", TranscriptionOverlay, {"video", "transcription"}),
+    ],
+)
+def test_paramspec_count_matches_apply_signature(
+    op_id: str,
+    cls: type[Any],
+    excluded_apply_params: set[str],
+) -> None:
+    registry = _reload_registry()
+    spec = registry.get_operation_spec(op_id)
+
+    assert spec is not None
+
+    apply_params = [
+        name for name in inspect.signature(cls.apply).parameters if name != "self" and name not in excluded_apply_params
+    ]
+    assert len(spec.apply_params) == len(apply_params)

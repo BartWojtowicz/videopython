@@ -60,12 +60,15 @@ effects = get_specs_by_category(OperationCategory.EFFECT)
 Use `spec_from_class` to register your own operations:
 
 ```python
-from videopython.base import register, spec_from_class, OperationCategory
+from videopython.base import Video, register, spec_from_class, OperationCategory
 
 class MyCustomEffect:
     """Apply a custom visual effect."""
     def __init__(self, intensity: float = 0.5):
         self.intensity = intensity
+
+    def apply(self, video: Video, start: float | None = None, stop: float | None = None) -> Video:
+        ...
 
 spec = spec_from_class(
     MyCustomEffect,
@@ -76,14 +79,16 @@ spec = spec_from_class(
 register(spec)
 ```
 
-`spec_from_class` introspects the constructor signature to build parameter schemas automatically. Use `exclude_params` for non-JSON-serializable arguments and `param_overrides` to add constraints like `minimum`/`maximum`.
+`spec_from_class` introspects both the constructor and `apply` method signatures to build parameter schemas automatically. The `video`, `videos`, and `transcription` parameters are excluded from the apply schema by default. Use `exclude_params` / `exclude_apply_params` for non-JSON-serializable arguments and `param_overrides` / `apply_param_overrides` to add constraints like `minimum`/`maximum`.
 
 ## JSON Schema Generation
 
-Every `OperationSpec` can generate a JSON Schema for its constructor arguments:
+Every `OperationSpec` can generate JSON Schemas for both constructor arguments and apply method arguments:
 
 ```python
 spec = get_operation_spec("cut")
+
+# Constructor args schema
 schema = spec.to_json_schema()
 # {
 #     "type": "object",
@@ -94,7 +99,22 @@ schema = spec.to_json_schema()
 #     "required": ["start", "end"],
 #     "additionalProperties": false
 # }
+
+# Apply args schema (e.g. for effects with start/stop)
+spec = get_operation_spec("blur_effect")
+apply_schema = spec.to_apply_json_schema()
+# {
+#     "type": "object",
+#     "properties": {
+#         "start": {"type": "number", ...},
+#         "stop": {"type": "number", ...}
+#     },
+#     "required": [],
+#     "additionalProperties": false
+# }
 ```
+
+Transformations and transitions typically have an empty apply schema (no extra arguments beyond the video input), while effects expose `start`/`stop` parameters.
 
 ## Registered Operations
 

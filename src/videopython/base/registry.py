@@ -37,7 +37,7 @@ UNSET = _UnsetType()
 
 @dataclass(frozen=True)
 class ParamSpec:
-    """Machine-readable schema metadata for a constructor parameter."""
+    """Machine-readable schema metadata for a parameter."""
 
     name: str
     json_type: str
@@ -80,20 +80,76 @@ class OperationSpec:
     category: OperationCategory
     description: str
     params: tuple[ParamSpec, ...]
+    apply_params: tuple[ParamSpec, ...] = ()
     tags: frozenset[str] = frozenset()
     aliases: tuple[str, ...] = ()
     metadata_method: str | None = None
 
     def to_json_schema(self) -> dict[str, Any]:
         """Generate constructor-args JSON schema for this operation."""
-        properties = {param.name: param.to_json_schema() for param in self.params}
-        required = [param.name for param in self.params if param.required]
-        return {
-            "type": "object",
-            "properties": properties,
-            "required": required,
-            "additionalProperties": False,
-        }
+        return _params_to_json_schema(self.params)
+
+    def to_apply_json_schema(self) -> dict[str, Any]:
+        """Generate apply-args JSON schema for this operation."""
+        return _params_to_json_schema(self.apply_params)
+
+
+def _params_to_json_schema(params: tuple[ParamSpec, ...]) -> dict[str, Any]:
+    properties = {param.name: param.to_json_schema() for param in params}
+    required = [param.name for param in params if param.required]
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": required,
+        "additionalProperties": False,
+    }
+
+
+def _spec_params_from_callable(
+    fn: Any,
+    *,
+    exclude_params: Iterable[str],
+    param_overrides: Mapping[str, Mapping[str, Any]],
+    description_prefix: str,
+) -> tuple[ParamSpec, ...]:
+    excluded = set(exclude_params)
+    signature = inspect.signature(fn)
+
+    module = inspect.getmodule(fn)
+    type_hints: dict[str, Any] = {}
+    try:
+        globalns = vars(module) if module is not None else None
+        type_hints = get_type_hints(fn, globalns=globalns, localns=globalns)
+    except (AttributeError, NameError, TypeError):
+        type_hints = {}
+
+    params: list[ParamSpec] = []
+    for parameter in signature.parameters.values():
+        if parameter.name == "self" or parameter.name in excluded:
+            continue
+
+        annotation = type_hints.get(parameter.name, parameter.annotation)
+        required = parameter.default is inspect.Signature.empty
+        default = UNSET if required else _to_json_value(parameter.default)
+        json_type, enum_values, items_type = _annotation_to_schema(annotation)
+
+        param_spec = ParamSpec(
+            name=parameter.name,
+            json_type=json_type,
+            description=f"{description_prefix} argument '{parameter.name}'.",
+            required=required,
+            default=default,
+            enum=enum_values,
+            items_type=items_type,
+        )
+
+        override = param_overrides.get(parameter.name)
+        if override is not None:
+            param_spec = replace(param_spec, **override)
+
+        params.append(param_spec)
+
+    return tuple(params)
 
 
 _REGISTRY: dict[str, OperationSpec] = {}
@@ -162,47 +218,28 @@ def spec_from_class(
     aliases: Iterable[str] | None = None,
     exclude_params: Iterable[str] | None = None,
     param_overrides: Mapping[str, Mapping[str, Any]] | None = None,
+    exclude_apply_params: Iterable[str] | None = None,
+    apply_param_overrides: Mapping[str, Mapping[str, Any]] | None = None,
     metadata_method: str | None = None,
 ) -> OperationSpec:
-    """Build an operation spec from class constructor type hints."""
-    excluded = set(exclude_params or ())
-    overrides = param_overrides or {}
-
-    init_signature = inspect.signature(cls.__init__)
-
-    module = inspect.getmodule(cls)
-    type_hints: dict[str, Any] = {}
-    try:
-        globalns = vars(module) if module is not None else None
-        type_hints = get_type_hints(cls.__init__, globalns=globalns, localns=globalns)
-    except (AttributeError, NameError, TypeError):
-        type_hints = {}
-
-    params: list[ParamSpec] = []
-    for parameter in init_signature.parameters.values():
-        if parameter.name == "self" or parameter.name in excluded:
-            continue
-
-        annotation = type_hints.get(parameter.name, parameter.annotation)
-        required = parameter.default is inspect.Signature.empty
-        default = UNSET if required else _to_json_value(parameter.default)
-        json_type, enum_values, items_type = _annotation_to_schema(annotation)
-
-        param_spec = ParamSpec(
-            name=parameter.name,
-            json_type=json_type,
-            description=f"Constructor argument '{parameter.name}'.",
-            required=required,
-            default=default,
-            enum=enum_values,
-            items_type=items_type,
-        )
-
-        override = overrides.get(parameter.name)
-        if override is not None:
-            param_spec = replace(param_spec, **override)
-
-        params.append(param_spec)
+    """Build an operation spec from constructor and apply method type hints."""
+    constructor_params = _spec_params_from_callable(
+        cls.__init__,
+        exclude_params=exclude_params or (),
+        param_overrides=param_overrides or {},
+        description_prefix="Constructor",
+    )
+    # Default exclusions cover known first-argument media inputs for current ops.
+    # Callers can override this when introducing non-standard apply signatures.
+    apply_exclusions = (
+        set(exclude_apply_params) if exclude_apply_params is not None else {"video", "videos", "transcription"}
+    )
+    apply_params = _spec_params_from_callable(
+        cls.apply,
+        exclude_params=apply_exclusions,
+        param_overrides=apply_param_overrides or {},
+        description_prefix="Apply",
+    )
 
     description = _first_line(inspect.getdoc(cls))
     if not description:
@@ -214,7 +251,8 @@ def spec_from_class(
         module_path=cls.__module__,
         category=category,
         description=description,
-        params=tuple(params),
+        params=constructor_params,
+        apply_params=apply_params,
         tags=frozenset(tags or ()),
         aliases=tuple(aliases or ()),
         metadata_method=metadata_method,
