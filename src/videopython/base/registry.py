@@ -387,6 +387,7 @@ def _register_base_operations() -> None:
             op_id="cut_frames",
             category=OperationCategory.TRANSFORMATION,
             tags={"changes_duration"},
+            metadata_method="cut_frames",
         )
     )
     register(
@@ -396,6 +397,7 @@ def _register_base_operations() -> None:
             category=OperationCategory.TRANSFORMATION,
             tags={"changes_duration"},
             aliases=("cut_seconds",),
+            metadata_method="cut",
         )
     )
     register(
@@ -404,6 +406,7 @@ def _register_base_operations() -> None:
             op_id="resize",
             category=OperationCategory.TRANSFORMATION,
             tags={"changes_dimensions"},
+            metadata_method="resize",
         )
     )
     register(
@@ -412,6 +415,7 @@ def _register_base_operations() -> None:
             op_id="resample_fps",
             category=OperationCategory.TRANSFORMATION,
             tags={"changes_fps"},
+            metadata_method="resample_fps",
         )
     )
     register(
@@ -420,6 +424,7 @@ def _register_base_operations() -> None:
             op_id="crop",
             category=OperationCategory.TRANSFORMATION,
             tags={"changes_dimensions"},
+            metadata_method="crop",
         )
     )
     register(
@@ -428,6 +433,7 @@ def _register_base_operations() -> None:
             op_id="speed_change",
             category=OperationCategory.TRANSFORMATION,
             tags={"changes_duration"},
+            metadata_method="speed_change",
         )
     )
     register(

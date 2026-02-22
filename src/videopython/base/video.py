@@ -295,6 +295,32 @@ class VideoMetadata:
             raise ValueError(f"FPS ({fps}) must be positive")
         return self.with_fps(fps)
 
+    def speed_change(self, speed: float) -> VideoMetadata:
+        """Predict metadata after speed change.
+
+        Mirrors runtime frame-count semantics: int(frame_count / speed),
+        matching SpeedChange.apply() behavior.
+
+        Args:
+            speed: Speed multiplier (e.g. 2.0 = double speed, 0.5 = half speed).
+
+        Returns:
+            New VideoMetadata with updated duration and frame count.
+        """
+        if speed <= 0:
+            raise ValueError(f"Speed ({speed}) must be positive")
+        new_frame_count = int(self.frame_count / speed)
+        if new_frame_count == 0:
+            raise ValueError(f"Speed {speed}x would result in 0 frames")
+        new_seconds = round(new_frame_count / self.fps, 4)
+        return VideoMetadata(
+            height=self.height,
+            width=self.width,
+            fps=self.fps,
+            frame_count=new_frame_count,
+            total_seconds=new_seconds,
+        )
+
     def transition_to(self, other: VideoMetadata, effect_time: float = 0.0) -> VideoMetadata:
         """Predict metadata after transition to another video.
 
