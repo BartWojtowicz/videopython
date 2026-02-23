@@ -9,6 +9,7 @@ from .description import (
     MotionInfo,
     SceneBoundary,
 )
+from .edit import SegmentConfig, VideoEdit
 from .effects import Blur, ColorGrading, Effect, FullImageOverlay, KenBurns, Vignette, Zoom
 from .exceptions import (
     AudioError,
@@ -60,6 +61,9 @@ from .transitions import BlurTransition, FadeTransition, InstantTransition, Tran
 from .video import FrameIterator, Video, VideoMetadata
 
 __all__ = [
+    # Editing
+    "VideoEdit",
+    "SegmentConfig",
     # Core
     "Video",
     "VideoMetadata",

@@ -1,5 +1,41 @@
 # Release Notes
 
+## 0.18.0
+
+### New Features
+
+- **VideoEdit editing plans**: New multi-segment editing plan API for assembling clips from one or more source videos
+  - `VideoEdit.run()` executes segment extraction, per-segment transforms/effects, concatenation, and post-assembly operations
+  - `VideoEdit.validate()` performs dry-run validation using `VideoMetadata` and checks concatenation compatibility (exact fps and dimensions)
+  - JSON plan support via `VideoEdit.from_dict()`, `VideoEdit.from_json()`, and canonical serialization via `VideoEdit.to_dict()`
+  - Registry-backed parsing with canonical op IDs, alias normalization, and clear errors for unsupported operations
+- **New base exports**: `VideoEdit` and `SegmentConfig` are now exported from `videopython.base`
+- **VideoEdit JSON Schema generation**: `VideoEdit.json_schema()` builds a parser-aligned plan schema from the operation registry
+  - Canonical op IDs only
+  - Excludes unsupported categories/tags and non-JSON-instantiable operations
+  - Reflects currently registered operations (AI ops appear after `import videopython.ai`)
+
+### Improved Validation
+
+- Stronger parse-time JSON plan validation for `VideoEdit`
+  - Validates parameter value types, enums, array item types, and selected numeric minimum constraints using registry `ParamSpec` metadata
+  - Normalizes JSON values for constructor compatibility where needed (for example enum values and tuple-like args)
+  - Nullable registry params (e.g. effect `apply.start` / `apply.stop`) now emit correct JSON Schema and validate `null` inputs
+- Added metadata prediction support for core transforms used by `VideoEdit.validate()` (`cut`, `cut_frames`, `resize`, `crop`, `resample_fps`, `speed_change`)
+- Added `VideoMetadata.speed_change()` for metadata-only validation of speed changes
+
+### Fixed
+
+- `VideoEdit.validate()` metadata prediction now matches runtime frame-rounding semantics for time-based cuts (`cut`)
+- `VideoEdit.validate()` crop metadata prediction now matches runtime crop behavior (including odd-size center crops and slice clipping)
+- `VideoEdit.json_schema()` and parser semantics are aligned for `resize` by requiring at least one non-null dimension (`width` or `height`)
+
+### Documentation
+
+- Added `docs/api/editing.md` with `VideoEdit` JSON plan format, validation, and schema generation examples
+- Linked editing plans from `docs/api/index.md`
+- Added a `VideoEdit` JSON plan example to `docs/examples/social-clip.md`
+
 ## 0.17.0
 
 ### New Features

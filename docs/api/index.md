@@ -9,6 +9,7 @@ Core video and audio processing functionality with no AI dependencies:
 - [**Video**](core/video.md) - Core video class for loading, manipulating, and saving videos
 - [**Audio**](core/audio.md) - Core audio class for loading, manipulating, analyzing, and saving audio
 - [**Scene Detection**](core/scene.md) - Detect scene changes using histogram comparison
+- [**Editing Plans (`VideoEdit`)**](editing.md) - Multi-segment editing plans with JSON parsing, validation, and schema generation
 - [**Transforms**](transforms.md) - Frame transformations (cut, resize, resample)
 - [**Transitions**](transitions.md) - Video transitions (fade, blur)
 - [**Effects**](effects.md) - Visual effects (blur, zoom, overlays)
