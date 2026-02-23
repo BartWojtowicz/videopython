@@ -88,6 +88,37 @@ title_card = Video.from_image(title_frame, fps=30, length_seconds=2.0)
 final = title_card.transition_to(video, FadeTransition(effect_time_seconds=0.5))
 ```
 
+## Alternative: JSON Editing Plan (`VideoEdit`)
+
+For LLM-generated or UI-generated edits, use `VideoEdit` instead of manual orchestration:
+
+```python
+from videopython.base import VideoEdit
+
+plan = {
+    "segments": [
+        {"source": "raw_footage.mp4", "start": 30.0, "end": 45.0}
+    ],
+    "post_transforms": [
+        {"op": "resize", "args": {"height": 1920}}
+    ],
+    "post_effects": [
+        {"op": "color_adjust", "args": {"brightness": 0.05}}
+    ],
+}
+
+edit = VideoEdit.from_dict(plan)
+edit.validate()  # dry run using VideoMetadata
+final = edit.run()
+final.save("social_clip.mp4")
+```
+
+If you need a parser-aligned JSON Schema for plan generation/validation:
+
+```python
+schema = VideoEdit.json_schema()
+```
+
 ## Tips
 
 - **Aspect Ratios**: TikTok/Reels use 9:16 (1080x1920). YouTube Shorts accepts 9:16 up to 1080x1920.

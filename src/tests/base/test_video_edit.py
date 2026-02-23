@@ -11,7 +11,7 @@ import pytest
 
 from tests.test_config import SMALL_VIDEO_METADATA, SMALL_VIDEO_PATH
 from videopython.base.edit import SegmentConfig, VideoEdit, _StepRecord
-from videopython.base.transforms import PictureInPicture
+from videopython.base.transforms import CropMode, PictureInPicture
 from videopython.base.video import Video, VideoMetadata
 
 
@@ -38,6 +38,10 @@ def _segment_plan(
     }
 
 
+def _schema_step_ops(items_schema: dict) -> set[str]:
+    return {step["properties"]["op"]["const"] for step in items_schema["oneOf"]}
+
+
 class TestConstruction:
     def test_empty_segments_raises(self):
         with pytest.raises(ValueError, match="at least one segment"):
@@ -48,6 +52,15 @@ class TestConstruction:
         edit = VideoEdit(segments=[segment])
         assert isinstance(edit.segments, tuple)
         assert len(edit.segments) == 1
+
+    def test_step_record_apply_args_contract_rejects_non_numeric_start_stop(self):
+        with pytest.raises(TypeError, match="must be numeric or None"):
+            _StepRecord.create(
+                "blur_effect",
+                {},
+                {"start": "bad"},
+                object(),  # type: ignore[arg-type]
+            )
 
 
 class TestParsingAndSerialization:
@@ -140,6 +153,90 @@ class TestParsingAndSerialization:
         resize_op.width = 123  # type: ignore[attr-defined]
         assert edit.to_dict()["segments"][0]["transforms"][0]["args"]["width"] == 320
 
+    def test_constructor_enum_arg_is_normalized_for_crop(self):
+        plan = {
+            "segments": [
+                _segment_plan(transforms=[{"op": "crop", "args": {"width": 0.5, "height": 0.5, "mode": "center"}}])
+            ]
+        }
+        edit = VideoEdit.from_dict(plan)
+        crop_op = edit.segments[0].transform_records[0].operation
+        assert getattr(crop_op, "mode") is CropMode.CENTER
+        # Snapshot stays JSON-native/canonical
+        assert edit.to_dict()["segments"][0]["transforms"][0]["args"]["mode"] == "center"
+
+    def test_constructor_tuple_arg_is_normalized_but_snapshot_stays_list(self):
+        plan = {
+            "segments": [
+                _segment_plan(
+                    effects=[
+                        {
+                            "op": "blur_effect",
+                            "args": {"mode": "constant", "iterations": 1, "kernel_size": [5, 5]},
+                        }
+                    ]
+                )
+            ]
+        }
+        edit = VideoEdit.from_dict(plan)
+        blur_op = edit.segments[0].effect_records[0].operation
+        assert getattr(blur_op, "kernel_size") == (5, 5)
+        assert isinstance(getattr(blur_op, "kernel_size"), tuple)
+        assert edit.to_dict()["segments"][0]["effects"][0]["args"]["kernel_size"] == [5, 5]
+
+
+class TestJsonSchema:
+    def test_json_schema_top_level_and_segment_shapes(self):
+        schema = VideoEdit.json_schema()
+        assert schema["$schema"] == "http://json-schema.org/draft-07/schema#"
+        assert schema["type"] == "object"
+        assert schema["required"] == ["segments"]
+        assert "additionalProperties" not in schema
+
+        segment_schema = schema["properties"]["segments"]["items"]
+        assert segment_schema["type"] == "object"
+        assert segment_schema["additionalProperties"] is False
+        assert set(segment_schema["required"]) == {"source", "start", "end"}
+        assert schema["properties"]["segments"]["minItems"] == 1
+
+    def test_json_schema_uses_canonical_ops_and_excludes_unsupported(self):
+        schema = VideoEdit.json_schema()
+        transform_ops = _schema_step_ops(schema["properties"]["post_transforms"]["items"])
+        effect_ops = _schema_step_ops(schema["properties"]["post_effects"]["items"])
+
+        assert "resize" in transform_ops
+        assert "cut" in transform_ops
+        assert "blur_effect" in effect_ops
+        assert "blur" not in effect_ops  # alias should not be emitted
+
+        assert "fade_transition" not in transform_ops
+        assert "picture_in_picture" not in transform_ops
+        assert "ken_burns" not in effect_ops
+        assert "full_image_overlay" not in effect_ops
+
+    def test_json_schema_step_shapes_match_parser_rules(self):
+        schema = VideoEdit.json_schema()
+        transform_steps = schema["properties"]["post_transforms"]["items"]["oneOf"]
+        effect_steps = schema["properties"]["post_effects"]["items"]["oneOf"]
+
+        cut_step = next(step for step in transform_steps if step["properties"]["op"]["const"] == "cut")
+        resize_step = next(step for step in transform_steps if step["properties"]["op"]["const"] == "resize")
+        blur_step = next(step for step in effect_steps if step["properties"]["op"]["const"] == "blur_effect")
+
+        assert cut_step["additionalProperties"] is False
+        assert "apply" not in cut_step["properties"]
+        assert "args" in cut_step["required"]  # cut requires start/end
+
+        assert "apply" in blur_step["properties"]
+        assert "apply" not in blur_step["required"]  # effect apply params are optional
+        assert blur_step["properties"]["apply"]["properties"]["start"]["type"] == ["number", "null"]
+
+        resize_step = next(step for step in transform_steps if step["properties"]["op"]["const"] == "resize")
+        assert "args" in resize_step["required"]
+        assert "anyOf" in resize_step["properties"]["args"]
+        assert resize_step["properties"]["args"]["anyOf"][0]["required"] == ["width"]
+        assert resize_step["properties"]["args"]["anyOf"][1]["required"] == ["height"]
+
 
 class TestExecution:
     def test_from_dict_run(self):
@@ -205,6 +302,22 @@ class TestValidation:
         meta = VideoEdit.from_dict(plan).validate()
         assert meta.width == 320
         assert meta.height == 200
+
+    def test_validate_crop_matches_runtime_for_odd_center_crop(self):
+        plan = {
+            "segments": [
+                _segment_plan(
+                    start=0.0,
+                    end=2.0,
+                    transforms=[{"op": "crop", "args": {"width": 5, "height": 5, "mode": "center"}}],
+                )
+            ]
+        }
+        edit = VideoEdit.from_dict(plan)
+        meta = edit.validate()
+        video = edit.run()
+        assert meta.width == video.frame_shape[1]
+        assert meta.height == video.frame_shape[0]
 
     def test_validate_speed_change(self):
         plan = {
@@ -306,9 +419,7 @@ class TestParsingErrors:
             VideoEdit.from_dict(
                 {
                     "segments": [
-                        _segment_plan(
-                            transforms=[{"op": "resize", "args": {"width": 1}, "apply": {"start": 0}}]
-                        )
+                        _segment_plan(transforms=[{"op": "resize", "args": {"width": 1}, "apply": {"start": 0}}])
                     ]
                 }
             )
@@ -322,11 +433,7 @@ class TestParsingErrors:
             VideoEdit.from_dict(
                 {
                     "segments": [
-                        _segment_plan(
-                            transforms=[
-                                {"op": "blur_effect", "args": {"mode": "constant", "iterations": 1}}
-                            ]
-                        )
+                        _segment_plan(transforms=[{"op": "blur_effect", "args": {"mode": "constant", "iterations": 1}}])
                     ]
                 }
             )
@@ -345,9 +452,7 @@ class TestParsingErrors:
 
     def test_non_json_instantiable_precedes_arg_validation(self):
         with pytest.raises(ValueError, match="not JSON-instantiable"):
-            VideoEdit.from_dict(
-                {"segments": [_segment_plan(effects=[{"op": "ken_burns", "args": {"bogus": 1}}])]}
-            )
+            VideoEdit.from_dict({"segments": [_segment_plan(effects=[{"op": "ken_burns", "args": {"bogus": 1}}])]})
 
     def test_unknown_apply_arg_rejected(self):
         with pytest.raises(ValueError, match="unknown keys"):
@@ -385,6 +490,120 @@ class TestParsingErrors:
                 }
             )
 
+    def test_nullable_apply_arg_accepts_none(self):
+        edit = VideoEdit.from_dict(
+            {
+                "segments": [
+                    _segment_plan(
+                        effects=[
+                            {
+                                "op": "blur_effect",
+                                "args": {"mode": "constant", "iterations": 1},
+                                "apply": {"start": None},
+                            }
+                        ]
+                    )
+                ]
+            }
+        )
+        assert edit.to_dict()["segments"][0]["effects"][0]["apply"]["start"] is None
+
+    def test_bool_rejected_for_integer_param(self):
+        with pytest.raises(ValueError, match=r"\.args\.width must be an integer"):
+            VideoEdit.from_dict(
+                {"segments": [_segment_plan(transforms=[{"op": "resize", "args": {"width": True, "height": 100}}])]}
+            )
+
+    def test_invalid_enum_value_rejected_at_parse_time(self):
+        with pytest.raises(ValueError, match=r"\.args\.mode must be one of"):
+            VideoEdit.from_dict(
+                {
+                    "segments": [
+                        _segment_plan(
+                            transforms=[{"op": "crop", "args": {"width": 10, "height": 10, "mode": "not_a_mode"}}]
+                        )
+                    ]
+                }
+            )
+
+    def test_crop_width_must_be_positive(self):
+        with pytest.raises(ValueError, match=r"\.args\.width must be > 0"):
+            VideoEdit.from_dict(
+                {"segments": [_segment_plan(transforms=[{"op": "crop", "args": {"width": 0, "height": 10}}])]}
+            )
+
+    def test_resize_requires_width_or_height_at_parse_time(self):
+        with pytest.raises(ValueError, match="must include at least one non-null value"):
+            VideoEdit.from_dict({"segments": [_segment_plan(transforms=[{"op": "resize"}])]})
+
+    def test_resize_rejects_all_null_dimensions_at_parse_time(self):
+        with pytest.raises(ValueError, match="must include at least one non-null value"):
+            VideoEdit.from_dict(
+                {"segments": [_segment_plan(transforms=[{"op": "resize", "args": {"width": None, "height": None}}])]}
+            )
+
+    def test_speed_change_zero_rejected_by_exclusive_minimum(self):
+        with pytest.raises(ValueError, match=r"\.args\.speed must be > 0"):
+            VideoEdit.from_dict(
+                {"segments": [_segment_plan(transforms=[{"op": "speed_change", "args": {"speed": 0}}])]}
+            )
+
+    def test_array_item_type_validation_for_blur_kernel_size(self):
+        with pytest.raises(ValueError, match=r"\.args\.kernel_size\[1\] must be a number"):
+            VideoEdit.from_dict(
+                {
+                    "segments": [
+                        _segment_plan(
+                            effects=[
+                                {
+                                    "op": "blur_effect",
+                                    "args": {
+                                        "mode": "constant",
+                                        "iterations": 1,
+                                        "kernel_size": [5, "bad"],
+                                    },
+                                }
+                            ]
+                        )
+                    ]
+                }
+            )
+
+    def test_numeric_minimum_validation_for_blur_iterations(self):
+        with pytest.raises(ValueError, match=r"\.args\.iterations must be >= 1"):
+            VideoEdit.from_dict(
+                {
+                    "segments": [
+                        _segment_plan(
+                            effects=[
+                                {
+                                    "op": "blur_effect",
+                                    "args": {"mode": "constant", "iterations": 0},
+                                }
+                            ]
+                        )
+                    ]
+                }
+            )
+
+    def test_numeric_minimum_validation_for_effect_apply_start(self):
+        with pytest.raises(ValueError, match=r"\.apply\.start must be >= 0"):
+            VideoEdit.from_dict(
+                {
+                    "segments": [
+                        _segment_plan(
+                            effects=[
+                                {
+                                    "op": "blur_effect",
+                                    "args": {"mode": "constant", "iterations": 1},
+                                    "apply": {"start": -1},
+                                }
+                            ]
+                        )
+                    ]
+                }
+            )
+
 
 class TestRegistryAndMetadata:
     @pytest.mark.parametrize("op_id", ["cut", "cut_frames", "resize", "crop", "resample_fps", "speed_change"])
@@ -411,3 +630,9 @@ class TestRegistryAndMetadata:
         meta = VideoMetadata(height=100, width=100, fps=24, frame_count=1, total_seconds=0.0417)
         with pytest.raises(ValueError, match="0 frames"):
             meta.speed_change(100.0)
+
+    def test_cut_metadata_runtime_semantics_with_fractional_seconds(self):
+        meta = VideoMetadata(height=100, width=100, fps=10, frame_count=10, total_seconds=1.0)
+        result = meta.cut(0.05, 0.15)
+        assert result.frame_count == 2
+        assert result.total_seconds == pytest.approx(0.2)

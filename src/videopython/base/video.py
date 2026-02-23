@@ -218,7 +218,11 @@ class VideoMetadata:
             raise ValueError(f"Start time ({start}) cannot be negative")
         if end > self.total_seconds:
             raise ValueError(f"End time ({end}) exceeds video duration ({self.total_seconds})")
-        return self.with_duration(end - start)
+        # Mirror CutSeconds.apply() semantics: convert times to frame indices using
+        # round() before slicing so metadata validation matches runtime output.
+        start_frame = round(start * self.fps)
+        end_frame = round(end * self.fps)
+        return self.cut_frames(start_frame, end_frame)
 
     def cut_frames(self, start: int, end: int) -> VideoMetadata:
         """Predict metadata after cutting by frame range.

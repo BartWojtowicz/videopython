@@ -5,11 +5,19 @@ import importlib
 import inspect
 import json
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from types import UnionType
+from typing import Any, Mapping, Sequence, Union, get_args, get_origin, get_type_hints
 
 from videopython.base.effects import Effect
-from videopython.base.registry import OperationCategory, OperationSpec, ParamSpec, get_operation_spec
+from videopython.base.registry import (
+    OperationCategory,
+    OperationSpec,
+    ParamSpec,
+    get_operation_spec,
+    get_operation_specs,
+)
 from videopython.base.transforms import Transformation
 from videopython.base.video import Video, VideoMetadata
 
@@ -40,10 +48,13 @@ class _StepRecord:
         apply_args: Mapping[str, Any] | None,
         operation: Transformation | Effect,
     ) -> _StepRecord:
+        args_copy = copy.deepcopy(dict(args or {}))
+        apply_args_copy = copy.deepcopy(dict(apply_args or {}))
+        _validate_step_record_apply_args_contract(apply_args_copy)
         return cls(
             op_id=op_id,
-            args=copy.deepcopy(dict(args or {})),
-            apply_args=copy.deepcopy(dict(apply_args or {})),
+            args=args_copy,
+            apply_args=apply_args_copy,
             operation=operation,
         )
 
@@ -70,8 +81,7 @@ class SegmentConfig:
         for record in self.effect_records:
             if not isinstance(record.operation, Effect):
                 raise TypeError(
-                    "SegmentConfig.effect_records must contain "
-                    f"Effect operations, got {type(record.operation)}"
+                    f"SegmentConfig.effect_records must contain Effect operations, got {type(record.operation)}"
                 )
 
     def process_segment(self) -> Video:
@@ -84,6 +94,10 @@ class SegmentConfig:
         for record in self.transform_records:
             video = record.operation.apply(video)
         for record in self.effect_records:
+            if not isinstance(record.operation, Effect):
+                raise TypeError(
+                    f"SegmentConfig.effect_records must contain Effect operations, got {type(record.operation)}"
+                )
             video = record.operation.apply(
                 video,
                 start=_coerce_optional_number(record.apply_args.get("start"), "start"),
@@ -177,12 +191,67 @@ class VideoEdit:
             "post_effects": [_step_to_dict(record, include_apply=True) for record in self.post_effect_records],
         }
 
+    @classmethod
+    def json_schema(cls) -> dict[str, Any]:
+        """Return a JSON Schema for `VideoEdit` plans."""
+        transform_specs = _videoedit_supported_specs_for_category(OperationCategory.TRANSFORMATION)
+        effect_specs = _videoedit_supported_specs_for_category(OperationCategory.EFFECT)
+
+        transform_step_schemas = [
+            _videoedit_step_schema_from_spec(spec, include_apply=False) for spec in transform_specs
+        ]
+        effect_step_schemas = [_videoedit_step_schema_from_spec(spec, include_apply=True) for spec in effect_specs]
+
+        segment_schema: dict[str, Any] = {
+            "type": "object",
+            "properties": {
+                "source": {"type": "string", "description": "Source video path."},
+                "start": {"type": "number", "description": "Segment start time in seconds."},
+                "end": {"type": "number", "description": "Segment end time in seconds."},
+                "transforms": {
+                    "type": "array",
+                    "items": {"oneOf": transform_step_schemas},
+                },
+                "effects": {
+                    "type": "array",
+                    "items": {"oneOf": effect_step_schemas},
+                },
+            },
+            "required": ["source", "start", "end"],
+            "additionalProperties": False,
+        }
+
+        return {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+                "segments": {
+                    "type": "array",
+                    "items": segment_schema,
+                    "minItems": 1,
+                },
+                "post_transforms": {
+                    "type": "array",
+                    "items": {"oneOf": transform_step_schemas},
+                },
+                "post_effects": {
+                    "type": "array",
+                    "items": {"oneOf": effect_step_schemas},
+                },
+            },
+            "required": ["segments"],
+        }
+
     def run(self) -> Video:
         """Execute the editing plan and return the final video."""
         video = self._assemble_segments()
         for record in self.post_transform_records:
             video = record.operation.apply(video)
         for record in self.post_effect_records:
+            if not isinstance(record.operation, Effect):
+                raise TypeError(
+                    f"VideoEdit.post_effect_records must contain Effect operations, got {type(record.operation)}"
+                )
             video = record.operation.apply(
                 video,
                 start=_coerce_optional_number(record.apply_args.get("start"), "start"),
@@ -334,12 +403,14 @@ def _parse_transform_step(step: Any, location: str) -> _StepRecord:
     op_cls = _load_operation_class(spec, requested_op, location)
     _ensure_json_instantiable(op_cls, spec, location)
     _validate_object_arg_map(args, spec.params, f"{location}.args")
+    _validate_param_values(args, spec.params, f"{location}.args")
+    _validate_step_semantics(spec.id, args, f"{location}.args")
+    normalized_args = _normalize_constructor_args_for_class(op_cls, args, f"{location}.args")
     try:
-        operation = op_cls(**args)
+        operation = op_cls(**normalized_args)
     except (TypeError, ValueError) as e:
         raise ValueError(
-            f"{location}: Failed to instantiate operation '{requested_op}' "
-            f"(canonical '{spec.id}'): {e}"
+            f"{location}: Failed to instantiate operation '{requested_op}' (canonical '{spec.id}'): {e}"
         ) from e
 
     if not isinstance(operation, Transformation):
@@ -368,14 +439,17 @@ def _parse_effect_step(step: Any, location: str) -> _StepRecord:
     op_cls = _load_operation_class(spec, requested_op, location)
     _ensure_json_instantiable(op_cls, spec, location)
     _validate_object_arg_map(args, spec.params, f"{location}.args")
+    _validate_param_values(args, spec.params, f"{location}.args")
+    _validate_step_semantics(spec.id, args, f"{location}.args")
     _validate_object_arg_map(apply_args, spec.apply_params, f"{location}.apply")
+    _validate_param_values(apply_args, spec.apply_params, f"{location}.apply")
     normalized_apply_args = _normalize_effect_apply_args(apply_args, f"{location}.apply")
+    normalized_args = _normalize_constructor_args_for_class(op_cls, args, f"{location}.args")
     try:
-        operation = op_cls(**args)
+        operation = op_cls(**normalized_args)
     except (TypeError, ValueError) as e:
         raise ValueError(
-            f"{location}: Failed to instantiate operation '{requested_op}' "
-            f"(canonical '{spec.id}'): {e}"
+            f"{location}: Failed to instantiate operation '{requested_op}' (canonical '{spec.id}'): {e}"
         ) from e
 
     if not isinstance(operation, Effect):
@@ -400,20 +474,7 @@ def _resolve_and_validate_step_spec(
             f"{location}: Unknown operation '{requested_op}'. If this is an AI operation "
             "(e.g. face_crop, auto_framing), ensure `import videopython.ai` is called before parsing the plan."
         )
-
-    # 1) Category check
-    if spec.category != expected_category:
-        raise ValueError(
-            f"{location}: Expected {expected_category.value} operation, got {spec.category.value} ('{spec.id}')"
-        )
-
-    # 2) Tag check
-    for tag in ("multi_source", "multi_source_only"):
-        if tag in spec.tags:
-            raise ValueError(
-                f"{location}: Operation '{spec.id}' is not supported in VideoEdit JSON plans (tag '{tag}')"
-            )
-
+    _ensure_videoedit_step_category_and_tags(spec, expected_category, location)
     return spec
 
 
@@ -425,20 +486,12 @@ def _load_operation_class(spec: OperationSpec, requested_op: str, location: str)
             raise TypeError(f"Resolved attribute '{spec.class_name}' is not a class")
         return cls
     except (ImportError, AttributeError, TypeError) as e:
-        raise ValueError(
-            f"{location}: Failed to load operation '{requested_op}' (canonical '{spec.id}'): {e}"
-        ) from e
+        raise ValueError(f"{location}: Failed to load operation '{requested_op}' (canonical '{spec.id}'): {e}") from e
 
 
 def _ensure_json_instantiable(op_cls: type[Any], spec: OperationSpec, location: str) -> None:
-    sig = inspect.signature(op_cls.__init__)
-    required_init_params = [
-        p.name for p in sig.parameters.values() if p.name != "self" and p.default is inspect.Signature.empty
-    ]
-    spec_param_names = {param.name for param in spec.params}
-    missing = [name for name in required_init_params if name not in spec_param_names]
-    if missing:
-        first_missing = missing[0]
+    first_missing = _get_non_json_instantiable_missing_param(op_cls, spec)
+    if first_missing is not None:
         raise ValueError(
             f"{location}: Operation '{spec.id}' is registered but not JSON-instantiable because required constructor "
             f"parameter '{first_missing}' is not included in the registry spec."
@@ -472,6 +525,147 @@ def _normalize_effect_apply_args(apply_args: Mapping[str, Any], location: str) -
     return normalized
 
 
+def _validate_param_values(value: Mapping[str, Any], params: tuple[ParamSpec, ...], location: str) -> None:
+    param_map = {param.name: param for param in params}
+    for key, raw in value.items():
+        param = param_map.get(key)
+        if param is None:
+            continue
+        _validate_param_value(raw, param, f"{location}.{key}")
+
+
+def _validate_param_value(value: Any, param: ParamSpec, location: str) -> None:
+    if value is None:
+        if param.nullable:
+            return
+        raise ValueError(f"{location} must be a {param.json_type}")
+
+    _validate_json_type(value, param.json_type, location)
+
+    if param.enum is not None and value not in param.enum:
+        allowed = ", ".join(repr(v) for v in param.enum)
+        raise ValueError(f"{location} must be one of: {allowed}")
+
+    if param.json_type in {"integer", "number"}:
+        numeric_value = float(value)
+        if param.minimum is not None and numeric_value < param.minimum:
+            raise ValueError(f"{location} must be >= {param.minimum}")
+        if param.maximum is not None and numeric_value > param.maximum:
+            raise ValueError(f"{location} must be <= {param.maximum}")
+        if param.exclusive_minimum is not None and numeric_value <= param.exclusive_minimum:
+            raise ValueError(f"{location} must be > {param.exclusive_minimum}")
+        if param.exclusive_maximum is not None and numeric_value >= param.exclusive_maximum:
+            raise ValueError(f"{location} must be < {param.exclusive_maximum}")
+
+    if param.json_type == "array" and param.items_type is not None:
+        assert isinstance(value, list)
+        for i, item in enumerate(value):
+            _validate_json_type(item, param.items_type, f"{location}[{i}]")
+
+
+def _validate_json_type(value: Any, json_type: str, location: str) -> None:
+    if json_type == "integer":
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"{location} must be an integer")
+        return
+
+    if json_type == "number":
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"{location} must be a number")
+        return
+
+    if json_type == "string":
+        if not isinstance(value, str):
+            raise ValueError(f"{location} must be a string")
+        return
+
+    if json_type == "boolean":
+        if not isinstance(value, bool):
+            raise ValueError(f"{location} must be a boolean")
+        return
+
+    if json_type == "array":
+        if not isinstance(value, list):
+            raise ValueError(f"{location} must be an array")
+        return
+
+    if json_type == "object":
+        if not isinstance(value, dict):
+            raise ValueError(f"{location} must be an object")
+        return
+
+
+def _normalize_constructor_args_for_class(
+    op_cls: type[Any],
+    args: Mapping[str, Any],
+    location: str,
+) -> dict[str, Any]:
+    normalized = dict(args)
+    try:
+        module = inspect.getmodule(op_cls)
+        globalns = vars(module) if module is not None else None
+        type_hints = get_type_hints(op_cls.__init__, globalns=globalns, localns=globalns)
+    except (AttributeError, NameError, TypeError):
+        type_hints = {}
+
+    for key, value in list(normalized.items()):
+        annotation = type_hints.get(key, inspect.Signature.empty)
+        normalized[key] = _normalize_value_for_annotation(value, annotation, f"{location}.{key}")
+    return normalized
+
+
+def _normalize_value_for_annotation(value: Any, annotation: Any, location: str) -> Any:
+    if annotation is inspect.Signature.empty or value is None:
+        return value
+
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+
+    if _is_union_origin(origin):
+        non_none_args = [arg for arg in args if arg is not type(None)]
+        if len(non_none_args) == 1:
+            return _normalize_value_for_annotation(value, non_none_args[0], location)
+        return value
+
+    if origin is tuple and isinstance(value, list):
+        return tuple(value)
+
+    if inspect.isclass(annotation) and issubclass(annotation, Enum):
+        if isinstance(value, annotation):
+            return value
+        try:
+            return annotation(value)
+        except ValueError as e:
+            raise ValueError(f"{location} has invalid enum value {value!r}") from e
+
+    return value
+
+
+def _is_union_origin(origin: Any) -> bool:
+    return origin in (Union, UnionType)
+
+
+def _validate_step_semantics(op_id: str, args: Mapping[str, Any], location: str) -> None:
+    if op_id == "resize":
+        width = args.get("width")
+        height = args.get("height")
+        if width is None and height is None:
+            raise ValueError(f"{location} must include at least one non-null value for 'width' or 'height'")
+
+
+def _validate_step_record_apply_args_contract(apply_args: Mapping[str, Any]) -> None:
+    for key in ("start", "stop"):
+        if key not in apply_args:
+            continue
+        value = apply_args[key]
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise TypeError(
+                "_StepRecord.apply_args values for 'start'/'stop' must be numeric or None before execution/validation"
+            )
+
+
 def _step_to_dict(record: _StepRecord, *, include_apply: bool) -> dict[str, Any]:
     step: dict[str, Any] = {"op": record.op_id}
     args_copy = copy.deepcopy(record.args)
@@ -484,12 +678,131 @@ def _step_to_dict(record: _StepRecord, *, include_apply: bool) -> dict[str, Any]
     return step
 
 
+def _videoedit_supported_specs_for_category(category: OperationCategory) -> list[OperationSpec]:
+    supported: list[OperationSpec] = []
+    for spec in sorted(get_operation_specs().values(), key=lambda s: s.id):
+        ok, _ = _is_videoedit_json_supported_spec(spec, category)
+        if ok:
+            supported.append(spec)
+    return supported
+
+
+def _is_videoedit_json_supported_spec(
+    spec: OperationSpec, expected_category: OperationCategory
+) -> tuple[bool, str | None]:
+    if spec.category != expected_category:
+        return False, f"category '{spec.category.value}'"
+
+    blocked_tag = _get_unsupported_videoedit_tag(spec)
+    if blocked_tag is not None:
+        return False, f"tag '{blocked_tag}'"
+
+    try:
+        op_cls = _load_operation_class(spec, spec.id, "VideoEdit.json_schema()")
+    except ValueError:
+        return False, "failed to load class"
+    missing_param = _get_non_json_instantiable_missing_param(op_cls, spec)
+    if missing_param is not None:
+        return False, f"non-JSON-instantiable ({missing_param})"
+
+    return True, None
+
+
+def _videoedit_step_schema_from_spec(spec: OperationSpec, *, include_apply: bool) -> dict[str, Any]:
+    required: list[str] = ["op"]
+    args_schema = spec.to_json_schema()
+    if spec.id == "resize":
+        args_schema = dict(args_schema)
+        args_schema["anyOf"] = [
+            {
+                "required": ["width"],
+                "properties": {
+                    "width": {"not": {"type": "null"}},
+                },
+            },
+            {
+                "required": ["height"],
+                "properties": {
+                    "height": {"not": {"type": "null"}},
+                },
+            },
+        ]
+    properties: dict[str, Any] = {
+        "op": {
+            "const": spec.id,
+            "description": "Canonical videopython operation ID.",
+        },
+        "args": args_schema,
+    }
+
+    if any(param.required for param in spec.params):
+        required.append("args")
+    elif spec.id == "resize":
+        required.append("args")
+
+    if include_apply:
+        properties["apply"] = spec.to_apply_json_schema()
+        if any(param.required for param in spec.apply_params):
+            required.append("apply")
+
+    return {
+        "type": "object",
+        "description": spec.description,
+        "properties": properties,
+        "required": required,
+        "additionalProperties": False,
+    }
+
+
+def _ensure_videoedit_step_category_and_tags(
+    spec: OperationSpec,
+    expected_category: OperationCategory,
+    location: str,
+) -> None:
+    # 1) Category check
+    if spec.category != expected_category:
+        raise ValueError(
+            f"{location}: Expected {expected_category.value} operation, got {spec.category.value} ('{spec.id}')"
+        )
+
+    # 2) Tag check
+    blocked_tag = _get_unsupported_videoedit_tag(spec)
+    if blocked_tag is not None:
+        raise ValueError(
+            f"{location}: Operation '{spec.id}' is not supported in VideoEdit JSON plans (tag '{blocked_tag}')"
+        )
+
+
+def _get_unsupported_videoedit_tag(spec: OperationSpec) -> str | None:
+    for tag in ("multi_source", "multi_source_only"):
+        if tag in spec.tags:
+            return tag
+    return None
+
+
+def _get_non_json_instantiable_missing_param(op_cls: type[Any], spec: OperationSpec) -> str | None:
+    sig = inspect.signature(op_cls.__init__)
+    required_init_params = [
+        p.name for p in sig.parameters.values() if p.name != "self" and p.default is inspect.Signature.empty
+    ]
+    spec_param_names = {param.name for param in spec.params}
+    missing = [name for name in required_init_params if name not in spec_param_names]
+    return missing[0] if missing else None
+
+
 def _predict_transform_metadata(
     meta: VideoMetadata,
     op_id: str,
     args: Mapping[str, Any],
     context: str = "",
 ) -> VideoMetadata:
+    if op_id == "crop":
+        try:
+            return _predict_crop_metadata(meta, args)
+        except (TypeError, ValueError) as e:
+            prefix = f"{context}: " if context else ""
+            raise ValueError(f"{prefix}Metadata prediction failed for transform op '{op_id}': {e}") from e
+
     spec = get_operation_spec(op_id)
     if spec is None or spec.category != OperationCategory.TRANSFORMATION or spec.metadata_method is None:
         prefix = f"{context}: " if context else ""
@@ -524,25 +837,59 @@ def _prepare_metadata_args(
 ) -> dict[str, Any]:
     filtered = {k: v for k, v in args.items() if k in accepted_params}
 
-    if op_id == "crop":
-        width = filtered.get("width")
-        height = filtered.get("height")
-        if isinstance(width, float) and 0 < width <= 1:
-            filtered["width"] = int(width * meta.width)
-        elif width is not None:
-            filtered["width"] = int(width)
-
-        if isinstance(height, float) and 0 < height <= 1:
-            filtered["height"] = int(height * meta.height)
-        elif height is not None:
-            filtered["height"] = int(height)
-
     if op_id == "speed_change":
         end_speed = args.get("end_speed")
         if end_speed is not None and "speed" in filtered:
             filtered["speed"] = (filtered["speed"] + end_speed) / 2
 
     return filtered
+
+
+def _predict_crop_metadata(meta: VideoMetadata, args: Mapping[str, Any]) -> VideoMetadata:
+    width_raw = args.get("width")
+    height_raw = args.get("height")
+    if width_raw is None or height_raw is None:
+        raise ValueError("crop metadata prediction requires both 'width' and 'height'")
+
+    crop_width = _crop_value_to_pixels(width_raw, meta.width)
+    crop_height = _crop_value_to_pixels(height_raw, meta.height)
+    crop_x = _crop_value_to_pixels(args.get("x", 0), meta.width)
+    crop_y = _crop_value_to_pixels(args.get("y", 0), meta.height)
+    mode = _crop_mode_value(args.get("mode", "center"))
+
+    if mode == "center":
+        center_height = meta.height // 2
+        center_width = meta.width // 2
+        width_offset = crop_width // 2
+        height_offset = crop_height // 2
+        out_height = _slice_length(meta.height, center_height - height_offset, center_height + height_offset)
+        out_width = _slice_length(meta.width, center_width - width_offset, center_width + width_offset)
+    else:
+        out_height = _slice_length(meta.height, crop_y, crop_y + crop_height)
+        out_width = _slice_length(meta.width, crop_x, crop_x + crop_width)
+
+    return meta.with_dimensions(out_width, out_height)
+
+
+def _crop_value_to_pixels(value: Any, dimension: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("crop values must be numeric")
+    if isinstance(value, float) and 0 < value <= 1:
+        return int(value * dimension)
+    return int(value)
+
+
+def _crop_mode_value(value: Any) -> str:
+    if isinstance(value, Enum):
+        value = value.value
+    if not isinstance(value, str):
+        raise ValueError("crop mode must be a string or Enum")
+    return value
+
+
+def _slice_length(size: int, start: int, stop: int) -> int:
+    normalized_start, normalized_stop, step = slice(start, stop).indices(size)
+    return max(0, (normalized_stop - normalized_start + (step - 1)) // step)
 
 
 def _validate_effect_bounds(

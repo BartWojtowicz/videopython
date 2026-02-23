@@ -47,12 +47,19 @@ class ParamSpec:
     enum: tuple[Any, ...] | None = None
     minimum: int | float | None = None
     maximum: int | float | None = None
+    exclusive_minimum: int | float | None = None
+    exclusive_maximum: int | float | None = None
     items_type: str | None = None
+    nullable: bool = False
 
     def to_json_schema(self) -> dict[str, Any]:
         """Convert parameter metadata into a JSON Schema fragment."""
+        schema_type: str | list[str] = self.json_type
+        if self.nullable:
+            schema_type = [self.json_type, "null"]
+
         schema: dict[str, Any] = {
-            "type": self.json_type,
+            "type": schema_type,
             "description": self.description,
         }
 
@@ -62,6 +69,10 @@ class ParamSpec:
             schema["minimum"] = self.minimum
         if self.maximum is not None:
             schema["maximum"] = self.maximum
+        if self.exclusive_minimum is not None:
+            schema["exclusiveMinimum"] = self.exclusive_minimum
+        if self.exclusive_maximum is not None:
+            schema["exclusiveMaximum"] = self.exclusive_maximum
         if self.json_type == "array" and self.items_type is not None:
             schema["items"] = {"type": self.items_type}
         if self.default is not UNSET:
@@ -131,7 +142,7 @@ def _spec_params_from_callable(
         annotation = type_hints.get(parameter.name, parameter.annotation)
         required = parameter.default is inspect.Signature.empty
         default = UNSET if required else _to_json_value(parameter.default)
-        json_type, enum_values, items_type = _annotation_to_schema(annotation)
+        json_type, enum_values, items_type, nullable = _annotation_to_schema(annotation)
 
         param_spec = ParamSpec(
             name=parameter.name,
@@ -141,6 +152,7 @@ def _spec_params_from_callable(
             default=default,
             enum=enum_values,
             items_type=items_type,
+            nullable=nullable,
         )
 
         override = param_overrides.get(parameter.name)
@@ -279,9 +291,9 @@ def _first_line(docstring: str | None) -> str:
     return docstring.strip().splitlines()[0].strip()
 
 
-def _annotation_to_schema(annotation: Any) -> tuple[str, tuple[Any, ...] | None, str | None]:
+def _annotation_to_schema(annotation: Any) -> tuple[str, tuple[Any, ...] | None, str | None, bool]:
     if annotation is inspect.Signature.empty:
-        return "object", None, None
+        return "object", None, None, False
 
     origin = get_origin(annotation)
     args = get_args(annotation)
@@ -289,49 +301,51 @@ def _annotation_to_schema(annotation: Any) -> tuple[str, tuple[Any, ...] | None,
     if origin is Literal:
         values = tuple(_to_json_value(value) for value in args)
         literal_type = _json_type_from_python_types({type(value) for value in values})
-        return literal_type, values, None
+        return literal_type, values, None, False
 
     if _is_union(origin):
+        nullable = any(arg is type(None) for arg in args)
         non_none_args = [arg for arg in args if arg is not type(None)]
         if len(non_none_args) == 1:
-            return _annotation_to_schema(non_none_args[0])
+            json_type, enum_values, items_type, _ = _annotation_to_schema(non_none_args[0])
+            return json_type, enum_values, items_type, nullable
 
         member_types = {_annotation_to_schema(arg)[0] for arg in non_none_args}
         if member_types <= {"integer", "number"}:
-            return "number", None, None
+            return "number", None, None, nullable
         if len(member_types) == 1:
-            return member_types.pop(), None, None
-        return "object", None, None
+            return member_types.pop(), None, None, nullable
+        return "object", None, None, nullable
 
     if origin in (list, set, frozenset):
         items_type = _items_type_from_args(args)
-        return "array", None, items_type
+        return "array", None, items_type, False
 
     if origin is tuple:
         items_type = _items_type_from_args(args)
-        return "array", None, items_type
+        return "array", None, items_type, False
 
     if origin is dict:
-        return "object", None, None
+        return "object", None, None, False
 
     if inspect.isclass(annotation) and issubclass(annotation, Enum):
         enum_values = tuple(_to_json_value(item.value) for item in annotation)
         enum_type = _json_type_from_python_types({type(value) for value in enum_values})
-        return enum_type, enum_values, None
+        return enum_type, enum_values, None, False
 
     if annotation is bool:
-        return "boolean", None, None
+        return "boolean", None, None, False
     if annotation is int:
-        return "integer", None, None
+        return "integer", None, None, False
     if annotation is float:
-        return "number", None, None
+        return "number", None, None, False
     if annotation is str:
-        return "string", None, None
+        return "string", None, None, False
 
     if annotation in (Any, object):
-        return "object", None, None
+        return "object", None, None, False
 
-    return "object", None, None
+    return "object", None, None, False
 
 
 def _is_union(origin: Any) -> bool:
@@ -387,6 +401,10 @@ def _register_base_operations() -> None:
             op_id="cut_frames",
             category=OperationCategory.TRANSFORMATION,
             tags={"changes_duration"},
+            param_overrides={
+                "start": {"minimum": 0},
+                "end": {"minimum": 0},
+            },
             metadata_method="cut_frames",
         )
     )
@@ -397,6 +415,10 @@ def _register_base_operations() -> None:
             category=OperationCategory.TRANSFORMATION,
             tags={"changes_duration"},
             aliases=("cut_seconds",),
+            param_overrides={
+                "start": {"minimum": 0},
+                "end": {"minimum": 0},
+            },
             metadata_method="cut",
         )
     )
@@ -415,6 +437,7 @@ def _register_base_operations() -> None:
             op_id="resample_fps",
             category=OperationCategory.TRANSFORMATION,
             tags={"changes_fps"},
+            param_overrides={"fps": {"minimum": 1}},
             metadata_method="resample_fps",
         )
     )
@@ -424,6 +447,10 @@ def _register_base_operations() -> None:
             op_id="crop",
             category=OperationCategory.TRANSFORMATION,
             tags={"changes_dimensions"},
+            param_overrides={
+                "width": {"exclusive_minimum": 0},
+                "height": {"exclusive_minimum": 0},
+            },
             metadata_method="crop",
         )
     )
@@ -433,6 +460,10 @@ def _register_base_operations() -> None:
             op_id="speed_change",
             category=OperationCategory.TRANSFORMATION,
             tags={"changes_duration"},
+            param_overrides={
+                "speed": {"exclusive_minimum": 0},
+                "end_speed": {"exclusive_minimum": 0},
+            },
             metadata_method="speed_change",
         )
     )
@@ -451,6 +482,11 @@ def _register_base_operations() -> None:
             op_id="blur_effect",
             category=OperationCategory.EFFECT,
             aliases=("blur",),
+            param_overrides={"iterations": {"minimum": 1}},
+            apply_param_overrides={
+                "start": {"minimum": 0},
+                "stop": {"minimum": 0},
+            },
         )
     )
     register(

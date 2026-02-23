@@ -153,10 +153,37 @@ def test_effect_apply_schema_contains_start_stop() -> None:
     assert [param.name for param in spec.apply_params] == ["start", "stop"]
     assert all(not param.required for param in spec.apply_params)
     assert all(param.json_type == "number" for param in spec.apply_params)
+    assert all(param.nullable for param in spec.apply_params)
 
     apply_schema = spec.to_apply_json_schema()
     assert set(apply_schema["properties"]) == {"start", "stop"}
     assert apply_schema["required"] == []
+    assert apply_schema["properties"]["start"]["type"] == ["number", "null"]
+    assert apply_schema["properties"]["stop"]["type"] == ["number", "null"]
+    assert apply_schema["properties"]["start"]["minimum"] == 0
+    assert apply_schema["properties"]["stop"]["minimum"] == 0
+
+
+def test_selected_base_schema_constraints_are_present() -> None:
+    registry = _reload_registry()
+
+    cut_spec = registry.get_operation_spec("cut")
+    assert cut_spec is not None
+    cut_schema = cut_spec.to_json_schema()
+    assert cut_schema["properties"]["start"]["minimum"] == 0
+    assert cut_schema["properties"]["end"]["minimum"] == 0
+
+    speed_spec = registry.get_operation_spec("speed_change")
+    assert speed_spec is not None
+    speed_schema = speed_spec.to_json_schema()
+    assert speed_schema["properties"]["speed"]["exclusiveMinimum"] == 0
+    assert speed_schema["properties"]["end_speed"]["exclusiveMinimum"] == 0
+
+    crop_spec = registry.get_operation_spec("crop")
+    assert crop_spec is not None
+    crop_schema = crop_spec.to_json_schema()
+    assert crop_schema["properties"]["width"]["exclusiveMinimum"] == 0
+    assert crop_schema["properties"]["height"]["exclusiveMinimum"] == 0
 
 
 def test_category_filtering_returns_expected_subset() -> None:
