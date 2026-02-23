@@ -4,302 +4,345 @@
 
 ### Phase 1 (implemented)
 
-Core `VideoEdit` execution + validation is now in place:
+Core execution and dry-run validation landed:
 
 - `src/videopython/base/edit.py`
-  - `EffectApplication`
   - `SegmentConfig.process_segment()`
   - `VideoEdit.run()`
-  - `VideoEdit.validate()` with registry-driven `metadata_method` prediction
+  - `VideoEdit.validate()` with `VideoMetadata` prediction
 - `src/videopython/base/video.py`
   - `VideoMetadata.speed_change()` metadata prediction
 - `src/videopython/base/registry.py`
-  - `metadata_method` wired for core transforms (including `speed_change`)
-- `src/videopython/base/__init__.py`
-  - exports added
+  - `metadata_method` populated for core transforms used by validation
 - `src/tests/base/test_video_edit.py`
-  - Phase 1 coverage for execution, validation, cache behavior, and metadata prediction
+  - execution + validation coverage
 
-### Phase 2 (next)
+### Phase 2 (implemented)
 
-Add registry-backed JSON plan parsing and serialization for LLM-generated editing plans:
+Registry-backed JSON parsing and canonical serialization landed (records-first internals):
 
 - `VideoEdit.from_dict(...)`
 - `VideoEdit.from_json(...)`
-- `VideoEdit.to_dict()` (canonicalized output)
-- Stable roundtrips with canonical registry IDs and effect apply params
+- `VideoEdit.to_dict()`
+- `_StepRecord` as the internal source of truth (canonical `op_id`, parsed `args`, parsed `apply_args`, live op object)
+- Registry-driven parsing with category/tag/JSON-instantiability checks
+- Path-specific parse errors and AI lazy-registration hint
+- Records-first tests in `src/tests/base/test_video_edit.py`
 
-This plan is based on `REQUEST.md`, `MULTICUT_DESIGN.md`, and the current Phase 1 implementation.
+## Current Architecture Facts (Phase 3 baseline)
 
-## Current Architecture Facts (relevant to Phase 2)
+- `VideoEdit` internals are `_StepRecord`-backed (`src/videopython/base/edit.py`).
+- `EffectApplication` is no longer part of the `VideoEdit` internal model.
+- `from_dict` / `from_json` are the intended construction path; `SegmentConfig` remains exported but is not the primary user-facing constructor API.
+- Parsing currently validates structure (required/unknown keys) and support boundaries (category/tags/JSON-instantiability), then instantiates operations.
+- Effect `apply.start` / `apply.stop` are validated/coerced at parse time because they bypass constructor validation.
+- Value/type validation for constructor/apply args is still partial:
+  - no generic `ParamSpec.json_type`/`enum`/`minimum`/`maximum`/`items_type` enforcement yet
+  - JSON values are passed into constructors mostly unchanged
+- `OperationSpec` / `ParamSpec` already support per-operation JSON schema generation for constructor/apply args (`spec.to_json_schema()`, `spec.to_apply_json_schema()`).
+- There is no `VideoEdit` plan-level JSON schema API yet.
+- There is no `docs/api/editing.md` yet, and `docs/api/index.md` does not link editing-plan docs.
+- There is no `jsonschema` dependency in `pyproject.toml`.
 
-- `Video.from_path(...)` already supports `start_second` / `end_second` segment loading in `src/videopython/base/video.py`.
-- `Video.__add__` concatenation is strict: same `fps` and same `frame_shape` required (`src/videopython/base/video.py`).
-- Registry already exposes constructor/apply JSON schemas via `OperationSpec` (`src/videopython/base/registry.py`).
-- Registry `apply_params` naturally models effect `start`/`stop` (`Effect.apply(video, start=None, stop=None)`).
-- `VideoMetadata` already provides fluent prediction for core operations (`cut`, `cut_frames`, `resize`, `crop`, `resample_fps`) in `src/videopython/base/video.py`.
-- Base module must remain independent from `videopython.ai` (enforced by `src/tests/base/test_import_isolation.py`).
-- Registry `metadata_method` is now populated for core transform validation paths used by `VideoEdit.validate()`.
+## Phase 3 Goal
 
-## Phase 2 Scope
+Make `VideoEdit` JSON plans self-describing and safer to consume by adding:
+
+1. Full plan-level JSON schema generation (registry-backed, canonical, parser-aligned)
+2. Stronger parse-time value validation and normalization (type/enum/range/items)
+3. Docs + release notes for the JSON plan workflow
+
+This phase should iterate on the current Phase 1/2 implementation without backward-compatibility constraints.
+
+## Phase 3 Scope
 
 ### In scope
 
-- JSON deserialization into working `VideoEdit` objects using the operation registry
-- Canonical JSON serialization (`to_dict`) for roundtrip/debugging
-- Alias normalization (`blur` -> `blur_effect`, etc.)
-- Category/tag validation for JSON plans (transforms vs effects, reject unsupported ops)
-- Error messages tailored for registry-driven plans (including AI lazy-registration hint)
-- Tests for parse/serialize/roundtrip/validation-after-parse
-- Docs for JSON plan format and usage
-- Internal model simplification: registry-backed step records are the primary representation
+- `VideoEdit` plan-level JSON schema generation API
+- Shared filtering logic so schema and parser expose the same supported operation set
+- Parse-time value validation against `ParamSpec` metadata:
+  - `json_type`
+  - `enum`
+  - `minimum` / `maximum`
+  - `items_type` (array elements)
+- Parse-time JSON-to-Python normalization for registry-serializable constructor args where needed (notably enums / tuples)
+- Registry metadata enhancements needed to express schema accurately (nullable support)
+- Tests for schema generation + value validation + normalization
+- Docs and release notes
 
-### Explicitly out of scope (Phase 2)
+### Explicitly out of scope (Phase 3)
 
-- Transitions between segments
-- Auto-resizing/normalization of incompatible segments
-- Full JSON Schema generation for the entire `VideoEdit` plan (nice-to-have, can be Phase 3)
-- Generic resolver hooks for non-JSON constructor args (e.g. numpy arrays / `BoundingBox`)
-- Primitive type validation of JSON args against `ParamSpec.json_type` (Python constructors catch type errors at instantiation; defer jsonschema-level validation to Phase 3)
-- Backward compatibility with pre-merge Phase 1 internal object-only construction/storage shape
+- Transitions in `VideoEdit` JSON plans
+- Auto-normalization of incompatible segment outputs (resize/fps harmonization)
+- Generic resolver hooks for non-JSON constructor args (numpy arrays, `BoundingBox`, raw `Video`)
+- Full semantic validation of every operation argument beyond available registry metadata (constructors remain the final authority)
+- Introducing automatic `videopython.ai` imports from `videopython.base`
 
-## Phase 2 Locked Decisions
+## Phase 3 Locked Decisions
 
-- File: extend existing `src/videopython/base/edit.py` (already created in Phase 1).
-- API: `from_dict(data)`, `from_json(text)`, `to_dict()`. No `registry_lookup` parameter -- use the global registry directly. Simpler API; tests can monkeypatch if needed.
-- `to_dict()` normalizes to canonical `OperationSpec.id` (never emits aliases).
-- Internal storage is `_StepRecord`-backed and is the source of truth for serialization/execution/validation.
-- `_StepRecord` is the only step representation in Phase 2 internals (no dual object-list + sidecar model).
-- `to_dict()` serializes from `_StepRecord` only (no introspection fallback).
-- `SegmentConfig` / `VideoEdit` direct constructors accept `_StepRecord` lists (or internal normalized forms), not raw operation-object lists.
-- Public construction path is `VideoEdit.from_dict(...)` / `VideoEdit.from_json(...)`.
-- `EffectApplication` is removed from the Phase 2 internal model (the `_StepRecord` carries effect + apply bounds).
-- `SegmentConfig` remains an exported type but is not a user-facing construction API in Phase 2; users are expected to construct via `VideoEdit.from_dict(...)` / `from_json(...)`.
-- `validate()` behavior unchanged: raise on invalid, return predicted metadata on success.
-- `run()` does not implicitly validate. Keep as-is.
-- Unknown top-level keys in JSON plans: ignore (forward-compatible). Unknown keys inside step dicts: reject (catch typos).
+- No backward compatibility constraints: iterate directly on the Phase 2 records-first design.
+- No runtime `jsonschema` dependency in `videopython.base` for Phase 3.
+  - Schema generation returns plain dicts.
+  - Parsing/validation remains internal code.
+- `VideoEdit` remains the public entrypoint for plans (`from_dict`, `from_json`, `to_dict`).
+- Add a class-level schema API on `VideoEdit` (recommended: `VideoEdit.json_schema()`).
+- Schema and parser must share the same support-boundary rules (category/tag/JSON-instantiability) to avoid drift.
+- Canonical op IDs only in schemas and serialization (aliases accepted on input only).
+- Top-level unknown keys remain ignored by parser (forward-compatible); generated top-level schema should reflect this.
+- Step-level and segment-level unknown keys remain rejected; generated schemas should reflect this.
+- `to_dict()` remains canonical output, not necessarily byte-for-byte identical to original JSON if parse-time normalization occurs.
 
-## Phase 2 Detailed Implementation Plan
+## Phase 3 Detailed Implementation Plan
 
-### A. Make `_StepRecord` the primary step representation
+### A. Refactor parser support checks into reusable helpers (schema + parser alignment)
 
-Store canonical step data and the live operation object together. `_StepRecord` becomes the internal source of truth.
+Current parser support checks live inline in `_resolve_and_validate_step_spec(...)` plus `_ensure_json_instantiable(...)`.
+Phase 3 needs the same rules when generating the plan schema.
 
-- [ ] Add `_StepRecord` (private, not exported) as a simple frozen dataclass:
-  ```python
-  @dataclass(frozen=True)
-  class _StepRecord:
-      op_id: str           # canonical registry ID
-      args: dict           # constructor args (deep-copied snapshot)
-      apply_args: dict     # effect start/stop (deep-copied snapshot; empty for transforms)
-      operation: Transformation | Effect  # typed live operation
+- [ ] Extract a reusable helper for JSON-plan support checks on a resolved `OperationSpec`:
+  - Example shape:
+    - `_ensure_videoedit_json_supported(spec, expected_category, location, op_cls=None)`
+    - or split into:
+      - `_validate_videoedit_step_category(...)`
+      - `_validate_videoedit_step_tags(...)`
+      - `_ensure_json_instantiable(...)`
+- [ ] Add a schema-facing predicate/helper that uses the same rules but returns bool/reason instead of raising:
+  - Example: `_is_videoedit_json_supported_spec(spec, expected_category) -> tuple[bool, str | None]`
+- [ ] Keep deterministic check order consistent across parser and schema filtering:
+  1. category
+  2. tags (`multi_source`, `multi_source_only`)
+  3. JSON-instantiability
+- [ ] Reuse `_ensure_json_instantiable(...)` in both parser and schema generation (schema generation will need `op_cls`, so class loading happens there too).
+- [ ] Preserve AI lazy-registration behavior:
+  - schema generation only includes AI ops if already registered
+  - no auto-import of `videopython.ai`
 
-      @classmethod
-      def create(cls, op_id, args, apply_args, operation):
-          return cls(
-              op_id=op_id,
-              args=copy.deepcopy(args),
-              apply_args=copy.deepcopy(apply_args),
-              operation=operation,
-          )
-  ```
-- [ ] **Snapshot semantics**: `_StepRecord` captures the JSON as parsed. If the caller later mutates the live operation object (e.g. `transform.width = ...`), `to_dict()` still emits the original parsed values. This is intentional -- `_StepRecord` is a parse-time snapshot, not a live binding. Document this in the `to_dict()` docstring.
-- [ ] **Defensive deep copies on ingest and emit**: all internal callers construct records via `_StepRecord.create(...)` so `args` and `apply_args` are deep-copied on ingest. `to_dict()` must also deepcopy on emit.
-- [ ] Refactor `SegmentConfig` to store `transform_records: tuple[_StepRecord, ...]` and `effect_records: tuple[_StepRecord, ...]` as primary internals.
-- [ ] Refactor `VideoEdit` to store `post_transform_records: tuple[_StepRecord, ...]` and `post_effect_records: tuple[_StepRecord, ...]` as primary internals.
-- [ ] Change direct constructors to accept record lists/tuples (no raw operation-object list constructor path).
-- [ ] `from_dict` constructs normalized record-backed objects directly.
-- [ ] Merge execution/validation integration into this refactor:
-  - `SegmentConfig.process_segment()` iterates over `_StepRecord.operation`
-  - `VideoEdit.run()` iterates over record-held operations
-  - `VideoEdit.validate()` predicts transforms using `_StepRecord.op_id` + `_StepRecord.args` (no constructor arg introspection)
-  - Effects execute as `record.operation.apply(video, start=record.apply_args.get("start"), stop=record.apply_args.get("stop"))`
-- [ ] Simplify metadata prediction helpers:
-  - `_predict_transform_metadata(...)` accepts `(meta, op_id, args)` (minimal interface)
-  - `_prepare_metadata_args(...)` uses `op_id` + record args directly
-  - Special-case handling in `_prepare_metadata_args(...)` uses `op_id` string checks (`"crop"`, `"speed_change"`) instead of `isinstance(...)`
-  - Crop normalized-float conversion remains
-  - SpeedChange ramp averaging uses `args["speed"]` + `args.get("end_speed")`
-- [ ] Remove Phase 1 class/introspection-based validation helpers and cache (hard requirement):
-  - `_extract_transform_args` / `_extract_init_args`
-  - `_get_metadata_method_for_class`
-  - `_SPEC_CACHE`
+### B. Add registry metadata support for nullability (needed for accurate schema + value validation)
 
-### B. Implement JSON parsing entrypoints
+Current `ParamSpec` loses `Optional[...]` / `None` information (`float | None` becomes `"number"` only).
+That makes generated schemas for effect apply params (`start`, `stop`) stricter than current parser behavior.
 
-- [ ] Add `VideoEdit.from_dict(data: dict) -> VideoEdit`:
-  - Validate top-level: `segments` required and non-empty
-  - `post_transforms` and `post_effects` optional, default `[]`
-  - Ignore unknown top-level keys (forward-compatible)
-- [ ] Add `VideoEdit.from_json(text: str) -> VideoEdit`:
-  - `json.loads(text)` with wrapped decode error
-  - Delegates to `from_dict`
-- [ ] Parse each segment:
-  - Required: `source` (str -> Path), `start` (number), `end` (number)
-  - Optional: `transforms` (list, default `[]`), `effects` (list, default `[]`)
-  - Reject unknown segment keys
-- [ ] Coerce/validate `start`, `end` are numeric (not strings)
-- [ ] Build `SegmentConfig` / `VideoEdit` in normalized `_StepRecord`-backed form (not object-list + optional sidecars)
+- [ ] Extend `ParamSpec` with `nullable: bool = False`
+- [ ] Update `ParamSpec.to_json_schema()` to emit nullable JSON schema:
+  - Option 1 (recommended for broad compatibility): `"type": [json_type, "null"]`
+  - Option 2: `anyOf` with `{type: ...}` + `{type: "null"}`
+- [ ] Update `_annotation_to_schema(...)` to return nullability info (or add a separate nullable detector)
+- [ ] Preferred implementation: update `_annotation_to_schema(...)` to return nullability info directly (4-tuple/expanded return shape) instead of adding a separate nullable detector, so annotations are inspected once.
+  - `float | None` => `json_type="number", nullable=True`
+  - `Enum | None` => enum schema + nullable
+  - `Literal[...] | None` => literal schema + nullable
+- [ ] Update `_spec_params_from_callable(...)` / `spec_from_class(...)` plumbing for the new return shape
+- [ ] Add/adjust registry tests in `src/tests/base/test_registry.py`:
+  - `blur_effect` apply params `start`/`stop` are nullable
+  - `spec.to_apply_json_schema()` exposes nullable schema for `start`/`stop`
 
-### C. Parse registry-backed operation steps
+### C. Implement `VideoEdit` plan-level JSON schema generation
 
-- [ ] Implement `_parse_transform_step(step: dict, location: str) -> _StepRecord`:
-  - Required key: `op`
-  - Optional key: `args` (default `{}`)
-  - Reject `apply` key on transforms (error: "transforms do not accept apply params")
-  - Reject unknown keys in step dict
-  - Resolve `op` via `get_operation_spec()`, canonicalize to `spec.id`
-  - Enforce support-boundary checks inline (see Section E for check order):
-    1. category check (must be `TRANSFORMATION`)
-    2. tag check (`multi_source`, `multi_source_only`)
-    3. JSON-instantiability check
-  - Instantiate via `importlib.import_module(spec.module_path)` + `getattr(..., spec.class_name)`
-  - Validate constructor `args` keys against `spec.params` (required present, no unknowns)
-  - **Wrap constructor/import errors**: catch `ImportError`, `TypeError`, `ValueError` from instantiation and re-raise as `ValueError` with location, requested op name, canonical op_id, and the original error message. Use `raise ... from e` to preserve the original traceback for debugging. Since we defer type validation, constructor errors from bad arg types are expected and must be actionable.
-  - Return `_StepRecord.create(op_id, args, {}, transform_instance)`
-- [ ] Implement `_parse_effect_step(step: dict, location: str) -> _StepRecord`:
-  - Required key: `op`
-  - Optional: `args` (default `{}`), `apply` (default `{}`)
-  - Reject unknown keys in step dict
-  - Resolve + canonicalize via registry
-  - Enforce support-boundary checks inline (same order as transform parser; category must be `EFFECT`)
-  - Instantiate effect (raw `Effect`; do not wrap in `EffectApplication`)
-  - Validate `args` keys against `spec.params`, `apply` keys against `spec.apply_params`
-  - **Wrap constructor/import errors** (same pattern as transform steps)
-  - Return `_StepRecord.create(op_id, args, apply, effect_instance)`
-- [ ] Use `location` strings like `segments[1].transforms[0]` for path-specific errors
+Add a schema API that downstream systems (LLM orchestration, UI builders, validation layers) can use directly.
 
-### D. Validate step args against registry specs (structural only)
+- [ ] Add `@classmethod VideoEdit.json_schema(cls) -> dict[str, Any]` in `src/videopython/base/edit.py`
+  - Returns a canonical JSON Schema for the full plan object
+  - Must not instantiate or load videos
+- [ ] Build plan schema from registry specs dynamically:
+  - gather supported transform specs (`OperationCategory.TRANSFORMATION`)
+  - gather supported effect specs (`OperationCategory.EFFECT`)
+  - apply the same support-boundary filtering as parser (category/tag/JSON-instantiability)
+- [ ] Generate per-op step schemas:
+  - transform step schema shape:
+    - `{"type":"object","properties":{"op":{"const": "..."},"args": ...},"required":["op"],"additionalProperties":False}`
+    - no `apply` property
+  - effect step schema shape:
+    - same plus `apply` from `spec.to_apply_json_schema()`
+  - include operation descriptions (where useful) from `OperationSpec.description`
+- [ ] Step schema required-ness must reflect registry param requirements (parser-aligned):
+  - If `spec.params` contains any required params, include `"args"` in step-schema `required`
+  - Otherwise `args` remains optional
+  - If `spec.apply_params` contains any required params (effects), include `"apply"` in step-schema `required`
+  - Otherwise `apply` remains optional
+- [ ] Use canonical IDs only in schema (`spec.id`), not aliases
+- [ ] Compose union schemas:
+  - `transforms.items = {"oneOf": [per-op transform step schemas...]}`
+  - `effects.items = {"oneOf": [per-op effect step schemas...]}`
+  - same for `post_transforms` / `post_effects`
+- [ ] Generate segment schema aligned with parser:
+  - required: `source`, `start`, `end`
+  - optional: `transforms`, `effects`
+  - `additionalProperties: false`
+- [ ] Generate top-level plan schema aligned with parser:
+  - required: `segments`
+  - `segments` minItems = 1
+  - optional: `post_transforms`, `post_effects`
+  - top-level unknown keys allowed (do not set `additionalProperties: false`)
+- [ ] Decide schema draft marker and document it (recommended: include `$schema` draft-07 URI for compatibility)
+- [ ] Add helper internals (private) to keep schema code readable:
+  - `_videoedit_step_schema_from_spec(...)`
+  - `_videoedit_supported_specs_for_category(...)`
+  - `_videoedit_plan_schema_components(...)` (optional)
 
-- [ ] Check required `spec.params` keys are present in `args`
-- [ ] Check no unknown keys in `args` (not in `spec.params` names)
-- [ ] Check required `spec.apply_params` keys are present in `apply` (effects)
-- [ ] Check no unknown keys in `apply` (effects)
-- [ ] Do NOT validate value types against `ParamSpec.json_type` in Phase 2 -- rely on Python constructor to catch type errors at instantiation time
+### D. Add parse-time value validation against `ParamSpec` metadata
 
-### E. Enforce JSON-plan support boundaries
+Phase 2 validates structure and relies on constructors for most bad values. Phase 3 should catch JSON-type/enum/range errors before constructor execution for clearer messages and better LLM feedback loops.
 
-These checks are performed inside `_parse_transform_step` / `_parse_effect_step` (Section C), not as a separate post-parse validation pass.
+- [ ] Add a reusable validator for arg maps against `ParamSpec` metadata:
+  - Example: `_validate_param_values(value: Mapping[str, Any], params: tuple[ParamSpec, ...], location: str)`
+- [ ] Validate per-key values after structural validation and before instantiation:
+  - `_parse_transform_step(...)`: `args`
+  - `_parse_effect_step(...)`: `args` and `apply`
+- [ ] Type validation rules (JSON-centric, path-specific errors):
+  - `integer`: `int` only (reject `bool`)
+  - `number`: `int | float` (reject `bool`)
+  - `string`: `str`
+  - `boolean`: `bool`
+  - `array`: `list` (JSON arrays parse as Python lists)
+  - `object`: `dict`
+- [ ] Array item validation (when `items_type` is set):
+  - validate each element type
+  - error includes index path (e.g. `...kernel_size[1]`)
+- [ ] Enum validation:
+  - if `ParamSpec.enum` is set, require membership in enum values
+  - error message shows allowed values
+- [ ] Numeric range validation:
+  - enforce `minimum` / `maximum` when present
+  - keep constructor validation as the source of truth for stricter/non-linear constraints
+- [ ] Respect `nullable=True` (if implemented in Section B)
+  - `None` accepted only for nullable params
+- [ ] Preserve deterministic error precedence:
+  - support-boundary checks -> structural key checks -> value validation -> constructor/import errors
 
-**Check order is deterministic** (first failing check produces the error):
-1. Category check (reject `TRANSITION`, `SPECIAL`)
-2. Tag check (reject `multi_source` / `multi_source_only`)
-3. JSON-instantiability check (required params excluded from spec)
+### E. Add parse-time JSON-to-Python normalization for constructor args (Enum / tuple support)
 
-This means `picture_in_picture` is rejected for `multi_source` tag (step 2), not for excluded `overlay` param (step 3). Tests should assert the specific error message.
+Phase 2 stores JSON snapshots and instantiates constructors with raw JSON values. Some constructors accept Python types that do not map 1:1 from JSON (e.g. enum members, tuples).
+This is already observable with `Crop.mode` (JSON string vs `CropMode`) and tuple-like params such as `Blur.kernel_size`.
 
-- [ ] Reject `TRANSITION` and `SPECIAL` category ops with clear message
-- [ ] Reject `multi_source` / `multi_source_only` tagged ops with message naming the tag
-- [ ] Detect non-JSON-instantiable ops (required constructor params excluded from spec):
-  - Get actual required `__init__` param names (params with no default, excluding `self`)
-  - Compare against `spec.params` names
-  - If any required param is missing from spec, op is not JSON-instantiable
-  - Error: "Operation '{op_id}' is registered but not JSON-instantiable because required constructor parameter '{param}' is not included in the registry spec."
-  - This catches: `ken_burns` (excluded `start_region`, `end_region`), `full_image_overlay` (excluded `overlay_image`)
+- [ ] Add a constructor-arg normalizer using `op_cls.__init__` type hints (applied to a copy):
+  - Example: `_normalize_constructor_args_for_class(op_cls, args, location) -> dict[str, Any]`
+- [ ] Normalization rules (Phase 3 targeted set):
+  - `Enum` parameters: convert JSON enum value (string/number) to enum member
+  - `tuple[...]` parameters: convert JSON list to tuple (shallow conversion)
+  - `tuple[T, T]` / `tuple[int, int]`: keep element types validated by Section D, convert container only
+  - Leave unsupported complex annotations unchanged (constructor will remain fallback validator)
+- [ ] Apply normalization only to constructor call inputs, not `_StepRecord.args`
+  - `_StepRecord.args` must remain the canonical parsed JSON snapshot used by `to_dict()`
+- [ ] Keep `apply` arg normalization separate:
+  - `apply` stays JSON-native in `_StepRecord.apply_args` (already parse-time numeric coercion for `start`/`stop`)
+  - optionally collapse `_normalize_effect_apply_args(...)` into the new validation/normalization flow for consistency
+- [ ] Add explicit tests for:
+  - `crop.mode: "center"` produces a `Crop` op with `CropMode.CENTER` internally and validates/runs correctly
+  - invalid enum literal for `crop.mode` fails at parse time with allowed values listed
+  - `blur_effect.kernel_size: [5, 5]` is accepted and normalized to tuple for constructor input (while `to_dict()` preserves JSON array snapshot)
 
-### F. AI lazy-registration compatibility
+### F. Enrich registry constraints with `param_overrides` where high-value (optional but recommended in Phase 3)
 
-- [ ] When `get_operation_spec(op)` returns `None`:
-  - Error message: "Unknown operation '{op}'. If this is an AI operation (e.g. face_crop, auto_framing), ensure `import videopython.ai` is called before parsing the plan."
-- [ ] Do NOT auto-import `videopython.ai` (preserve base import isolation)
-- [ ] Add test asserting the hint message text on unknown op
+The value validator can enforce `minimum` / `maximum`, but current base registrations mostly do not populate these fields.
+Adding a small, high-signal set of overrides will improve schema usefulness and parse-time feedback.
 
-### G. Implement `VideoEdit.to_dict()`
+- [ ] Add `param_overrides` / `apply_param_overrides` for core base ops where constraints are clear and stable
+  - Examples (illustrative; confirm exact constraints from constructors/runtime behavior):
+    - `cut.start`, `cut.end` minimum `0`
+    - `cut_frames.start`, `cut_frames.end` minimum `0`
+    - `resample_fps.fps` minimum `1`
+    - `speed_change.speed` minimum `0` (schema cannot express strict `> 0` with current `ParamSpec`; constructor remains authority for rejecting `0`)
+    - `speed_change.end_speed` minimum `0` (same caveat; constructor enforces strict positivity)
+    - `blur_effect.iterations` minimum `1`
+    - effect `apply.start`, `apply.stop` minimum `0`
+- [ ] Prefer exact bounds only; avoid speculative limits that constructors do not enforce
+- [ ] Add registry tests verifying selected overrides appear in generated schemas
 
-- [ ] Return canonical JSON-ready dict with structure:
-  ```python
-  {
-      "segments": [...],
-      "post_transforms": [...],
-      "post_effects": [...]
-  }
-  ```
-- [ ] For each transform/effect step, serialize from `_StepRecord` only:
-  - `op_id`
-  - deep-copied `args`
-  - deep-copied `apply_args`
-- [ ] No introspection fallback path in Phase 2 (single invariant, simpler implementation)
-- [ ] Transform step format: `{"op": op_id, "args": {...}}`
-- [ ] Effect step format: `{"op": op_id, "args": {...}, "apply": {...}}`
-- [ ] Omit `args`/`apply` keys when empty dict (cleaner output, optional)
-- [ ] Segment format: `{"source": str, "start": float, "end": float, "transforms": [...], "effects": [...]}`
+### G. Update `VideoEdit` parser internals to use new validation/normalization flow
 
-### H. Tests (`src/tests/base/test_video_edit.py`)
+Wire the new pieces into the existing parser with minimal churn to the records-first model.
 
-Add Phase 2 tests in existing file (split to `test_video_edit_json.py` if it gets large).
+- [ ] `_parse_transform_step(...)`
+  - keep current support-boundary + structural checks
+  - add value validation for `args`
+  - normalize constructor args into a temporary dict
+  - instantiate using normalized constructor args
+  - keep `_StepRecord.create(spec.id, original_args, {}, operation)` using original parsed JSON args
+- [ ] `_parse_effect_step(...)`
+  - keep current support-boundary + structural checks
+  - add value validation for `args` and `apply`
+  - normalize constructor args into temporary dict
+  - normalize `apply` args through existing/start-stop path (or unified normalizer)
+  - instantiate effect using normalized constructor args
+  - keep `_StepRecord` snapshots JSON-native/canonical
+- [ ] Revisit helper naming after Phase 3 wiring:
+  - avoid overlapping “validate” vs “normalize” responsibilities
+  - make call order obvious in code
 
-- [ ] Rewrite Phase 1 construction-heavy tests to use `from_dict` / `from_json` as the primary construction path (execution/validation assertions stay, construction API changes)
+### H. Tests (`src/tests/base/`)
 
-- [ ] **Parsing happy paths**
-  - Single-segment plan, no ops
-  - Plan with transform and effect steps (including `apply` bounds)
-  - Alias input (`blur`) canonicalizes to `blur_effect` in parsed record
-  - Post-transforms and post-effects
-  - `from_json` string input
-  - `_StepRecord` snapshot semantics: mutate live op after parse, `to_dict()` still emits original parsed values
-- [ ] **Parse + validate + run integration**
-  - `from_dict` -> `validate()` -> returns correct predicted metadata
-  - `from_dict` -> `run()` -> produces Video output (test on real video assets)
-  - Parsed plan with `speed_change` validates via registry metadata_method
-  - `from_dict` -> `run()` is treated as the primary construction/execution path in Phase 2
-- [ ] **Structural validation errors**
-  - Missing `segments` key
-  - Empty segments list
-  - Missing `source` / `start` / `end`
-  - Unknown segment key (e.g. `transforms` typo as `tranforms`)
-  - Non-numeric `start` / `end`
-  - Invalid `transforms` / `effects` type (not list)
-- [ ] **Step validation errors**
-  - Missing `op` key
-  - Unknown step key
-  - Transform step with `apply` key rejected
-  - Missing required constructor arg
-  - Unknown constructor arg
-  - Unknown `apply` arg on effect
-- [ ] **Registry/category/tag errors**
-  - Unknown op includes AI lazy-registration hint
-  - Transform list containing an effect op
-  - Effect list containing a transform op
-  - Transition op rejected
-  - `multi_source` / `multi_source_only` tagged op rejected
-  - Non-JSON-instantiable op (`ken_burns`, `full_image_overlay`) rejected with clear message
-- [ ] **Serialization tests**
-  - `from_dict(...).to_dict()` roundtrip stability (canonical output)
-  - `to_dict()` emits deep copies (mutating returned dict does not alter future `to_dict()` output)
-  - Alias input serializes as canonical op ID
-- [ ] **Normalized storage invariants**
-  - Internal step storage is `_StepRecord`-backed after construction/parsing
+Add focused Phase 3 coverage. Keep records-first Phase 2 tests and extend them rather than introducing compatibility layers.
 
-### I. Docs and release notes
+- [ ] `src/tests/base/test_video_edit.py` (or split `test_video_edit_schema.py` if it gets too large)
 
-- [ ] Remove `EffectApplication` from `videopython.base.__all__` exports and docs in Phase 2 (records carry effect apply bounds)
-- [ ] Add `docs/api/editing.md`:
-  - `VideoEdit` and `SegmentConfig` API reference
-  - JSON plan schema with annotated example
-  - `from_dict` / `from_json` / `to_dict` usage
-  - Alias normalization behavior
-  - Unsupported ops in JSON plans (multi-source, special, excluded-arg ops)
-  - Effect time semantics: segment-local vs post-assembly timeline
-- [ ] Link from `docs/api/index.md`
-- [ ] Add short README example: JSON plan -> `from_dict` -> `validate` -> `run`
-- [ ] Add release notes entry
+- [ ] **Plan schema generation**
+  - `VideoEdit.json_schema()` returns object schema with required `segments`
+  - `segments` has `minItems: 1`
+  - top-level unknown keys are allowed (schema matches parser)
+  - segment/step `additionalProperties: false`
+  - transform step schema excludes `apply`
+  - effect step schema includes `apply`
+  - aliases are not emitted (canonical IDs only)
+  - unsupported ops excluded from schema:
+    - transitions
+    - `multi_source` / `multi_source_only`
+    - non-JSON-instantiable (`ken_burns`, `full_image_overlay`) with explicit coverage for both transform/effect filtering paths
+  - AI ops absent before `import videopython.ai`, present after import (if supported)
 
-## Phase 2 Implementation Sequence
+- [ ] **Value validation**
+  - wrong primitive types rejected with path-specific messages (`.args.width`, `.apply.start`, etc.)
+  - `bool` rejected where `number`/`integer` expected
+  - enum validation for `crop.mode`
+  - array element type validation for tuple-backed params like `blur_effect.kernel_size`
+  - numeric min/max enforcement for any registry overrides added in Section F
+  - nullable params (`apply.start`, `apply.stop`) accept `null` if Section B is implemented
 
-1. Refactor `SegmentConfig` / `VideoEdit` internals to `_StepRecord`-backed storage
-2. Implement step parsers (`_parse_transform_step`, `_parse_effect_step`) with registry/category/tag/instantiability checks
-3. Implement `VideoEdit.from_dict` / `from_json` (construct normalized record-backed objects)
-4. Implement `VideoEdit.to_dict` (records-only serialization)
-5. Add tests for parsing/serialization/roundtrip/integration
-6. Add docs + release notes
+- [ ] **Normalization**
+  - enum coercion for constructor args (`crop.mode`)
+  - tuple coercion for constructor args (`blur_effect.kernel_size`)
+  - `to_dict()` still emits JSON-native snapshots after normalization (e.g. list remains list)
 
-## Phase 2 Acceptance Criteria
+- [ ] **Parser/schema alignment smoke tests**
+  - op IDs accepted by parser are represented in schema for supported categories
+  - unsupported ops rejected by parser are absent from schema
 
-- [ ] `VideoEdit.from_dict(plan)` builds a runnable/validatable `VideoEdit` for supported base transform/effect plans
-- [ ] `VideoEdit.from_json(text)` wraps JSON decode and parse errors with actionable messages
-- [ ] `VideoEdit.to_dict()` emits canonical op IDs and preserves effect `apply` bounds
-- [ ] `from_dict(...).to_dict()` roundtrips stably for supported plans
-- [ ] `_StepRecord` snapshot semantics hold (live-op mutation and returned-dict mutation do not affect future `to_dict()` output)
-- [ ] Unsupported categories/tags/non-JSON-instantiable ops fail with clear, path-specific messages
-- [ ] Unknown ops mention AI lazy registration (`import videopython.ai`) in the error guidance
-- [ ] Base import isolation remains intact (`videopython.base` does not import `videopython.ai`)
+- [ ] **Regression checks**
+  - Phase 2 `from_dict -> validate -> run` happy paths still pass
+  - import isolation (`src/tests/base/test_import_isolation.py`) still passes
+
+### I. Docs and release notes (carry forward the unfinished Phase 2 docs work)
+
+- [ ] Add `docs/api/editing.md`
+  - `VideoEdit` overview (segments -> concat -> post-ops)
+  - JSON plan format with annotated examples
+  - `from_dict`, `from_json`, `to_dict`
+  - `validate()` dry-run usage and compatibility checks
+  - `VideoEdit.json_schema()` usage (LLM/UI integration)
+  - alias normalization behavior (input aliases accepted, output/schema canonicalized)
+  - unsupported ops and AI lazy-registration note (`import videopython.ai`)
+  - effect time semantics (segment-local vs post-assembly)
+- [ ] Link `docs/api/editing.md` from `docs/api/index.md`
+- [ ] Add a short example to `docs/examples/social-clip.md` or a new example showing JSON plan -> validate -> run
+- [ ] Add release notes entry in `RELEASE_NOTES.md` for the next version:
+  - `VideoEdit` JSON schema generation
+  - stronger parse-time plan validation
+
+## Suggested Phase 3 Implementation Sequence (PR-friendly)
+
+1. Add `ParamSpec.nullable` + registry/schema plumbing + tests
+2. Add reusable VideoEdit support-filter helpers (parser/schema shared)
+3. Implement `VideoEdit.json_schema()` + schema tests
+4. Implement `ParamSpec`-based value validation in parser
+5. Implement constructor arg normalization (enum/tuple) + tests
+6. Add selected registry `param_overrides` for high-value constraints
+7. Add docs + release notes
+
+## Phase 3 Acceptance Criteria
+
+- [ ] `VideoEdit.json_schema()` returns a parser-aligned plan schema using canonical op IDs only
+- [ ] Generated plan schema excludes unsupported categories/tags/non-JSON-instantiable ops
+- [ ] Parser rejects bad arg values (type/enum/range/items) with path-specific errors before constructor execution
+- [ ] JSON enum/tuple values needed by constructors are normalized correctly for instantiation while `to_dict()` preserves JSON-native snapshots
+- [ ] AI lazy-registration behavior remains unchanged (no base auto-import), and schema/parser both reflect only currently registered ops
+- [ ] Existing Phase 2 parse/validate/run behavior remains intact for supported plans
+- [ ] Docs for `VideoEdit` JSON plans and schema generation are published and linked from `docs/api/index.md`
