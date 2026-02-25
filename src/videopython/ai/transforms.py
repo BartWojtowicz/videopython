@@ -703,6 +703,10 @@ class SplitScreenComposite(Transformation):
         else:
             out_w, out_h = video.frame_shape[1], video.frame_shape[0]
 
+        # Keep final composite dimensions encoder-friendly by default.
+        out_w = _make_even(out_w)
+        out_h = _make_even(out_h)
+
         cell_rects = self._get_cell_rects(out_w, out_h)
 
         # Create face trackers for each cell
