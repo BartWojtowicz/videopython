@@ -11,7 +11,7 @@ from .exceptions import (
 )
 from .generation import ImageToVideo, TextToImage, TextToMusic, TextToSpeech, TextToVideo
 from .swapping import ObjectSwapper
-from .transforms import AutoFramingCrop, FaceTracker, FaceTrackingCrop, SplitScreenComposite
+from .transforms import FaceTracker, FaceTrackingCrop, SplitScreenComposite
 from .understanding import (
     ActionRecognizer,
     AudioClassifier,
@@ -62,7 +62,6 @@ __all__ = [
     "FaceTracker",
     "FaceTrackingCrop",
     "SplitScreenComposite",
-    "AutoFramingCrop",
     # Swapping
     "ObjectSwapper",
 ]

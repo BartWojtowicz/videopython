@@ -472,7 +472,7 @@ def _resolve_and_validate_step_spec(
     if spec is None:
         raise ValueError(
             f"{location}: Unknown operation '{requested_op}'. If this is an AI operation "
-            "(e.g. face_crop, auto_framing), ensure `import videopython.ai` is called before parsing the plan."
+            "(e.g. face_crop, split_screen), ensure `import videopython.ai` is called before parsing the plan."
         )
     _ensure_videoedit_step_category_and_tags(spec, expected_category, location)
     return spec

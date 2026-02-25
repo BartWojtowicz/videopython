@@ -121,7 +121,7 @@ Docs:
   - Detection/classification: `ObjectDetector`, `FaceDetector`, `TextDetector`, `ShotTypeClassifier`
   - Motion/action/scene understanding: `CameraMotionDetector`, `MotionAnalyzer`, `ActionRecognizer`, `SemanticSceneDetector`
   - Multi-signal frame analysis: `CombinedFrameAnalyzer`
-- AI transforms: `FaceTracker`, `FaceTrackingCrop`, `SplitScreenComposite`, `AutoFramingCrop`
+- AI transforms: `FaceTracker`, `FaceTrackingCrop`, `SplitScreenComposite`
 - Dubbing/revoicing: `videopython.ai.dubbing.VideoDubber`
 - Object swapping/inpainting: `ObjectSwapper`
 

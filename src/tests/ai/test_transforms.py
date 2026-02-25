@@ -6,7 +6,6 @@ import numpy as np
 import pytest
 
 from videopython.ai.transforms import (
-    AutoFramingCrop,
     FaceTracker,
     FaceTrackingCrop,
     SplitScreenComposite,
@@ -212,7 +211,11 @@ class TestFaceTrackingCrop:
         assert crop.face_selection == "largest"
         assert crop.padding == 0.3
         assert crop.vertical_offset == -0.1
+        assert crop.framing_rule == "offset"
+        assert crop.headroom == 0.15
+        assert crop.lead_room == 0.1
         assert crop.smoothing == 0.8
+        assert crop.max_speed is None
         assert crop.fallback == "last_position"
 
     def test_init_custom_params(self):
@@ -222,14 +225,22 @@ class TestFaceTrackingCrop:
             face_selection="centered",
             padding=0.5,
             vertical_offset=0.0,
+            framing_rule="headroom",
+            headroom=0.2,
+            lead_room=0.05,
             smoothing=0.5,
+            max_speed=0.1,
             fallback="center",
         )
         assert crop.target_aspect == (1, 1)
         assert crop.face_selection == "centered"
         assert crop.padding == 0.5
         assert crop.vertical_offset == 0.0
+        assert crop.framing_rule == "headroom"
+        assert crop.headroom == 0.2
+        assert crop.lead_room == 0.05
         assert crop.smoothing == 0.5
+        assert crop.max_speed == 0.1
         assert crop.fallback == "center"
 
     def test_calculate_crop_region_basic(self):
@@ -422,73 +433,45 @@ class TestSplitScreenComposite:
         assert len(result.frames) == 10
 
 
-class TestAutoFramingCrop:
-    """Tests for AutoFramingCrop transformation."""
-
-    def test_init_default_params(self):
-        """Test default initialization."""
-        crop = AutoFramingCrop()
-        assert crop.target_aspect == (9, 16)
-        assert crop.framing_rule == "headroom"
-        assert crop.headroom == 0.15
-        assert crop.lead_room == 0.1
-        assert crop.smoothing == 0.85
-        assert crop.max_speed == 0.1
+class TestFaceTrackingCropFraming:
+    """Tests for framing/speed features merged into FaceTrackingCrop."""
 
     def test_apply_framing_offset_center(self):
-        """Test center framing returns same position."""
-        crop = AutoFramingCrop(framing_rule="center")
+        crop = FaceTrackingCrop(framing_rule="center")
         result = crop._apply_framing_offset(0.5, 0.5, 0.1)
         assert result == (0.5, 0.5)
 
     def test_apply_framing_offset_headroom(self):
-        """Test headroom framing adds space above face."""
-        crop = AutoFramingCrop(framing_rule="headroom", headroom=0.15)
+        crop = FaceTrackingCrop(framing_rule="headroom", headroom=0.15)
         result = crop._apply_framing_offset(0.5, 0.5, 0.1)
-
-        # Face should be positioned lower in frame (target_y < face_cy)
-        assert result[0] == 0.5  # x unchanged
-        assert result[1] == 0.5 - 0.15  # y offset by headroom
+        assert result[0] == 0.5
+        assert result[1] == 0.5 - 0.15
 
     def test_apply_framing_offset_thirds(self):
-        """Test thirds framing places on rule of thirds."""
-        crop = AutoFramingCrop(framing_rule="thirds")
+        crop = FaceTrackingCrop(framing_rule="thirds")
         result = crop._apply_framing_offset(0.5, 0.5, 0.1)
-
-        # Should shift y to place face on upper third
         expected_y = 0.5 - (1 / 3 - 0.5)
         assert result[1] == pytest.approx(expected_y)
 
     def test_clamp_speed_within_limit(self):
-        """Test speed clamping when movement is within limit."""
-        crop = AutoFramingCrop(max_speed=0.1)
+        crop = FaceTrackingCrop(max_speed=0.1)
         result = crop._clamp_speed((0.5, 0.5), (0.55, 0.55))
-
-        # Movement is small enough, should reach target
         assert result == (0.55, 0.55)
 
     def test_clamp_speed_exceeds_limit(self):
-        """Test speed clamping when movement exceeds limit."""
-        crop = AutoFramingCrop(max_speed=0.1)
+        crop = FaceTrackingCrop(max_speed=0.1)
         result = crop._clamp_speed((0.0, 0.0), (1.0, 0.0))
-
-        # Movement would be 1.0, but max_speed is 0.1
         assert result[0] == pytest.approx(0.1, abs=0.01)
         assert result[1] == pytest.approx(0.0, abs=0.01)
 
     def test_clamp_speed_diagonal(self):
-        """Test speed clamping with diagonal movement."""
-        crop = AutoFramingCrop(max_speed=0.1)
-        # Movement of (0.5, 0.5) = distance of 0.707
+        crop = FaceTrackingCrop(max_speed=0.1)
         result = crop._clamp_speed((0.0, 0.0), (0.5, 0.5))
-
-        # Distance from origin to result should be max_speed
         distance = (result[0] ** 2 + result[1] ** 2) ** 0.5
         assert distance == pytest.approx(0.1, abs=0.01)
 
     @patch("videopython.ai.transforms.FaceTracker")
-    def test_apply_creates_correct_output_shape(self, mock_tracker_class):
-        """Test apply produces correct output dimensions."""
+    def test_apply_headroom_framing_creates_correct_output_shape(self, mock_tracker_class):
         mock_tracker = MagicMock()
         mock_tracker.detect_and_track.return_value = (0.5, 0.5, 0.1, 0.15)
         mock_tracker_class.return_value = mock_tracker
@@ -496,16 +479,14 @@ class TestAutoFramingCrop:
         frames = np.zeros((10, 1080, 1920, 3), dtype=np.uint8)
         video = Video.from_frames(frames, fps=30)
 
-        crop = AutoFramingCrop(target_aspect=(9, 16))
+        crop = FaceTrackingCrop(target_aspect=(9, 16), framing_rule="headroom", max_speed=0.1)
         result = crop.apply(video)
 
-        # Output should be 9:16 aspect ratio
         out_h, out_w = result.frame_shape[:2]
         assert abs(out_w / out_h - 9 / 16) < 0.01
 
     @patch("videopython.ai.transforms.FaceTracker")
-    def test_apply_without_face_uses_center(self, mock_tracker_class):
-        """Test apply uses center position when no face detected."""
+    def test_apply_headroom_without_face_uses_fallback(self, mock_tracker_class):
         mock_tracker = MagicMock()
         mock_tracker.detect_and_track.return_value = None
         mock_tracker_class.return_value = mock_tracker
@@ -513,10 +494,9 @@ class TestAutoFramingCrop:
         frames = np.zeros((10, 1080, 1920, 3), dtype=np.uint8)
         video = Video.from_frames(frames, fps=30)
 
-        crop = AutoFramingCrop(target_aspect=(9, 16))
+        crop = FaceTrackingCrop(target_aspect=(9, 16), framing_rule="headroom", fallback="center")
         result = crop.apply(video)
 
-        # Should still produce valid output
         assert len(result.frames) == 10
 
 
@@ -556,15 +536,6 @@ class TestGPUFaceTracking:
         )
         assert composite.backend == "gpu"
         assert composite.sample_rate == 3
-
-    def test_auto_framing_crop_gpu_params(self):
-        """Test AutoFramingCrop accepts GPU parameters."""
-        crop = AutoFramingCrop(
-            backend="auto",
-            sample_rate=10,
-        )
-        assert crop.backend == "auto"
-        assert crop.sample_rate == 10
 
     def test_interpolate_bbox(self):
         """Test bounding box interpolation."""

@@ -343,7 +343,7 @@ class VideoMetadata:
         """Predict metadata after aspect-ratio crop with even output dimensions.
 
         Mirrors the output dimension logic used by AI crop transforms like
-        ``FaceTrackingCrop`` and ``AutoFramingCrop``.
+        ``FaceTrackingCrop``.
         """
         if not isinstance(target_aspect, (tuple, list)) or len(target_aspect) != 2:
             raise ValueError("target_aspect must be a 2-item tuple/list of positive integers")

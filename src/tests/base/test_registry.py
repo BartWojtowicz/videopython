@@ -39,7 +39,6 @@ BASE_OPERATION_IDS = {
 
 AI_OPERATION_IDS = {
     "face_crop",
-    "auto_framing",
     "split_screen",
 }
 
