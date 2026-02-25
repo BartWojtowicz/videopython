@@ -63,6 +63,12 @@ def test_video_resize(height, width, small_video):
     )
 
 
+def test_video_resize_round_to_even_preserves_aspect_approximately():
+    video = Video.from_image(np.zeros((540, 302, 3), dtype=np.uint8), fps=30, length_seconds=1.0)
+    resized = Resize(width=1080).apply(video)
+    assert resized.frame_shape[:2] == (1932, 1080)
+
+
 def test_resample_fps_upsample_frame_count():
     video = Video.from_image(np.zeros((64, 64, 3), dtype=np.uint8), fps=10, length_seconds=1.0)
     resample = ResampleFPS(fps=20)

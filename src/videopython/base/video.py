@@ -37,6 +37,11 @@ FRAME_BUFFER_MULTIPLIER = 1.1  # 10% buffer for frame rate estimation errors
 FRAME_BUFFER_PADDING = 10  # Additional fixed frame padding
 
 
+def _round_dimension_to_even(value: int | float) -> int:
+    """Round a dimension to the nearest even integer (minimum 2)."""
+    return max(2, int(round(float(value) / 2.0) * 2))
+
+
 @dataclass
 class VideoMetadata:
     """Class to store video metadata."""
@@ -243,7 +248,12 @@ class VideoMetadata:
         duration = (end - start) / self.fps
         return self.with_duration(duration)
 
-    def resize(self, width: int | None = None, height: int | None = None) -> VideoMetadata:
+    def resize(
+        self,
+        width: int | None = None,
+        height: int | None = None,
+        round_to_even: bool = True,
+    ) -> VideoMetadata:
         """Predict metadata after resizing.
 
         If only width or height is provided, the other dimension is calculated
@@ -252,6 +262,7 @@ class VideoMetadata:
         Args:
             width: Target width in pixels.
             height: Target height in pixels.
+            round_to_even: If True (default), snap output width/height to even numbers.
 
         Returns:
             New VideoMetadata with updated dimensions.
@@ -259,16 +270,19 @@ class VideoMetadata:
         if width is None and height is None:
             raise ValueError("Must provide width or height")
 
+        def _snap(value: int) -> int:
+            return _round_dimension_to_even(value) if round_to_even else value
+
         if width and height:
-            return self.with_dimensions(width, height)
+            return self.with_dimensions(_snap(width), _snap(height))
         elif width:
             ratio = width / self.width
             new_height = round(self.height * ratio)
-            return self.with_dimensions(width, new_height)
+            return self.with_dimensions(_snap(width), _snap(new_height))
         else:  # height only
             ratio = height / self.height  # type: ignore[operator]
             new_width = round(self.width * ratio)
-            return self.with_dimensions(new_width, height)  # type: ignore[arg-type]
+            return self.with_dimensions(_snap(new_width), _snap(height))  # type: ignore[arg-type]
 
     def crop(self, width: int, height: int) -> VideoMetadata:
         """Predict metadata after cropping.
@@ -890,6 +904,14 @@ class Video:
                 f"Unsupported preset: {preset}. Allowed presets are: {', '.join(get_args(ALLOWED_VIDEO_PRESETS))}"
             )
 
+        frame_height, frame_width = self.frame_shape[:2]
+        if frame_width % 2 != 0 or frame_height % 2 != 0:
+            raise ValueError(
+                "Current save pipeline uses libx264 with yuv420p, which requires even frame dimensions. "
+                f"Got {frame_width}x{frame_height}. "
+                "Resize, crop, or pad to an even width and height before saving."
+            )
+
         if filename is None:
             filename = Path(generate_random_name(suffix=f".{format}"))
         else:
@@ -964,8 +986,16 @@ class Video:
                     frames = np.ascontiguousarray(frames, dtype=np.uint8)
 
                 buffer = memoryview(frames)
-                process.stdin.write(buffer)
-                process.stdin.close()
+                try:
+                    process.stdin.write(buffer)
+                    process.stdin.close()
+                except BrokenPipeError as e:
+                    stderr = process.stderr.read() if process.stderr is not None else b""
+                    returncode = process.wait()
+                    raise RuntimeError(
+                        f"FFmpeg terminated while receiving video data (code {returncode}): "
+                        f"{stderr.decode(errors='ignore')}"
+                    ) from e
 
                 stderr = process.stderr.read() if process.stderr is not None else b""
                 returncode = process.wait()
@@ -1108,7 +1138,12 @@ class Video:
 
         return CutFrames(start, end).apply(self)
 
-    def resize(self, width: int | None = None, height: int | None = None) -> Video:
+    def resize(
+        self,
+        width: int | None = None,
+        height: int | None = None,
+        round_to_even: bool = True,
+    ) -> Video:
         """Resize video.
 
         If only width or height is provided, the other dimension is calculated
@@ -1117,13 +1152,14 @@ class Video:
         Args:
             width: Target width in pixels.
             height: Target height in pixels.
+            round_to_even: If True (default), snap output width/height to even numbers.
 
         Returns:
             New Video with the specified dimensions.
         """
         from videopython.base.transforms import Resize
 
-        return Resize(width=width, height=height).apply(self)
+        return Resize(width=width, height=height, round_to_even=round_to_even).apply(self)
 
     def crop(self, width: int, height: int) -> Video:
         """Crop video to specified dimensions (center crop).

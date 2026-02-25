@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 
 from videopython.base.progress import log, progress_iter
-from videopython.base.video import Video
+from videopython.base.video import Video, _round_dimension_to_even
 
 # Minimum frames before using multiprocessing (Pool overhead isn't worth it below this)
 MIN_FRAMES_FOR_MULTIPROCESSING = 100
@@ -93,15 +93,17 @@ class CutSeconds(Transformation):
 class Resize(Transformation):
     """Resizes video to specified dimensions, maintaining aspect ratio if only one dimension is provided."""
 
-    def __init__(self, width: int | None = None, height: int | None = None):
+    def __init__(self, width: int | None = None, height: int | None = None, round_to_even: bool = True):
         """Initialize resizer.
 
         Args:
             width: Target width in pixels, or None to maintain aspect ratio.
             height: Target height in pixels, or None to maintain aspect ratio.
+            round_to_even: If True (default), snap output width/height to even numbers.
         """
         self.width = width
         self.height = height
+        self.round_to_even = round_to_even
         if width is None and height is None:
             raise ValueError("You must provide either `width` or `height`!")
 
@@ -134,6 +136,10 @@ class Resize(Transformation):
             video_width = video.video_shape[2]
             new_width = round(video_width * (self.height / video_height))
             new_height = self.height
+
+        if self.round_to_even:
+            new_width = _round_dimension_to_even(new_width)
+            new_height = _round_dimension_to_even(new_height)
 
         log(f"Resizing video to: {new_width}x{new_height}!")
         n_frames = len(video.frames)

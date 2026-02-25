@@ -1,5 +1,13 @@
 # Release Notes
 
+## 0.18.2
+
+### Fixed
+
+- `Resize` now rounds output dimensions to even values by default (runtime and `VideoMetadata.resize()` prediction), preventing width-only/height-only resizes from producing encoder-incompatible odd dimensions
+- `SplitScreenComposite` now snaps final composite canvas dimensions to even values by default for H.264 / `yuv420p` compatibility
+- `Video.save()` now raises a clear error for odd frame dimensions before invoking FFmpeg and surfaces FFmpeg stderr when the encoder terminates early (instead of a bare `BrokenPipeError`)
+
 ## 0.18.1
 
 ### Fixed
