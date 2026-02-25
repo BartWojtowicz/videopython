@@ -13,6 +13,7 @@ def _register_ai_operations() -> None:
             category=OperationCategory.TRANSFORMATION,
             tags={"requires_faces", "changes_dimensions"},
             aliases=("face_tracking_crop",),
+            metadata_method="crop_to_aspect_even",
         ),
         spec_from_class(
             AutoFramingCrop,
@@ -20,6 +21,7 @@ def _register_ai_operations() -> None:
             category=OperationCategory.TRANSFORMATION,
             tags={"requires_faces", "changes_dimensions"},
             aliases=("auto_framing_crop",),
+            metadata_method="crop_to_aspect_even",
         ),
         spec_from_class(
             SplitScreenComposite,

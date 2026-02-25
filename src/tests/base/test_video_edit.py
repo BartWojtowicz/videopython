@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 from pathlib import Path
 from unittest.mock import patch
@@ -331,6 +332,38 @@ class TestValidation:
         }
         meta = VideoEdit.from_dict(plan).validate()
         assert meta.total_seconds == pytest.approx(2.0, abs=0.2)
+
+    @pytest.mark.parametrize("op_id", ["auto_framing", "face_crop"])
+    def test_validate_ai_aspect_crop_transforms(self, op_id):
+        importlib.import_module("videopython.ai")
+
+        plan = {
+            "segments": [
+                _segment_plan(
+                    start=0.0,
+                    end=3.0,
+                    transforms=[{"op": op_id, "args": {"target_aspect": [9, 16]}}],
+                )
+            ]
+        }
+
+        meta = VideoEdit.from_dict(plan).validate()
+        cut_meta = SMALL_VIDEO_METADATA.cut(0.0, 3.0)
+
+        target_ratio = 9 / 16
+        if target_ratio < cut_meta.width / cut_meta.height:
+            expected_height = cut_meta.height - (cut_meta.height % 2)
+            expected_width = int(expected_height * target_ratio)
+            expected_width -= expected_width % 2
+        else:
+            expected_width = cut_meta.width - (cut_meta.width % 2)
+            expected_height = int(expected_width / target_ratio)
+            expected_height -= expected_height % 2
+
+        assert meta.width == expected_width
+        assert meta.height == expected_height
+        assert meta.frame_count == cut_meta.frame_count
+        assert meta.fps == cut_meta.fps
 
     def test_validate_does_not_load_video_frames(self):
         plan = {"segments": [_segment_plan(start=0.0, end=3.0)]}

@@ -1,5 +1,12 @@
 # Release Notes
 
+## 0.18.1
+
+### Fixed
+
+- Added `VideoEdit.validate()` metadata prediction support for AI aspect-crop transforms `auto_framing` and `face_crop`
+- `VideoEdit.validate()` no longer fails on `auto_framing` / `face_crop` plans after `import videopython.ai` due to missing registry `metadata_method`
+
 ## 0.18.0
 
 ### New Features
