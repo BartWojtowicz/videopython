@@ -1,5 +1,19 @@
 # Release Notes
 
+## 0.18.3
+
+### Changed
+
+- Consolidated face-framing behavior into `FaceTrackingCrop` by adding framing controls (`framing_rule`, `headroom`, `lead_room`) and optional movement speed clamping (`max_speed`)
+
+### Removed
+
+- Removed `AutoFramingCrop` and the `auto_framing` AI registry operation; use `FaceTrackingCrop` for face-based framing/cropping
+
+### Documentation
+
+- Updated AI transform docs/registry docs/examples to reflect `FaceTrackingCrop` as the single face-based crop/framing transform
+
 ## 0.18.2
 
 ### Fixed

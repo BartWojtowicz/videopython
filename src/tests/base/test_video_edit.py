@@ -334,7 +334,7 @@ class TestValidation:
         meta = VideoEdit.from_dict(plan).validate()
         assert meta.total_seconds == pytest.approx(2.0, abs=0.2)
 
-    @pytest.mark.parametrize("op_id", ["auto_framing", "face_crop"])
+    @pytest.mark.parametrize("op_id", ["face_crop"])
     def test_validate_ai_aspect_crop_transforms(self, op_id):
         importlib.import_module("videopython.ai")
         importlib.reload(importlib.import_module("videopython.ai.registry"))

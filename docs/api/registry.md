@@ -146,5 +146,4 @@ Transformations and transitions typically have an empty apply schema (no extra a
 | ID | Class | Category | Tags |
 |---|---|---|---|
 | `face_crop` | `FaceTrackingCrop` | transformation | `requires_faces`, `changes_dimensions` |
-| `auto_framing` | `AutoFramingCrop` | transformation | `requires_faces`, `changes_dimensions` |
 | `split_screen` | `SplitScreenComposite` | transformation | `requires_faces`, `multi_source`, `changes_dimensions` |
