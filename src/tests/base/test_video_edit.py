@@ -336,6 +336,7 @@ class TestValidation:
     @pytest.mark.parametrize("op_id", ["auto_framing", "face_crop"])
     def test_validate_ai_aspect_crop_transforms(self, op_id):
         importlib.import_module("videopython.ai")
+        importlib.reload(importlib.import_module("videopython.ai.registry"))
 
         plan = {
             "segments": [
