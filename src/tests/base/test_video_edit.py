@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -459,6 +460,11 @@ class TestParsingErrors:
             )
 
     def test_unknown_operation_has_ai_hint(self):
+        for name in list(sys.modules):
+            if name == "videopython.ai" or name.startswith("videopython.ai."):
+                sys.modules.pop(name)
+        importlib.reload(importlib.import_module("videopython.base.registry"))
+
         with pytest.raises(ValueError, match="import videopython.ai"):
             VideoEdit.from_dict({"segments": [_segment_plan(transforms=[{"op": "face_crop"}])]})
 

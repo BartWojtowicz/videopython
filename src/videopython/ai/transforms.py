@@ -801,10 +801,15 @@ class SplitScreenComposite(Transformation):
 
 
 class AutoFramingCrop(Transformation):
-    """Intelligent cropping with cinematographic framing rules.
+    """Face-detection-based intelligent cropping with cinematographic framing rules.
 
     Applies professional framing techniques like rule of thirds,
-    headroom, and lead room when tracking subjects.
+    headroom, and lead room when tracking detected subjects.
+
+    Note:
+        Despite the ``track_mode`` parameter accepting ``"person"`` and ``"auto"``,
+        the current implementation tracks via ``FaceTracker`` / face detection.
+        It does not perform generic subject saliency framing.
 
     Supports GPU acceleration for faster face detection.
     """
@@ -835,6 +840,7 @@ class AutoFramingCrop(Transformation):
             headroom: Amount of space above head (0.15 = 15% of frame).
             lead_room: Extra space in direction subject is looking.
             track_mode: What to track ("face", "person", or "auto").
+                Current implementation is face-detection-based.
             multi_subject: How to handle multiple subjects.
             smoothing: Position smoothing factor (higher = smoother camera).
             max_speed: Maximum camera movement per frame (normalized).
