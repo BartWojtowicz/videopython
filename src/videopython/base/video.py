@@ -325,6 +325,39 @@ class VideoMetadata:
             total_seconds=new_seconds,
         )
 
+    def crop_to_aspect_even(self, target_aspect: tuple[int, int] | list[int] = (9, 16)) -> VideoMetadata:
+        """Predict metadata after aspect-ratio crop with even output dimensions.
+
+        Mirrors the output dimension logic used by AI crop transforms like
+        ``FaceTrackingCrop`` and ``AutoFramingCrop``.
+        """
+        if not isinstance(target_aspect, (tuple, list)) or len(target_aspect) != 2:
+            raise ValueError("target_aspect must be a 2-item tuple/list of positive integers")
+
+        try:
+            aspect_w = int(target_aspect[0])
+            aspect_h = int(target_aspect[1])
+        except (TypeError, ValueError) as e:
+            raise ValueError("target_aspect must contain numeric values") from e
+
+        if aspect_w <= 0 or aspect_h <= 0:
+            raise ValueError("target_aspect values must be positive")
+
+        target_ratio = aspect_w / aspect_h
+        frame_ratio = self.width / self.height
+
+        def _make_even(value: int) -> int:
+            return value - (value % 2)
+
+        if target_ratio < frame_ratio:
+            out_h = _make_even(self.height)
+            out_w = _make_even(int(out_h * target_ratio))
+        else:
+            out_w = _make_even(self.width)
+            out_h = _make_even(int(out_w / target_ratio))
+
+        return self.with_dimensions(out_w, out_h)
+
     def transition_to(self, other: VideoMetadata, effect_time: float = 0.0) -> VideoMetadata:
         """Predict metadata after transition to another video.
 
