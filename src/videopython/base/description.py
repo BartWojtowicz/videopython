@@ -276,6 +276,21 @@ class AudioClassification:
     events: list[AudioEvent]
     clip_predictions: dict[str, float] = field(default_factory=dict)
 
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "events": [event.to_dict() for event in self.events],
+            "clip_predictions": self.clip_predictions,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "AudioClassification":
+        """Create AudioClassification from dictionary."""
+        return cls(
+            events=[AudioEvent.from_dict(event) for event in data.get("events", [])],
+            clip_predictions={k: float(v) for k, v in data.get("clip_predictions", {}).items()},
+        )
+
 
 @dataclass
 class MotionInfo:

@@ -26,6 +26,7 @@ from .understanding import (
     ShotTypeClassifier,
     TextDetector,
 )
+from .video_analysis import VideoAnalysis, VideoAnalysisConfig, VideoAnalyzer
 
 __all__ = [
     # Exceptions
@@ -64,4 +65,8 @@ __all__ = [
     "SplitScreenComposite",
     # Swapping
     "ObjectSwapper",
+    # Video analysis
+    "VideoAnalysis",
+    "VideoAnalysisConfig",
+    "VideoAnalyzer",
 ]
