@@ -1,5 +1,18 @@
 # Release Notes
 
+## 0.19.0
+
+### New Features
+
+- Added `VideoAnalysis`, `VideoAnalysisConfig`, and `VideoAnalyzer` to aggregate understanding outputs into a serializable analysis object
+- Added `CombinedFrameAnalysis.to_dict()` / `from_dict()` and `AudioClassification.to_dict()` / `from_dict()` for complete analysis serialization support
+- Added bounded-memory `VideoAnalyzer.analyze_path()` orchestration that prefers path-based analyzers and streaming/chunked frame sampling
+
+### Documentation
+
+- Added `docs/api/ai/video_analysis.md` with usage and API references
+- Linked AI Video Analysis in API overview and MkDocs navigation
+
 ## 0.18.3
 
 ### Changed

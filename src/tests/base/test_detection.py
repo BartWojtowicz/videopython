@@ -2,7 +2,7 @@
 
 import pytest
 
-from videopython.base.description import BoundingBox, DetectedObject
+from videopython.base.description import AudioClassification, AudioEvent, BoundingBox, DetectedObject
 
 
 class TestBoundingBox:
@@ -46,3 +46,20 @@ class TestDetectedObject:
         assert obj.label == "car"
         assert obj.bounding_box is not None
         assert obj.bounding_box.x == 0.1
+
+
+class TestAudioClassification:
+    """Tests for AudioClassification serialization helpers."""
+
+    def test_roundtrip_dict_serialization(self):
+        """AudioClassification should roundtrip via to_dict/from_dict."""
+        original = AudioClassification(
+            events=[
+                AudioEvent(start=0.0, end=1.2, label="Speech", confidence=0.93),
+                AudioEvent(start=1.3, end=2.0, label="Music", confidence=0.78),
+            ],
+            clip_predictions={"Speech": 0.93, "Music": 0.78},
+        )
+
+        restored = AudioClassification.from_dict(original.to_dict())
+        assert restored == original

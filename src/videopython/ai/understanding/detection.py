@@ -772,6 +772,25 @@ class CombinedFrameAnalysis:
     face_count: int
     shot_type: str | None
 
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "detected_objects": [obj.to_dict() for obj in self.detected_objects],
+            "detected_text": self.detected_text,
+            "face_count": self.face_count,
+            "shot_type": self.shot_type,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "CombinedFrameAnalysis":
+        """Create CombinedFrameAnalysis from dictionary."""
+        return cls(
+            detected_objects=[DetectedObject.from_dict(item) for item in data.get("detected_objects", [])],
+            detected_text=[str(item) for item in data.get("detected_text", [])],
+            face_count=int(data.get("face_count", 0)),
+            shot_type=data.get("shot_type"),
+        )
+
 
 class CombinedFrameAnalyzer:
     """Analyzes frames using a single vision API call for efficiency.

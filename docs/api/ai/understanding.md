@@ -2,6 +2,8 @@
 
 Analyze videos, transcribe audio, and describe visual content.
 
+For a single aggregate, serializable analysis object across multiple analyzers, see [Video Analysis](video_analysis.md).
+
 ## Backend Support
 
 | Class | local | openai | gemini | elevenlabs |
