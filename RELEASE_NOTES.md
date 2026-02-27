@@ -1,5 +1,30 @@
 # Release Notes
 
+## 0.20.1
+
+### New Features
+
+- Added `VideoAnalysisConfig.rich_understanding_preset()` for high-coverage, cross-domain video understanding defaults
+- Added structured OCR output support via `DetectedText` and `TextDetector.detect_detailed()`, while preserving backward-compatible `TextDetector.detect() -> list[str]`
+
+### Changed
+
+- `VideoAnalyzer` now supports memory-budgeted sampling/chunking through `VideoAnalysisConfig.max_memory_mb` with `effective_max_frames` surfaced in `FrameSamplingReport`
+- Action recognition orchestration supports `action_scope` (`video`, `scene`, `adaptive`) with `max_action_scenes` to improve temporal understanding quality on multi-scene videos
+- `FrameAnalysisSample` now includes optional `text_regions` for OCR confidence + region geometry
+- `VideoAnalysis` summary now includes richer aggregate signals (top actions/objects, OCR terms, face presence, motion distributions)
+
+### Fixed
+
+- Geo redaction now sanitizes `source.raw_tags` when `redact_geo=True`, preventing location metadata leakage
+- Added stronger `VideoAnalysisConfig` validation for analyzer IDs and sampling/runtime constraints to fail fast on invalid configurations
+
+### Tests
+
+- Added explicit full `VideoAnalysis` JSON roundtrip test
+- Added tests for scene-scoped action execution, memory-budgeted sampling behavior, geo redaction, and rich preset coverage
+- Added lightweight unit test for structured OCR regions without model downloads
+
 ## 0.20.0
 
 ### Breaking Changes

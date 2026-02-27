@@ -8,7 +8,7 @@ import numpy as np
 from PIL import Image
 
 from videopython.ai._device import select_device
-from videopython.base.description import BoundingBox, DetectedFace, DetectedObject
+from videopython.base.description import BoundingBox, DetectedFace, DetectedObject, DetectedText
 
 
 class ObjectDetector:
@@ -277,13 +277,57 @@ class TextDetector:
         self.device = selected_device
 
     def detect(self, image: np.ndarray | Image.Image) -> list[str]:
-        """Detect text in an image."""
+        """Detect text in an image.
+
+        Returns plain text strings for backward compatibility.
+        """
+        return [item.text for item in self.detect_detailed(image)]
+
+    def detect_detailed(self, image: np.ndarray | Image.Image) -> list[DetectedText]:
+        """Detect text in an image with confidence and region boxes."""
         if self._reader is None:
             self._init_easyocr()
 
         img_array = np.array(image) if isinstance(image, Image.Image) else image
         results = self._reader.readtext(img_array)
-        return [text for _, text, _ in results if text.strip()]
+
+        img_h, img_w = img_array.shape[:2]
+        detected_text: list[DetectedText] = []
+        for polygon, text, confidence in results:
+            text_value = str(text).strip()
+            if not text_value:
+                continue
+
+            bbox: BoundingBox | None = None
+            try:
+                if polygon:
+                    xs = [float(point[0]) for point in polygon]
+                    ys = [float(point[1]) for point in polygon]
+                    x_min = max(0.0, min(xs))
+                    x_max = min(float(img_w), max(xs))
+                    y_min = max(0.0, min(ys))
+                    y_max = min(float(img_h), max(ys))
+                    width = max(0.0, x_max - x_min)
+                    height = max(0.0, y_max - y_min)
+                    if img_w > 0 and img_h > 0:
+                        bbox = BoundingBox(
+                            x=x_min / img_w,
+                            y=y_min / img_h,
+                            width=width / img_w,
+                            height=height / img_h,
+                        )
+            except Exception:
+                bbox = None
+
+            detected_text.append(
+                DetectedText(
+                    text=text_value,
+                    confidence=float(confidence),
+                    bounding_box=bbox,
+                )
+            )
+
+        return detected_text
 
 
 class CameraMotionDetector:

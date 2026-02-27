@@ -4,7 +4,7 @@ import json
 import re
 import subprocess
 import time
-from collections import deque
+from collections import Counter, deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from importlib import metadata as importlib_metadata
@@ -31,6 +31,7 @@ from videopython.base.description import (
     DetectedAction,
     DetectedFace,
     DetectedObject,
+    DetectedText,
     MotionInfo,
     SceneBoundary,
 )
@@ -240,6 +241,57 @@ class VideoAnalysisConfig:
     fail_fast: bool = False
     include_geo: bool = True
     redact_geo: bool = False
+    action_scope: str = "adaptive"
+    max_action_scenes: int | None = 12
+
+    def __post_init__(self) -> None:
+        unknown_enabled = sorted(set(self.enabled_analyzers) - set(ALL_ANALYZER_IDS))
+        if unknown_enabled:
+            raise ValueError(f"Unknown analyzer ids in enabled_analyzers: {unknown_enabled}")
+
+        unknown_optional = sorted(set(self.optional_analyzers) - set(ALL_ANALYZER_IDS))
+        if unknown_optional:
+            raise ValueError(f"Unknown analyzer ids in optional_analyzers: {unknown_optional}")
+
+        if self.frame_sampling_mode not in {"uniform", "scene_boundary", "scene_representative", "hybrid"}:
+            raise ValueError(
+                "frame_sampling_mode must be one of: uniform, scene_boundary, scene_representative, hybrid"
+            )
+        if self.frames_per_second < 0:
+            raise ValueError("frames_per_second must be >= 0")
+        if self.max_frames is not None and self.max_frames < 1:
+            raise ValueError("max_frames must be >= 1 or None")
+        if not 0.0 <= self.scene_representative_offset <= 1.0:
+            raise ValueError("scene_representative_offset must be between 0.0 and 1.0")
+        if self.camera_motion_stride < 1:
+            raise ValueError("camera_motion_stride must be >= 1")
+        if self.frame_chunk_size < 1:
+            raise ValueError("frame_chunk_size must be >= 1")
+        if self.max_memory_mb is not None and self.max_memory_mb < 1:
+            raise ValueError("max_memory_mb must be >= 1 or None")
+        if self.action_scope not in {"video", "scene", "adaptive"}:
+            raise ValueError("action_scope must be one of: video, scene, adaptive")
+        if self.max_action_scenes is not None and self.max_action_scenes < 1:
+            raise ValueError("max_action_scenes must be >= 1 or None")
+
+    @classmethod
+    def rich_understanding_preset(cls) -> "VideoAnalysisConfig":
+        """High-coverage preset for richer cross-domain video understanding."""
+        return cls(
+            enabled_analyzers=set(ALL_ANALYZER_IDS),
+            optional_analyzers={IMAGE_TO_TEXT, TEXT_DETECTOR, ACTION_RECOGNIZER},
+            frame_sampling_mode="hybrid",
+            frames_per_second=1.0,
+            max_frames=240,
+            include_scene_boundaries=True,
+            scene_representative_offset=0.5,
+            camera_motion_stride=2,
+            frame_chunk_size=24,
+            best_effort=True,
+            fail_fast=False,
+            action_scope="adaptive",
+            max_action_scenes=16,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -258,6 +310,8 @@ class VideoAnalysisConfig:
             "fail_fast": self.fail_fast,
             "include_geo": self.include_geo,
             "redact_geo": self.redact_geo,
+            "action_scope": self.action_scope,
+            "max_action_scenes": self.max_action_scenes,
         }
 
     @classmethod
@@ -281,6 +335,8 @@ class VideoAnalysisConfig:
             fail_fast=bool(data.get("fail_fast", False)),
             include_geo=bool(data.get("include_geo", True)),
             redact_geo=bool(data.get("redact_geo", False)),
+            action_scope=data.get("action_scope", "adaptive"),
+            max_action_scenes=data.get("max_action_scenes", 12),
         )
 
 
@@ -395,6 +451,7 @@ class FrameSamplingReport:
     sampled_indices: list[int] = field(default_factory=list)
     sampled_timestamps: list[float] = field(default_factory=list)
     access_mode: str | None = None
+    effective_max_frames: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -404,6 +461,7 @@ class FrameSamplingReport:
             "sampled_indices": self.sampled_indices,
             "sampled_timestamps": self.sampled_timestamps,
             "access_mode": self.access_mode,
+            "effective_max_frames": self.effective_max_frames,
         }
 
     @classmethod
@@ -415,6 +473,9 @@ class FrameSamplingReport:
             sampled_indices=[int(v) for v in data.get("sampled_indices", [])],
             sampled_timestamps=[float(v) for v in data.get("sampled_timestamps", [])],
             access_mode=data.get("access_mode"),
+            effective_max_frames=(
+                int(data["effective_max_frames"]) if data.get("effective_max_frames") is not None else None
+            ),
         )
 
 
@@ -428,6 +489,7 @@ class FrameAnalysisSample:
     objects: list[DetectedObject] | None = None
     faces: list[DetectedFace] | None = None
     text: list[str] | None = None
+    text_regions: list[DetectedText] | None = None
     step_results: dict[str, str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -438,6 +500,7 @@ class FrameAnalysisSample:
             "objects": [item.to_dict() for item in self.objects] if self.objects is not None else None,
             "faces": [item.to_dict() for item in self.faces] if self.faces is not None else None,
             "text": self.text,
+            "text_regions": [item.to_dict() for item in self.text_regions] if self.text_regions is not None else None,
             "step_results": self.step_results,
         }
 
@@ -445,6 +508,7 @@ class FrameAnalysisSample:
     def from_dict(cls, data: dict[str, Any]) -> "FrameAnalysisSample":
         objects = data.get("objects")
         faces = data.get("faces")
+        text_regions = data.get("text_regions")
         return cls(
             timestamp=float(data["timestamp"]),
             frame_index=data.get("frame_index"),
@@ -452,6 +516,7 @@ class FrameAnalysisSample:
             objects=[DetectedObject.from_dict(item) for item in objects] if objects is not None else None,
             faces=[DetectedFace.from_dict(item) for item in faces] if faces is not None else None,
             text=data.get("text"),
+            text_regions=[DetectedText.from_dict(item) for item in text_regions] if text_regions is not None else None,
             step_results=data.get("step_results"),
         )
 
@@ -654,9 +719,12 @@ class VideoAnalyzer:
             actions_result = self._run_step(
                 steps,
                 ACTION_RECOGNIZER,
-                lambda: action_recognizer.recognize_path(source_path)
-                if source_path is not None
-                else action_recognizer.recognize(_require_video(video)),
+                lambda: self._run_action_recognition(
+                    action_recognizer=action_recognizer,
+                    source_path=source_path,
+                    video=video,
+                    scenes=scenes,
+                ),
                 optional=ACTION_RECOGNIZER in self.config.optional_analyzers,
             )
             if actions_result is not None:
@@ -689,7 +757,12 @@ class VideoAnalyzer:
                 if motion_result is not None:
                     motion_section.video_motion = motion_result
 
-        frame_indices = self._plan_frame_indices(metadata=metadata, scenes=scenes)
+        effective_max_frames = self._effective_max_frames(metadata)
+        frame_indices = self._plan_frame_indices(
+            metadata=metadata,
+            scenes=scenes,
+            effective_max_frames=effective_max_frames,
+        )
         sampling = FrameSamplingReport(
             mode=self.config.frame_sampling_mode,
             frames_per_second=self.config.frames_per_second,
@@ -697,6 +770,7 @@ class VideoAnalyzer:
             sampled_indices=frame_indices,
             sampled_timestamps=[round(idx / metadata.fps, 6) for idx in frame_indices],
             access_mode=None,
+            effective_max_frames=effective_max_frames,
         )
 
         frame_steps_runtime: dict[str, dict[str, Any]] = {}
@@ -744,12 +818,12 @@ class VideoAnalyzer:
 
         run_info.elapsed_seconds = time.perf_counter() - started
 
-        summary = {
-            "scene_count": len(temporal_section.scenes),
-            "action_count": len(temporal_section.actions),
-            "frame_sample_count": len(frame_samples),
-            "audio_events_count": len(audio_section.classification.events) if audio_section.classification else 0,
-        }
+        summary = self._build_summary(
+            temporal_section=temporal_section,
+            audio_section=audio_section,
+            motion_section=motion_section,
+            frame_samples=frame_samples,
+        )
 
         return VideoAnalysis(
             source=source,
@@ -794,6 +868,170 @@ class VideoAnalyzer:
 
     def _analyzer_kwargs(self, analyzer_id: str) -> dict[str, Any]:
         return dict(self.config.analyzer_params.get(analyzer_id, {}))
+
+    def _run_action_recognition(
+        self,
+        *,
+        action_recognizer: ActionRecognizer,
+        source_path: Path | None,
+        video: Video | None,
+        scenes: list[SceneBoundary],
+    ) -> list[DetectedAction]:
+        def analyze_full_video() -> list[DetectedAction]:
+            if source_path is not None:
+                return action_recognizer.recognize_path(source_path)
+            return action_recognizer.recognize(_require_video(video))
+
+        if self.config.action_scope == "video":
+            return analyze_full_video()
+
+        use_scene_scope = False
+        if self.config.action_scope == "scene":
+            use_scene_scope = bool(scenes)
+        elif self.config.action_scope == "adaptive":
+            use_scene_scope = bool(scenes) and (
+                self.config.max_action_scenes is None or len(scenes) <= self.config.max_action_scenes
+            )
+
+        if not use_scene_scope:
+            return analyze_full_video()
+
+        selected_scenes = self._select_action_scenes(scenes)
+        if not selected_scenes:
+            return analyze_full_video()
+
+        if source_path is not None:
+            actions: list[DetectedAction] = []
+            for scene in selected_scenes:
+                actions.extend(
+                    action_recognizer.recognize_path(
+                        source_path,
+                        start_second=scene.start,
+                        end_second=scene.end,
+                    )
+                )
+            return actions
+
+        current_video = _require_video(video)
+        return self._recognize_actions_on_video_scenes(
+            action_recognizer=action_recognizer,
+            video=current_video,
+            scenes=selected_scenes,
+        )
+
+    def _select_action_scenes(self, scenes: list[SceneBoundary]) -> list[SceneBoundary]:
+        selected = [scene for scene in scenes if scene.end > scene.start and scene.end_frame > scene.start_frame]
+        max_action_scenes = self.config.max_action_scenes
+        if max_action_scenes is not None and len(selected) > max_action_scenes:
+            picks = np.linspace(0, len(selected) - 1, max_action_scenes, dtype=int)
+            selected = [selected[i] for i in picks]
+        return selected
+
+    def _recognize_actions_on_video_scenes(
+        self,
+        *,
+        action_recognizer: ActionRecognizer,
+        video: Video,
+        scenes: list[SceneBoundary],
+    ) -> list[DetectedAction]:
+        actions: list[DetectedAction] = []
+        frame_count = len(video.frames)
+        if frame_count <= 0:
+            return actions
+
+        for scene in scenes:
+            start_frame = max(0, min(frame_count - 1, int(scene.start_frame)))
+            end_frame = max(start_frame + 1, min(frame_count, int(scene.end_frame)))
+            clip = Video.from_frames(video.frames[start_frame:end_frame], video.fps)
+            clip_actions = action_recognizer.recognize(clip)
+            for action in clip_actions:
+                action.start_frame = (
+                    start_frame if action.start_frame is None else min(frame_count, start_frame + action.start_frame)
+                )
+                action.end_frame = (
+                    end_frame if action.end_frame is None else min(frame_count, start_frame + action.end_frame)
+                )
+                action.start_time = scene.start if action.start_time is None else scene.start + action.start_time
+                action.end_time = (
+                    scene.end
+                    if action.end_time is None
+                    else min(video.total_seconds, scene.start + action.end_time)
+                )
+            actions.extend(clip_actions)
+
+        return actions
+
+    def _build_summary(
+        self,
+        *,
+        temporal_section: TemporalAnalysisSection,
+        audio_section: AudioAnalysisSection,
+        motion_section: MotionAnalysisSection,
+        frame_samples: list[FrameAnalysisSample],
+    ) -> dict[str, Any]:
+        summary: dict[str, Any] = {
+            "scene_count": len(temporal_section.scenes),
+            "action_count": len(temporal_section.actions),
+            "frame_sample_count": len(frame_samples),
+            "audio_events_count": len(audio_section.classification.events) if audio_section.classification else 0,
+        }
+
+        if temporal_section.actions:
+            action_counts = Counter(action.label for action in temporal_section.actions if action.label)
+            action_conf = {
+                label: max(a.confidence for a in temporal_section.actions if a.label == label)
+                for label in action_counts
+            }
+            summary["top_actions"] = [
+                {
+                    "label": label,
+                    "count": count,
+                    "max_confidence": round(float(action_conf[label]), 4),
+                }
+                for label, count in action_counts.most_common(5)
+            ]
+
+        if frame_samples:
+            face_present_count = sum(1 for sample in frame_samples if sample.faces)
+            summary["face_presence_ratio"] = round(face_present_count / len(frame_samples), 4)
+
+            object_labels: list[tuple[str, float]] = []
+            for sample in frame_samples:
+                for obj in sample.objects or []:
+                    object_labels.append((obj.label, float(obj.confidence)))
+
+            if object_labels:
+                object_counts = Counter(label for label, _ in object_labels)
+                object_conf: dict[str, float] = {}
+                for label, conf in object_labels:
+                    object_conf[label] = max(object_conf.get(label, 0.0), conf)
+                summary["top_objects"] = [
+                    {
+                        "label": label,
+                        "count": count,
+                        "max_confidence": round(object_conf[label], 4),
+                    }
+                    for label, count in object_counts.most_common(10)
+                ]
+
+            text_tokens: Counter[str] = Counter()
+            for sample in frame_samples:
+                for text_item in sample.text or []:
+                    for token in re.findall(r"[A-Za-z0-9]{3,}", text_item.lower()):
+                        text_tokens[token] += 1
+            if text_tokens:
+                summary["top_ocr_terms"] = [
+                    {"term": token, "count": count} for token, count in text_tokens.most_common(10)
+                ]
+
+        if motion_section.camera_motion_samples:
+            camera_counts = Counter(item.label for item in motion_section.camera_motion_samples)
+            summary["camera_motion_distribution"] = dict(camera_counts)
+        elif motion_section.motion_timeline:
+            motion_counts = Counter(item.motion.motion_type for item in motion_section.motion_timeline)
+            summary["motion_type_distribution"] = dict(motion_counts)
+
+        return summary
 
     def _initialize_frame_steps(self, steps: dict[str, AnalysisStepStatus]) -> dict[str, dict[str, Any]]:
         runtime: dict[str, dict[str, Any]] = {}
@@ -970,7 +1208,7 @@ class VideoAnalyzer:
         camera_samples: list[CameraMotionSample] = []
         camera_window: deque[tuple[int, float, np.ndarray]] = deque(maxlen=max(self.config.camera_motion_stride, 1) + 1)
 
-        chunk_size = max(1, int(self.config.frame_chunk_size))
+        chunk_size = self._effective_frame_chunk_size(metadata)
         for chunk_start in range(0, len(frame_indices), chunk_size):
             chunk_indices = frame_indices[chunk_start : chunk_start + chunk_size]
             chunk_frames = extract_frames_at_indices(path, chunk_indices)
@@ -1037,6 +1275,7 @@ class VideoAnalyzer:
             objects=[],
             faces=[],
             text=[],
+            text_regions=[],
         )
         step_results: dict[str, str] = {}
 
@@ -1057,7 +1296,12 @@ class VideoAnalyzer:
                 elif analyzer_id == FACE_DETECTOR:
                     sample.faces = analyzer.detect(frame)
                 elif analyzer_id == TEXT_DETECTOR:
-                    sample.text = analyzer.detect(frame)
+                    if hasattr(analyzer, "detect_detailed"):
+                        detailed = analyzer.detect_detailed(frame)
+                        sample.text_regions = detailed
+                        sample.text = [item.text for item in detailed]
+                    else:
+                        sample.text = analyzer.detect(frame)
                 elif analyzer_id == IMAGE_TO_TEXT:
                     sample.image_caption = analyzer.describe_image(frame)
 
@@ -1091,6 +1335,7 @@ class VideoAnalyzer:
         sample.objects = sample.objects if sample.objects is not None else []
         sample.faces = sample.faces if sample.faces is not None else []
         sample.text = sample.text if sample.text is not None else []
+        sample.text_regions = sample.text_regions if sample.text_regions is not None else []
 
         # Keep payload compact.
         if step_results:
@@ -1104,7 +1349,44 @@ class VideoAnalyzer:
         density = sampled_frames / total_frames
         return "streaming" if density >= 0.20 else "chunked"
 
-    def _plan_frame_indices(self, *, metadata: VideoMetadata, scenes: list[SceneBoundary]) -> list[int]:
+    def _effective_max_frames(self, metadata: VideoMetadata) -> int | None:
+        """Compute the max sampled frames after applying explicit and memory budget limits."""
+        limits: list[int] = []
+        if self.config.max_frames is not None:
+            limits.append(int(self.config.max_frames))
+
+        if self.config.max_memory_mb is not None:
+            frame_bytes = metadata.width * metadata.height * 3
+            if frame_bytes > 0:
+                budget_bytes = int(self.config.max_memory_mb * 1024 * 1024)
+                # Reserve memory for model tensors and transient buffers.
+                usable_bytes = max(frame_bytes, int(budget_bytes * 0.5))
+                limits.append(max(1, usable_bytes // frame_bytes))
+
+        if not limits:
+            return None
+        return max(1, min(limits))
+
+    def _effective_frame_chunk_size(self, metadata: VideoMetadata) -> int:
+        chunk_size = max(1, int(self.config.frame_chunk_size))
+        effective_max_frames = self._effective_max_frames(metadata)
+        if effective_max_frames is None:
+            return chunk_size
+        return max(1, min(chunk_size, effective_max_frames))
+
+    def _apply_max_frames_limit(self, indices: list[int], max_frames: int | None) -> list[int]:
+        if max_frames is None or len(indices) <= max_frames:
+            return indices
+        picks = np.linspace(0, len(indices) - 1, max_frames, dtype=int)
+        return [indices[i] for i in picks]
+
+    def _plan_frame_indices(
+        self,
+        *,
+        metadata: VideoMetadata,
+        scenes: list[SceneBoundary],
+        effective_max_frames: int | None = None,
+    ) -> list[int]:
         if metadata.frame_count <= 0:
             return []
 
@@ -1132,15 +1414,13 @@ class VideoAnalyzer:
             sampled.add(0)
 
         ordered = sorted(sampled)
-        max_frames = self.config.max_frames
-        if max_frames is not None and len(ordered) > max_frames:
-            indices = np.linspace(0, len(ordered) - 1, max_frames, dtype=int)
-            ordered = [ordered[i] for i in indices]
+        ordered = self._apply_max_frames_limit(ordered, effective_max_frames)
 
         return ordered
 
     def _build_source_from_path(self, path: Path, metadata: VideoMetadata) -> VideoAnalysisSource:
         tags = self._extract_source_tags(path)
+        raw_tags = _sanitize_raw_tags(tags, redact_geo=self.config.redact_geo)
         creation_time = _normalize_creation_time(next((tags[k] for k in _CREATION_TIME_TAG_KEYS if k in tags), None))
 
         geo: GeoMetadata | None = None
@@ -1160,7 +1440,7 @@ class VideoAnalyzer:
             frame_count=metadata.frame_count,
             creation_time=creation_time,
             geo=geo,
-            raw_tags=tags or None,
+            raw_tags=raw_tags or None,
         )
 
     def _build_source_from_video(
@@ -1172,6 +1452,7 @@ class VideoAnalyzer:
     ) -> VideoAnalysisSource:
         path_obj = Path(source_path) if source_path is not None else None
         tags = self._extract_source_tags(path_obj) if path_obj else {}
+        raw_tags = _sanitize_raw_tags(tags, redact_geo=self.config.redact_geo)
         creation_time = _normalize_creation_time(next((tags[k] for k in _CREATION_TIME_TAG_KEYS if k in tags), None))
 
         geo: GeoMetadata | None = None
@@ -1193,7 +1474,7 @@ class VideoAnalyzer:
             frame_count=metadata.frame_count,
             creation_time=creation_time,
             geo=geo,
-            raw_tags=tags or None,
+            raw_tags=raw_tags or None,
         )
 
     def _extract_source_tags(self, path: Path | None) -> dict[str, str]:
@@ -1306,3 +1587,11 @@ def _parse_iso6709_or_pair(value: str) -> GeoMetadata | None:
         return GeoMetadata(latitude=lat, longitude=lon, altitude=alt)
 
     return None
+
+
+def _sanitize_raw_tags(tags: dict[str, str], *, redact_geo: bool) -> dict[str, str]:
+    if not tags:
+        return {}
+    if not redact_geo:
+        return dict(tags)
+    return {key: value for key, value in tags.items() if key not in _GEO_TAG_KEYS}
