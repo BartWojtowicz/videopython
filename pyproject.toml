@@ -1,6 +1,6 @@
 [project]
 name = "videopython"
-version = "0.20.0"
+version = "0.20.1"
 description = "Minimal video generation and processing library."
 authors = [
     { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
@@ -40,6 +40,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "pre-commit>=3.8.0",
     "ruff>=0.1.14",
     "mypy>=1.8.0",
     "pytest>=7.4.0",
@@ -78,6 +79,7 @@ ai = [
 # Required for pip install videopython[ai] - pip uses optional-dependencies, not dependency-groups
 [project.optional-dependencies]
 dev = [
+    "pre-commit>=3.8.0",
     "ruff>=0.1.14",
     "mypy>=1.8.0",
     "pytest>=7.4.0",

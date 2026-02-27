@@ -6,6 +6,7 @@ from .description import (
     DetectedAction,
     DetectedFace,
     DetectedObject,
+    DetectedText,
     MotionInfo,
     SceneBoundary,
 )
@@ -121,6 +122,7 @@ __all__ = [
     "BoundingBox",
     "DetectedObject",
     "DetectedFace",
+    "DetectedText",
     "DetectedAction",
     "AudioEvent",
     "AudioClassification",

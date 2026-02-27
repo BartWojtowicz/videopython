@@ -55,14 +55,18 @@ Tests requiring models 100MB+ are marked with `@pytest.mark.requires_model_downl
 | `TestCameraMotionDetector` | OpenCV optical flow | bundled | Yes |
 | `test_transforms.py` | mocked | none | Yes |
 
-We also use [Ruff](https://docs.astral.sh/ruff/) for linting/formatting and [mypy](https://github.com/python/mypy) as type checker.
+We use [pre-commit](https://pre-commit.com/) to run [Ruff](https://docs.astral.sh/ruff/) and [mypy](https://github.com/python/mypy) checks locally, and CI runs the same hooks.
 ```bash
-# Run formatting
-uv run ruff format
-# Run linting and apply fixes
-uv run ruff check --fix
-# Run type checks
-uv run mypy src/
+# Install git pre-commit hook
+uv run pre-commit install
+
+# Run all configured hooks manually
+uv run pre-commit run --all-files
+
+# (Optional) run tools directly
+uv run ruff format src
+uv run ruff check src
+uv run mypy src
 ```
 
 ## Releasing

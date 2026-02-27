@@ -43,7 +43,7 @@ jobs:
         run: uv run pytest src/tests/ai -m "not requires_model_download" -v
 
   static_checks:
-    name: Linting and formatting
+    name: Static checks (pre-commit)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -52,27 +52,10 @@ jobs:
         uses: astral-sh/setup-uv@v5
       - name: Set up Python
         run: uv python install 312
-      - name: Install dev dependencies
-        run: uv sync --dev
-      - name: Run Ruff lint checks
-        run: uv run ruff check src
-      - name: Run Ruff format checks
-        run: uv run ruff format --check src
-
-  mypy:
-    name: Type tests
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-      - name: Set up Python
-        run: uv python install 312
-      - name: Install all dependencies
-        run: uv sync --all-extras --group ai
-      - name: Run type tests
-        run: uv run mypy src
+      - name: Install dependencies for hooks
+        run: uv sync --dev --all-extras --group ai
+      - name: Run pre-commit hooks
+        run: uv run pre-commit run --all-files --show-diff-on-failure
 
   docs:
     name: Documentation build

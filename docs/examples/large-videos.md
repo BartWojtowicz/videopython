@@ -83,6 +83,25 @@ for scene in scenes:
     print(f"Scene: {scene.start:.1f}s - {scene.end:.1f}s")
 ```
 
+## AI Video Analysis with Memory Budget
+
+`VideoAnalyzer.analyze_path()` is designed for bounded memory usage. You can explicitly cap sampled-frame memory:
+
+```python
+from videopython.ai import VideoAnalyzer, VideoAnalysisConfig
+
+config = VideoAnalysisConfig(
+    frame_sampling_mode="hybrid",
+    frames_per_second=1.0,
+    max_frames=240,
+    max_memory_mb=512,  # budget for sampled frames
+    frame_chunk_size=24,
+)
+
+analysis = VideoAnalyzer(config=config).analyze_path("long_video.mp4")
+print(analysis.frames.sampling.effective_max_frames)
+```
+
 ## Processing a Segment
 
 Process only a portion of a large video:

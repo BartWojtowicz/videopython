@@ -6,6 +6,7 @@ __all__ = [
     "BoundingBox",
     "DetectedObject",
     "DetectedFace",
+    "DetectedText",
     "AudioEvent",
     "AudioClassification",
     "MotionInfo",
@@ -220,6 +221,38 @@ class DetectedFace:
         return cls(
             bounding_box=BoundingBox.from_dict(data["bounding_box"]) if data.get("bounding_box") else None,
             confidence=data.get("confidence", 1.0),
+        )
+
+
+@dataclass
+class DetectedText:
+    """Text detected in a video frame.
+
+    Attributes:
+        text: OCR text content
+        confidence: Detection confidence score between 0 and 1
+        bounding_box: Optional normalized bounding box for the text region
+    """
+
+    text: str
+    confidence: float
+    bounding_box: BoundingBox | None = None
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "text": self.text,
+            "confidence": self.confidence,
+            "bounding_box": self.bounding_box.to_dict() if self.bounding_box else None,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "DetectedText":
+        """Create DetectedText from dictionary."""
+        return cls(
+            text=data["text"],
+            confidence=data["confidence"],
+            bounding_box=BoundingBox.from_dict(data["bounding_box"]) if data.get("bounding_box") else None,
         )
 
 

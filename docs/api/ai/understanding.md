@@ -65,6 +65,22 @@ for event in result.events:
 
 ### TextDetector
 
+`TextDetector` supports two output modes:
+
+- `detect(image)` -> `list[str]` (backward-compatible plain text)
+- `detect_detailed(image)` -> `list[DetectedText]` (text + confidence + bounding box)
+
+```python
+from videopython.ai import TextDetector
+
+detector = TextDetector(languages=["en"])
+texts = detector.detect(frame)
+regions = detector.detect_detailed(frame)
+
+for region in regions:
+    print(region.text, region.confidence, region.bounding_box)
+```
+
 ::: videopython.ai.TextDetector
 
 ### CameraMotionDetector
@@ -145,6 +161,10 @@ These classes are used by `SceneDetector` to represent analysis results:
 ### DetectedObject
 
 ::: videopython.base.DetectedObject
+
+### DetectedText
+
+::: videopython.base.DetectedText
 
 ### AudioEvent
 
