@@ -383,24 +383,15 @@ class TestObjectSwapper:
 
         swapper = ObjectSwapper()
 
-        assert swapper.backend == "local"
         assert isinstance(swapper.config, SwapConfig)
 
-    def test_initialization_replicate(self):
-        """Test Replicate backend initialization."""
+    def test_initialization_with_device(self):
+        """Test initialization with explicit device."""
         from videopython.ai.swapping import ObjectSwapper
 
-        swapper = ObjectSwapper(backend="replicate")
+        swapper = ObjectSwapper(device="cpu")
 
-        assert swapper.backend == "replicate"
-
-    def test_initialization_invalid_backend(self):
-        """Test that invalid backend raises error."""
-        from videopython.ai.backends import UnsupportedBackendError
-        from videopython.ai.swapping import ObjectSwapper
-
-        with pytest.raises(UnsupportedBackendError):
-            ObjectSwapper(backend="invalid")
+        assert swapper.device == "cpu"
 
     def test_initialization_custom_config(self):
         """Test initialization with custom config."""
@@ -444,24 +435,15 @@ class TestObjectSegmenter:
 
         segmenter = ObjectSegmenter()
 
-        assert segmenter.backend == "local"
         assert isinstance(segmenter.config, SegmentationConfig)
 
-    def test_initialization_replicate(self):
-        """Test Replicate backend initialization."""
+    def test_initialization_with_device(self):
+        """Test initialization with explicit device."""
         from videopython.ai.swapping import ObjectSegmenter
 
-        segmenter = ObjectSegmenter(backend="replicate")
+        segmenter = ObjectSegmenter(device="cpu")
 
-        assert segmenter.backend == "replicate"
-
-    def test_initialization_invalid_backend(self):
-        """Test that invalid backend raises error."""
-        from videopython.ai.backends import UnsupportedBackendError
-        from videopython.ai.swapping import ObjectSegmenter
-
-        with pytest.raises(UnsupportedBackendError):
-            ObjectSegmenter(backend="invalid")
+        assert segmenter.device == "cpu"
 
     def test_initialization_custom_config(self):
         """Test initialization with custom config."""
@@ -482,24 +464,15 @@ class TestVideoInpainter:
 
         inpainter = VideoInpainter()
 
-        assert inpainter.backend == "local"
         assert isinstance(inpainter.config, InpaintingConfig)
 
-    def test_initialization_replicate(self):
-        """Test Replicate backend initialization."""
+    def test_initialization_with_device(self):
+        """Test initialization with explicit device."""
         from videopython.ai.swapping import VideoInpainter
 
-        inpainter = VideoInpainter(backend="replicate")
+        inpainter = VideoInpainter(device="cpu")
 
-        assert inpainter.backend == "replicate"
-
-    def test_initialization_invalid_backend(self):
-        """Test that invalid backend raises error."""
-        from videopython.ai.backends import UnsupportedBackendError
-        from videopython.ai.swapping import VideoInpainter
-
-        with pytest.raises(UnsupportedBackendError):
-            VideoInpainter(backend="invalid")
+        assert inpainter.device == "cpu"
 
     def test_initialization_custom_config(self):
         """Test initialization with custom config."""

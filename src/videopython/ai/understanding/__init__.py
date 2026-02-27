@@ -1,10 +1,8 @@
 from .audio import AudioClassifier, AudioToText
 from .detection import (
     CameraMotionDetector,
-    CombinedFrameAnalyzer,
     FaceDetector,
     ObjectDetector,
-    ShotTypeClassifier,
     TextDetector,
 )
 from .image import ImageToText
@@ -19,9 +17,7 @@ __all__ = [
     "ObjectDetector",
     "FaceDetector",
     "TextDetector",
-    "ShotTypeClassifier",
     "CameraMotionDetector",
-    "CombinedFrameAnalyzer",
     # Motion
     "MotionAnalyzer",
     # Temporal

@@ -352,25 +352,16 @@ class TestVideoDubber:
 
         dubber = VideoDubber()
 
-        assert dubber.backend == "local"
-        assert dubber.translation_backend == "openai"
-        assert dubber.tts_backend == "local"
+        assert dubber.device is None
+        assert dubber._local_pipeline is None
 
-    def test_initialization_elevenlabs(self):
-        """Test ElevenLabs backend initialization."""
+    def test_initialization_with_device(self):
+        """Test initialization with explicit device."""
         from videopython.ai.dubbing import VideoDubber
 
-        dubber = VideoDubber(backend="elevenlabs")
+        dubber = VideoDubber(device="cpu")
 
-        assert dubber.backend == "elevenlabs"
-
-    def test_initialization_invalid_backend(self):
-        """Test that invalid backend raises error."""
-        from videopython.ai.backends import UnsupportedBackendError
-        from videopython.ai.dubbing import VideoDubber
-
-        with pytest.raises(UnsupportedBackendError):
-            VideoDubber(backend="invalid")
+        assert dubber.device == "cpu"
 
     def test_get_supported_languages(self):
         """Test getting supported languages."""
@@ -394,24 +385,15 @@ class TestTextTranslator:
 
         translator = TextTranslator()
 
-        # Default falls back to "local" when no config is set
-        assert translator.backend == "local"
+        assert translator.model_name is None
 
-    def test_initialization_local(self):
-        """Test local backend initialization."""
+    def test_initialization_with_model_name(self):
+        """Test initialization with explicit model name."""
         from videopython.ai.generation.translation import TextTranslator
 
-        translator = TextTranslator(backend="local")
+        translator = TextTranslator(model_name="Helsinki-NLP/opus-mt-en-es")
 
-        assert translator.backend == "local"
-
-    def test_initialization_invalid_backend(self):
-        """Test that invalid backend raises error."""
-        from videopython.ai.backends import UnsupportedBackendError
-        from videopython.ai.generation.translation import TextTranslator
-
-        with pytest.raises(UnsupportedBackendError):
-            TextTranslator(backend="invalid")
+        assert translator.model_name == "Helsinki-NLP/opus-mt-en-es"
 
     def test_get_supported_languages(self):
         """Test getting supported languages."""
@@ -427,7 +409,7 @@ class TestTextTranslator:
         """Test that empty text is returned as-is."""
         from videopython.ai.generation.translation import TextTranslator
 
-        translator = TextTranslator(backend="local")
+        translator = TextTranslator()
 
         result = translator.translate("", target_lang="es")
 
@@ -438,7 +420,7 @@ class TestTextTranslator:
         from videopython.ai.generation.translation import TextTranslator
 
         # Create translator but don't call translate (would require API)
-        translator = TextTranslator(backend="local")
+        translator = TextTranslator()
 
         # Just verify the method exists and has correct signature
         assert hasattr(translator, "translate_segments")
@@ -454,7 +436,6 @@ class TestAudioSeparator:
 
         separator = AudioSeparator()
 
-        assert separator.backend == "local"
         assert separator.model_name == "htdemucs"
 
     def test_initialization_custom_model(self):
@@ -471,11 +452,3 @@ class TestAudioSeparator:
 
         with pytest.raises(ValueError, match="not supported"):
             AudioSeparator(model_name="invalid_model")
-
-    def test_initialization_invalid_backend(self):
-        """Test that invalid backend raises error."""
-        from videopython.ai.backends import UnsupportedBackendError
-        from videopython.ai.understanding.separation import AudioSeparator
-
-        with pytest.raises(UnsupportedBackendError):
-            AudioSeparator(backend="invalid")

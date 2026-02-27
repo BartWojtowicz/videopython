@@ -2,6 +2,7 @@
 
 Minimal Python library for video editing, processing, and AI video workflows.
 Built primarily for practical editing workflows, with optional AI capabilities layered on top.
+Open-source and local-first: all AI workflows run on your hardware.
 
 Full documentation lives at [videopython.com](https://videopython.com) (guides, examples, and complete API reference).  
 Use this README for quick setup and a feature overview.
@@ -84,9 +85,9 @@ Use `post_transforms` for transforms and `post_effects` for effects. `VideoEdit.
 ```python
 from videopython.ai import TextToImage, ImageToVideo, TextToSpeech
 
-image = TextToImage(backend="openai").generate_image("A cinematic mountain sunrise")
-video = ImageToVideo(backend="local").generate_video(image=image, fps=24).resize(1080, 1920)
-audio = TextToSpeech(backend="openai").generate_audio("Welcome to videopython.")
+image = TextToImage().generate_image("A cinematic mountain sunrise")
+video = ImageToVideo().generate_video(image=image, fps=24).resize(1080, 1920)
+audio = TextToSpeech().generate_audio("Welcome to videopython.")
 video.add_audio(audio).save("ai_video.mp4")
 ```
 
@@ -118,9 +119,8 @@ Docs:
 - Generation: `TextToVideo`, `ImageToVideo`, `TextToImage`, `TextToSpeech`, `TextToMusic`
 - Understanding:
   - Transcription and captioning: `AudioToText`, `ImageToText`
-  - Detection/classification: `ObjectDetector`, `FaceDetector`, `TextDetector`, `ShotTypeClassifier`
+  - Detection/classification: `ObjectDetector`, `FaceDetector`, `TextDetector`
   - Motion/action/scene understanding: `CameraMotionDetector`, `MotionAnalyzer`, `ActionRecognizer`, `SemanticSceneDetector`
-  - Multi-signal frame analysis: `CombinedFrameAnalyzer`
 - AI transforms: `FaceTracker`, `FaceTrackingCrop`, `SplitScreenComposite`
 - Dubbing/revoicing: `videopython.ai.dubbing.VideoDubber`
 - Object swapping/inpainting: `ObjectSwapper`
@@ -132,27 +132,11 @@ Docs:
 - [AI Dubbing](https://videopython.com/api/ai/dubbing/)
 - [AI Object Swapping](https://videopython.com/api/ai/swapping/)
 
-## Backends and API Keys
+## Local AI Runtime Notes
 
-Cloud-enabled features use these environment variables:
-
-- `OPENAI_API_KEY`
-- `GOOGLE_API_KEY`
-- `ELEVENLABS_API_KEY`
-- `RUNWAYML_API_KEY`
-- `LUMAAI_API_KEY`
-- `REPLICATE_API_TOKEN`
-
-Example:
-
-```bash
-export OPENAI_API_KEY="your-key"
-export GOOGLE_API_KEY="your-key"
-```
-
-Notes:
-- Local generation models can require substantial GPU resources.
-- Backend/model details by class are documented at [videopython.com](https://videopython.com).
+- `videopython.ai` is local-only and does not require cloud API keys.
+- Several AI features download model weights on first run and can require substantial GPU resources.
+- Device/model details by class are documented at [videopython.com](https://videopython.com).
 
 ## Examples
 

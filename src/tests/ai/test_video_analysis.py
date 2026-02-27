@@ -7,27 +7,29 @@ from pathlib import Path
 import numpy as np
 
 import videopython.ai.video_analysis as va
-from videopython.ai.understanding.detection import CombinedFrameAnalysis
 from videopython.base.description import BoundingBox, DetectedObject
 from videopython.base.video import VideoMetadata
 
 
-def test_combined_frame_analysis_roundtrip_dict() -> None:
-    """CombinedFrameAnalysis should roundtrip via to_dict/from_dict."""
-    original = CombinedFrameAnalysis(
-        detected_objects=[
+def test_frame_analysis_sample_roundtrip_dict() -> None:
+    """FrameAnalysisSample should roundtrip via to_dict/from_dict."""
+    original = va.FrameAnalysisSample(
+        timestamp=1.25,
+        frame_index=30,
+        image_caption="A person standing in a room",
+        objects=[
             DetectedObject(
                 label="person",
                 confidence=0.91,
                 bounding_box=BoundingBox(x=0.1, y=0.2, width=0.3, height=0.4),
-            )
+            ),
         ],
-        detected_text=["EXIT"],
-        face_count=2,
-        shot_type="medium",
+        faces=[],
+        text=["EXIT"],
+        step_results={va.OBJECT_DETECTOR: "ok", va.IMAGE_TO_TEXT: "ok"},
     )
 
-    restored = CombinedFrameAnalysis.from_dict(original.to_dict())
+    restored = va.FrameAnalysisSample.from_dict(original.to_dict())
     assert restored == original
 
 

@@ -2,14 +2,9 @@
 
 Dub videos into different languages or replace speech with custom text using voice cloning.
 
-## Backend Support
+## Local Pipeline
 
-| Feature | local | elevenlabs |
-|---------|-------|------------|
-| Video Dubbing | Whisper + XTTS + Demucs | ElevenLabs API |
-| Voice Cloning | XTTS-v2 | ElevenLabs |
-| Background Preservation | Demucs | ElevenLabs |
-| Voice Revoicing | XTTS-v2 | - |
+Video dubbing runs with a local pipeline combining Whisper, translation models, XTTS, and Demucs.
 
 ## VideoDubber
 
@@ -24,7 +19,7 @@ from videopython.ai.dubbing import VideoDubber
 from videopython.base import Video
 
 video = Video.from_path("video.mp4")
-dubber = VideoDubber(backend="local")
+dubber = VideoDubber()
 
 # Dub to Spanish with voice cloning
 result = dubber.dub(
@@ -53,7 +48,7 @@ from videopython.ai.dubbing import VideoDubber
 from videopython.base import Video
 
 video = Video.from_path("video.mp4")
-dubber = VideoDubber(backend="local")
+dubber = VideoDubber()
 
 # Make the person say something different
 result = dubber.revoice(
@@ -71,23 +66,6 @@ revoiced_video = dubber.revoice_and_replace(
     text="Hello everyone! This is a completely different message.",
 )
 revoiced_video.save("revoiced_video.mp4")
-```
-
-### ElevenLabs Backend
-
-For higher quality dubbing, use the ElevenLabs cloud backend:
-
-```python
-import os
-os.environ["ELEVENLABS_API_KEY"] = "your-api-key"
-
-dubber = VideoDubber(backend="elevenlabs")
-
-result = dubber.dub(
-    video=video,
-    target_lang="es",
-    num_speakers=1,  # Helps with speaker separation
-)
 ```
 
 ### Progress Tracking

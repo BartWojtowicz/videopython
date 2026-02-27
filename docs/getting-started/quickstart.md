@@ -111,20 +111,18 @@ video.save("output.mp4", preset="ultrafast", crf=28)  # Faster encoding, lower q
 
 ## AI Features (Quick Preview)
 
-!!! note "API Keys Required"
-    AI features may require API keys depending on backend. Supported cloud keys:
-    `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `ELEVENLABS_API_KEY`, `RUNWAYML_API_KEY`,
-    `LUMAAI_API_KEY`, `REPLICATE_API_TOKEN`.
+!!! note "Local AI"
+    AI features run locally and may download model weights on first use.
 
 ```python
 from videopython.ai import TextToImage, TextToSpeech
 
-# Generate an image with DALL-E
-generator = TextToImage(backend="openai")
+# Generate an image
+generator = TextToImage()
 image = generator.generate_image("A sunset over mountains")
 
-# Generate speech with OpenAI TTS
-tts = TextToSpeech(backend="openai")
+# Generate speech
+tts = TextToSpeech()
 audio = tts.generate_audio("Welcome to videopython!")
 ```
 

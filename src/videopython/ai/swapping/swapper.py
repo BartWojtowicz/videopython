@@ -7,8 +7,6 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 
-from videopython.ai.backends import ObjectSwapperBackend, UnsupportedBackendError
-from videopython.ai.config import get_default_backend
 from videopython.ai.swapping.inpainter import VideoInpainter
 from videopython.ai.swapping.models import SwapConfig, SwapResult
 from videopython.ai.swapping.segmenter import ObjectSegmenter
@@ -30,7 +28,7 @@ class ObjectSwapper:
         >>> from videopython.ai.swapping import ObjectSwapper
         >>>
         >>> video = Video.from_path("street.mp4")
-        >>> swapper = ObjectSwapper(backend="local")
+        >>> swapper = ObjectSwapper()
         >>>
         >>> # Option A: Generate replacement from prompt
         >>> result = swapper.swap(video, source_object="red car", target_object="blue motorcycle")
@@ -44,32 +42,19 @@ class ObjectSwapper:
         >>> swapped_video = Video.from_frames(result.swapped_frames, video.fps)
     """
 
-    SUPPORTED_BACKENDS: list[str] = ["local", "replicate"]
-
     def __init__(
         self,
-        backend: ObjectSwapperBackend | None = None,
         config: SwapConfig | None = None,
         device: str | None = None,
-        api_key: str | None = None,
     ):
         """Initialize the object swapper.
 
         Args:
-            backend: Backend to use ('local' or 'replicate').
-                If None, uses config default or 'local'.
             config: Configuration for the swapping pipeline.
             device: Device for local models ('cuda', 'mps', or 'cpu').
-            api_key: API key for cloud backends (Replicate).
         """
-        resolved_backend: str = backend if backend is not None else get_default_backend("object_swapper")
-        if resolved_backend not in self.SUPPORTED_BACKENDS:
-            raise UnsupportedBackendError(resolved_backend, self.SUPPORTED_BACKENDS)
-
-        self.backend: ObjectSwapperBackend = resolved_backend  # type: ignore[assignment]
         self.config = config or SwapConfig()
         self.device = device
-        self.api_key = api_key
 
         # Lazy-loaded components
         self._segmenter: ObjectSegmenter | None = None
@@ -80,10 +65,8 @@ class ObjectSwapper:
         """Get or create the object segmenter."""
         if self._segmenter is None:
             self._segmenter = ObjectSegmenter(
-                backend=self.backend,
                 config=self.config.segmentation,
                 device=self.device,
-                api_key=self.api_key,
             )
         return self._segmenter
 
@@ -91,10 +74,8 @@ class ObjectSwapper:
         """Get or create the video inpainter."""
         if self._inpainter is None:
             self._inpainter = VideoInpainter(
-                backend=self.backend,
                 config=self.config.inpainting,
                 device=self.device,
-                api_key=self.api_key,
             )
         return self._inpainter
 
@@ -103,7 +84,7 @@ class ObjectSwapper:
         if self._image_generator is None:
             from videopython.ai.generation import TextToImage
 
-            self._image_generator = TextToImage(backend="local")
+            self._image_generator = TextToImage()
         return self._image_generator
 
     def _generate_replacement_image(
@@ -123,13 +104,10 @@ class ObjectSwapper:
             Generated image as RGB array.
         """
         generator = self._get_image_generator()
+        from PIL import Image
 
-        # Generate image at requested size
-        image = generator.generate(
-            prompt=target_prompt,
-            width=width,
-            height=height,
-        )
+        image = generator.generate_image(target_prompt)
+        image = image.resize((width, height), Image.Resampling.LANCZOS)
 
         return np.array(image)
 

@@ -2,13 +2,9 @@
 
 Replace, remove, or modify objects in videos using AI-powered segmentation and inpainting.
 
-## Backend Support
+## Local Pipeline
 
-| Feature | local | replicate |
-|---------|-------|-----------|
-| Object Segmentation | SAM2 + GroundingDINO | SAM2 + GroundingDINO |
-| Video Inpainting | SDXL | SDXL |
-| Image Generation | SDXL | SDXL |
+Object swapping uses local SAM2 + GroundingDINO segmentation with SDXL inpainting/compositing.
 
 ## ObjectSwapper
 
@@ -23,7 +19,7 @@ from videopython.base import Video
 from videopython.ai import ObjectSwapper
 
 video = Video.from_path("street.mp4")
-swapper = ObjectSwapper(backend="local")
+swapper = ObjectSwapper()
 
 # Replace red car with a blue motorcycle
 result = swapper.swap(
@@ -97,18 +93,6 @@ result = swapper.swap(
     target_object="blue motorcycle",
     progress_callback=on_progress,
 )
-```
-
-### Cloud Backend (Replicate)
-
-For systems without a local GPU:
-
-```python
-import os
-os.environ["REPLICATE_API_TOKEN"] = "your-token"
-
-swapper = ObjectSwapper(backend="replicate")
-result = swapper.swap(video, "car", "truck")
 ```
 
 ::: videopython.ai.ObjectSwapper

@@ -44,7 +44,7 @@ class TestObjectDetectorLocal:
         """Create ObjectDetector with local backend."""
         from videopython.ai.understanding.detection import ObjectDetector
 
-        return ObjectDetector(backend="local", model_size="n", confidence_threshold=0.25)
+        return ObjectDetector(model_size="n", confidence_threshold=0.25)
 
     @pytest.fixture
     def sample_image(self):
@@ -64,7 +64,6 @@ class TestObjectDetectorLocal:
 
     def test_detector_initialization(self, detector):
         """Test detector initializes correctly."""
-        assert detector.backend == "local"
         assert detector.model_size == "n"
         assert detector.confidence_threshold == 0.25
 
@@ -177,7 +176,7 @@ class TestTextDetectorLocal:
         """Create TextDetector with local backend."""
         from videopython.ai.understanding.detection import TextDetector
 
-        return TextDetector(backend="local", languages=["en"])
+        return TextDetector(languages=["en"])
 
     @pytest.fixture
     def blank_image(self):
@@ -191,7 +190,6 @@ class TestTextDetectorLocal:
 
     def test_detector_initialization(self, detector):
         """Test detector initializes correctly."""
-        assert detector.backend == "local"
         assert detector.languages == ["en"]
 
     def test_detect_returns_list(self, detector, blank_image):

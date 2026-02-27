@@ -24,14 +24,6 @@ SMALL_VIDEO_PATH = os.path.join(TEST_DATA_DIR, "small_video.mp4")
 class TestAudioClassifierInit:
     """Lightweight tests for AudioClassifier initialization (no model download needed)."""
 
-    def test_classifier_unsupported_backend(self):
-        """Test classifier raises error for unsupported backend."""
-        from videopython.ai.backends import UnsupportedBackendError
-        from videopython.ai.understanding.audio import AudioClassifier
-
-        with pytest.raises(UnsupportedBackendError):
-            AudioClassifier(backend="invalid_backend")
-
     def test_classifier_unsupported_model(self):
         """Test classifier raises error for unsupported model."""
         from videopython.ai.understanding.audio import AudioClassifier
@@ -49,14 +41,14 @@ class TestAudioClassifier:
         """Create AudioClassifier with local backend."""
         from videopython.ai.understanding.audio import AudioClassifier
 
-        return AudioClassifier(backend="local", confidence_threshold=0.3, device="cpu")
+        return AudioClassifier(confidence_threshold=0.3, device="cpu")
 
     @pytest.fixture
     def low_threshold_classifier(self):
         """Create AudioClassifier with low threshold for more detections."""
         from videopython.ai.understanding.audio import AudioClassifier
 
-        return AudioClassifier(backend="local", confidence_threshold=0.1, device="cpu")
+        return AudioClassifier(confidence_threshold=0.1, device="cpu")
 
     @pytest.fixture
     def test_audio(self):
@@ -90,7 +82,6 @@ class TestAudioClassifier:
 
     def test_classifier_initialization(self, classifier):
         """Test classifier initializes correctly."""
-        assert classifier.backend == "local"
         assert classifier.confidence_threshold == 0.3
         assert classifier.model_name == "MIT/ast-finetuned-audioset-10-10-0.4593"
         assert classifier.device == "cpu"
@@ -179,7 +170,7 @@ class TestAudioEventMerging:
         """Create AudioClassifier for testing."""
         from videopython.ai.understanding.audio import AudioClassifier
 
-        return AudioClassifier(backend="local", confidence_threshold=0.1, device="cpu")
+        return AudioClassifier(confidence_threshold=0.1, device="cpu")
 
     def test_merge_consecutive_events(self, classifier):
         """Test that consecutive events of same class are merged."""

@@ -10,14 +10,14 @@ from videopython.ai import TextToImage, ImageToVideo, TextToSpeech
 
 def create_video():
     # Generate an image and animate it
-    image = TextToImage(backend="openai").generate_image(
+    image = TextToImage().generate_image(
         "A cozy coffee shop on a rainy evening, warm lighting"
     )
     video = ImageToVideo().generate_video(image=image, fps=24)
     video = video.resize(1080, 1920)  # Vertical format
 
     # Add narration
-    audio = TextToSpeech(backend="openai").generate_audio(
+    audio = TextToSpeech().generate_audio(
         "Sometimes the best ideas come with a cup of coffee and the sound of rain."
     )
     video = video.add_audio(audio)

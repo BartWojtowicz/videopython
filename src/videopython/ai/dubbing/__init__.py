@@ -1,4 +1,4 @@
-"""Video dubbing functionality with multi-backend support."""
+"""Local video dubbing functionality."""
 
 from videopython.ai.dubbing.dubber import VideoDubber
 from videopython.ai.dubbing.models import DubbingResult, RevoiceResult, SeparatedAudio, TranslatedSegment
