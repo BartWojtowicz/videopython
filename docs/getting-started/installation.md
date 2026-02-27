@@ -43,50 +43,19 @@ uv add videopython --extra ai
     Local AI models (video generation, music generation) require a GPU.
     CUDA (NVIDIA) or MPS (Apple Silicon) is supported. An NVIDIA A40 or better is recommended for video generation.
 
-## API Keys for Cloud Backends
+## Local-Only AI Runtime
 
-Cloud backends require API keys set as environment variables (only for the providers you use):
+`videopython.ai` runs locally and does not use cloud backend/API key configuration.
 
-| Backend | Environment Variable |
-|---------|---------------------|
-| OpenAI | `OPENAI_API_KEY` |
-| Google Gemini | `GOOGLE_API_KEY` |
-| ElevenLabs | `ELEVENLABS_API_KEY` |
-| Runway | `RUNWAYML_API_KEY` |
-| Luma AI | `LUMAAI_API_KEY` |
-| Replicate | `REPLICATE_API_TOKEN` |
+Practical setup notes:
 
-```bash
-export OPENAI_API_KEY="your-key-here"
-export GOOGLE_API_KEY="your-key-here"
-export ELEVENLABS_API_KEY="your-key-here"
-export RUNWAYML_API_KEY="your-key-here"
-export LUMAAI_API_KEY="your-key-here"
-export REPLICATE_API_TOKEN="your-key-here"
-```
-
-## Choose Your Backend
-
-Most AI classes default to `backend="local"`. You can switch per task:
-
-| Common Task | Recommended Start | Other Backend Options |
-|------------|-------------------|------------------------|
-| Text-to-image (`TextToImage`) | `local` | `openai` |
-| Text-to-video (`TextToVideo`) | `local` | `luma` |
-| Image-to-video (`ImageToVideo`) | `local` | `luma`, `runway` |
-| Text-to-speech (`TextToSpeech`) | `openai` | `local`, `elevenlabs` |
-| Speech-to-text subtitles (`AudioToText`) | `openai` | `local`, `gemini` |
-| Video dubbing (`VideoDubber`) | `local` | `elevenlabs` |
-| Object swapping (`ObjectSwapper`) | `local` | `replicate` |
-
-Quick rules:
-
-- Use `local` for offline workflows and no API costs.
-- Use cloud backends when you need managed inference or do not have suitable local hardware.
-- Choose backend per class via the `backend` argument.
+- First AI run may download model weights.
+- Prefer GPU (`cuda` or `mps`) for generation-heavy workflows.
+- Use the `device` argument where supported to force placement.
 
 ```python
-from videopython.ai import TextToSpeech
+from videopython.ai import TextToSpeech, ImageToVideo
 
-tts = TextToSpeech(backend="elevenlabs")
+tts = TextToSpeech(device="cuda")
+video_gen = ImageToVideo()
 ```

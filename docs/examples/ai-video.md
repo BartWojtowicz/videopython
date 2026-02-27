@@ -30,9 +30,9 @@ def create_ai_video():
     ]
 
     # Initialize AI generators
-    image_gen = TextToImage(backend="openai")
-    video_gen = ImageToVideo(backend="local")
-    speech_gen = TextToSpeech(backend="openai")
+    image_gen = TextToImage()
+    video_gen = ImageToVideo()
+    speech_gen = TextToSpeech()
 
     videos = []
     for scene in scenes:
@@ -69,41 +69,26 @@ video.save("ai_generated.mp4")
 ### 1. Generate Images
 
 ```python
-image_gen = TextToImage(backend="openai")  # Uses DALL-E 3
+image_gen = TextToImage()  # Uses local SDXL pipeline
 image = image_gen.generate_image("A serene mountain landscape at sunrise")
 ```
-
-Available backends:
-
-| Backend | Model |
-|---------|-------|
-| `openai` | DALL-E 3 |
-| `local` | Stable Diffusion XL |
 
 ### 2. Animate to Video
 
 ```python
-video_gen = ImageToVideo(backend="local")  # Uses CogVideoX1.5-5B-I2V
+video_gen = ImageToVideo()  # Uses local CogVideoX1.5-5B-I2V
 video = video_gen.generate_video(image=image, fps=24)
 ```
 
 !!! note "Local Models"
-    Local backends (`ImageToVideo`, `TextToVideo`) require significant GPU memory (CUDA). An NVIDIA A40 or better is recommended for video generation.
+    `ImageToVideo` and `TextToVideo` require significant GPU memory (CUDA). An NVIDIA A40 or better is recommended for video generation.
 
 ### 3. Generate Speech
 
 ```python
-speech_gen = TextToSpeech(backend="openai")  # Uses OpenAI TTS
+speech_gen = TextToSpeech()  # Uses local Bark/XTTS stack
 audio = speech_gen.generate_audio("Your narration text here")
 ```
-
-Available backends:
-
-| Backend | Model |
-|---------|-------|
-| `openai` | OpenAI TTS |
-| `elevenlabs` | Multilingual v2 |
-| `local` | Bark |
 
 ### 4. Combine Segments
 
@@ -115,4 +100,4 @@ final = video1.transition_to(video2, FadeTransition(effect_time_seconds=1.0))
 
 - **Consistency**: Use similar prompt styles across scenes for visual coherence.
 - **Timing**: Match narration length to video segment duration.
-- **Quality**: OpenAI backends generally produce higher quality but cost money. Local backends are free but require GPU.
+- **Performance**: Local generation quality and speed depend heavily on your GPU and model choice.

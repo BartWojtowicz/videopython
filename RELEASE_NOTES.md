@@ -1,5 +1,38 @@
 # Release Notes
 
+## 0.20.0
+
+### Breaking Changes
+
+- `videopython.ai` is now local-only. All non-local/cloud provider backends were removed.
+- Removed backend/config/error compatibility modules:
+  - `videopython.ai.backends`
+  - `videopython.ai.config`
+  - `videopython.ai.exceptions`
+- Removed cloud-only analyzers:
+  - `ShotTypeClassifier`
+  - `CombinedFrameAnalyzer`
+  - `CombinedFrameAnalysis`
+- Removed backend-related API surface from constructors and orchestration where no longer applicable (`backend`, `api_key`, backend override/fallback settings).
+
+### Changed
+
+- Simplified AI runtime paths to direct local inference across generation, understanding, dubbing, and swapping modules.
+- `VideoAnalyzer` frame-analysis orchestration now runs only local analyzers.
+- Introduced shared local device selection helper with consistent automatic behavior:
+  - default auto-selection: `cuda` -> `cpu`
+  - optional `mps` in auto-selection only for models where explicitly allowed
+
+### Dependencies
+
+- Removed cloud SDK dependencies from AI extras/groups:
+  - `openai`, `google-generativeai`, `protobuf`, `elevenlabs`, `runwayml`, `lumaai`, `replicate`, `requests`
+
+### Documentation
+
+- Rewrote README and AI docs/examples for local-only usage.
+- Added explicit project positioning in README: open-source and local-first.
+
 ## 0.19.0
 
 ### New Features

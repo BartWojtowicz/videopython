@@ -11,31 +11,11 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
+from videopython.ai._device import select_device
 from videopython.base.description import DetectedAction, SceneBoundary
 
 if TYPE_CHECKING:
     from videopython.base.video import Video
-
-
-def _get_device(device: str | None) -> str:
-    """Get the best available device for inference.
-
-    Args:
-        device: Explicit device choice, or None for auto-detection.
-
-    Returns:
-        Device string: 'cuda', 'mps', or 'cpu'.
-    """
-    if device is not None:
-        return device
-
-    import torch
-
-    if torch.cuda.is_available():
-        return "cuda"
-    elif torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
 
 
 # Kinetics-400 action labels (subset of common actions)
@@ -117,7 +97,7 @@ class ActionRecognizer:
         self._processor = VideoMAEImageProcessor.from_pretrained(model_name)
         self._model = VideoMAEForVideoClassification.from_pretrained(model_name)
 
-        self._device = _get_device(self._device)
+        self._device = select_device(self._device, mps_allowed=True)
 
         self._model = self._model.to(self._device)
         self._model.eval()
@@ -326,8 +306,7 @@ class SemanticSceneDetector:
 
         from transnetv2_pytorch import TransNetV2
 
-        # Use 'auto' for transnetv2-pytorch's device selection, or explicit device
-        device = self._device if self._device is not None else "auto"
+        device = select_device(self._device, mps_allowed=True)
         self._model = TransNetV2(device=device)
         self._model.eval()
 

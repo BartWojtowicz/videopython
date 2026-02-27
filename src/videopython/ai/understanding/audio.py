@@ -1,15 +1,10 @@
-"""Audio understanding with multi-backend support."""
+"""Audio understanding using local models."""
 
 from __future__ import annotations
 
-import io
-import os
-import tempfile
-from pathlib import Path
 from typing import Any, Literal
 
-from videopython.ai.backends import AudioClassifierBackend, AudioToTextBackend, UnsupportedBackendError, get_api_key
-from videopython.ai.config import get_default_backend
+from videopython.ai._device import select_device
 from videopython.base.audio import Audio
 from videopython.base.description import AudioClassification, AudioEvent
 from videopython.base.text.transcription import Transcription, TranscriptionSegment, TranscriptionWord
@@ -18,50 +13,23 @@ from videopython.base.video import Video
 
 def _detect_device() -> str:
     """Auto-detect the best available device for local inference."""
-    import torch
-
-    if torch.cuda.is_available():
-        return "cuda"
-    if torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
+    return select_device(None, mps_allowed=True)
 
 
 class AudioToText:
-    """Transcription service for audio and video."""
-
-    SUPPORTED_BACKENDS: list[str] = ["local", "openai", "gemini"]
+    """Transcription service for audio and video using local Whisper models."""
 
     def __init__(
         self,
-        backend: AudioToTextBackend | None = None,
         model_name: Literal["tiny", "base", "small", "medium", "large", "turbo"] = "small",
         enable_diarization: bool = False,
         device: str | None = None,
         compute_type: str = "float32",
-        api_key: str | None = None,
     ):
-        """Initialize the audio-to-text transcriber.
-
-        Args:
-            backend: Backend to use. If None, uses config default or 'local'.
-            model_name: Whisper model for local backend.
-            enable_diarization: Enable speaker diarization (local backend only).
-            device: Device for local backend ('cuda', 'mps', or 'cpu'). If None, auto-detected.
-            compute_type: Compute type for local backend.
-            api_key: API key for cloud backends. If None, reads from environment.
-        """
-        resolved_backend: str = backend if backend is not None else get_default_backend("audio_to_text")
-        if resolved_backend not in self.SUPPORTED_BACKENDS:
-            raise UnsupportedBackendError(resolved_backend, self.SUPPORTED_BACKENDS)
-
-        self.backend: AudioToTextBackend = resolved_backend  # type: ignore[assignment]
         self.model_name = model_name
         self.enable_diarization = enable_diarization
         self.device = device if device is not None else _detect_device()
         self.compute_type = compute_type
-        self.api_key = api_key
-
         self._model: Any = None
 
     def _init_local(self) -> None:
@@ -76,7 +44,7 @@ class AudioToText:
             self._model = whisper.load_model(name=self.model_name)
 
     def _process_transcription_result(self, transcription_result: dict) -> Transcription:
-        """Process raw transcription result into Transcription object."""
+        """Process raw transcription result into a Transcription object."""
         transcription_segments = []
         for segment in transcription_result["segments"]:
             transcription_words = [
@@ -99,7 +67,6 @@ class AudioToText:
         import whisperx  # type: ignore
         from omegaconf import DictConfig, ListConfig, OmegaConf
 
-        # PyTorch 2.6+ defaults weights_only=True which breaks pyannote's omegaconf serialization
         torch.serialization.add_safe_globals([DictConfig, ListConfig, OmegaConf])
 
         model_a, metadata = whisperx.load_align_model(language_code=whisperx_result["language"], device=self.device)
@@ -142,109 +109,12 @@ class AudioToText:
             audio_data = audio_mono.data
             transcription_result = self._model.transcribe(audio_data)
             return self._process_whisperx_result(transcription_result, audio_data)
-        else:
-            transcription_result = self._model.transcribe(audio=audio_mono.data, word_timestamps=True)
-            return self._process_transcription_result(transcription_result)
 
-    def _transcribe_openai(self, audio: Audio) -> Transcription:
-        """Transcribe using OpenAI Whisper API."""
-        from openai import OpenAI
-
-        api_key = get_api_key("openai", self.api_key)
-        client = OpenAI(api_key=api_key)
-
-        # Convert audio to file-like object (WAV format)
-        # Save to temp file first, then read into BytesIO
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            audio.save(f.name)
-            temp_path = f.name
-
-        audio_bytes = io.BytesIO(Path(temp_path).read_bytes())
-        audio_bytes.name = "audio.wav"
-        Path(temp_path).unlink()  # Clean up temp file
-
-        response = client.audio.transcriptions.create(
-            model="whisper-1",
-            file=audio_bytes,
-            response_format="verbose_json",
-            timestamp_granularities=["word", "segment"],
-        )
-
-        # Convert OpenAI response to Transcription
-        segments = []
-        for segment in response.segments or []:
-            words = []
-            # OpenAI may include words in segment
-            for word in getattr(response, "words", []) or []:
-                if segment.start <= word.start < segment.end:
-                    words.append(
-                        TranscriptionWord(
-                            word=word.word,
-                            start=word.start,
-                            end=word.end,
-                        )
-                    )
-
-            segments.append(
-                TranscriptionSegment(
-                    start=segment.start,
-                    end=segment.end,
-                    text=segment.text,
-                    words=words,
-                )
-            )
-
-        return Transcription(segments=segments)
-
-    def _transcribe_gemini(self, audio: Audio) -> Transcription:
-        """Transcribe using Google Gemini."""
-        import google.generativeai as genai
-
-        api_key = get_api_key("gemini", self.api_key)
-        genai.configure(api_key=api_key)
-
-        # Save audio to temp file (Gemini needs file path or bytes)
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            audio.save(f.name)
-            temp_path = f.name
-
-        model = genai.GenerativeModel("gemini-2.0-flash")
-
-        try:
-            # Upload audio file
-            audio_file = genai.upload_file(temp_path)
-
-            response = model.generate_content(
-                [
-                    audio_file,
-                    "Transcribe this audio. Return only the transcription text, nothing else.",
-                ]
-            )
-            transcription_text = response.text
-        finally:
-            os.unlink(temp_path)
-
-        # Gemini doesn't provide timestamps, create a single segment
-        return Transcription(
-            segments=[
-                TranscriptionSegment(
-                    start=0.0,
-                    end=audio.metadata.duration_seconds,
-                    text=transcription_text.strip(),
-                    words=[],
-                )
-            ]
-        )
+        transcription_result = self._model.transcribe(audio=audio_mono.data, word_timestamps=True)
+        return self._process_transcription_result(transcription_result)
 
     def transcribe(self, media: Audio | Video) -> Transcription:
-        """Transcribe audio or video to text.
-
-        Args:
-            media: Audio or Video to transcribe.
-
-        Returns:
-            Transcription object with segments of text and their timestamps.
-        """
+        """Transcribe audio or video to text."""
         if isinstance(media, Video):
             if media.audio.is_silent:
                 return Transcription(segments=[])
@@ -256,55 +126,27 @@ class AudioToText:
         else:
             raise TypeError(f"Unsupported media type: {type(media)}. Expected Audio or Video.")
 
-        if self.backend == "local":
-            return self._transcribe_local(audio)
-        elif self.backend == "openai":
-            return self._transcribe_openai(audio)
-        elif self.backend == "gemini":
-            return self._transcribe_gemini(audio)
-        else:
-            raise UnsupportedBackendError(self.backend, self.SUPPORTED_BACKENDS)
+        return self._transcribe_local(audio)
 
 
 class AudioClassifier:
-    """Audio event and sound classification using AST (Audio Spectrogram Transformer).
+    """Audio event and sound classification using AST."""
 
-    Detects and classifies sounds, music, and audio events with timestamps.
-    Uses AST trained on AudioSet with 527 sound classes.
-    """
-
-    SUPPORTED_BACKENDS: list[str] = ["local"]
     SUPPORTED_MODELS: list[str] = ["MIT/ast-finetuned-audioset-10-10-0.4593"]
     AST_SAMPLE_RATE: int = 16000
-    # AST processes ~10 second chunks, we use sliding window for longer audio
     AST_CHUNK_SECONDS: float = 10.0
-    AST_HOP_SECONDS: float = 5.0  # 50% overlap between chunks
+    AST_HOP_SECONDS: float = 5.0
 
     def __init__(
         self,
-        backend: AudioClassifierBackend | None = None,
         model_name: str = "MIT/ast-finetuned-audioset-10-10-0.4593",
         confidence_threshold: float = 0.3,
         top_k: int = 10,
         device: str | None = None,
     ):
-        """Initialize the audio classifier.
-
-        Args:
-            backend: Backend to use. If None, uses config default or 'local'.
-            model_name: HuggingFace model ID for AST.
-            confidence_threshold: Minimum confidence to include an event.
-            top_k: Maximum number of classes to consider per time frame.
-            device: Device for local backend ('cuda', 'mps', or 'cpu'). If None, auto-detected.
-        """
-        resolved_backend: str = backend if backend is not None else get_default_backend("audio_classifier")
-        if resolved_backend not in self.SUPPORTED_BACKENDS:
-            raise UnsupportedBackendError(resolved_backend, self.SUPPORTED_BACKENDS)
-
         if model_name not in self.SUPPORTED_MODELS:
             raise ValueError(f"Model '{model_name}' not supported. Supported: {self.SUPPORTED_MODELS}")
 
-        self.backend: AudioClassifierBackend = resolved_backend  # type: ignore[assignment]
         self.model_name = model_name
         self.confidence_threshold = confidence_threshold
         self.top_k = top_k
@@ -323,23 +165,13 @@ class AudioClassifier:
         self._model.to(self.device)
         self._model.eval()
 
-        # Get labels from model config (527 AudioSet classes)
         self._labels = [self._model.config.id2label[i] for i in range(len(self._model.config.id2label))]
 
     def _merge_events(self, events: list[AudioEvent], gap_threshold: float = 0.5) -> list[AudioEvent]:
-        """Merge consecutive events of the same class.
-
-        Args:
-            events: List of audio events sorted by start time.
-            gap_threshold: Maximum gap in seconds to merge events.
-
-        Returns:
-            List of merged audio events.
-        """
+        """Merge consecutive events of the same class."""
         if not events:
             return []
 
-        # Sort by label, then by start time
         events_by_label: dict[str, list[AudioEvent]] = {}
         for event in events:
             if event.label not in events_by_label:
@@ -352,7 +184,6 @@ class AudioClassifier:
             current = sorted_events[0]
 
             for next_event in sorted_events[1:]:
-                # If events are close enough, merge them
                 if next_event.start - current.end <= gap_threshold:
                     current = AudioEvent(
                         start=current.start,
@@ -366,31 +197,26 @@ class AudioClassifier:
 
             merged.append(current)
 
-        # Sort final list by start time
         return sorted(merged, key=lambda e: e.start)
 
     def _classify_local(self, audio: Audio) -> AudioClassification:
-        """Classify audio using local AST model with sliding window for temporal events."""
+        """Classify audio using local AST model with sliding window."""
         import numpy as np
         import torch
 
         if self._model is None:
             self._init_local()
 
-        # Resample to AST expected sample rate (16kHz mono)
         audio_processed = audio.to_mono().resample(self.AST_SAMPLE_RATE)
         audio_data = audio_processed.data.astype(np.float32)
 
-        # Calculate chunk and hop sizes in samples
         chunk_samples = int(self.AST_CHUNK_SECONDS * self.AST_SAMPLE_RATE)
         hop_samples = int(self.AST_HOP_SECONDS * self.AST_SAMPLE_RATE)
         total_samples = len(audio_data)
 
-        # Process audio in overlapping chunks for temporal resolution
         all_chunk_probs = []
         chunk_times = []
 
-        # If audio is shorter than one chunk, just process it directly
         if total_samples <= chunk_samples:
             chunks = [(0, audio_data)]
         else:
@@ -399,7 +225,6 @@ class AudioClassifier:
             while start < total_samples:
                 end = min(start + chunk_samples, total_samples)
                 chunk = audio_data[start:end]
-                # Pad short final chunk
                 if len(chunk) < chunk_samples:
                     chunk = np.pad(chunk, (0, chunk_samples - len(chunk)))
                 chunks.append((start, chunk))
@@ -408,7 +233,6 @@ class AudioClassifier:
         for start_sample, chunk in chunks:
             start_time = start_sample / self.AST_SAMPLE_RATE
 
-            # Process through AST
             inputs = self._processor(
                 chunk,
                 sampling_rate=self.AST_SAMPLE_RATE,
@@ -418,21 +242,17 @@ class AudioClassifier:
 
             with torch.no_grad():
                 outputs = self._model(**inputs)
-                logits = outputs.logits[0]  # Remove batch dimension
+                logits = outputs.logits[0]
                 probs = torch.sigmoid(logits).cpu().numpy()
 
             all_chunk_probs.append(probs)
             chunk_times.append(start_time)
 
-        # Convert to numpy array for easier processing
-        chunk_probs_array = np.array(all_chunk_probs)  # shape: (num_chunks, num_classes)
+        chunk_probs_array = np.array(all_chunk_probs)
 
-        # Extract events from chunk-level predictions
         events = []
-        for chunk_idx, (start_time, probs) in enumerate(zip(chunk_times, chunk_probs_array)):
+        for start_time, probs in zip(chunk_times, chunk_probs_array):
             end_time = start_time + self.AST_CHUNK_SECONDS
-
-            # Get top-k classes for this chunk
             top_indices = np.argsort(probs)[-self.top_k :][::-1]
 
             for class_idx in top_indices:
@@ -448,10 +268,8 @@ class AudioClassifier:
                         )
                     )
 
-        # Merge consecutive events of the same class
         merged_events = self._merge_events(events)
 
-        # Calculate clip-level predictions (average across all chunks)
         clip_preds = np.mean(chunk_probs_array, axis=0)
         top_clip_indices = np.argsort(clip_preds)[-self.top_k :][::-1]
         clip_predictions = {
@@ -463,14 +281,7 @@ class AudioClassifier:
         return AudioClassification(events=merged_events, clip_predictions=clip_predictions)
 
     def classify(self, media: Audio | Video) -> AudioClassification:
-        """Classify audio events in audio or video.
-
-        Args:
-            media: Audio or Video to classify.
-
-        Returns:
-            AudioClassification with detected events and timestamps.
-        """
+        """Classify audio events in audio or video."""
         if isinstance(media, Video):
             if media.audio.is_silent:
                 return AudioClassification(events=[], clip_predictions={})
@@ -482,7 +293,4 @@ class AudioClassifier:
         else:
             raise TypeError(f"Unsupported media type: {type(media)}. Expected Audio or Video.")
 
-        if self.backend == "local":
-            return self._classify_local(audio)
-        else:
-            raise UnsupportedBackendError(self.backend, self.SUPPORTED_BACKENDS)
+        return self._classify_local(audio)

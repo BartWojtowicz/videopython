@@ -18,16 +18,13 @@ from videopython.ai.understanding import (
     AudioClassifier,
     AudioToText,
     CameraMotionDetector,
-    CombinedFrameAnalyzer,
     FaceDetector,
     ImageToText,
     MotionAnalyzer,
     ObjectDetector,
     SemanticSceneDetector,
-    ShotTypeClassifier,
     TextDetector,
 )
-from videopython.ai.understanding.detection import CombinedFrameAnalysis
 from videopython.base.audio import Audio
 from videopython.base.description import (
     AudioClassification,
@@ -48,11 +45,9 @@ SEMANTIC_SCENE_DETECTOR = "semantic_scene_detector"
 ACTION_RECOGNIZER = "action_recognizer"
 MOTION_ANALYZER = "motion_analyzer"
 CAMERA_MOTION_DETECTOR = "camera_motion_detector"
-COMBINED_FRAME_ANALYZER = "combined_frame_analyzer"
 OBJECT_DETECTOR = "object_detector"
 FACE_DETECTOR = "face_detector"
 TEXT_DETECTOR = "text_detector"
-SHOT_TYPE_CLASSIFIER = "shot_type_classifier"
 IMAGE_TO_TEXT = "image_to_text"
 
 ALL_ANALYZER_IDS: tuple[str, ...] = (
@@ -62,18 +57,10 @@ ALL_ANALYZER_IDS: tuple[str, ...] = (
     ACTION_RECOGNIZER,
     MOTION_ANALYZER,
     CAMERA_MOTION_DETECTOR,
-    COMBINED_FRAME_ANALYZER,
     OBJECT_DETECTOR,
     FACE_DETECTOR,
     TEXT_DETECTOR,
-    SHOT_TYPE_CLASSIFIER,
     IMAGE_TO_TEXT,
-)
-
-_OVERLAPPING_FRAME_ANALYZERS: tuple[str, ...] = (
-    OBJECT_DETECTOR,
-    TEXT_DETECTOR,
-    SHOT_TYPE_CLASSIFIER,
 )
 
 _CREATION_TIME_TAG_KEYS: tuple[str, ...] = (
@@ -234,16 +221,13 @@ class VideoAnalysisConfig:
             ACTION_RECOGNIZER,
             MOTION_ANALYZER,
             CAMERA_MOTION_DETECTOR,
-            COMBINED_FRAME_ANALYZER,
             OBJECT_DETECTOR,
             FACE_DETECTOR,
             TEXT_DETECTOR,
-            SHOT_TYPE_CLASSIFIER,
         }
     )
-    optional_analyzers: set[str] = field(default_factory=lambda: {SHOT_TYPE_CLASSIFIER, COMBINED_FRAME_ANALYZER})
+    optional_analyzers: set[str] = field(default_factory=set)
     analyzer_params: dict[str, dict[str, Any]] = field(default_factory=dict)
-    backend_overrides: dict[str, str] = field(default_factory=dict)
     frame_sampling_mode: str = "hybrid"
     frames_per_second: float = 0.5
     max_frames: int | None = 120
@@ -254,7 +238,6 @@ class VideoAnalysisConfig:
     max_memory_mb: int | None = None
     best_effort: bool = True
     fail_fast: bool = False
-    prefer_combined_frame_analyzer: bool = True
     include_geo: bool = True
     redact_geo: bool = False
 
@@ -263,7 +246,6 @@ class VideoAnalysisConfig:
             "enabled_analyzers": sorted(self.enabled_analyzers),
             "optional_analyzers": sorted(self.optional_analyzers),
             "analyzer_params": self.analyzer_params,
-            "backend_overrides": self.backend_overrides,
             "frame_sampling_mode": self.frame_sampling_mode,
             "frames_per_second": self.frames_per_second,
             "max_frames": self.max_frames,
@@ -274,7 +256,6 @@ class VideoAnalysisConfig:
             "max_memory_mb": self.max_memory_mb,
             "best_effort": self.best_effort,
             "fail_fast": self.fail_fast,
-            "prefer_combined_frame_analyzer": self.prefer_combined_frame_analyzer,
             "include_geo": self.include_geo,
             "redact_geo": self.redact_geo,
         }
@@ -288,7 +269,6 @@ class VideoAnalysisConfig:
             enabled_analyzers=set(enabled_raw) if enabled_raw is not None else defaults.enabled_analyzers,
             optional_analyzers=set(optional_raw) if optional_raw is not None else defaults.optional_analyzers,
             analyzer_params=data.get("analyzer_params", {}),
-            backend_overrides=data.get("backend_overrides", {}),
             frame_sampling_mode=data.get("frame_sampling_mode", "hybrid"),
             frames_per_second=float(data.get("frames_per_second", 0.5)),
             max_frames=data.get("max_frames", 120),
@@ -299,7 +279,6 @@ class VideoAnalysisConfig:
             max_memory_mb=data.get("max_memory_mb"),
             best_effort=bool(data.get("best_effort", True)),
             fail_fast=bool(data.get("fail_fast", False)),
-            prefer_combined_frame_analyzer=bool(data.get("prefer_combined_frame_analyzer", True)),
             include_geo=bool(data.get("include_geo", True)),
             redact_geo=bool(data.get("redact_geo", False)),
         )
@@ -449,8 +428,6 @@ class FrameAnalysisSample:
     objects: list[DetectedObject] | None = None
     faces: list[DetectedFace] | None = None
     text: list[str] | None = None
-    shot_type: str | None = None
-    combined: CombinedFrameAnalysis | None = None
     step_results: dict[str, str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -461,8 +438,6 @@ class FrameAnalysisSample:
             "objects": [item.to_dict() for item in self.objects] if self.objects is not None else None,
             "faces": [item.to_dict() for item in self.faces] if self.faces is not None else None,
             "text": self.text,
-            "shot_type": self.shot_type,
-            "combined": self.combined.to_dict() if self.combined else None,
             "step_results": self.step_results,
         }
 
@@ -470,7 +445,6 @@ class FrameAnalysisSample:
     def from_dict(cls, data: dict[str, Any]) -> "FrameAnalysisSample":
         objects = data.get("objects")
         faces = data.get("faces")
-        combined = data.get("combined")
         return cls(
             timestamp=float(data["timestamp"]),
             frame_index=data.get("frame_index"),
@@ -478,8 +452,6 @@ class FrameAnalysisSample:
             objects=[DetectedObject.from_dict(item) for item in objects] if objects is not None else None,
             faces=[DetectedFace.from_dict(item) for item in faces] if faces is not None else None,
             text=data.get("text"),
-            shot_type=data.get("shot_type"),
-            combined=CombinedFrameAnalysis.from_dict(combined) if combined else None,
             step_results=data.get("step_results"),
         )
 
@@ -731,11 +703,9 @@ class VideoAnalyzer:
         camera_samples: list[CameraMotionSample] = []
         frame_samples: list[FrameAnalysisSample] = []
         frame_work_ids = (
-            COMBINED_FRAME_ANALYZER,
             OBJECT_DETECTOR,
             FACE_DETECTOR,
             TEXT_DETECTOR,
-            SHOT_TYPE_CLASSIFIER,
             IMAGE_TO_TEXT,
             CAMERA_MOTION_DETECTOR,
         )
@@ -823,39 +793,16 @@ class VideoAnalyzer:
         return self.config.fail_fast or (not self.config.best_effort)
 
     def _analyzer_kwargs(self, analyzer_id: str) -> dict[str, Any]:
-        kwargs = dict(self.config.analyzer_params.get(analyzer_id, {}))
-        if "backend" not in kwargs and analyzer_id in self.config.backend_overrides:
-            kwargs["backend"] = self.config.backend_overrides[analyzer_id]
-        return kwargs
+        return dict(self.config.analyzer_params.get(analyzer_id, {}))
 
     def _initialize_frame_steps(self, steps: dict[str, AnalysisStepStatus]) -> dict[str, dict[str, Any]]:
         runtime: dict[str, dict[str, Any]] = {}
 
-        if COMBINED_FRAME_ANALYZER in self.config.enabled_analyzers:
-            combined_optional = COMBINED_FRAME_ANALYZER in self.config.optional_analyzers
-            analyzer = self._create_analyzer(
-                CombinedFrameAnalyzer,
-                analyzer_id=COMBINED_FRAME_ANALYZER,
-                steps=steps,
-                optional=combined_optional,
-            )
-            if analyzer is not None:
-                runtime[COMBINED_FRAME_ANALYZER] = self._frame_runtime(analyzer, optional=combined_optional)
-
-        suppress_overlapping = self.config.prefer_combined_frame_analyzer and COMBINED_FRAME_ANALYZER in runtime
-
         for analyzer_id, analyzer_cls in (
             (OBJECT_DETECTOR, ObjectDetector),
             (TEXT_DETECTOR, TextDetector),
-            (SHOT_TYPE_CLASSIFIER, ShotTypeClassifier),
         ):
             if analyzer_id not in self.config.enabled_analyzers:
-                continue
-            if suppress_overlapping:
-                steps[analyzer_id] = AnalysisStepStatus(
-                    status="skipped",
-                    warning=f"Suppressed by {COMBINED_FRAME_ANALYZER} precedence",
-                )
                 continue
 
             optional = analyzer_id in self.config.optional_analyzers
@@ -1094,11 +1041,9 @@ class VideoAnalyzer:
         step_results: dict[str, str] = {}
 
         for analyzer_id in (
-            COMBINED_FRAME_ANALYZER,
             OBJECT_DETECTOR,
             FACE_DETECTOR,
             TEXT_DETECTOR,
-            SHOT_TYPE_CLASSIFIER,
             IMAGE_TO_TEXT,
         ):
             runtime = frame_steps_runtime.get(analyzer_id)
@@ -1107,20 +1052,12 @@ class VideoAnalyzer:
 
             analyzer = runtime["analyzer"]
             try:
-                if analyzer_id == COMBINED_FRAME_ANALYZER:
-                    combined = analyzer.analyze(frame)
-                    sample.combined = combined
-                    sample.objects = combined.detected_objects
-                    sample.text = combined.detected_text
-                    sample.shot_type = combined.shot_type
-                elif analyzer_id == OBJECT_DETECTOR:
+                if analyzer_id == OBJECT_DETECTOR:
                     sample.objects = analyzer.detect(frame)
                 elif analyzer_id == FACE_DETECTOR:
                     sample.faces = analyzer.detect(frame)
                 elif analyzer_id == TEXT_DETECTOR:
                     sample.text = analyzer.detect(frame)
-                elif analyzer_id == SHOT_TYPE_CLASSIFIER:
-                    sample.shot_type = analyzer.classify(frame)
                 elif analyzer_id == IMAGE_TO_TEXT:
                     sample.image_caption = analyzer.describe_image(frame)
 

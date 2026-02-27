@@ -7,8 +7,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 
-from videopython.ai.backends import ObjectSwapperBackend, UnsupportedBackendError, get_api_key
-from videopython.ai.config import get_default_backend
+from videopython.ai._device import select_device
 from videopython.ai.swapping.models import ObjectMask, ObjectTrack, SegmentationConfig
 
 if TYPE_CHECKING:
@@ -40,7 +39,7 @@ class ObjectSegmenter:
         >>> from videopython.base.video import Video
         >>>
         >>> video = Video.from_path("video.mp4")
-        >>> segmenter = ObjectSegmenter(backend="local")
+        >>> segmenter = ObjectSegmenter()
         >>>
         >>> # Segment using text prompt
         >>> track = segmenter.segment_object(video.frames, "red car")
@@ -52,32 +51,19 @@ class ObjectSegmenter:
         >>> track = segmenter.segment_with_box(video.frames, (50, 50, 200, 200))
     """
 
-    SUPPORTED_BACKENDS: list[str] = ["local", "replicate"]
-
     def __init__(
         self,
-        backend: ObjectSwapperBackend | None = None,
         config: SegmentationConfig | None = None,
         device: str | None = None,
-        api_key: str | None = None,
     ):
         """Initialize the object segmenter.
 
         Args:
-            backend: Backend to use ('local' or 'replicate').
-                If None, uses config default or 'local'.
             config: Segmentation configuration. Uses defaults if None.
             device: Device for local models ('cuda', 'mps', or 'cpu').
-            api_key: API key for cloud backends.
         """
-        resolved_backend: str = backend if backend is not None else get_default_backend("object_swapper")
-        if resolved_backend not in self.SUPPORTED_BACKENDS:
-            raise UnsupportedBackendError(resolved_backend, self.SUPPORTED_BACKENDS)
-
-        self.backend: ObjectSwapperBackend = resolved_backend  # type: ignore[assignment]
         self.config = config or SegmentationConfig()
         self.device = device
-        self.api_key = api_key
 
         # Lazy-loaded models
         self._sam2_model: Any = None
@@ -87,16 +73,7 @@ class ObjectSegmenter:
 
     def _get_device(self) -> str:
         """Get the device to use for inference."""
-        if self.device:
-            return self.device
-
-        import torch
-
-        if torch.cuda.is_available():
-            return "cuda"
-        elif torch.backends.mps.is_available():
-            return "mps"
-        return "cpu"
+        return select_device(self.device, mps_allowed=True)
 
     def _init_sam2(self) -> None:
         """Initialize SAM2 model."""
@@ -413,122 +390,6 @@ class ObjectSegmenter:
         masks.sort(key=lambda m: m.frame_index)
         return masks
 
-    def _segment_replicate(
-        self,
-        frames: np.ndarray,
-        prompt: str | None = None,
-        point: tuple[int, int] | None = None,
-        box: tuple[float, float, float, float] | None = None,
-        reference_frame: int = 0,
-        progress_callback: Callable[[str, float], None] | None = None,
-    ) -> ObjectTrack:
-        """Segment object using Replicate API.
-
-        Args:
-            frames: Video frames array.
-            prompt: Text prompt for object detection.
-            point: Point coordinates for segmentation.
-            box: Bounding box for segmentation.
-            reference_frame: Frame index for initial detection.
-            progress_callback: Progress callback.
-
-        Returns:
-            ObjectTrack with masks for all frames.
-        """
-        import base64
-        import io
-        import tempfile
-        from pathlib import Path
-
-        import cv2
-        import replicate
-        from PIL import Image
-
-        api_key = get_api_key("replicate", self.api_key)
-
-        if progress_callback:
-            progress_callback("Preparing video for Replicate", 0.1)
-
-        # Save frames to temporary video file
-        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
-            temp_video_path = Path(f.name)
-
-        h, w = frames.shape[1:3]
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        writer = cv2.VideoWriter(str(temp_video_path), fourcc, 30, (w, h))
-
-        for frame in frames:
-            # Convert RGB to BGR for OpenCV
-            bgr_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            writer.write(bgr_frame)
-        writer.release()
-
-        try:
-            if progress_callback:
-                progress_callback("Running segmentation on Replicate", 0.3)
-
-            # Use SAM2 on Replicate
-            client = replicate.Client(api_token=api_key)
-
-            # Prepare input for Replicate SAM2 model
-            with open(temp_video_path, "rb") as video_file:
-                video_data = base64.b64encode(video_file.read()).decode("utf-8")
-
-            input_data: dict[str, Any] = {
-                "video": f"data:video/mp4;base64,{video_data}",
-            }
-
-            # Add prompt type
-            if prompt:
-                input_data["text_prompt"] = prompt
-            elif point:
-                input_data["point_coords"] = f"{point[0]},{point[1]}"
-                input_data["point_frame"] = reference_frame
-            elif box:
-                input_data["box_coords"] = f"{box[0]},{box[1]},{box[2]},{box[3]}"
-                input_data["box_frame"] = reference_frame
-
-            # Run SAM2 video segmentation model
-            output = client.run(
-                "meta/sam-2-video:fe97b453a6455861e3bec01b4e2fbbb76610e696f1924c155c664143cd3e5109",
-                input=input_data,
-            )
-
-            if progress_callback:
-                progress_callback("Processing segmentation results", 0.8)
-
-            # Parse output masks
-            masks = []
-            for i, mask_url in enumerate(output):
-                # Fetch mask image
-                import requests
-
-                response = requests.get(mask_url)
-                mask_image = Image.open(io.BytesIO(response.content))
-                mask_array = np.array(mask_image) > 127  # Binary threshold
-
-                masks.append(
-                    ObjectMask(
-                        frame_index=i,
-                        mask=mask_array,
-                        confidence=0.9,  # Replicate doesn't return confidence
-                    )
-                )
-
-            if progress_callback:
-                progress_callback("Segmentation complete", 1.0)
-
-            return ObjectTrack(
-                object_id=str(uuid.uuid4()),
-                masks=masks,
-                label=prompt or "object",
-                start_frame=0,
-                end_frame=len(frames) - 1,
-            )
-
-        finally:
-            temp_video_path.unlink()
-
     def segment_object(
         self,
         frames: np.ndarray,
@@ -554,14 +415,6 @@ class ObjectSegmenter:
         Raises:
             ValueError: If object is not found in reference frame.
         """
-        if self.backend == "replicate":
-            return self._segment_replicate(
-                frames=frames,
-                prompt=prompt,
-                reference_frame=reference_frame,
-                progress_callback=progress_callback,
-            )
-
         if progress_callback:
             progress_callback("Detecting object from text prompt", 0.0)
 
@@ -625,14 +478,6 @@ class ObjectSegmenter:
         Returns:
             ObjectTrack containing masks for all frames.
         """
-        if self.backend == "replicate":
-            return self._segment_replicate(
-                frames=frames,
-                point=point,
-                reference_frame=reference_frame,
-                progress_callback=progress_callback,
-            )
-
         if progress_callback:
             progress_callback("Segmenting object from point", 0.0)
 
@@ -686,14 +531,6 @@ class ObjectSegmenter:
         Returns:
             ObjectTrack containing masks for all frames.
         """
-        if self.backend == "replicate":
-            return self._segment_replicate(
-                frames=frames,
-                box=box,
-                reference_frame=reference_frame,
-                progress_callback=progress_callback,
-            )
-
         if progress_callback:
             progress_callback("Segmenting object from box", 0.0)
 

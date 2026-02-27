@@ -1,14 +1,5 @@
 from videopython.ai import registry as _ai_registry  # noqa: F401
 
-from .exceptions import (
-    BackendError,
-    ConfigError,
-    GenerationError,
-    LumaGenerationError,
-    MissingAPIKeyError,
-    RunwayGenerationError,
-    UnsupportedBackendError,
-)
 from .generation import ImageToVideo, TextToImage, TextToMusic, TextToSpeech, TextToVideo
 from .swapping import ObjectSwapper
 from .transforms import FaceTracker, FaceTrackingCrop, SplitScreenComposite
@@ -17,26 +8,16 @@ from .understanding import (
     AudioClassifier,
     AudioToText,
     CameraMotionDetector,
-    CombinedFrameAnalyzer,
     FaceDetector,
     ImageToText,
     MotionAnalyzer,
     ObjectDetector,
     SemanticSceneDetector,
-    ShotTypeClassifier,
     TextDetector,
 )
 from .video_analysis import VideoAnalysis, VideoAnalysisConfig, VideoAnalyzer
 
 __all__ = [
-    # Exceptions
-    "BackendError",
-    "MissingAPIKeyError",
-    "UnsupportedBackendError",
-    "GenerationError",
-    "LumaGenerationError",
-    "RunwayGenerationError",
-    "ConfigError",
     # Generation
     "TextToVideo",
     "ImageToVideo",
@@ -51,9 +32,7 @@ __all__ = [
     "ObjectDetector",
     "FaceDetector",
     "TextDetector",
-    "ShotTypeClassifier",
     "CameraMotionDetector",
-    "CombinedFrameAnalyzer",
     # Motion
     "MotionAnalyzer",
     # Temporal

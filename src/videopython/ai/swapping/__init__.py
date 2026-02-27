@@ -8,7 +8,7 @@ Example:
     >>> from videopython.ai.swapping import ObjectSwapper
     >>>
     >>> video = Video.from_path("street.mp4")
-    >>> swapper = ObjectSwapper(backend="local")
+    >>> swapper = ObjectSwapper()
     >>>
     >>> # Swap an object with a generated replacement
     >>> result = swapper.swap(video, source_object="red car", target_object="blue motorcycle")

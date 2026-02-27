@@ -4,21 +4,20 @@ Analyze videos, transcribe audio, and describe visual content.
 
 For a single aggregate, serializable analysis object across multiple analyzers, see [Video Analysis](video_analysis.md).
 
-## Backend Support
+## Local Model Support
 
-| Class | local | openai | gemini | elevenlabs |
-|-------|-------|--------|--------|------------|
-| ImageToText | BLIP | GPT-4o | Gemini | - |
-| AudioToText | Whisper | Whisper API | Gemini | - |
-| AudioClassifier | AST | - | - | - |
-| ObjectDetector | YOLO | GPT-4o | Gemini | - |
-| TextDetector | EasyOCR | GPT-4o | Gemini | - |
-| FaceDetector | OpenCV | - | - | - |
-| ShotTypeClassifier | - | GPT-4o | Gemini | - |
-| CameraMotionDetector | OpenCV | - | - | - |
-| MotionAnalyzer | OpenCV | - | - | - |
-| ActionRecognizer | VideoMAE | - | - | - |
-| SemanticSceneDetector | TransNetV2 | - | - | - |
+| Class | Local Model Family |
+|-------|--------------------|
+| ImageToText | BLIP |
+| AudioToText | Whisper |
+| AudioClassifier | AST |
+| ObjectDetector | YOLO |
+| TextDetector | EasyOCR |
+| FaceDetector | OpenCV / YOLOv8-face |
+| CameraMotionDetector | OpenCV |
+| MotionAnalyzer | OpenCV |
+| ActionRecognizer | VideoMAE |
+| SemanticSceneDetector | TransNetV2 |
 
 ## AudioToText
 
@@ -67,10 +66,6 @@ for event in result.events:
 ### TextDetector
 
 ::: videopython.ai.TextDetector
-
-### ShotTypeClassifier
-
-::: videopython.ai.ShotTypeClassifier
 
 ### CameraMotionDetector
 
@@ -134,10 +129,6 @@ for scene in scenes:
 ```
 
 ::: videopython.ai.SemanticSceneDetector
-
-### CombinedFrameAnalyzer
-
-::: videopython.ai.CombinedFrameAnalyzer
 
 ## Scene Data Classes
 

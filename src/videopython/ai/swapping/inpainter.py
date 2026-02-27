@@ -7,8 +7,7 @@ from typing import TYPE_CHECKING, Any, Callable
 import numpy as np
 from tqdm import tqdm
 
-from videopython.ai.backends import ObjectSwapperBackend, UnsupportedBackendError, get_api_key
-from videopython.ai.config import get_default_backend
+from videopython.ai._device import select_device
 from videopython.ai.swapping.models import InpaintingConfig, ObjectTrack
 
 if TYPE_CHECKING:
@@ -33,48 +32,26 @@ class VideoInpainter:
         >>> inpainted = inpainter.inpaint(video.frames, track, prompt="empty room")
     """
 
-    SUPPORTED_BACKENDS: list[str] = ["local", "replicate"]
-
     def __init__(
         self,
-        backend: ObjectSwapperBackend | None = None,
         config: InpaintingConfig | None = None,
         device: str | None = None,
-        api_key: str | None = None,
     ):
         """Initialize the video inpainter.
 
         Args:
-            backend: Backend to use ('local' or 'replicate').
-                If None, uses config default or 'local'.
             config: Inpainting configuration. Uses defaults if None.
             device: Device for local models ('cuda', 'mps', or 'cpu').
-            api_key: API key for cloud backends.
         """
-        resolved_backend: str = backend if backend is not None else get_default_backend("object_swapper")
-        if resolved_backend not in self.SUPPORTED_BACKENDS:
-            raise UnsupportedBackendError(resolved_backend, self.SUPPORTED_BACKENDS)
-
-        self.backend: ObjectSwapperBackend = resolved_backend  # type: ignore[assignment]
         self.config = config or InpaintingConfig()
         self.device = device
-        self.api_key = api_key
 
         # Lazy-loaded model
         self._inpaint_pipeline: Any = None
 
     def _get_device(self) -> str:
         """Get the device to use for inference."""
-        if self.device:
-            return self.device
-
-        import torch
-
-        if torch.cuda.is_available():
-            return "cuda"
-        elif torch.backends.mps.is_available():
-            return "mps"
-        return "cpu"
+        return select_device(self.device, mps_allowed=True)
 
     def _init_inpaint_pipeline(self) -> None:
         """Initialize the inpainting diffusion pipeline."""
@@ -158,89 +135,6 @@ class VideoInpainter:
 
         return np.array(result)
 
-    def _inpaint_replicate(
-        self,
-        frames: np.ndarray,
-        track: ObjectTrack,
-        prompt: str,
-        progress_callback: Callable[[str, float], None] | None = None,
-    ) -> np.ndarray:
-        """Inpaint video frames using Replicate API.
-
-        Args:
-            frames: Video frames array of shape (N, H, W, C).
-            track: Object track containing masks to inpaint.
-            prompt: Text prompt to guide inpainting.
-            progress_callback: Progress callback.
-
-        Returns:
-            Inpainted frames array.
-        """
-        import base64
-        import io
-
-        import replicate
-        from PIL import Image
-
-        api_key = get_api_key("replicate", self.api_key)
-        client = replicate.Client(api_token=api_key)
-
-        inpainted_frames = []
-        num_frames = frames.shape[0]
-
-        for i, frame in enumerate(tqdm(frames, desc="Inpainting frames")):
-            if progress_callback:
-                progress_callback("Inpainting frames", i / num_frames)
-
-            mask_obj = track.get_mask_for_frame(i)
-            if mask_obj is None or mask_obj.area == 0:
-                # No mask for this frame, keep original
-                inpainted_frames.append(frame)
-                continue
-
-            mask = mask_obj.mask
-            if self.config.mask_dilation > 0:
-                mask = self._dilate_mask(mask, self.config.mask_dilation)
-
-            # Convert frame and mask to base64
-            frame_image = Image.fromarray(frame)
-            mask_image = Image.fromarray((mask * 255).astype(np.uint8))
-
-            frame_buffer = io.BytesIO()
-            mask_buffer = io.BytesIO()
-            frame_image.save(frame_buffer, format="PNG")
-            mask_image.save(mask_buffer, format="PNG")
-
-            frame_b64 = base64.b64encode(frame_buffer.getvalue()).decode("utf-8")
-            mask_b64 = base64.b64encode(mask_buffer.getvalue()).decode("utf-8")
-
-            # Run SDXL inpainting on Replicate
-            output = client.run(
-                "stability-ai/sdxl:39ed52f2a78e934b3ba6e2a89f5b1c712de7dfea535525255b1aa35c5565e08b",
-                input={
-                    "image": f"data:image/png;base64,{frame_b64}",
-                    "mask": f"data:image/png;base64,{mask_b64}",
-                    "prompt": prompt,
-                    "num_inference_steps": self.config.num_inference_steps,
-                    "guidance_scale": self.config.guidance_scale,
-                },
-            )
-
-            # Fetch result image
-            import requests
-
-            result_url = output[0] if isinstance(output, list) else output
-            response = requests.get(str(result_url))
-            result_image = Image.open(io.BytesIO(response.content))
-            result_frame = np.array(result_image.convert("RGB"))
-
-            inpainted_frames.append(result_frame)
-
-        if progress_callback:
-            progress_callback("Inpainting complete", 1.0)
-
-        return np.stack(inpainted_frames, axis=0)
-
     def inpaint(
         self,
         frames: np.ndarray,
@@ -269,14 +163,6 @@ class VideoInpainter:
             ...     frames, person_track, prompt="empty park background"
             ... )
         """
-        if self.backend == "replicate":
-            return self._inpaint_replicate(
-                frames=frames,
-                track=track,
-                prompt=prompt,
-                progress_callback=progress_callback,
-            )
-
         if progress_callback:
             progress_callback("Initializing inpainting model", 0.0)
 

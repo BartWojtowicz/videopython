@@ -18,7 +18,7 @@ def add_subtitles(input_path: str, output_path: str):
     video = Video.from_path(input_path)
 
     # Transcribe audio
-    transcriber = AudioToText(backend="openai")
+    transcriber = AudioToText()
     transcription = transcriber.transcribe(video)
 
     # Apply subtitle overlay
@@ -42,7 +42,7 @@ add_subtitles("interview.mp4", "interview_subtitled.mp4")
 ### 1. Transcribe Audio
 
 ```python
-transcriber = AudioToText(backend="openai")  # Uses Whisper API
+transcriber = AudioToText()  # Local Whisper model
 transcription = transcriber.transcribe(video)
 ```
 
@@ -57,13 +57,10 @@ The transcription includes word-level timestamps:
 # ]
 ```
 
-Available backends:
+Model options:
 
-| Backend | Model | Notes |
-|---------|-------|-------|
-| `openai` | Whisper API | Best accuracy, requires API key |
-| `gemini` | Gemini | Good accuracy, requires API key |
-| `local` | Whisper | Free, runs locally, slower |
+- `tiny`, `base`, `small`, `medium`, `large`, `turbo`
+- Enable diarization with `AudioToText(enable_diarization=True)` when needed.
 
 ### 2. Configure Subtitle Style
 
