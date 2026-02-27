@@ -6,7 +6,7 @@ from typing import Any
 
 from PIL import Image
 
-from videopython.ai._device import select_device
+from videopython.ai._device import log_device_initialization, select_device
 
 
 class TextToImage:
@@ -21,6 +21,7 @@ class TextToImage:
         import torch
         from diffusers import DiffusionPipeline
 
+        requested_device = self.device
         device = select_device(self.device, mps_allowed=True)
         dtype = torch.float16 if device == "cuda" else torch.float32
         variant = "fp16" if device == "cuda" else None
@@ -34,6 +35,11 @@ class TextToImage:
         )
         self._pipeline.to(device)
         self.device = device
+        log_device_initialization(
+            "TextToImage",
+            requested_device=requested_device,
+            resolved_device=device,
+        )
 
         if device == "mps":
             self._pipeline.enable_attention_slicing()

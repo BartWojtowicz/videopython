@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from videopython.ai._device import select_device
+from videopython.ai._device import log_device_initialization, select_device
 from videopython.base.audio import Audio, AudioMetadata
 
 
@@ -38,12 +38,18 @@ class TextToSpeech:
         """Initialize local Bark model."""
         from transformers import AutoModel, AutoProcessor
 
+        requested_device = self.device
         device = select_device(self.device, mps_allowed=False)
 
         model_name = "suno/bark" if self.model_size == "base" else "suno/bark-small"
         self._processor = AutoProcessor.from_pretrained(model_name)
         self._model = AutoModel.from_pretrained(model_name).to(device)
         self.device = device
+        log_device_initialization(
+            "TextToSpeech",
+            requested_device=requested_device,
+            resolved_device=device,
+        )
 
     def _patch_xtts_load_audio(self) -> None:
         """Patch XTTS load_audio to avoid torchcodec dependency issues."""
@@ -78,10 +84,16 @@ class TextToSpeech:
 
         self._patch_xtts_load_audio()
 
+        requested_device = self.device
         device = select_device(self.device, mps_allowed=False)
 
         self._xtts_model = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(device)
         self.device = device
+        log_device_initialization(
+            "TextToSpeech",
+            requested_device=requested_device,
+            resolved_device=device,
+        )
 
     def _generate_local(self, text: str, voice_preset: str | None) -> Audio:
         """Generate speech using Bark."""
@@ -178,12 +190,19 @@ class TextToMusic:
 
         os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
+        requested_device = self.device
         self._device = select_device(self.device, mps_allowed=True)
 
         model_name = "facebook/musicgen-small"
         self._processor = AutoProcessor.from_pretrained(model_name)
         self._model = MusicgenForConditionalGeneration.from_pretrained(model_name)
         self._model.to(self._device)
+        self.device = self._device
+        log_device_initialization(
+            "TextToMusic",
+            requested_device=requested_device,
+            resolved_device=self._device,
+        )
 
     def generate_audio(self, text: str, max_new_tokens: int = 256) -> Audio:
         """Generate music audio from text description."""

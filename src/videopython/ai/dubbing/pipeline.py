@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any, Callable
 
 from videopython.ai.dubbing.models import DubbingResult, RevoiceResult, SeparatedAudio
@@ -10,12 +11,16 @@ from videopython.ai.dubbing.timing import TimingSynchronizer
 if TYPE_CHECKING:
     from videopython.base.video import Video
 
+logger = logging.getLogger(__name__)
+
 
 class LocalDubbingPipeline:
     """Local pipeline for video dubbing."""
 
     def __init__(self, device: str | None = None):
         self.device = device
+        requested = device.lower() if isinstance(device, str) else "auto"
+        logger.info("LocalDubbingPipeline initialized with device=%s", requested)
 
         self._transcriber: Any = None
         self._translator: Any = None

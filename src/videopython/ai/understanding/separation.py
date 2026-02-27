@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from videopython.ai._device import select_device
+from videopython.ai._device import log_device_initialization, select_device
 from videopython.ai.dubbing.models import SeparatedAudio
 from videopython.base.audio import Audio, AudioMetadata
 
@@ -28,12 +28,18 @@ class AudioSeparator:
         """Initialize local Demucs model."""
         from demucs.pretrained import get_model
 
+        requested_device = self.device
         device = select_device(self.device, mps_allowed=False)
 
         self._model = get_model(self.model_name)
         self._model.to(device)
         self._model.eval()
         self.device = device
+        log_device_initialization(
+            "AudioSeparator",
+            requested_device=requested_device,
+            resolved_device=device,
+        )
 
     def _separate_local(self, audio: Audio) -> SeparatedAudio:
         """Separate audio using local Demucs model."""

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Callable
 import numpy as np
 from tqdm import tqdm
 
-from videopython.ai._device import select_device
+from videopython.ai._device import log_device_initialization, select_device
 from videopython.ai.swapping.models import InpaintingConfig, ObjectTrack
 
 if TYPE_CHECKING:
@@ -58,6 +58,7 @@ class VideoInpainter:
         import torch
         from diffusers import AutoPipelineForInpainting
 
+        requested_device = self.device
         device = self._get_device()
 
         self._inpaint_pipeline = AutoPipelineForInpainting.from_pretrained(
@@ -69,6 +70,11 @@ class VideoInpainter:
         # Enable memory optimizations for CUDA
         if device == "cuda":
             self._inpaint_pipeline.enable_model_cpu_offload()
+        log_device_initialization(
+            "VideoInpainter",
+            requested_device=requested_device,
+            resolved_device=device,
+        )
 
     def _dilate_mask(self, mask: np.ndarray, kernel_size: int) -> np.ndarray:
         """Dilate a binary mask to ensure clean inpainting edges.

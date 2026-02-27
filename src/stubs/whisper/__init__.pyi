@@ -3,7 +3,10 @@ from typing import Any, Literal
 class Whisper:
     def transcribe(self, audio: Any, word_timestamps: bool) -> dict[str, Any]: ...
 
-def load_model(name: Literal["tiny", "base", "small", "medium", "large", "turbo"]) -> Whisper: ...
+def load_model(
+    name: Literal["tiny", "base", "small", "medium", "large", "turbo"],
+    device: str | None = ...,
+) -> Whisper: ...
 
 class audio:
     SAMPLE_RATE: int

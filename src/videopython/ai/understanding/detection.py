@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Literal
 
 import numpy as np
 from PIL import Image
 
-from videopython.ai._device import select_device
+from videopython.ai._device import log_device_initialization, select_device
 from videopython.base.description import BoundingBox, DetectedFace, DetectedObject, DetectedText
+
+logger = logging.getLogger(__name__)
 
 
 class ObjectDetector:
@@ -29,11 +32,17 @@ class ObjectDetector:
         """Initialize YOLO model."""
         from ultralytics import YOLO
 
+        requested_device = self.device
         self._model = YOLO(f"yolo11{self.model_size}.pt")
         selected_device = select_device(self.device, mps_allowed=False)
         if selected_device != "cpu":
             self._model.to(selected_device)
         self.device = selected_device
+        log_device_initialization(
+            "ObjectDetector",
+            requested_device=requested_device,
+            resolved_device=selected_device,
+        )
 
     def detect(self, image: np.ndarray | Image.Image) -> list[DetectedObject]:
         """Detect objects in an image."""
@@ -81,7 +90,7 @@ class FaceDetector:
         self,
         confidence_threshold: float = 0.5,
         min_face_size: int = 30,
-        backend: Literal["cpu", "gpu", "auto"] = "cpu",
+        backend: Literal["cpu", "gpu", "auto"] = "auto",
         device: str | None = None,
     ):
         self.confidence_threshold = confidence_threshold
@@ -92,6 +101,7 @@ class FaceDetector:
         self._cascade: Any = None
         self._yolo_model: Any = None
         self._resolved_backend: Literal["cpu", "gpu"] | None = None
+        self._resolve_backend()
 
     def _get_device(self) -> str:
         """Get the device to use for GPU inference."""
@@ -102,11 +112,24 @@ class FaceDetector:
         if self._resolved_backend is not None:
             return self._resolved_backend
 
+        resolved_device = "cpu"
         if self.backend == "auto":
             device = self._get_device()
+            resolved_device = device
             self._resolved_backend = "gpu" if device in ("cuda", "mps") else "cpu"
         else:
             self._resolved_backend = self.backend
+            if self._resolved_backend == "gpu":
+                resolved_device = self._get_device()
+
+        requested_device = self.device.lower() if isinstance(self.device, str) else "auto"
+        logger.info(
+            "FaceDetector initialized with backend=%s (requested_backend=%s, device=%s, requested_device=%s)",
+            self._resolved_backend,
+            self.backend,
+            resolved_device,
+            requested_device,
+        )
 
         return self._resolved_backend
 
@@ -272,9 +295,15 @@ class TextDetector:
         """Initialize EasyOCR reader."""
         import easyocr
 
+        requested_device = self.device
         selected_device = select_device(self.device, mps_allowed=False)
         self._reader = easyocr.Reader(self.languages, gpu=(selected_device == "cuda"))
         self.device = selected_device
+        log_device_initialization(
+            "TextDetector",
+            requested_device=requested_device,
+            resolved_device=selected_device,
+        )
 
     def detect(self, image: np.ndarray | Image.Image) -> list[str]:
         """Detect text in an image.

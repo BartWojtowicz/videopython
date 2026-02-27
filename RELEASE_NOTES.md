@@ -1,5 +1,22 @@
 # Release Notes
 
+## 0.20.2
+
+### Changed
+
+- Face detection/tracking transform defaults now use automatic backend/device resolution instead of hard-coded CPU defaults:
+  - `FaceDetector(backend="auto")`
+  - `FaceTracker(backend="auto")`
+  - `FaceTrackingCrop(backend="auto")`
+  - `SplitScreenComposite(backend="auto")`
+- Added consistent initialization logging across AI generation, understanding, swapping, and dubbing classes to report selected execution device (and backend resolution where applicable).
+- `ObjectSwapper` now propagates its configured device to internal `TextToImage` creation.
+
+### Fixed
+
+- `AudioToText` now consistently loads Whisper on the resolved runtime device.
+- `AudioToText` and `AudioClassifier` constructor device handling now consistently uses shared device resolution.
+
 ## 0.20.1
 
 ### New Features

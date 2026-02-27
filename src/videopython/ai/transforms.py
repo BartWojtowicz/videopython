@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Literal
 
 import cv2
@@ -14,6 +15,8 @@ from videopython.base.video import Video
 
 if TYPE_CHECKING:
     pass
+
+logger = logging.getLogger(__name__)
 
 
 def _make_even(value: int) -> int:
@@ -38,7 +41,7 @@ class FaceTracker:
     detection, with optional frame sampling and interpolation for video.
 
     Example:
-        >>> # CPU tracking (default, backward compatible)
+        >>> # Auto backend (default): resolves to GPU when available, else CPU
         >>> tracker = FaceTracker()
         >>> for i, frame in enumerate(frames):
         ...     pos = tracker.detect_and_track(frame, i)
@@ -55,7 +58,7 @@ class FaceTracker:
         smoothing: float = 0.8,
         detection_interval: int = 3,
         min_face_size: int = 30,
-        backend: Literal["cpu", "gpu", "auto"] = "cpu",
+        backend: Literal["cpu", "gpu", "auto"] = "auto",
         sample_rate: int = 1,
         batch_size: int = 16,
     ):
@@ -89,6 +92,7 @@ class FaceTracker:
         self._last_size: tuple[float, float] | None = None
         self._smoothed_position: tuple[float, float] | None = None
         self._smoothed_size: tuple[float, float] | None = None
+        logger.info("FaceTracker initialized with backend=%s", self.backend)
 
     def _init_detector(self) -> None:
         """Initialize face detector lazily."""
@@ -392,7 +396,7 @@ class FaceTrackingCrop(Transformation):
     optional movement speed clamping.
 
     Example:
-        >>> # CPU (default, backward compatible)
+        >>> # Auto backend (default): resolves to GPU when available, else CPU
         >>> video = FaceTrackingCrop().apply(video)
         >>>
         >>> # GPU with frame sampling for speed
@@ -413,7 +417,7 @@ class FaceTrackingCrop(Transformation):
         max_speed: float | None = None,
         fallback: Literal["center", "last_position", "full_frame"] = "last_position",
         detection_interval: int = 3,
-        backend: Literal["cpu", "gpu", "auto"] = "cpu",
+        backend: Literal["cpu", "gpu", "auto"] = "auto",
         sample_rate: int = 1,
     ):
         """Initialize face tracking crop.
@@ -453,6 +457,7 @@ class FaceTrackingCrop(Transformation):
         self.detection_interval = detection_interval
         self.backend: Literal["cpu", "gpu", "auto"] = backend
         self.sample_rate = sample_rate
+        logger.info("FaceTrackingCrop initialized with backend=%s", self.backend)
 
     def _apply_framing_offset(
         self,
@@ -659,7 +664,7 @@ class SplitScreenComposite(Transformation):
         smoothing: float = 0.8,
         detection_interval: int = 3,
         audio_source: Literal["main", "loudest", "mix"] = "main",
-        backend: Literal["cpu", "gpu", "auto"] = "cpu",
+        backend: Literal["cpu", "gpu", "auto"] = "auto",
         sample_rate: int = 1,
     ):
         """Initialize split screen composite.
@@ -695,6 +700,7 @@ class SplitScreenComposite(Transformation):
         self.audio_source = audio_source
         self.backend: Literal["cpu", "gpu", "auto"] = backend
         self.sample_rate = sample_rate
+        logger.info("SplitScreenComposite initialized with backend=%s", self.backend)
 
     def _get_cell_rects(self, width: int, height: int) -> list[tuple[int, int, int, int]]:
         """Calculate cell rectangles for the layout.

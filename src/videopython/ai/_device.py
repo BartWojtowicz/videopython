@@ -2,9 +2,27 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Literal, cast
 
 Device = Literal["cpu", "cuda", "mps"]
+logger = logging.getLogger(__name__)
+
+
+def log_device_initialization(
+    component: str,
+    *,
+    requested_device: str | None,
+    resolved_device: str,
+) -> None:
+    """Log resolved device information for model initialization."""
+    requested = requested_device.lower() if isinstance(requested_device, str) else "auto"
+    logger.info(
+        "%s initialized on device=%s (requested=%s)",
+        component,
+        resolved_device,
+        requested,
+    )
 
 
 def select_device(

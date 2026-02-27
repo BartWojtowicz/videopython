@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any, Callable
 
 from videopython.ai.dubbing.models import DubbingResult, RevoiceResult
 
 if TYPE_CHECKING:
     from videopython.base.video import Video
+
+logger = logging.getLogger(__name__)
 
 
 class VideoDubber:
@@ -16,6 +19,8 @@ class VideoDubber:
     def __init__(self, device: str | None = None):
         self.device = device
         self._local_pipeline: Any = None
+        requested = device.lower() if isinstance(device, str) else "auto"
+        logger.info("VideoDubber initialized with device=%s", requested)
 
     def _init_local_pipeline(self) -> None:
         from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
