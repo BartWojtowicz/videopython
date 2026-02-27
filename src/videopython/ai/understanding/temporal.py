@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
-from videopython.ai._device import select_device
+from videopython.ai._device import log_device_initialization, select_device
 from videopython.base.description import DetectedAction, SceneBoundary
 
 if TYPE_CHECKING:
@@ -97,7 +97,13 @@ class ActionRecognizer:
         self._processor = VideoMAEImageProcessor.from_pretrained(model_name)
         self._model = VideoMAEForVideoClassification.from_pretrained(model_name)
 
+        requested_device = self._device
         self._device = select_device(self._device, mps_allowed=True)
+        log_device_initialization(
+            "ActionRecognizer",
+            requested_device=requested_device,
+            resolved_device=self._device,
+        )
 
         self._model = self._model.to(self._device)
         self._model.eval()
@@ -306,7 +312,13 @@ class SemanticSceneDetector:
 
         from transnetv2_pytorch import TransNetV2
 
+        requested_device = self._device
         device = select_device(self._device, mps_allowed=True)
+        log_device_initialization(
+            "SemanticSceneDetector",
+            requested_device=requested_device,
+            resolved_device=device,
+        )
         self._model = TransNetV2(device=device)
         self._model.eval()
 

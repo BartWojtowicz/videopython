@@ -4,16 +4,11 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from videopython.ai._device import select_device
+from videopython.ai._device import log_device_initialization, select_device
 from videopython.base.audio import Audio
 from videopython.base.description import AudioClassification, AudioEvent
 from videopython.base.text.transcription import Transcription, TranscriptionSegment, TranscriptionWord
 from videopython.base.video import Video
-
-
-def _detect_device() -> str:
-    """Auto-detect the best available device for local inference."""
-    return select_device(None, mps_allowed=True)
 
 
 class AudioToText:
@@ -28,7 +23,12 @@ class AudioToText:
     ):
         self.model_name = model_name
         self.enable_diarization = enable_diarization
-        self.device = device if device is not None else _detect_device()
+        self.device = select_device(device, mps_allowed=True)
+        log_device_initialization(
+            "AudioToText",
+            requested_device=device,
+            resolved_device=self.device,
+        )
         self.compute_type = compute_type
         self._model: Any = None
 
@@ -41,7 +41,7 @@ class AudioToText:
         else:
             import whisper
 
-            self._model = whisper.load_model(name=self.model_name)
+            self._model = whisper.load_model(name=self.model_name, device=self.device)
 
     def _process_transcription_result(self, transcription_result: dict) -> Transcription:
         """Process raw transcription result into a Transcription object."""
@@ -150,7 +150,12 @@ class AudioClassifier:
         self.model_name = model_name
         self.confidence_threshold = confidence_threshold
         self.top_k = top_k
-        self.device = device if device is not None else _detect_device()
+        self.device = select_device(device, mps_allowed=True)
+        log_device_initialization(
+            "AudioClassifier",
+            requested_device=device,
+            resolved_device=self.device,
+        )
 
         self._model: Any = None
         self._processor: Any = None

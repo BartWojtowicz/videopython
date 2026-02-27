@@ -514,10 +514,10 @@ class TestGPUFaceTracking:
         assert tracker.sample_rate == 5
         assert tracker.batch_size == 8
 
-    def test_face_tracker_default_backend_is_cpu(self):
-        """Test FaceTracker defaults to CPU backend for backward compatibility."""
+    def test_face_tracker_default_backend_is_auto(self):
+        """Test FaceTracker defaults to auto backend."""
         tracker = FaceTracker()
-        assert tracker.backend == "cpu"
+        assert tracker.backend == "auto"
 
     def test_face_tracking_crop_gpu_params(self):
         """Test FaceTrackingCrop accepts and stores GPU parameters."""

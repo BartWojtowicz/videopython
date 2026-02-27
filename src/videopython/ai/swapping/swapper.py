@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -13,6 +14,8 @@ from videopython.ai.swapping.segmenter import ObjectSegmenter
 
 if TYPE_CHECKING:
     from videopython.base.video import Video
+
+logger = logging.getLogger(__name__)
 
 
 class ObjectSwapper:
@@ -55,6 +58,8 @@ class ObjectSwapper:
         """
         self.config = config or SwapConfig()
         self.device = device
+        requested = device.lower() if isinstance(device, str) else "auto"
+        logger.info("ObjectSwapper initialized with device=%s", requested)
 
         # Lazy-loaded components
         self._segmenter: ObjectSegmenter | None = None
@@ -84,7 +89,7 @@ class ObjectSwapper:
         if self._image_generator is None:
             from videopython.ai.generation import TextToImage
 
-            self._image_generator = TextToImage()
+            self._image_generator = TextToImage(device=self.device)
         return self._image_generator
 
     def _generate_replacement_image(

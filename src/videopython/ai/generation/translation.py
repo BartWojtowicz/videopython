@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from videopython.ai._device import select_device
+from videopython.ai._device import log_device_initialization, select_device
 from videopython.ai.dubbing.models import TranslatedSegment
 from videopython.base.text.transcription import TranscriptionSegment
 
@@ -65,11 +65,17 @@ class TextTranslator:
 
         model_name = self._get_local_model_name(source_lang, target_lang)
 
+        requested_device = self.device
         device = select_device(self.device, mps_allowed=True)
 
         self._tokenizer = AutoTokenizer.from_pretrained(model_name)
         self._model = AutoModelForSeq2SeqLM.from_pretrained(model_name).to(device)
         self.device = device
+        log_device_initialization(
+            "TextTranslator",
+            requested_device=requested_device,
+            resolved_device=device,
+        )
         self._current_lang_pair = (source_lang, target_lang)
 
     def _translate_local(self, text: str, target_lang: str, source_lang: str) -> str:

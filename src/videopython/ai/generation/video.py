@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from videopython.ai._device import select_device
+from videopython.ai._device import log_device_initialization, select_device
 from videopython.base.video import Video
 
 if TYPE_CHECKING:
@@ -34,12 +34,18 @@ class TextToVideo:
     def _init_local(self) -> None:
         from diffusers import CogVideoXPipeline
 
+        requested_device = self.device
         self._device, dtype = _get_torch_device_and_dtype(self.device)
 
         model_name = "THUDM/CogVideoX1.5-5B"
         self._pipeline = CogVideoXPipeline.from_pretrained(model_name, torch_dtype=dtype)
         self._pipeline.to(self._device)
         self.device = self._device
+        log_device_initialization(
+            "TextToVideo",
+            requested_device=requested_device,
+            resolved_device=self._device,
+        )
 
     def generate_video(
         self,
@@ -76,12 +82,18 @@ class ImageToVideo:
     def _init_local(self) -> None:
         from diffusers import CogVideoXImageToVideoPipeline
 
+        requested_device = self.device
         self._device, dtype = _get_torch_device_and_dtype(self.device)
 
         model_name = "THUDM/CogVideoX1.5-5B-I2V"
         self._pipeline = CogVideoXImageToVideoPipeline.from_pretrained(model_name, torch_dtype=dtype)
         self._pipeline.to(self._device)
         self.device = self._device
+        log_device_initialization(
+            "ImageToVideo",
+            requested_device=requested_device,
+            resolved_device=self._device,
+        )
 
     def generate_video(
         self,

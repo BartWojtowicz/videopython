@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 
-from videopython.ai._device import select_device
+from videopython.ai._device import log_device_initialization, select_device
 from videopython.ai.swapping.models import ObjectMask, ObjectTrack, SegmentationConfig
 
 if TYPE_CHECKING:
@@ -81,6 +81,7 @@ class ObjectSegmenter:
         from transformers import Sam2Model, Sam2Processor  # type: ignore[attr-defined]
 
         model_id = SAM2_MODEL_IDS[self.config.model_size]
+        requested_device = self.device
         device = self._get_device()
 
         self._sam2_processor = Sam2Processor.from_pretrained(model_id)
@@ -91,12 +92,18 @@ class ObjectSegmenter:
             self._sam2_model = self._sam2_model.to(device).to(torch.float16)
         else:
             self._sam2_model = self._sam2_model.to(device)
+        log_device_initialization(
+            "ObjectSegmenter",
+            requested_device=requested_device,
+            resolved_device=device,
+        )
 
     def _init_grounding_dino(self) -> None:
         """Initialize GroundingDINO model for text-to-bbox."""
         import torch
         from transformers import AutoModelForZeroShotObjectDetection, AutoProcessor  # type: ignore[attr-defined]
 
+        requested_device = self.device
         device = self._get_device()
 
         self._grounding_dino_processor = AutoProcessor.from_pretrained(GROUNDING_DINO_MODEL_ID)
@@ -106,6 +113,11 @@ class ObjectSegmenter:
             self._grounding_dino_model = self._grounding_dino_model.to(device).to(torch.float16)
         else:
             self._grounding_dino_model = self._grounding_dino_model.to(device)
+        log_device_initialization(
+            "ObjectSegmenter",
+            requested_device=requested_device,
+            resolved_device=device,
+        )
 
     def _detect_object_bbox(
         self,

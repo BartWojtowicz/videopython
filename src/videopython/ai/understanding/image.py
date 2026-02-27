@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from videopython.ai._device import select_device
+from videopython.ai._device import log_device_initialization, select_device
 
 
 class ImageToText:
@@ -23,6 +23,7 @@ class ImageToText:
         from transformers.models.blip import BlipForConditionalGeneration, BlipProcessor
 
         # MPS is intentionally disabled here due to worse BLIP performance/compatibility.
+        requested_device = self.device
         device = select_device(self.device, mps_allowed=False)
 
         model_name = "Salesforce/blip-image-captioning-large"
@@ -30,6 +31,11 @@ class ImageToText:
         self._model = BlipForConditionalGeneration.from_pretrained(model_name)
         self._model.to(device)
         self.device = device
+        log_device_initialization(
+            "ImageToText",
+            requested_device=requested_device,
+            resolved_device=device,
+        )
 
     def describe_image(
         self,
