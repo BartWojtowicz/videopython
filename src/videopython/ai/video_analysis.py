@@ -953,9 +953,7 @@ class VideoAnalyzer:
                 )
                 action.start_time = scene.start if action.start_time is None else scene.start + action.start_time
                 action.end_time = (
-                    scene.end
-                    if action.end_time is None
-                    else min(video.total_seconds, scene.start + action.end_time)
+                    scene.end if action.end_time is None else min(video.total_seconds, scene.start + action.end_time)
                 )
             actions.extend(clip_actions)
 

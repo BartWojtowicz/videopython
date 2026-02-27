@@ -35,4 +35,3 @@ def test_detect_detailed_returns_text_regions_without_model_download() -> None:
 
     # Backward-compatible plain-text API should still work.
     assert detector.detect(image) == ["EXIT", "A12"]
-
