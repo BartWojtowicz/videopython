@@ -303,7 +303,7 @@ class ColorGrading(Effect):
             hsv = cv2.cvtColor(np.clip(img, 0, 1).astype(np.float32), cv2.COLOR_RGB2HSV)
             hsv[:, :, 1] = hsv[:, :, 1] * self.saturation
             hsv[:, :, 1] = np.clip(hsv[:, :, 1], 0, 1)
-            img = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB).astype(np.float64)
+            img = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB).astype(np.float32)
 
         # Apply temperature (shift red/blue channels)
         if self.temperature != 0:

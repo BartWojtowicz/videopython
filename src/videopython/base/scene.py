@@ -40,7 +40,7 @@ def _detect_segment_worker(
     start_second, end_second = segment
 
     scene_boundaries: list[int] = []
-    prev_frame: np.ndarray | None = None
+    prev_hist: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
     first_frame_idx: int | None = None
     last_frame_idx: int = 0
 
@@ -49,16 +49,13 @@ def _detect_segment_worker(
 
     with FrameIterator(path, start_second, end_second) as frames:
         for frame_idx, frame in frames:
+            current_hist = detector._frame_histogram(frame)
             if first_frame_idx is None:
                 first_frame_idx = frame_idx
                 scene_boundaries.append(frame_idx)
-
-            if prev_frame is not None:
-                difference = detector._calculate_histogram_difference(prev_frame, frame)
-                if difference > threshold:
-                    scene_boundaries.append(frame_idx)
-
-            prev_frame = frame
+            elif prev_hist is not None and detector._histogram_difference(prev_hist, current_hist) > threshold:
+                scene_boundaries.append(frame_idx)
+            prev_hist = current_hist
             last_frame_idx = frame_idx
 
     return (scene_boundaries, first_frame_idx or 0, last_frame_idx)
@@ -117,6 +114,19 @@ class SceneDetector:
 
         return (h_hist, s_hist, v_hist)
 
+    def _frame_histogram(self, frame: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Calculate normalized HSV histograms for a single RGB frame."""
+        return self._calculate_hsv_histogram(cv2.cvtColor(frame, cv2.COLOR_RGB2HSV))
+
+    def _histogram_difference(
+        self,
+        hist1: tuple[np.ndarray, np.ndarray, np.ndarray],
+        hist2: tuple[np.ndarray, np.ndarray, np.ndarray],
+    ) -> float:
+        """Calculate histogram difference between two precomputed HSV histogram tuples."""
+        correlations = [cv2.compareHist(h1, h2, cv2.HISTCMP_CORREL) for h1, h2 in zip(hist1, hist2)]
+        return 1.0 - (sum(correlations) / len(correlations))
+
     def _calculate_histogram_difference(self, frame1: np.ndarray, frame2: np.ndarray) -> float:
         """Calculate histogram difference between two frames.
 
@@ -127,16 +137,7 @@ class SceneDetector:
         Returns:
             Difference score between 0.0 (identical) and 1.0 (completely different)
         """
-        hsv1 = cv2.cvtColor(frame1, cv2.COLOR_RGB2HSV)
-        hsv2 = cv2.cvtColor(frame2, cv2.COLOR_RGB2HSV)
-
-        hist1 = self._calculate_hsv_histogram(hsv1)
-        hist2 = self._calculate_hsv_histogram(hsv2)
-
-        correlations = [cv2.compareHist(h1, h2, cv2.HISTCMP_CORREL) for h1, h2 in zip(hist1, hist2)]
-        avg_correlation = sum(correlations) / len(correlations)
-
-        return 1.0 - avg_correlation
+        return self._histogram_difference(self._frame_histogram(frame1), self._frame_histogram(frame2))
 
     def detect(self, video: Video) -> list[SceneBoundary]:
         """Detect scenes in a video.
@@ -155,12 +156,13 @@ class SceneDetector:
             return [SceneBoundary(start=0.0, end=video.total_seconds, start_frame=0, end_frame=1)]
 
         scene_boundaries = [0]
+        prev_hist = self._frame_histogram(video.frames[0])
 
         for i in range(1, len(video.frames)):
-            difference = self._calculate_histogram_difference(video.frames[i - 1], video.frames[i])
-
-            if difference > self.threshold:
+            current_hist = self._frame_histogram(video.frames[i])
+            if self._histogram_difference(prev_hist, current_hist) > self.threshold:
                 scene_boundaries.append(i)
+            prev_hist = current_hist
 
         scene_boundaries.append(len(video.frames))
 
@@ -217,22 +219,19 @@ class SceneDetector:
         metadata = VideoMetadata.from_path(path)
 
         scene_boundaries: list[int] = []
-        prev_frame: np.ndarray | None = None
+        prev_hist: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
         first_frame_idx: int | None = None
         last_frame_idx: int = 0
 
         with FrameIterator(path, start_second, end_second) as frames:
             for frame_idx, frame in frames:
+                current_hist = self._frame_histogram(frame)
                 if first_frame_idx is None:
                     first_frame_idx = frame_idx
                     scene_boundaries.append(frame_idx)
-
-                if prev_frame is not None:
-                    difference = self._calculate_histogram_difference(prev_frame, frame)
-                    if difference > self.threshold:
-                        scene_boundaries.append(frame_idx)
-
-                prev_frame = frame
+                elif prev_hist is not None and self._histogram_difference(prev_hist, current_hist) > self.threshold:
+                    scene_boundaries.append(frame_idx)
+                prev_hist = current_hist
                 last_frame_idx = frame_idx
 
         # Handle empty video case

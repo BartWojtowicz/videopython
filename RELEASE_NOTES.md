@@ -1,5 +1,18 @@
 # Release Notes
 
+## 0.20.3
+
+### Changed
+
+- Simplified several `videopython.base` frame-processing paths to reduce overhead and code size.
+- Removed unnecessary float64 conversion in `ColorGrading` saturation processing.
+
+### Performance
+
+- `SceneDetector` now reuses the previous frame histogram in `detect`, `detect_streaming`, and worker-based detection instead of recomputing both sides for each frame pair.
+- `PictureInPicture` rounded-mask and masked-border logic is now vectorized with OpenCV/NumPy operations instead of nested Python pixel loops.
+- `Resize` now uses a direct in-process frame resize path, avoiding multiprocessing setup and frame pickling overhead for common workloads.
+
 ## 0.20.2
 
 ### Changed

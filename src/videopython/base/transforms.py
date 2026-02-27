@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from enum import Enum
-from multiprocessing import Pool
 from typing import TYPE_CHECKING, Literal
 
 import cv2
@@ -10,9 +9,6 @@ import numpy as np
 
 from videopython.base.progress import log, progress_iter
 from videopython.base.video import Video, _round_dimension_to_even
-
-# Minimum frames before using multiprocessing (Pool overhead isn't worth it below this)
-MIN_FRAMES_FOR_MULTIPROCESSING = 100
 
 if TYPE_CHECKING:
     from videopython.base.audio import Audio
@@ -142,18 +138,10 @@ class Resize(Transformation):
             new_height = _round_dimension_to_even(new_height)
 
         log(f"Resizing video to: {new_width}x{new_height}!")
-        n_frames = len(video.frames)
-
-        if n_frames >= MIN_FRAMES_FOR_MULTIPROCESSING:
-            with Pool() as pool:
-                frames_copy = pool.starmap(
-                    self._resize_frame,
-                    [(frame, new_width, new_height) for frame in video.frames],
-                )
-        else:
-            frames_copy = [self._resize_frame(frame, new_width, new_height) for frame in video.frames]
-
-        video.frames = np.array(frames_copy)
+        video.frames = np.asarray(
+            [self._resize_frame(frame, new_width, new_height) for frame in video.frames],
+            dtype=np.uint8,
+        )
         return video
 
 
@@ -332,18 +320,6 @@ class SpeedChange(Transformation):
         self.interpolate = interpolate
         self.adjust_audio = adjust_audio
 
-    def _interpolate_frame(self, frames: np.ndarray, index: float) -> np.ndarray:
-        """Interpolate between two frames at a fractional index."""
-        idx_low = int(index)
-        idx_high = min(idx_low + 1, len(frames) - 1)
-        ratio = index - idx_low
-
-        if ratio == 0 or idx_low == idx_high:
-            return frames[idx_low]
-
-        # Linear interpolation between frames
-        return ((1 - ratio) * frames[idx_low] + ratio * frames[idx_high]).astype(np.uint8)
-
     def apply(self, video: Video) -> Video:
         """Apply speed change to video.
 
@@ -395,7 +371,14 @@ class SpeedChange(Transformation):
             # Interpolate for smoother slow motion
             new_frames = []
             for idx in progress_iter(source_indices, desc="Interpolating frames"):
-                new_frames.append(self._interpolate_frame(video.frames, idx))
+                idx_low = int(idx)
+                idx_high = min(idx_low + 1, len(video.frames) - 1)
+                ratio = idx - idx_low
+                if ratio == 0 or idx_low == idx_high:
+                    new_frames.append(video.frames[idx_low])
+                else:
+                    interpolated = (1 - ratio) * video.frames[idx_low] + ratio * video.frames[idx_high]
+                    new_frames.append(interpolated.astype(np.uint8))
             video.frames = np.array(new_frames, dtype=np.uint8)
         else:
             # Simple frame selection (faster, good for speedup)
@@ -486,30 +469,24 @@ class PictureInPicture(Transformation):
 
     def _create_rounded_mask(self, width: int, height: int) -> np.ndarray:
         """Create a mask with rounded corners."""
-        mask = np.ones((height, width), dtype=np.float32)
-
         if self.corner_radius <= 0:
-            return mask
+            return np.ones((height, width), dtype=np.float32)
 
         radius = min(self.corner_radius, width // 2, height // 2)
+        mask = np.ones((height, width), dtype=np.float32)
 
-        # Create rounded corners using circles
-        for corner_y, corner_x in [(0, 0), (0, width), (height, 0), (height, width)]:
-            # Determine the center of the corner circle
-            center_y = radius if corner_y == 0 else height - radius
-            center_x = radius if corner_x == 0 else width - radius
-
-            # Create coordinate grids for this corner region
-            y_start = 0 if corner_y == 0 else height - radius
-            y_end = radius if corner_y == 0 else height
-            x_start = 0 if corner_x == 0 else width - radius
-            x_end = radius if corner_x == 0 else width
-
-            for y in range(y_start, y_end):
-                for x in range(x_start, x_end):
-                    dist = np.sqrt((x - center_x) ** 2 + (y - center_y) ** 2)
-                    if dist > radius:
-                        mask[y, x] = 0
+        # Vectorized equivalent of the previous per-pixel corner loop.
+        corners = [
+            (0, radius, 0, radius, radius, radius),  # top-left
+            (0, radius, width - radius, width, width - radius, radius),  # top-right
+            (height - radius, height, 0, radius, radius, height - radius),  # bottom-left
+            (height - radius, height, width - radius, width, width - radius, height - radius),  # bottom-right
+        ]
+        radius_sq = float(radius * radius)
+        for y_start, y_end, x_start, x_end, center_x, center_y in corners:
+            yy, xx = np.ogrid[y_start:y_end, x_start:x_end]
+            outside = ((xx - center_x) ** 2 + (yy - center_y) ** 2) > radius_sq
+            mask[y_start:y_end, x_start:x_end][outside] = 0.0
 
         return mask
 
@@ -534,9 +511,7 @@ class PictureInPicture(Transformation):
 
         # If we have rounded corners, apply mask to border too
         if self.corner_radius > 0:
-            # Only show border where mask is 1
-            for c in range(3):
-                bordered[:, :, c] = bordered[:, :, c] * mask
+            bordered = bordered * mask[:, :, None].astype(np.uint8)
 
         return bordered
 
@@ -569,17 +544,24 @@ class PictureInPicture(Transformation):
 
         # Resize overlay frames once
         log(f"Resizing overlay to {overlay_w}x{overlay_h}...")
-        resized_overlay_frames = []
-        for frame in progress_iter(self.overlay.frames, desc="Resizing overlay"):
-            resized = cv2.resize(frame, (overlay_w, overlay_h), interpolation=cv2.INTER_AREA)
-            resized_overlay_frames.append(resized)
+        resized_overlay_frames = np.asarray(
+            [
+                cv2.resize(frame, (overlay_w, overlay_h), interpolation=cv2.INTER_AREA)
+                for frame in progress_iter(self.overlay.frames, desc="Resizing overlay")
+            ],
+            dtype=np.uint8,
+        )
 
         # Create rounded corner mask if needed
         mask = self._create_rounded_mask(overlay_w, overlay_h)
+        alpha = mask[:, :, None] * self.opacity
 
         # Apply border to overlay frames
         if self.border_width > 0:
-            resized_overlay_frames = [self._add_border(frame, mask) for frame in resized_overlay_frames]
+            resized_overlay_frames = np.asarray(
+                [self._add_border(frame, mask) for frame in resized_overlay_frames],
+                dtype=np.uint8,
+            )
 
         log("Applying picture-in-picture...")
         new_frames = []
@@ -596,8 +578,6 @@ class PictureInPicture(Transformation):
             # Apply mask and opacity
             if self.corner_radius > 0 or self.opacity < 1.0:
                 # Blend with mask and opacity
-                mask_3d = mask[:, :, np.newaxis]
-                alpha = mask_3d * self.opacity
                 blended = (overlay_frame * alpha + region * (1 - alpha)).astype(np.uint8)
             else:
                 blended = overlay_frame
