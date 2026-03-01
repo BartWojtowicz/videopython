@@ -17,7 +17,7 @@ from videopython.base.description import (
     DetectedText,
     SceneBoundary,
 )
-from videopython.base.text.transcription import Transcription, TranscriptionSegment
+from videopython.base.text.transcription import Transcription, TranscriptionSegment, TranscriptionWord
 from videopython.base.video import VideoMetadata
 
 
@@ -100,11 +100,11 @@ def test_video_analysis_roundtrip_json() -> None:
                 )
             ],
         ),
-        summary={"frame_sample_count": 1},
     )
 
     restored = va.VideoAnalysis.from_json(original.to_json())
     assert restored == original
+    assert restored.summary["frame_sample_count"] == 1
 
 
 def test_build_summary_prioritizes_high_level_information() -> None:
@@ -428,3 +428,201 @@ def test_rich_understanding_preset_includes_full_coverage() -> None:
     assert set(va.ALL_ANALYZER_IDS).issubset(config.enabled_analyzers)
     assert va.IMAGE_TO_TEXT in config.enabled_analyzers
     assert config.frames_per_second >= 1.0
+
+
+def test_video_analysis_editing_export_prunes_noise_and_keeps_signal() -> None:
+    """Editing export should keep high-signal fields and remove raw-heavy sections."""
+    analysis = va.VideoAnalysis(
+        source=va.VideoAnalysisSource(
+            title="fight_clip",
+            filename="fight_clip.mp4",
+            duration=10.0,
+            fps=30.0,
+            width=1280,
+            height=720,
+        ),
+        config=va.VideoAnalysisConfig(enabled_analyzers=set()),
+        run_info=va.AnalysisRunInfo(created_at="2026-01-01T00:00:00Z", mode="path"),
+        audio=va.AudioAnalysisSection(
+            transcription=Transcription(
+                segments=[
+                    TranscriptionSegment(
+                        start=0.0,
+                        end=2.0,
+                        text="Round one starts now",
+                        words=[
+                            TranscriptionWord(start=0.0, end=0.4, word="Round"),
+                            TranscriptionWord(start=0.4, end=0.8, word="one"),
+                            TranscriptionWord(start=0.8, end=1.2, word="starts"),
+                            TranscriptionWord(start=1.2, end=1.6, word="now"),
+                        ],
+                    )
+                ]
+            ),
+            classification=AudioClassification(
+                events=[
+                    AudioEvent(start=0.0, end=2.0, label="Speech", confidence=0.95),
+                    AudioEvent(start=2.0, end=6.0, label="Music", confidence=0.81),
+                ],
+                clip_predictions={"Speech": 0.9, "Music": 0.72, "Noise": 0.05},
+            ),
+        ),
+        temporal=va.TemporalAnalysisSection(
+            scenes=[
+                SceneBoundary(start=0.0, end=5.0, start_frame=0, end_frame=150),
+                SceneBoundary(start=5.0, end=10.0, start_frame=150, end_frame=300),
+            ],
+            actions=[
+                DetectedAction(label="boxing", confidence=0.81, start_time=1.0, end_time=3.0),
+                DetectedAction(label="dodgeball", confidence=0.12, start_time=6.0, end_time=7.0),
+            ],
+        ),
+        motion=va.MotionAnalysisSection(
+            camera_motion_samples=[
+                va.CameraMotionSample(start=0.0, end=5.0, label="zoom"),
+                va.CameraMotionSample(start=5.0, end=10.0, label="pan"),
+            ],
+        ),
+        frames=va.FrameAnalysisSection(
+            sampling=va.FrameSamplingReport(
+                mode="uniform",
+                frames_per_second=1.0,
+                max_frames=10,
+                sampled_indices=[0, 30, 60, 90],
+                sampled_timestamps=[0.0, 1.0, 2.0, 3.0],
+            ),
+            samples=[
+                va.FrameAnalysisSample(
+                    timestamp=0.0,
+                    frame_index=0,
+                    image_caption="Two fighters in a cage",
+                    objects=[
+                        DetectedObject(label="person", confidence=0.88),
+                        DetectedObject(label="tv", confidence=0.2),
+                    ],
+                    text_regions=[DetectedText(text="ROUND 1", confidence=0.72)],
+                ),
+                va.FrameAnalysisSample(
+                    timestamp=1.0,
+                    frame_index=30,
+                    image_caption="Fighters trading punches",
+                    objects=[DetectedObject(label="person", confidence=0.82)],
+                    text_regions=[DetectedText(text="ROUND 1", confidence=0.76)],
+                ),
+                va.FrameAnalysisSample(
+                    timestamp=2.0,
+                    frame_index=60,
+                    image_caption="Referee steps in",
+                    objects=[DetectedObject(label="person", confidence=0.78)],
+                    text_regions=[],
+                ),
+            ],
+        ),
+    )
+
+    editing = analysis.filter(target="editing")
+
+    assert editing.source.path is None
+    assert editing.source.raw_tags is None
+    assert editing.audio is not None and editing.audio.transcription is not None
+    assert editing.audio.transcription.segments[0].text == "Round one starts now"
+    assert editing.audio.transcription.segments[0].words == []
+    assert editing.temporal is not None
+    assert len(editing.temporal.actions) == 1
+    assert editing.temporal.actions[0].label == "boxing"
+    assert editing.frames is not None
+    assert editing.frames.samples
+    assert all(sample.step_results is None for sample in editing.frames.samples)
+    assert all(obj.label != "tv" for sample in editing.frames.samples for obj in (sample.objects or []))
+    assert editing.motion is not None
+    assert editing.motion.video_motion == []
+    assert editing.motion.motion_timeline == []
+    assert "overview" in editing.summary
+
+
+def test_editing_export_does_not_cap_high_quality_moments() -> None:
+    """Editing export should include all high-quality moments without hard caps."""
+    scenes = []
+    actions = []
+    for i in range(20):
+        start = float(i * 5)
+        end = start + 5.0
+        scenes.append(SceneBoundary(start=start, end=end, start_frame=i * 150, end_frame=(i + 1) * 150))
+        actions.append(
+            DetectedAction(
+                label=f"action_{i}",
+                confidence=0.9,
+                start_time=start + 1.0,
+                end_time=start + 2.0,
+            )
+        )
+
+    analysis = va.VideoAnalysis(
+        source=va.VideoAnalysisSource(duration=100.0, fps=30.0),
+        config=va.VideoAnalysisConfig(enabled_analyzers=set()),
+        run_info=va.AnalysisRunInfo(created_at="2026-01-01T00:00:00Z", mode="path"),
+        temporal=va.TemporalAnalysisSection(scenes=scenes, actions=actions),
+    )
+
+    editing = analysis.filter(target="editing")
+    assert editing.temporal is not None
+    assert len(editing.temporal.actions) == 20
+
+
+def test_filter_rejects_non_editing_targets() -> None:
+    """Only editing target should be supported for filtering."""
+    analysis = va.VideoAnalysis(
+        source=va.VideoAnalysisSource(duration=2.0, fps=30.0),
+        config=va.VideoAnalysisConfig(enabled_analyzers=set()),
+        run_info=va.AnalysisRunInfo(created_at="2026-01-01T00:00:00Z", mode="path"),
+    )
+    with pytest.raises(ValueError, match="Supported targets: editing"):
+        analysis.filter(target="rich")
+
+
+def test_editing_filter_preserves_motion_timeline_when_camera_samples_absent() -> None:
+    """Editing filter should keep timeline motion signal if camera samples are unavailable."""
+    analysis = va.VideoAnalysis(
+        source=va.VideoAnalysisSource(duration=4.0, fps=30.0),
+        config=va.VideoAnalysisConfig(enabled_analyzers=set()),
+        run_info=va.AnalysisRunInfo(created_at="2026-01-01T00:00:00Z", mode="path"),
+        motion=va.MotionAnalysisSection(
+            motion_timeline=[
+                va.MotionTimelineSample(
+                    timestamp=1.0,
+                    motion=va.MotionInfo(motion_type="pan", magnitude=0.4, raw_magnitude=8.0),
+                ),
+                va.MotionTimelineSample(
+                    timestamp=2.0, motion=va.MotionInfo(motion_type="zoom", magnitude=0.5, raw_magnitude=10.0)
+                ),
+            ],
+            camera_motion_samples=[],
+        ),
+    )
+
+    editing = analysis.filter()
+    assert editing.motion is not None
+    assert editing.motion.camera_motion_samples == []
+    assert len(editing.motion.motion_timeline) == 2
+    assert editing.motion.motion_timeline[0].motion.motion_type == "pan"
+    assert editing.motion.motion_timeline[1].motion.motion_type == "zoom"
+
+
+def test_summary_is_computed_runtime_not_from_serialized_snapshot() -> None:
+    """Serialized summary snapshots should be ignored in favor of runtime summary."""
+    analysis = va.VideoAnalysis(
+        source=va.VideoAnalysisSource(duration=6.0, fps=30.0),
+        config=va.VideoAnalysisConfig(enabled_analyzers=set()),
+        run_info=va.AnalysisRunInfo(created_at="2026-01-01T00:00:00Z", mode="path"),
+        temporal=va.TemporalAnalysisSection(
+            scenes=[SceneBoundary(start=0.0, end=6.0, start_frame=0, end_frame=180)],
+            actions=[],
+        ),
+    )
+
+    payload = analysis.to_dict()
+    payload["summary"] = {"scene_count": 999, "overview": "stale summary"}
+    restored = va.VideoAnalysis.from_dict(payload)
+
+    assert restored.summary["scene_count"] == 1
+    assert restored.summary["overview"] != "stale summary"

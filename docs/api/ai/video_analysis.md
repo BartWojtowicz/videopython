@@ -11,6 +11,7 @@ Create a single, serializable analysis object that aggregates multiple AI unders
 - `to_dict()` / `from_dict()`
 - `to_json()` / `from_json()`
 - `save()` / `load()`
+- `filter()` (editing-focused filtering)
 
 The path-based flow (`analyze_path`) is designed for bounded frame memory usage by preferring streaming/chunked frame access.
 
@@ -65,6 +66,18 @@ analysis = VideoAnalyzer(config=config).analyze_path("video.mp4")
 ```
 
 The preset enables all analyzers and keeps resource usage bounded with adaptive defaults.
+
+## Editing Export
+
+Use `filter()` (or `filter(target="editing")`) to obtain a filtered `VideoAnalysis` object optimized for edit planning:
+
+```python
+editing_analysis = analysis.filter()
+print(editing_analysis.summary)  # computed from filtered data
+```
+
+`editing` filtering removes low-confidence predictions and low-value verbose details while preserving strong signals.
+`summary` is computed at runtime from currently available data (full or filtered), so it cannot go stale.
 
 ## Notes on New Output Fields
 
