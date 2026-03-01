@@ -1,5 +1,21 @@
 # Release Notes
 
+## 0.20.5
+
+### Changed
+
+- `VideoAnalysis.summary` is now always computed at access time from the current analysis state (including filtered analyses), while keeping serialized `summary` output for compatibility.
+- Added `VideoAnalysis.filter(target="editing")` to produce an editing-focused `VideoAnalysis` view that filters low-confidence/low-signal predictions and keeps all high-quality signals (no hard cap on retained good moments).
+- Reduced editing payload noise by stripping low-value frame details (for example, bounding boxes and repeated near-duplicate samples), compacting transcription/audio events to useful signals, and merging adjacent camera-motion spans.
+
+### Documentation
+
+- Updated `VideoAnalysis` API docs to describe the filtering-first workflow for editing use cases.
+
+### Tests
+
+- Added and updated tests for runtime summary computation, legacy-summary deserialization compatibility, editing filter behavior, no-cap retention of high-confidence actions, and motion timeline fallback.
+
 ## 0.20.4
 
 ### Changed

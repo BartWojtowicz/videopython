@@ -5,7 +5,7 @@ import re
 import subprocess
 import time
 from collections import Counter, deque
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from datetime import datetime, timezone
 from importlib import metadata as importlib_metadata
 from pathlib import Path
@@ -28,6 +28,7 @@ from videopython.ai.understanding import (
 from videopython.base.audio import Audio
 from videopython.base.description import (
     AudioClassification,
+    AudioEvent,
     DetectedAction,
     DetectedFace,
     DetectedObject,
@@ -35,7 +36,7 @@ from videopython.base.description import (
     MotionInfo,
     SceneBoundary,
 )
-from videopython.base.text.transcription import Transcription
+from videopython.base.text.transcription import Transcription, TranscriptionSegment
 from videopython.base.video import FrameIterator, Video, VideoMetadata, extract_frames_at_indices
 
 __all__ = ["VideoAnalysis", "VideoAnalysisConfig", "VideoAnalyzer"]
@@ -75,6 +76,16 @@ _GEO_TAG_KEYS: tuple[str, ...] = (
     "location",
     "location-eng",
 )
+
+_EDITING_EXPORT_TARGET = "editing"
+_SUPPORTED_EXPORT_TARGETS = {_EDITING_EXPORT_TARGET}
+
+_EDITING_ACTION_CONFIDENCE_THRESHOLD = 0.25
+_EDITING_OBJECT_MEDIAN_CONFIDENCE_THRESHOLD = 0.45
+_EDITING_AUDIO_EVENT_CONFIDENCE_THRESHOLD = 0.35
+_EDITING_AUDIO_EVENT_MIN_DURATION_SECONDS = 0.8
+_EDITING_TEXT_CONFIDENCE_THRESHOLD = 0.35
+_EDITING_FACE_CONFIDENCE_THRESHOLD = 0.5
 
 
 @dataclass
@@ -554,7 +565,21 @@ class VideoAnalysis:
     temporal: TemporalAnalysisSection | None = None
     motion: MotionAnalysisSection | None = None
     frames: FrameAnalysisSection | None = None
-    summary: dict[str, Any] | None = None
+    legacy_summary: InitVar[dict[str, Any] | None] = None
+
+    def __post_init__(self, legacy_summary: dict[str, Any] | None) -> None:
+        # Preserve backward compatibility for payloads that carry serialized summary snapshots.
+        del legacy_summary
+
+    @property
+    def summary(self) -> dict[str, Any]:
+        # Build summary from current state on every access to avoid stale snapshots.
+        return VideoAnalyzer(config=VideoAnalysisConfig(enabled_analyzers=set()))._build_summary(
+            temporal_section=self.temporal or TemporalAnalysisSection(),
+            audio_section=self.audio or AudioAnalysisSection(),
+            motion_section=self.motion or MotionAnalysisSection(),
+            frame_samples=self.frames.samples if self.frames else [],
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -566,7 +591,7 @@ class VideoAnalysis:
             "temporal": self.temporal.to_dict() if self.temporal else None,
             "motion": self.motion.to_dict() if self.motion else None,
             "frames": self.frames.to_dict() if self.frames else None,
-            "summary": self.summary,
+            "summary": self.summary,  # Derived at serialization time.
         }
 
     @classmethod
@@ -584,7 +609,7 @@ class VideoAnalysis:
             temporal=TemporalAnalysisSection.from_dict(temporal_data) if temporal_data else None,
             motion=MotionAnalysisSection.from_dict(motion_data) if motion_data else None,
             frames=FrameAnalysisSection.from_dict(frames_data) if frames_data else None,
-            summary=data.get("summary"),
+            legacy_summary=data.get("summary"),
         )
 
     def to_json(self, *, indent: int | None = 2) -> str:
@@ -602,6 +627,245 @@ class VideoAnalysis:
     @classmethod
     def load(cls, path: str | Path) -> "VideoAnalysis":
         return cls.from_json(Path(path).read_text(encoding="utf-8"))
+
+    def filter(self, *, target: str = _EDITING_EXPORT_TARGET) -> "VideoAnalysis":
+        """Return an editing-optimized filtered copy of this analysis."""
+        if target not in _SUPPORTED_EXPORT_TARGETS:
+            supported = ", ".join(sorted(_SUPPORTED_EXPORT_TARGETS))
+            raise ValueError(f"Unsupported export target '{target}'. Supported targets: {supported}")
+        return self._filter_editing()
+
+    def _filter_editing(self) -> "VideoAnalysis":
+        return VideoAnalysis(
+            source=self._filter_source_for_editing(),
+            config=VideoAnalysisConfig.from_dict(self.config.to_dict()),
+            run_info=AnalysisRunInfo.from_dict(self.run_info.to_dict()),
+            steps={
+                name: AnalysisStepStatus.from_dict(step.to_dict())
+                for name, step in self.steps.items()
+                if step.status != "succeeded" or step.error is not None or step.warning is not None
+            },
+            audio=self._filter_audio_for_editing(),
+            temporal=self._filter_temporal_for_editing(),
+            motion=self._filter_motion_for_editing(),
+            frames=self._filter_frames_for_editing(),
+        )
+
+    def _filter_source_for_editing(self) -> VideoAnalysisSource:
+        return VideoAnalysisSource(
+            title=self.source.title,
+            path=None,
+            filename=self.source.filename,
+            duration=self.source.duration,
+            fps=self.source.fps,
+            width=self.source.width,
+            height=self.source.height,
+            frame_count=self.source.frame_count,
+            creation_time=self.source.creation_time,
+            geo=None,
+            raw_tags=None,
+        )
+
+    def _filter_audio_for_editing(self) -> AudioAnalysisSection | None:
+        if self.audio is None:
+            return None
+
+        transcription_filtered: Transcription | None = None
+        if self.audio.transcription is not None:
+            segments: list[TranscriptionSegment] = []
+            for segment in self.audio.transcription.segments:
+                text = _normalize_text(segment.text)
+                if not text:
+                    continue
+                segments.append(
+                    TranscriptionSegment(
+                        start=segment.start,
+                        end=segment.end,
+                        text=text,
+                        words=[],
+                        speaker=segment.speaker,
+                    )
+                )
+            if segments:
+                transcription_filtered = Transcription(segments=segments)
+
+        classification_filtered: AudioClassification | None = None
+        if self.audio.classification is not None:
+            events: list[AudioEvent] = []
+            for event in self.audio.classification.events:
+                if float(event.confidence) < _EDITING_AUDIO_EVENT_CONFIDENCE_THRESHOLD:
+                    continue
+                if float(event.duration) < _EDITING_AUDIO_EVENT_MIN_DURATION_SECONDS:
+                    continue
+                events.append(
+                    AudioEvent(
+                        start=event.start,
+                        end=event.end,
+                        label=event.label,
+                        confidence=event.confidence,
+                    )
+                )
+            clip_predictions = {
+                label: float(confidence)
+                for label, confidence in self.audio.classification.clip_predictions.items()
+                if float(confidence) >= _EDITING_ACTION_CONFIDENCE_THRESHOLD
+            }
+            if events or clip_predictions:
+                classification_filtered = AudioClassification(events=events, clip_predictions=clip_predictions)
+
+        if transcription_filtered is None and classification_filtered is None:
+            return None
+        return AudioAnalysisSection(
+            transcription=transcription_filtered,
+            classification=classification_filtered,
+        )
+
+    def _filter_temporal_for_editing(self) -> TemporalAnalysisSection | None:
+        if self.temporal is None:
+            return None
+
+        scenes = [SceneBoundary.from_dict(scene.to_dict()) for scene in self.temporal.scenes]
+        actions: list[DetectedAction] = []
+        for action in self.temporal.actions:
+            if float(action.confidence) < _EDITING_ACTION_CONFIDENCE_THRESHOLD:
+                continue
+            if action.start_time is None or action.end_time is None:
+                continue
+            if float(action.end_time) <= float(action.start_time):
+                continue
+            actions.append(DetectedAction.from_dict(action.to_dict()))
+
+        if not scenes and not actions:
+            return None
+        return TemporalAnalysisSection(scenes=scenes, actions=actions)
+
+    def _filter_motion_for_editing(self) -> MotionAnalysisSection | None:
+        if self.motion is None:
+            return None
+
+        merged_samples: list[CameraMotionSample] = []
+        for sample in self.motion.camera_motion_samples:
+            if not merged_samples:
+                merged_samples.append(CameraMotionSample.from_dict(sample.to_dict()))
+                continue
+            previous = merged_samples[-1]
+            if previous.label == sample.label and float(sample.start) <= float(previous.end) + 1e-6:
+                previous.end = max(previous.end, sample.end)
+            else:
+                merged_samples.append(CameraMotionSample.from_dict(sample.to_dict()))
+
+        if not merged_samples:
+            if self.motion.motion_timeline:
+                return MotionAnalysisSection(
+                    video_motion=[],
+                    motion_timeline=[
+                        MotionTimelineSample(
+                            timestamp=float(sample.timestamp),
+                            motion=MotionInfo(
+                                motion_type=sample.motion.motion_type,
+                                magnitude=float(sample.motion.magnitude),
+                                raw_magnitude=float(sample.motion.raw_magnitude),
+                            ),
+                        )
+                        for sample in self.motion.motion_timeline
+                    ],
+                    camera_motion_samples=[],
+                )
+            return None
+
+        return MotionAnalysisSection(
+            video_motion=[],
+            motion_timeline=[],
+            camera_motion_samples=merged_samples,
+        )
+
+    def _filter_frames_for_editing(self) -> FrameAnalysisSection | None:
+        if self.frames is None:
+            return None
+
+        sampling = FrameSamplingReport(
+            mode=self.frames.sampling.mode,
+            frames_per_second=self.frames.sampling.frames_per_second,
+            max_frames=self.frames.sampling.max_frames,
+            sampled_indices=[],
+            sampled_timestamps=[],
+            access_mode=self.frames.sampling.access_mode,
+            effective_max_frames=self.frames.sampling.effective_max_frames,
+        )
+
+        filtered_samples: list[FrameAnalysisSample] = []
+        previous_signature: tuple[Any, ...] | None = None
+        for sample in self.frames.samples:
+            objects = [
+                DetectedObject(label=obj.label, confidence=obj.confidence, bounding_box=None)
+                for obj in (sample.objects or [])
+                if float(obj.confidence) >= _EDITING_OBJECT_MEDIAN_CONFIDENCE_THRESHOLD
+            ]
+            faces = [
+                DetectedFace(bounding_box=None, confidence=face.confidence)
+                for face in (sample.faces or [])
+                if float(face.confidence) >= _EDITING_FACE_CONFIDENCE_THRESHOLD
+            ]
+            text_regions: list[DetectedText] = []
+            for region in sample.text_regions or []:
+                if float(region.confidence) < _EDITING_TEXT_CONFIDENCE_THRESHOLD:
+                    continue
+                normalized = _normalize_ocr_text(region.text)
+                if not normalized:
+                    continue
+                text_regions.append(
+                    DetectedText(
+                        text=normalized,
+                        confidence=region.confidence,
+                        bounding_box=None,
+                    )
+                )
+
+            text_tokens: list[str] = []
+            seen_tokens: set[str] = set()
+            for region in text_regions:
+                token = region.text
+                key = token.lower()
+                if key not in seen_tokens:
+                    seen_tokens.add(key)
+                    text_tokens.append(token)
+            for raw_token in sample.text or []:
+                normalized = _normalize_ocr_text(raw_token)
+                if not normalized:
+                    continue
+                key = normalized.lower()
+                if key not in seen_tokens:
+                    seen_tokens.add(key)
+                    text_tokens.append(normalized)
+
+            caption = _normalize_text(sample.image_caption) or None
+            has_signal = bool(objects or faces or text_regions or text_tokens or caption)
+            if not has_signal:
+                continue
+
+            signature = (
+                tuple(sorted(obj.label for obj in objects)),
+                tuple(token.lower() for token in text_tokens[:6]),
+                (caption or "").lower(),
+            )
+            if signature == previous_signature:
+                continue
+            previous_signature = signature
+
+            filtered_samples.append(
+                FrameAnalysisSample(
+                    timestamp=sample.timestamp,
+                    frame_index=sample.frame_index,
+                    image_caption=caption,
+                    objects=objects,
+                    faces=faces,
+                    text=text_tokens,
+                    text_regions=text_regions,
+                    step_results=None,
+                )
+            )
+
+        return FrameAnalysisSection(sampling=sampling, samples=filtered_samples)
 
 
 class VideoAnalyzer:
@@ -818,13 +1082,6 @@ class VideoAnalyzer:
 
         run_info.elapsed_seconds = time.perf_counter() - started
 
-        summary = self._build_summary(
-            temporal_section=temporal_section,
-            audio_section=audio_section,
-            motion_section=motion_section,
-            frame_samples=frame_samples,
-        )
-
         return VideoAnalysis(
             source=source,
             config=self.config,
@@ -836,7 +1093,6 @@ class VideoAnalyzer:
             if (motion_section.video_motion or motion_section.motion_timeline or motion_section.camera_motion_samples)
             else None,
             frames=frames_section,
-            summary=summary,
         )
 
     def _run_step(
@@ -2047,3 +2303,18 @@ def _sanitize_raw_tags(tags: dict[str, str], *, redact_geo: bool) -> dict[str, s
     if not redact_geo:
         return dict(tags)
     return {key: value for key, value in tags.items() if key not in _GEO_TAG_KEYS}
+
+
+def _normalize_text(text: str | None) -> str:
+    if not text:
+        return ""
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _normalize_ocr_text(text: str | None) -> str:
+    normalized = _normalize_text(text)
+    if len(normalized) < 2:
+        return ""
+    if re.fullmatch(r"[\W_]+", normalized):
+        return ""
+    return normalized
