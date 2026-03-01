@@ -1,6 +1,6 @@
 [project]
 name = "videopython"
-version = "0.20.3"
+version = "0.20.4"
 description = "Minimal video generation and processing library."
 authors = [
     { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },

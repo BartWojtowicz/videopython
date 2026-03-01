@@ -974,62 +974,516 @@ class VideoAnalyzer:
             "audio_events_count": len(audio_section.classification.events) if audio_section.classification else 0,
         }
 
-        if temporal_section.actions:
-            action_counts = Counter(action.label for action in temporal_section.actions if action.label)
-            action_conf = {
-                label: max(a.confidence for a in temporal_section.actions if a.label == label)
-                for label in action_counts
-            }
-            summary["top_actions"] = [
-                {
-                    "label": label,
-                    "count": count,
-                    "max_confidence": round(float(action_conf[label]), 4),
-                }
-                for label, count in action_counts.most_common(5)
-            ]
+        action_counts = Counter(action.label for action in temporal_section.actions if action.label)
+        primary_actions = [self._normalize_summary_label(label) for label, _ in action_counts.most_common(3)]
+        if primary_actions:
+            summary["primary_actions"] = primary_actions
+
+        object_counts: Counter[str] = Counter()
+        caption_cues: list[dict[str, Any]] = []
+        caption_seen: set[str] = set()
+        for sample in frame_samples:
+            for obj in sample.objects or []:
+                if obj.label:
+                    object_counts[self._normalize_summary_label(obj.label)] += 1
+            if sample.image_caption:
+                caption = " ".join(sample.image_caption.split())
+                key = caption.lower()
+                if caption and key not in caption_seen and len(caption_cues) < 4:
+                    caption_seen.add(key)
+                    caption_cues.append({"timestamp": sample.timestamp, "caption": caption})
+
+        if object_counts:
+            summary["primary_subjects"] = [label for label, _ in object_counts.most_common(4)]
+        if caption_cues:
+            summary["visual_cues"] = caption_cues
 
         if frame_samples:
             face_present_count = sum(1 for sample in frame_samples if sample.faces)
             summary["face_presence_ratio"] = round(face_present_count / len(frame_samples), 4)
 
-            object_labels: list[tuple[str, float]] = []
-            for sample in frame_samples:
-                for obj in sample.objects or []:
-                    object_labels.append((obj.label, float(obj.confidence)))
+        audio_cues = self._extract_audio_cues(audio_section)
+        if audio_cues:
+            summary["audio_cues"] = audio_cues
 
-            if object_labels:
-                object_counts = Counter(label for label, _ in object_labels)
-                object_conf: dict[str, float] = {}
-                for label, conf in object_labels:
-                    object_conf[label] = max(object_conf.get(label, 0.0), conf)
-                summary["top_objects"] = [
-                    {
-                        "label": label,
-                        "count": count,
-                        "max_confidence": round(object_conf[label], 4),
-                    }
-                    for label, count in object_counts.most_common(10)
-                ]
+        transcript_excerpt = self._extract_transcript_excerpt(audio_section, max_chars=220)
+        if transcript_excerpt:
+            summary["transcript_excerpt"] = transcript_excerpt
+        transcript_full, transcript_reliability = self._extract_full_transcript_if_reliable(audio_section)
+        if transcript_reliability is not None:
+            summary["transcript_reliability"] = transcript_reliability
+        if transcript_full:
+            summary["transcript_full"] = transcript_full
 
-            text_tokens: Counter[str] = Counter()
-            for sample in frame_samples:
-                for text_item in sample.text or []:
-                    for token in re.findall(r"[A-Za-z0-9]{3,}", text_item.lower()):
-                        text_tokens[token] += 1
-            if text_tokens:
-                summary["top_ocr_terms"] = [
-                    {"term": token, "count": count} for token, count in text_tokens.most_common(10)
-                ]
+        camera_style = self._derive_camera_style(motion_section)
+        if camera_style:
+            summary["camera_style"] = camera_style
 
-        if motion_section.camera_motion_samples:
-            camera_counts = Counter(item.label for item in motion_section.camera_motion_samples)
-            summary["camera_motion_distribution"] = dict(camera_counts)
-        elif motion_section.motion_timeline:
-            motion_counts = Counter(item.motion.motion_type for item in motion_section.motion_timeline)
-            summary["motion_type_distribution"] = dict(motion_counts)
+        pace = self._derive_pace(temporal_section, motion_section)
+        if pace:
+            summary["pace"] = pace
+
+        topic_keywords = self._extract_topic_keywords(
+            temporal_section=temporal_section,
+            frame_samples=frame_samples,
+            transcript_excerpt=transcript_excerpt,
+        )
+        if topic_keywords:
+            summary["topic_keywords"] = topic_keywords
+
+        highlights = self._build_highlights(
+            temporal_section=temporal_section,
+            audio_section=audio_section,
+            frame_samples=frame_samples,
+        )
+        if highlights:
+            summary["highlights"] = highlights
+
+        summary["overview"] = self._build_overview(summary)
 
         return summary
+
+    def _build_overview(self, summary: dict[str, Any]) -> str:
+        parts: list[str] = []
+
+        subjects = [str(item) for item in summary.get("primary_subjects", [])[:3]]
+        actions = [str(item) for item in summary.get("primary_actions", [])[:2]]
+        visual_cues = summary.get("visual_cues", [])
+        scene_count = int(summary.get("scene_count", 0))
+        pace = summary.get("pace")
+        audio_cues = [str(item) for item in summary.get("audio_cues", [])[:3]]
+        camera_style = summary.get("camera_style")
+        topic_keywords = [str(item) for item in summary.get("topic_keywords", [])[:5]]
+
+        if subjects and actions:
+            parts.append(
+                f"This video mainly shows {self._human_join(subjects)} engaged in {self._human_join(actions)}."
+            )
+        elif actions:
+            parts.append(f"This video is primarily about {self._human_join(actions)}.")
+        elif subjects:
+            parts.append(f"This video mainly features {self._human_join(subjects)}.")
+        elif visual_cues:
+            first_cue = str(visual_cues[0].get("caption", "")).strip()
+            if first_cue:
+                parts.append(f"This video appears to show {self._truncate_text(first_cue, max_chars=96)}.")
+
+        if scene_count > 0:
+            scene_word = "scene" if scene_count == 1 else "scenes"
+            if pace:
+                parts.append(f"It moves through {scene_count} {scene_word} with {pace}.")
+            else:
+                parts.append(f"It moves through {scene_count} {scene_word}.")
+        elif pace:
+            parts.append(f"The pacing appears {pace}.")
+
+        if audio_cues:
+            parts.append(f"Audio cues suggest {self._human_join(audio_cues)}.")
+
+        if camera_style:
+            parts.append(f"Camera behavior is {camera_style}.")
+
+        if topic_keywords:
+            parts.append(f"Likely themes include {self._human_join(topic_keywords)}.")
+
+        highlights = summary.get("highlights", [])
+        if highlights:
+            highlight_times = [item["time"] for item in highlights if "time" in item]
+            if highlight_times:
+                times = ", ".join(highlight_times[:3])
+                parts.append(f"Notable moments appear around {times}.")
+
+        if not parts:
+            return "Limited analysis signals were available to infer high-level video content."
+        return " ".join(parts)
+
+    def _extract_audio_cues(self, audio_section: AudioAnalysisSection) -> list[str]:
+        cues: list[str] = []
+
+        if audio_section.transcription and audio_section.transcription.segments:
+            has_text = any(segment.text.strip() for segment in audio_section.transcription.segments)
+            if has_text:
+                cues.append("speech/dialogue")
+
+        if audio_section.classification:
+            event_counts = Counter(
+                self._normalize_summary_label(event.label)
+                for event in audio_section.classification.events
+                if event.label
+            )
+            cues.extend(label for label, _ in event_counts.most_common(3))
+
+            clip_predictions = sorted(
+                audio_section.classification.clip_predictions.items(),
+                key=lambda item: item[1],
+                reverse=True,
+            )
+            for label, score in clip_predictions[:3]:
+                if score >= 0.15:
+                    cues.append(self._normalize_summary_label(label))
+
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for cue in cues:
+            key = cue.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(cue)
+            if len(deduped) >= 4:
+                break
+
+        return deduped
+
+    def _extract_transcript_excerpt(self, audio_section: AudioAnalysisSection, *, max_chars: int) -> str | None:
+        transcription = audio_section.transcription
+        if transcription is None:
+            return None
+
+        pieces: list[str] = []
+        for segment in transcription.segments:
+            text = " ".join(segment.text.split()).strip()
+            if not text:
+                continue
+            pieces.append(text)
+            if len(" ".join(pieces)) >= max_chars:
+                break
+
+        if not pieces:
+            return None
+
+        return self._truncate_text(" ".join(pieces), max_chars=max_chars)
+
+    def _extract_full_transcript_if_reliable(
+        self,
+        audio_section: AudioAnalysisSection,
+    ) -> tuple[str | None, dict[str, Any] | None]:
+        transcription = audio_section.transcription
+        if transcription is None:
+            return None, None
+
+        lines: list[str] = []
+        total_words = 0
+        total_chars = 0
+        alpha_chars = 0
+        seen_tokens: set[str] = set()
+        timed_segments = 0
+        ordered_segments = 0
+        considered_segments = 0
+        prev_start: float | None = None
+
+        for segment in transcription.segments:
+            text = " ".join(segment.text.split()).strip()
+            if not text:
+                continue
+
+            lines.append(text)
+            considered_segments += 1
+
+            for char in text:
+                if char.isalpha():
+                    alpha_chars += 1
+                if not char.isspace():
+                    total_chars += 1
+
+            tokens = [token.lower() for token in re.findall(r"[A-Za-z0-9']+", text)]
+            total_words += len(tokens)
+            seen_tokens.update(tokens)
+
+            if segment.end > segment.start:
+                timed_segments += 1
+            if prev_start is None or segment.start >= prev_start:
+                ordered_segments += 1
+            prev_start = segment.start
+
+        if not lines:
+            return None, {
+                "is_reliable": False,
+                "score": 0.0,
+                "word_count": 0,
+                "char_count": 0,
+                "reason": "No non-empty transcript segments",
+            }
+
+        alpha_ratio = alpha_chars / max(total_chars, 1)
+        lexical_diversity = len(seen_tokens) / max(total_words, 1)
+        timed_ratio = timed_segments / max(considered_segments, 1)
+        ordered_ratio = ordered_segments / max(considered_segments, 1)
+        speech_score = self._speech_presence_score(audio_section)
+
+        score = 0.0
+        if total_words >= 8 and total_chars >= 40:
+            score += 1.0
+        if total_words >= 20:
+            score += 1.0
+        if alpha_ratio >= 0.6:
+            score += 1.0
+        if 0.22 <= lexical_diversity <= 0.95:
+            score += 1.0
+        if timed_ratio >= 0.75:
+            score += 1.0
+        if ordered_ratio >= 0.90:
+            score += 1.0
+        if speech_score >= 0.35:
+            score += 1.0
+
+        is_reliable = total_words >= 8 and total_chars >= 40 and score >= 4.0
+        reliability: dict[str, Any] = {
+            "is_reliable": is_reliable,
+            "score": round(score, 3),
+            "word_count": total_words,
+            "char_count": total_chars,
+            "alpha_ratio": round(alpha_ratio, 3),
+            "lexical_diversity": round(lexical_diversity, 3),
+            "timed_segment_ratio": round(timed_ratio, 3),
+            "ordered_segment_ratio": round(ordered_ratio, 3),
+            "speech_score": round(speech_score, 3),
+        }
+        if not is_reliable:
+            reliability["reason"] = "Transcript quality signals did not meet reliability threshold"
+            return None, reliability
+
+        return "\n".join(lines), reliability
+
+    def _speech_presence_score(self, audio_section: AudioAnalysisSection) -> float:
+        score = 0.0
+        speech_tokens = ("speech", "dialog", "dialogue", "voice", "talk", "conversation", "narration")
+
+        classification = audio_section.classification
+        if classification is None:
+            return score
+
+        for event in classification.events:
+            label = event.label.lower()
+            if any(token in label for token in speech_tokens):
+                score = max(score, float(event.confidence))
+
+        for label, value in classification.clip_predictions.items():
+            lowered = label.lower()
+            if any(token in lowered for token in speech_tokens):
+                score = max(score, float(value))
+
+        return score
+
+    def _derive_camera_style(self, motion_section: MotionAnalysisSection) -> str | None:
+        counts: Counter[str] = Counter()
+        if motion_section.camera_motion_samples:
+            counts.update(self._normalize_summary_label(item.label) for item in motion_section.camera_motion_samples)
+        elif motion_section.motion_timeline:
+            counts.update(
+                self._normalize_summary_label(item.motion.motion_type)
+                for item in motion_section.motion_timeline
+                if item.motion.motion_type
+            )
+
+        if not counts:
+            return None
+
+        dominant, dominant_count = counts.most_common(1)[0]
+        total = sum(counts.values())
+        share = dominant_count / max(total, 1)
+
+        if dominant == "static" and share >= 0.7:
+            return "mostly static"
+        if share >= 0.65:
+            return f"mostly {dominant}"
+        return "mixed and variable"
+
+    def _derive_pace(
+        self,
+        temporal_section: TemporalAnalysisSection,
+        motion_section: MotionAnalysisSection,
+    ) -> str | None:
+        if temporal_section.scenes:
+            durations = [scene.duration for scene in temporal_section.scenes if scene.duration > 0]
+            if durations:
+                average_duration = sum(durations) / len(durations)
+                if average_duration <= 2.5:
+                    return "fast pacing"
+                if average_duration <= 7.0:
+                    return "moderate pacing"
+                return "slower pacing"
+
+        if motion_section.motion_timeline:
+            dynamic = sum(1 for item in motion_section.motion_timeline if item.motion.motion_type != "static")
+            ratio = dynamic / len(motion_section.motion_timeline)
+            if ratio >= 0.7:
+                return "visually dynamic"
+            if ratio >= 0.35:
+                return "moderately dynamic"
+            return "mostly steady"
+
+        return None
+
+    def _extract_topic_keywords(
+        self,
+        *,
+        temporal_section: TemporalAnalysisSection,
+        frame_samples: list[FrameAnalysisSample],
+        transcript_excerpt: str | None,
+    ) -> list[str]:
+        stopwords = {
+            "about",
+            "after",
+            "again",
+            "also",
+            "and",
+            "around",
+            "because",
+            "been",
+            "being",
+            "between",
+            "during",
+            "from",
+            "have",
+            "into",
+            "just",
+            "like",
+            "look",
+            "mainly",
+            "more",
+            "most",
+            "over",
+            "show",
+            "some",
+            "that",
+            "them",
+            "then",
+            "there",
+            "these",
+            "this",
+            "those",
+            "through",
+            "video",
+            "with",
+        }
+        weights: dict[str, float] = {}
+
+        def add_weight(token: str, amount: float) -> None:
+            key = token.lower()
+            if len(key) < 3 or key in stopwords or key.isdigit():
+                return
+            weights[key] = weights.get(key, 0.0) + amount
+
+        for action in temporal_section.actions:
+            for token in re.findall(r"[A-Za-z][A-Za-z0-9]+", action.label):
+                add_weight(token, 3.0)
+
+        for sample in frame_samples:
+            for obj in sample.objects or []:
+                for token in re.findall(r"[A-Za-z][A-Za-z0-9]+", obj.label):
+                    add_weight(token, 2.5)
+            for text_item in sample.text or []:
+                for token in re.findall(r"[A-Za-z][A-Za-z0-9]+", text_item):
+                    add_weight(token, 1.5)
+            if sample.image_caption:
+                for token in re.findall(r"[A-Za-z][A-Za-z0-9]+", sample.image_caption):
+                    add_weight(token, 1.0)
+
+        if transcript_excerpt:
+            for token in re.findall(r"[A-Za-z][A-Za-z0-9]+", transcript_excerpt):
+                add_weight(token, 1.0)
+
+        ranked = sorted(weights.items(), key=lambda item: (-item[1], item[0]))
+        return [token for token, _ in ranked[:8]]
+
+    def _build_highlights(
+        self,
+        *,
+        temporal_section: TemporalAnalysisSection,
+        audio_section: AudioAnalysisSection,
+        frame_samples: list[FrameAnalysisSample],
+    ) -> list[dict[str, Any]]:
+        candidates: list[tuple[float, int, str]] = []
+
+        seen_actions: set[str] = set()
+        for action in sorted(
+            temporal_section.actions,
+            key=lambda item: (
+                item.start_time is None,
+                float("inf") if item.start_time is None else item.start_time,
+                -float(item.confidence),
+            ),
+        ):
+            if action.start_time is None or not action.label:
+                continue
+            label = self._normalize_summary_label(action.label)
+            if label in seen_actions:
+                continue
+            seen_actions.add(label)
+            candidates.append((float(action.start_time), 0, f"Action: {label}"))
+            if len(seen_actions) >= 3:
+                break
+
+        seen_captions: set[str] = set()
+        for sample in frame_samples:
+            if not sample.image_caption:
+                continue
+            caption = " ".join(sample.image_caption.split())
+            if not caption:
+                continue
+            key = caption.lower()
+            if key in seen_captions:
+                continue
+            seen_captions.add(key)
+            candidates.append((float(sample.timestamp), 1, f"Visual: {self._truncate_text(caption, max_chars=72)}"))
+            if len(seen_captions) >= 2:
+                break
+
+        if audio_section.classification:
+            seen_audio: set[str] = set()
+            for event in sorted(audio_section.classification.events, key=lambda item: (-item.confidence, item.start)):
+                label = self._normalize_summary_label(event.label)
+                if label in seen_audio:
+                    continue
+                seen_audio.add(label)
+                candidates.append((float(event.start), 2, f"Audio: {label}"))
+                if len(seen_audio) >= 2:
+                    break
+
+        if not candidates:
+            return []
+
+        highlights: list[dict[str, Any]] = []
+        for timestamp, _priority, text in sorted(candidates, key=lambda item: (item[0], item[1]))[:5]:
+            highlights.append(
+                {
+                    "time": self._format_timestamp(timestamp),
+                    "seconds": round(timestamp, 3),
+                    "summary": text,
+                }
+            )
+
+        return highlights
+
+    def _normalize_summary_label(self, label: str) -> str:
+        return re.sub(r"\s+", " ", label.replace("_", " ").strip()).lower()
+
+    def _human_join(self, items: list[str]) -> str:
+        if not items:
+            return ""
+        if len(items) == 1:
+            return items[0]
+        if len(items) == 2:
+            return f"{items[0]} and {items[1]}"
+        return f"{', '.join(items[:-1])}, and {items[-1]}"
+
+    def _truncate_text(self, text: str, *, max_chars: int) -> str:
+        compact = " ".join(text.split()).strip()
+        if len(compact) <= max_chars:
+            return compact
+        clipped = compact[:max_chars].rstrip()
+        if " " in clipped:
+            clipped = clipped.rsplit(" ", 1)[0]
+        return f"{clipped}..."
+
+    def _format_timestamp(self, seconds: float) -> str:
+        total_seconds = max(0, int(round(seconds)))
+        mins, sec = divmod(total_seconds, 60)
+        hours, mins = divmod(mins, 60)
+        if hours:
+            return f"{hours:d}:{mins:02d}:{sec:02d}"
+        return f"{mins:02d}:{sec:02d}"
 
     def _initialize_frame_steps(self, steps: dict[str, AnalysisStepStatus]) -> dict[str, dict[str, Any]]:
         runtime: dict[str, dict[str, Any]] = {}

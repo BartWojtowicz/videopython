@@ -1,5 +1,16 @@
 # Release Notes
 
+## 0.20.4
+
+### Changed
+
+- Reimplemented `VideoAnalysis.summary` to prioritize high-level understanding outputs (overview narrative, primary subjects/actions, audio cues, pacing, themes, and timestamped highlights) instead of mostly low-level distributions.
+- `VideoAnalysis.summary` now conditionally includes `transcript_full` when transcript quality appears reliable, and exposes gating details in `transcript_reliability`.
+
+### Tests
+
+- Added summary-focused tests covering high-level narrative outputs plus reliable vs. unreliable full-transcript inclusion behavior.
+
 ## 0.20.3
 
 ### Changed
