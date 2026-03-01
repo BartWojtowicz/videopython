@@ -8,7 +8,16 @@ import numpy as np
 import pytest
 
 import videopython.ai.video_analysis as va
-from videopython.base.description import BoundingBox, DetectedAction, DetectedObject, DetectedText, SceneBoundary
+from videopython.base.description import (
+    AudioClassification,
+    AudioEvent,
+    BoundingBox,
+    DetectedAction,
+    DetectedObject,
+    DetectedText,
+    SceneBoundary,
+)
+from videopython.base.text.transcription import Transcription, TranscriptionSegment
 from videopython.base.video import VideoMetadata
 
 
@@ -96,6 +105,122 @@ def test_video_analysis_roundtrip_json() -> None:
 
     restored = va.VideoAnalysis.from_json(original.to_json())
     assert restored == original
+
+
+def test_build_summary_prioritizes_high_level_information() -> None:
+    """Summary should provide a readable high-level overview of video content."""
+    analyzer = va.VideoAnalyzer(config=va.VideoAnalysisConfig(enabled_analyzers=set()))
+
+    temporal_section = va.TemporalAnalysisSection(
+        scenes=[
+            SceneBoundary(start=0.0, end=3.0, start_frame=0, end_frame=90),
+            SceneBoundary(start=3.0, end=7.0, start_frame=90, end_frame=210),
+        ],
+        actions=[
+            DetectedAction(label="running", confidence=0.93, start_time=0.8, end_time=2.9),
+            DetectedAction(label="running", confidence=0.88, start_time=3.5, end_time=5.4),
+            DetectedAction(label="jumping", confidence=0.81, start_time=5.8, end_time=6.4),
+        ],
+    )
+    audio_section = va.AudioAnalysisSection(
+        transcription=Transcription(
+            segments=[
+                TranscriptionSegment(start=0.4, end=2.2, text="welcome to the park race", words=[]),
+                TranscriptionSegment(start=2.2, end=4.6, text="the runners are speeding up", words=[]),
+            ]
+        ),
+        classification=AudioClassification(
+            events=[
+                AudioEvent(start=0.0, end=1.0, label="Speech", confidence=0.97),
+                AudioEvent(start=1.2, end=6.5, label="Music", confidence=0.84),
+            ],
+            clip_predictions={"Speech": 0.76, "Music": 0.58},
+        ),
+    )
+    motion_section = va.MotionAnalysisSection(
+        camera_motion_samples=[
+            va.CameraMotionSample(start=0.0, end=1.0, label="pan"),
+            va.CameraMotionSample(start=1.0, end=2.0, label="pan"),
+            va.CameraMotionSample(start=2.0, end=3.0, label="static"),
+        ]
+    )
+    frame_samples = [
+        va.FrameAnalysisSample(
+            timestamp=0.8,
+            frame_index=24,
+            image_caption="A runner moving quickly through a city park",
+            objects=[DetectedObject(label="person", confidence=0.95), DetectedObject(label="track", confidence=0.78)],
+            text=["RACE", "START"],
+        ),
+        va.FrameAnalysisSample(
+            timestamp=4.2,
+            frame_index=126,
+            image_caption="Several people sprinting near the finish line",
+            objects=[DetectedObject(label="person", confidence=0.92), DetectedObject(label="crowd", confidence=0.8)],
+            text=["FINISH"],
+        ),
+    ]
+
+    summary = analyzer._build_summary(
+        temporal_section=temporal_section,
+        audio_section=audio_section,
+        motion_section=motion_section,
+        frame_samples=frame_samples,
+    )
+
+    assert isinstance(summary.get("overview"), str)
+    assert "running" in summary["primary_actions"]
+    assert "person" in summary["primary_subjects"]
+    assert "speech/dialogue" in summary["audio_cues"]
+    assert "running" in summary["topic_keywords"]
+    assert summary["highlights"]
+    assert any(item["summary"].startswith("Action:") for item in summary["highlights"])
+    assert summary["pace"] in {"fast pacing", "moderate pacing", "slower pacing"}
+    assert "transcript_full" in summary
+    assert "runners are speeding up" in summary["transcript_full"]
+    assert summary["transcript_reliability"]["is_reliable"] is True
+
+
+def test_build_summary_with_no_signals_returns_fallback_overview() -> None:
+    """Summary should still be readable when analyzers produce little/no signal."""
+    analyzer = va.VideoAnalyzer(config=va.VideoAnalysisConfig(enabled_analyzers=set()))
+    summary = analyzer._build_summary(
+        temporal_section=va.TemporalAnalysisSection(),
+        audio_section=va.AudioAnalysisSection(),
+        motion_section=va.MotionAnalysisSection(),
+        frame_samples=[],
+    )
+
+    assert summary["scene_count"] == 0
+    assert summary["action_count"] == 0
+    assert summary["frame_sample_count"] == 0
+    assert summary["audio_events_count"] == 0
+    assert summary["overview"].startswith("Limited analysis signals")
+    assert "highlights" not in summary
+
+
+def test_build_summary_omits_full_transcript_when_unreliable() -> None:
+    """Low-quality transcript should not be expanded into full summary payload."""
+    analyzer = va.VideoAnalyzer(config=va.VideoAnalysisConfig(enabled_analyzers=set()))
+    audio_section = va.AudioAnalysisSection(
+        transcription=Transcription(
+            segments=[
+                TranscriptionSegment(start=1.0, end=1.0, text="um um um", words=[]),
+                TranscriptionSegment(start=0.5, end=0.6, text="uh", words=[]),
+                TranscriptionSegment(start=2.0, end=2.0, text="noise", words=[]),
+            ]
+        )
+    )
+    summary = analyzer._build_summary(
+        temporal_section=va.TemporalAnalysisSection(),
+        audio_section=audio_section,
+        motion_section=va.MotionAnalysisSection(),
+        frame_samples=[],
+    )
+
+    assert "transcript_excerpt" in summary
+    assert "transcript_full" not in summary
+    assert summary["transcript_reliability"]["is_reliable"] is False
 
 
 def test_analyze_path_extracts_source_metadata(monkeypatch, tmp_path: Path) -> None:

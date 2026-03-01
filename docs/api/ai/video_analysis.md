@@ -70,7 +70,8 @@ The preset enables all analyzers and keeps resource usage bounded with adaptive 
 
 - `FrameSamplingReport.effective_max_frames` shows the effective cap after applying `max_frames` and optional `max_memory_mb`.
 - `FrameAnalysisSample.text_regions` contains structured OCR detections (`text`, `confidence`, `bounding_box`) in addition to the existing plain `text` list.
-- `summary` now includes richer aggregate signals such as top actions/objects, OCR term frequencies, face presence ratio, and motion distributions when available.
+- `summary` now prioritizes high-level understanding fields (`overview`, primary actions/subjects, audio cues, pacing, and key highlights) so it reads like a concise "what is this video about" brief.
+- `summary["transcript_full"]` is included when transcript quality appears reliable, with gating details exposed in `summary["transcript_reliability"]`.
 
 ## Classes
 
