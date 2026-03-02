@@ -1,5 +1,11 @@
 # Release Notes
 
+## 0.21.2
+
+### Fixed
+
+- Added logging warnings to all bare `except` blocks in `VideoAnalyzer` so failures in transcription, scene detection, VLM, action recognition, and audio classification are no longer silently swallowed.
+
 ## 0.21.1
 
 ### Changed

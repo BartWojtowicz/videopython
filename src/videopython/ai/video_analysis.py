@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -31,6 +32,8 @@ from videopython.base.text.transcription import Transcription
 from videopython.base.video import Video, VideoMetadata, extract_frames_at_times
 
 __all__ = ["VideoAnalysis", "VideoAnalysisConfig", "VideoAnalyzer"]
+
+logger = logging.getLogger(__name__)
 
 AUDIO_TO_TEXT = "audio_to_text"
 AUDIO_CLASSIFIER = "audio_classifier"
@@ -431,6 +434,7 @@ class VideoAnalyzer:
                     Audio.from_path(source_path) if source_path is not None else _require_video(video)
                 )
             except Exception:
+                logger.warning("AudioToText failed, skipping transcription", exc_info=True)
                 transcription = None
 
         scenes = self._default_scene_boundaries(metadata)
@@ -444,6 +448,7 @@ class VideoAnalyzer:
                     else scene_detector.detect(_require_video(video))
                 )
             except Exception:
+                logger.warning("SemanticSceneDetector failed, using default scene boundaries", exc_info=True)
                 detected = None
             if detected is not None:
                 scenes = self._normalize_scene_boundaries(detected, metadata)
@@ -481,6 +486,7 @@ class VideoAnalyzer:
         try:
             scene_vlm = SceneVLM(**self.config.get_params(SCENE_VLM)) if SCENE_VLM in enabled else None
         except Exception:
+            logger.warning("Failed to initialize SceneVLM, skipping visual understanding", exc_info=True)
             scene_vlm = None
 
         try:
@@ -488,6 +494,7 @@ class VideoAnalyzer:
                 ActionRecognizer(**self.config.get_params(ACTION_RECOGNIZER)) if ACTION_RECOGNIZER in enabled else None
             )
         except Exception:
+            logger.warning("Failed to initialize ActionRecognizer, skipping action recognition", exc_info=True)
             action_recognizer = None
 
         try:
@@ -495,6 +502,7 @@ class VideoAnalyzer:
                 AudioClassifier(**self.config.get_params(AUDIO_CLASSIFIER)) if AUDIO_CLASSIFIER in enabled else None
             )
         except Exception:
+            logger.warning("Failed to initialize AudioClassifier, skipping audio classification", exc_info=True)
             audio_classifier = None
 
         path_audio: Audio | None = None
@@ -502,6 +510,9 @@ class VideoAnalyzer:
             try:
                 path_audio = Audio.from_path(source_path)
             except Exception:
+                logger.warning(
+                    "Failed to load audio from path, audio classification will use clip fallback", exc_info=True
+                )
                 path_audio = None
 
         samples: list[SceneAnalysisSample] = []
@@ -540,7 +551,9 @@ class VideoAnalyzer:
                         end_second=scene.end,
                     )
                 except Exception:
-                    pass
+                    logger.warning(
+                        "SceneVLM failed for scene %d (%.1f-%.1fs)", index, scene.start, scene.end, exc_info=True
+                    )
 
             if action_recognizer is not None:
                 try:
@@ -553,7 +566,13 @@ class VideoAnalyzer:
                         start_frame_offset=scene.start_frame,
                     )
                 except Exception:
-                    pass
+                    logger.warning(
+                        "ActionRecognizer failed for scene %d (%.1f-%.1fs)",
+                        index,
+                        scene.start,
+                        scene.end,
+                        exc_info=True,
+                    )
 
             if audio_classifier is not None:
                 try:
@@ -565,7 +584,9 @@ class VideoAnalyzer:
                         scene_end=scene.end,
                     )
                 except Exception:
-                    pass
+                    logger.warning(
+                        "AudioClassifier failed for scene %d (%.1f-%.1fs)", index, scene.start, scene.end, exc_info=True
+                    )
 
             samples.append(sample)
 
