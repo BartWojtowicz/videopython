@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import cv2
 import numpy as np
 from tqdm import tqdm
 
-from videopython.ai.understanding.detection import FaceDetector
+from videopython.ai._device import select_device
+from videopython.base.description import BoundingBox, DetectedFace
 from videopython.base.transforms import Transformation
 from videopython.base.video import Video
 
@@ -22,6 +23,112 @@ logger = logging.getLogger(__name__)
 def _make_even(value: int) -> int:
     """Round down to nearest even number for H.264 compatibility."""
     return value - (value % 2)
+
+
+class _FaceDetectionBackend:
+    """Internal YOLOv8-face detector used by AI transforms."""
+
+    def __init__(
+        self,
+        confidence_threshold: float = 0.5,
+        min_face_size: int = 30,
+        backend: Literal["cpu", "gpu", "auto"] = "auto",
+    ):
+        self.confidence_threshold = confidence_threshold
+        self.min_face_size = min_face_size
+        self.backend: Literal["cpu", "gpu", "auto"] = backend
+        self._resolved_device: Literal["cpu", "cuda"] | None = None
+        self._yolo_model: Any = None
+
+    def _resolve_device(self) -> Literal["cpu", "cuda"]:
+        if self._resolved_device is not None:
+            return self._resolved_device
+
+        if self.backend == "cpu":
+            self._resolved_device = "cpu"
+            return self._resolved_device
+
+        if self.backend == "gpu":
+            resolved = select_device(None, mps_allowed=False)
+            if resolved != "cuda":
+                raise ValueError("GPU backend requested but CUDA is not available.")
+            self._resolved_device = "cuda"
+            return self._resolved_device
+
+        resolved_auto = select_device(None, mps_allowed=False)
+        self._resolved_device = "cuda" if resolved_auto == "cuda" else "cpu"
+        return self._resolved_device
+
+    def execution_device(self) -> Literal["cpu", "cuda"]:
+        """Resolved execution device for this backend."""
+        return self._resolve_device()
+
+    def _init_yolo_face(self) -> None:
+        from huggingface_hub import hf_hub_download
+        from ultralytics import YOLO
+
+        model_path = hf_hub_download(
+            repo_id="arnabdhar/YOLOv8-Face-Detection",
+            filename="model.pt",
+        )
+        self._yolo_model = YOLO(model_path)
+
+        device = self._resolve_device()
+        if device == "cuda":
+            self._yolo_model.to("cuda")
+
+    def _faces_from_yolo_result(self, result: Any) -> list[DetectedFace]:
+        detected_faces: list[DetectedFace] = []
+        boxes = result.boxes
+        if boxes is None:
+            return detected_faces
+
+        img_h, img_w = result.orig_shape
+        for i in range(len(boxes)):
+            x1, y1, x2, y2 = boxes.xyxy[i].tolist()
+            conf = float(boxes.conf[i])
+
+            face_w = x2 - x1
+            face_h = y2 - y1
+            if face_w < self.min_face_size or face_h < self.min_face_size:
+                continue
+
+            detected_faces.append(
+                DetectedFace(
+                    bounding_box=BoundingBox(
+                        x=x1 / img_w,
+                        y=y1 / img_h,
+                        width=face_w / img_w,
+                        height=face_h / img_h,
+                    ),
+                    confidence=conf,
+                )
+            )
+        detected_faces.sort(key=lambda f: f.area or 0, reverse=True)
+        return detected_faces
+
+    def detect(self, image: np.ndarray) -> list[DetectedFace]:
+        if self._yolo_model is None:
+            self._init_yolo_face()
+        assert self._yolo_model is not None
+
+        results = self._yolo_model(image, conf=self.confidence_threshold, verbose=False)
+        if not results:
+            return []
+        return self._faces_from_yolo_result(results[0])
+
+    def detect_batch(self, images: list[np.ndarray] | np.ndarray) -> list[list[DetectedFace]]:
+        if isinstance(images, np.ndarray):
+            images = [images[i] for i in range(images.shape[0])] if images.ndim == 4 else [images]
+        if not images:
+            return []
+
+        if self._yolo_model is None:
+            self._init_yolo_face()
+        assert self._yolo_model is not None
+
+        results = self._yolo_model(images, conf=self.confidence_threshold, verbose=False)
+        return [self._faces_from_yolo_result(result) for result in results]
 
 
 __all__ = [
@@ -87,7 +194,7 @@ class FaceTracker:
         self.sample_rate = sample_rate
         self.batch_size = batch_size
 
-        self._detector: FaceDetector | None = None
+        self._detector: _FaceDetectionBackend | None = None
         self._last_position: tuple[float, float] | None = None
         self._last_size: tuple[float, float] | None = None
         self._smoothed_position: tuple[float, float] | None = None
@@ -96,7 +203,7 @@ class FaceTracker:
 
     def _init_detector(self) -> None:
         """Initialize face detector lazily."""
-        self._detector = FaceDetector(
+        self._detector = _FaceDetectionBackend(
             min_face_size=self.min_face_size,
             backend=self.backend,
         )
@@ -265,8 +372,19 @@ class FaceTracker:
 
         h, w = frames[0].shape[:2]
 
+        execution_device_getter = getattr(self._detector, "execution_device", None)
+        if callable(execution_device_getter):
+            resolved = execution_device_getter()
+            backend_execution_device = resolved if resolved in {"cpu", "cuda"} else None
+        else:
+            backend_execution_device = None
+        if backend_execution_device is None:
+            backend_execution_device = "cuda" if self.backend == "gpu" else "cpu"
+
+        use_sampled_interpolation = self.sample_rate > 1 and backend_execution_device == "cuda"
+
         # Determine which frames to sample
-        if self.sample_rate > 1 and self.backend in ("gpu", "auto"):
+        if use_sampled_interpolation:
             sample_indices = list(range(0, n_frames, self.sample_rate))
             # Ensure last frame is included
             if sample_indices[-1] != n_frames - 1:
@@ -291,8 +409,8 @@ class FaceTracker:
             face_info = self._select_face(faces, w, h)
             sampled_faces.append(face_info)
 
-        # If no sampling, apply smoothing directly
-        if self.sample_rate == 1 or self.backend == "cpu":
+        # If no sampled interpolation, apply smoothing directly over detections.
+        if not use_sampled_interpolation:
             self.reset()
             results: list[tuple[float, float, float, float] | None] = []
             for i, face_info in enumerate(sampled_faces):

@@ -1,5 +1,42 @@
 # Release Notes
 
+## 0.21.0
+
+### Breaking Changes
+
+- `VideoAnalysis` was rewritten to a scene-first schema focused on `audio.transcription` and `scenes.samples`.
+- Removed legacy `VideoAnalysis` payload/flow elements, including filtering-focused exports, motion outputs, and per-step timing/status data.
+- `VideoAnalysisConfig` is now minimal and primarily driven by `enabled_analyzers`.
+- Removed understanding APIs from public exports:
+  - `ImageToText`
+  - `ObjectDetector`
+  - `FaceDetector`
+  - `TextDetector`
+  - `CameraMotionDetector`
+  - `MotionAnalyzer`
+- Removed modules:
+  - `videopython.ai.understanding.detection`
+  - `videopython.ai.understanding.motion`
+
+### Changed
+
+- Added `SceneVLM` (Qwen3-VL) as the primary visual-understanding component, with structured JSON output parsing/validation.
+- `VideoAnalyzer` now runs global transcription/scene detection, then scene-level analysis with chunked visual segments (`_SCENE_VLM_MAX_SEGMENT_SECONDS`).
+- Device selection behavior was tightened:
+  - `SceneVLM` auto-selects `cuda -> cpu` (MPS disabled)
+  - `AudioToText` now also disables MPS auto-selection
+  - explicit `cuda`/`mps` requests now validate backend availability in shared device resolution
+
+### Dependencies
+
+- Added `pydantic>=2.8.0` to AI dependencies.
+- Bumped `transformers` minimum version to `>=4.57.0`.
+
+### Tests
+
+- Added focused tests for shared device resolution, `SceneVLM` initialization/parsing, and scene-first `VideoAnalysis`.
+- Removed legacy tests tied to deleted detection/motion APIs and pre-rewrite `VideoAnalysis` behavior.
+
 ## 0.20.5
 
 ### Changed

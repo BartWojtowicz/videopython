@@ -8,14 +8,9 @@ For a single aggregate, serializable analysis object across multiple analyzers, 
 
 | Class | Local Model Family |
 |-------|--------------------|
-| ImageToText | BLIP |
+| SceneVLM | Qwen3-VL |
 | AudioToText | Whisper |
 | AudioClassifier | AST |
-| ObjectDetector | YOLO |
-| TextDetector | EasyOCR |
-| FaceDetector | OpenCV / YOLOv8-face |
-| CameraMotionDetector | OpenCV |
-| MotionAnalyzer | OpenCV |
 | ActionRecognizer | VideoMAE |
 | SemanticSceneDetector | TransNetV2 |
 
@@ -49,66 +44,12 @@ for event in result.events:
 
 ::: videopython.ai.AudioClassifier
 
-## ImageToText
+## SceneVLM
 
-::: videopython.ai.ImageToText
+`SceneVLM` supports both Qwen3-VL `2B` and `4B` model variants.
+Device selection is automatic by default (`cuda` -> `cpu`).
 
-## Detection Classes
-
-### ObjectDetector
-
-::: videopython.ai.ObjectDetector
-
-### FaceDetector
-
-::: videopython.ai.FaceDetector
-
-### TextDetector
-
-`TextDetector` supports two output modes:
-
-- `detect(image)` -> `list[str]` (backward-compatible plain text)
-- `detect_detailed(image)` -> `list[DetectedText]` (text + confidence + bounding box)
-
-```python
-from videopython.ai import TextDetector
-
-detector = TextDetector(languages=["en"])
-texts = detector.detect(frame)
-regions = detector.detect_detailed(frame)
-
-for region in regions:
-    print(region.text, region.confidence, region.bounding_box)
-```
-
-::: videopython.ai.TextDetector
-
-### CameraMotionDetector
-
-::: videopython.ai.CameraMotionDetector
-
-### MotionAnalyzer
-
-Analyze motion in video frames using optical flow. Detects camera motion types (pan, tilt, zoom) and measures motion magnitude.
-
-```python
-from videopython.ai import MotionAnalyzer
-from videopython.base import Video
-
-analyzer = MotionAnalyzer()
-video = Video.from_path("video.mp4")
-
-# Analyze motion between two frames
-motion = analyzer.analyze_frames(video.frames[0], video.frames[1])
-print(f"Motion type: {motion.motion_type}, magnitude: {motion.magnitude:.2f}")
-
-# Analyze entire video (memory-efficient)
-results = analyzer.analyze_video_path("video.mp4", frames_per_second=1.0)
-for timestamp, motion in results:
-    print(f"{timestamp:.1f}s: {motion.motion_type} ({motion.magnitude:.2f})")
-```
-
-::: videopython.ai.MotionAnalyzer
+::: videopython.ai.SceneVLM
 
 ### ActionRecognizer
 
@@ -173,10 +114,6 @@ These classes are used by `SceneDetector` to represent analysis results:
 ### AudioClassification
 
 ::: videopython.base.AudioClassification
-
-### MotionInfo
-
-::: videopython.base.MotionInfo
 
 ### DetectedAction
 

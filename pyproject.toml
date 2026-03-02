@@ -1,6 +1,6 @@
 [project]
 name = "videopython"
-version = "0.20.5"
+version = "0.21.0"
 description = "Minimal video generation and processing library."
 authors = [
     { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
@@ -36,6 +36,7 @@ dependencies = [
     "pillow>=12.1.1",
     "torchcodec>=0.9.1",
     "tqdm>=4.66.3",
+    "pydantic>=2.8.0",
 ]
 
 [dependency-groups]
@@ -57,7 +58,7 @@ ai = [
     "diffusers>=0.26.3",
     "hf-transfer>=0.1.9",
     "torch>=2.1.0",
-    "transformers>=4.38.1",
+    "transformers>=4.57.0",
     "openai-whisper>=20240930",
     "whisperx>=3.4.2",
     "numba>=0.61.0",
@@ -92,7 +93,7 @@ ai = [
     "diffusers>=0.26.3",
     "hf-transfer>=0.1.9",
     "torch>=2.1.0",
-    "transformers>=4.38.1",
+    "transformers>=4.57.0",
     "openai-whisper>=20240930",
     "whisperx>=3.4.2",
     "numba>=0.61.0",

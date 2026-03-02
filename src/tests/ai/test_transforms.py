@@ -626,9 +626,9 @@ class TestGPUFaceTracking:
         results = tracker.track_video(np.array([]))
         assert results == []
 
-    @patch("videopython.ai.transforms.FaceDetector")
+    @patch("videopython.ai.transforms._FaceDetectionBackend")
     def test_face_tracker_passes_gpu_params_to_detector(self, mock_detector_class):
-        """Test FaceTracker passes GPU params to FaceDetector."""
+        """Test FaceTracker passes GPU params to internal detector backend."""
         mock_detector = MagicMock()
         mock_detector.detect_batch.return_value = [[]]
         mock_detector_class.return_value = mock_detector
@@ -642,7 +642,7 @@ class TestGPUFaceTracking:
         frames = np.zeros((1, 100, 100, 3), dtype=np.uint8)
         tracker.track_video(frames)
 
-        # Verify FaceDetector was created with correct params
+        # Verify detector backend was created with correct params
         mock_detector_class.assert_called_once_with(
             min_face_size=50,
             backend="gpu",

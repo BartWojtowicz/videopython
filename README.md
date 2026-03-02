@@ -118,9 +118,8 @@ Docs:
 
 - Generation: `TextToVideo`, `ImageToVideo`, `TextToImage`, `TextToSpeech`, `TextToMusic`
 - Understanding:
-  - Transcription and captioning: `AudioToText`, `ImageToText`
-  - Detection/classification: `ObjectDetector`, `FaceDetector`, `TextDetector`
-  - Motion/action/scene understanding: `CameraMotionDetector`, `MotionAnalyzer`, `ActionRecognizer`, `SemanticSceneDetector`
+  - Transcription and visual scene understanding: `AudioToText`, `SceneVLM`
+  - Action/scene understanding: `ActionRecognizer`, `SemanticSceneDetector`
 - AI transforms: `FaceTracker`, `FaceTrackingCrop`, `SplitScreenComposite`
 - Dubbing/revoicing: `videopython.ai.dubbing.VideoDubber`
 - Object swapping/inpainting: `ObjectSwapper`
