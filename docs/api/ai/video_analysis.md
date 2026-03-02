@@ -1,19 +1,18 @@
 # Video Analysis
 
-Create a single, serializable analysis object that aggregates multiple AI understanding results.
+Create a single, serializable, scene-first analysis object.
 
 ## Overview
 
-`VideoAnalyzer` orchestrates audio, temporal, motion, and frame analyzers and returns `VideoAnalysis`.
+`VideoAnalyzer` runs global passes (transcription + scene detection), then analyzes each scene window.
 
 `VideoAnalysis` can be serialized with:
 
 - `to_dict()` / `from_dict()`
 - `to_json()` / `from_json()`
 - `save()` / `load()`
-- `filter()` (editing-focused filtering)
 
-The path-based flow (`analyze_path`) is designed for bounded frame memory usage by preferring streaming/chunked frame access.
+The output is centered on `analysis.scenes.samples` (one payload per scene).
 
 ## Basic Usage
 
@@ -24,7 +23,8 @@ analyzer = VideoAnalyzer()
 analysis = analyzer.analyze_path("video.mp4")
 
 print(analysis.source.title)
-print(analysis.summary)
+print(len(analysis.scenes.samples) if analysis.scenes else 0)
+print(analysis.scenes.samples[0].visual_segments if analysis.scenes else [])
 
 # Persist results
 analysis.save("video_analysis.json")
@@ -40,14 +40,7 @@ print(loaded.run_info.mode)
 from videopython.ai import VideoAnalysisConfig, VideoAnalyzer
 
 config = VideoAnalysisConfig(
-    frame_sampling_mode="hybrid",
-    frames_per_second=1.0,
-    max_frames=240,
-    max_memory_mb=512,  # Optional memory budget for sampled frames
-    frame_chunk_size=24,
-    action_scope="adaptive",  # "video" | "scene" | "adaptive"
-    max_action_scenes=16,
-    best_effort=True,
+    enabled_analyzers={"audio_to_text", "semantic_scene_detector", "scene_vlm"},
 )
 
 analyzer = VideoAnalyzer(config=config)
@@ -65,26 +58,19 @@ config = VideoAnalysisConfig.rich_understanding_preset()
 analysis = VideoAnalyzer(config=config).analyze_path("video.mp4")
 ```
 
-The preset enables all analyzers and keeps resource usage bounded with adaptive defaults.
+The preset is equivalent to `VideoAnalysisConfig()`.
 
-## Editing Export
+## Notes on Output Fields
 
-Use `filter()` (or `filter(target="editing")`) to obtain a filtered `VideoAnalysis` object optimized for edit planning:
-
-```python
-editing_analysis = analysis.filter()
-print(editing_analysis.summary)  # computed from filtered data
-```
-
-`editing` filtering removes low-confidence predictions and low-value verbose details while preserving strong signals.
-`summary` is computed at runtime from currently available data (full or filtered), so it cannot go stale.
-
-## Notes on New Output Fields
-
-- `FrameSamplingReport.effective_max_frames` shows the effective cap after applying `max_frames` and optional `max_memory_mb`.
-- `FrameAnalysisSample.text_regions` contains structured OCR detections (`text`, `confidence`, `bounding_box`) in addition to the existing plain `text` list.
-- `summary` now prioritizes high-level understanding fields (`overview`, primary actions/subjects, audio cues, pacing, and key highlights) so it reads like a concise "what is this video about" brief.
-- `summary["transcript_full"]` is included when transcript quality appears reliable, with gating details exposed in `summary["transcript_reliability"]`.
+- Use `enabled_analyzers` to run a subset of steps.
+- Full transcription is available at `analysis.audio.transcription`.
+- Scene payload lives in `analysis.scenes.samples`.
+- Each sample includes:
+  - scene timing (`start_second`, `end_second`, optional frame bounds)
+  - chunked visual segments from scene VLM (`visual_segments`)
+  - each visual segment covers up to `_SCENE_VLM_MAX_SEGMENT_SECONDS` and uses `_SCENE_VLM_FRAMES_PER_SEGMENT` frames
+  - scene-scoped actions and audio classification
+- Scene VLM model size and max segment window are hard-coded module constants by design.
 
 ## Classes
 

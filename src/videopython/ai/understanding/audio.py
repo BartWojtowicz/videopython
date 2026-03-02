@@ -23,7 +23,7 @@ class AudioToText:
     ):
         self.model_name = model_name
         self.enable_diarization = enable_diarization
-        self.device = select_device(device, mps_allowed=True)
+        self.device = select_device(device, mps_allowed=False)
         log_device_initialization(
             "AudioToText",
             requested_device=device,

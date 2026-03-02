@@ -7,13 +7,8 @@ from .understanding import (
     ActionRecognizer,
     AudioClassifier,
     AudioToText,
-    CameraMotionDetector,
-    FaceDetector,
-    ImageToText,
-    MotionAnalyzer,
-    ObjectDetector,
+    SceneVLM,
     SemanticSceneDetector,
-    TextDetector,
 )
 from .video_analysis import VideoAnalysis, VideoAnalysisConfig, VideoAnalyzer
 
@@ -27,14 +22,7 @@ __all__ = [
     # Understanding
     "AudioToText",
     "AudioClassifier",
-    "ImageToText",
-    # Detection
-    "ObjectDetector",
-    "FaceDetector",
-    "TextDetector",
-    "CameraMotionDetector",
-    # Motion
-    "MotionAnalyzer",
+    "SceneVLM",
     # Temporal
     "ActionRecognizer",
     "SemanticSceneDetector",

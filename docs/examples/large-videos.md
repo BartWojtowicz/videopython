@@ -83,23 +83,22 @@ for scene in scenes:
     print(f"Scene: {scene.start:.1f}s - {scene.end:.1f}s")
 ```
 
-## AI Video Analysis with Memory Budget
+## AI Video Analysis (Scene-First)
 
-`VideoAnalyzer.analyze_path()` is designed for bounded memory usage. You can explicitly cap sampled-frame memory:
+`VideoAnalyzer.analyze_path()` returns scene-centered outputs:
 
 ```python
 from videopython.ai import VideoAnalyzer, VideoAnalysisConfig
 
 config = VideoAnalysisConfig(
-    frame_sampling_mode="hybrid",
-    frames_per_second=1.0,
-    max_frames=240,
-    max_memory_mb=512,  # budget for sampled frames
-    frame_chunk_size=24,
+    enabled_analyzers={"audio_to_text", "semantic_scene_detector", "scene_vlm"},
 )
 
 analysis = VideoAnalyzer(config=config).analyze_path("long_video.mp4")
-print(analysis.frames.sampling.effective_max_frames)
+for scene in (analysis.scenes.samples if analysis.scenes else []):
+    print(scene.scene_index, scene.start_second, scene.end_second)
+    for chunk in scene.visual_segments:
+        print("  ", chunk.start_second, chunk.end_second, chunk.caption)
 ```
 
 ## Processing a Segment

@@ -4610,13 +4610,14 @@ wheels = [
 
 [[package]]
 name = "videopython"
-version = "0.20.5"
+version = "0.21.0"
 source = { editable = "." }
 dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "opencv-python" },
     { name = "pillow" },
+    { name = "pydantic" },
     { name = "torchcodec" },
     { name = "tqdm" },
 ]
@@ -4703,6 +4704,7 @@ requires-dist = [
     { name = "opencv-python", specifier = ">=4.9.0.80" },
     { name = "pillow", specifier = ">=12.1.1" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.8.0" },
+    { name = "pydantic", specifier = ">=2.8.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6.1.1" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.14" },
@@ -4711,7 +4713,7 @@ requires-dist = [
     { name = "torch", marker = "extra == 'ai'", specifier = ">=2.1.0" },
     { name = "torchcodec", specifier = ">=0.9.1" },
     { name = "tqdm", specifier = ">=4.66.3" },
-    { name = "transformers", marker = "extra == 'ai'", specifier = ">=4.38.1" },
+    { name = "transformers", marker = "extra == 'ai'", specifier = ">=4.57.0" },
     { name = "transnetv2-pytorch", marker = "extra == 'ai'", specifier = ">=1.0.5" },
     { name = "types-pillow", marker = "extra == 'dev'", specifier = ">=10.2.0.20240213" },
     { name = "types-tqdm", marker = "extra == 'dev'", specifier = ">=4.66.0.20240106" },
@@ -4734,7 +4736,7 @@ ai = [
     { name = "scikit-learn", specifier = ">=1.3.0" },
     { name = "scipy", specifier = ">=1.10.0" },
     { name = "torch", specifier = ">=2.1.0" },
-    { name = "transformers", specifier = ">=4.38.1" },
+    { name = "transformers", specifier = ">=4.57.0" },
     { name = "transnetv2-pytorch", specifier = ">=1.0.5" },
     { name = "ultralytics", specifier = ">=8.0.0" },
     { name = "whisperx", specifier = ">=3.4.2" },

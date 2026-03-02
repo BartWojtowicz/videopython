@@ -42,18 +42,27 @@ def select_device(
     if requested is not None and requested not in {"auto", "cpu", "cuda", "mps"}:
         raise ValueError("device must be one of: auto, cpu, cuda, mps")
 
-    if requested in {"cpu", "cuda"}:
+    if requested == "cpu":
         return cast(Device, requested)
+
+    import torch
+
+    if requested == "cuda":
+        if not torch.cuda.is_available():
+            raise ValueError("CUDA requested but no CUDA device is available.")
+        return "cuda"
 
     if requested == "mps":
         if not mps_allowed:
             raise ValueError("MPS is not supported for this model.")
+        mps_backend = getattr(torch.backends, "mps", None)
+        if mps_backend is None or not mps_backend.is_available():
+            raise ValueError("MPS requested but MPS backend is not available.")
         return "mps"
-
-    import torch
 
     if torch.cuda.is_available():
         return "cuda"
-    if mps_allowed and torch.backends.mps.is_available():
+    mps_backend = getattr(torch.backends, "mps", None)
+    if mps_allowed and mps_backend is not None and mps_backend.is_available():
         return "mps"
     return "cpu"
