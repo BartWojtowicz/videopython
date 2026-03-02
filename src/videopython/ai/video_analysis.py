@@ -19,7 +19,6 @@ from videopython.ai.understanding import (
     SceneVLM,
     SemanticSceneDetector,
 )
-from videopython.ai.understanding.image import DEFAULT_SCENE_VLM_MODEL_SIZE, SCENE_VLM_MODEL_IDS
 from videopython.base.audio import Audio
 from videopython.base.description import (
     AudioClassification,
@@ -59,8 +58,6 @@ _GEO_TAG_KEYS: tuple[str, ...] = (
     "location-eng",
 )
 
-# Hard-coded scene VLM defaults by design (not user config).
-_SCENE_VLM_MODEL_SIZE = DEFAULT_SCENE_VLM_MODEL_SIZE
 _SCENE_VLM_MAX_SEGMENT_SECONDS = 10.0
 _SCENE_VLM_FRAMES_PER_SEGMENT = 2
 
@@ -167,14 +164,34 @@ class AnalysisRunInfo:
 
 @dataclass
 class VideoAnalysisConfig:
-    """Minimal execution config for scene-first analysis runs."""
+    """Execution config for scene-first analysis runs.
+
+    ``analyzer_params`` lets you forward keyword arguments to each predictor
+    constructor keyed by analyzer id.  For example::
+
+        VideoAnalysisConfig(
+            analyzer_params={
+                "audio_to_text": {"model_name": "large"},
+                "scene_vlm": {"model_size": "2b"},
+                "action_recognizer": {"model_size": "large"},
+            }
+        )
+    """
 
     enabled_analyzers: set[str] = field(default_factory=lambda: set(ALL_ANALYZER_IDS))
+    analyzer_params: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         unknown_enabled = sorted(set(self.enabled_analyzers) - set(ALL_ANALYZER_IDS))
         if unknown_enabled:
             raise ValueError(f"Unknown analyzer ids in enabled_analyzers: {unknown_enabled}")
+        unknown_params = sorted(set(self.analyzer_params) - set(ALL_ANALYZER_IDS))
+        if unknown_params:
+            raise ValueError(f"Unknown analyzer ids in analyzer_params: {unknown_params}")
+
+    def get_params(self, analyzer_id: str) -> dict[str, Any]:
+        """Return kwargs dict for the given analyzer, defaulting to empty."""
+        return dict(self.analyzer_params.get(analyzer_id, {}))
 
     @classmethod
     def rich_understanding_preset(cls) -> "VideoAnalysisConfig":
@@ -182,14 +199,20 @@ class VideoAnalysisConfig:
         return cls()
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result: dict[str, Any] = {
             "enabled_analyzers": sorted(self.enabled_analyzers),
         }
+        if self.analyzer_params:
+            result["analyzer_params"] = self.analyzer_params
+        return result
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "VideoAnalysisConfig":
         enabled_raw = data.get("enabled_analyzers")
-        return cls(enabled_analyzers=set(enabled_raw) if enabled_raw is not None else set(ALL_ANALYZER_IDS))
+        return cls(
+            enabled_analyzers=set(enabled_raw) if enabled_raw is not None else set(ALL_ANALYZER_IDS),
+            analyzer_params=data.get("analyzer_params", {}),
+        )
 
 
 @dataclass
@@ -404,7 +427,7 @@ class VideoAnalyzer:
         transcription: Transcription | None = None
         if AUDIO_TO_TEXT in enabled:
             try:
-                transcription = AudioToText().transcribe(
+                transcription = AudioToText(**self.config.get_params(AUDIO_TO_TEXT)).transcribe(
                     Audio.from_path(source_path) if source_path is not None else _require_video(video)
                 )
             except Exception:
@@ -414,7 +437,7 @@ class VideoAnalyzer:
         if SEMANTIC_SCENE_DETECTOR in enabled:
             detected: list[SceneBoundary] | None = None
             try:
-                scene_detector = SemanticSceneDetector()
+                scene_detector = SemanticSceneDetector(**self.config.get_params(SEMANTIC_SCENE_DETECTOR))
                 detected = (
                     scene_detector.detect_streaming(source_path)
                     if source_path is not None
@@ -456,19 +479,21 @@ class VideoAnalyzer:
         enabled = self.config.enabled_analyzers
 
         try:
-            scene_vlm = (
-                SceneVLM(model_name=SCENE_VLM_MODEL_IDS[_SCENE_VLM_MODEL_SIZE]) if SCENE_VLM in enabled else None
-            )
+            scene_vlm = SceneVLM(**self.config.get_params(SCENE_VLM)) if SCENE_VLM in enabled else None
         except Exception:
             scene_vlm = None
 
         try:
-            action_recognizer = ActionRecognizer() if ACTION_RECOGNIZER in enabled else None
+            action_recognizer = (
+                ActionRecognizer(**self.config.get_params(ACTION_RECOGNIZER)) if ACTION_RECOGNIZER in enabled else None
+            )
         except Exception:
             action_recognizer = None
 
         try:
-            audio_classifier = AudioClassifier() if AUDIO_CLASSIFIER in enabled else None
+            audio_classifier = (
+                AudioClassifier(**self.config.get_params(AUDIO_CLASSIFIER)) if AUDIO_CLASSIFIER in enabled else None
+            )
         except Exception:
             audio_classifier = None
 

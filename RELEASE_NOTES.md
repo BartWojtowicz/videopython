@@ -1,5 +1,12 @@
 # Release Notes
 
+## 0.21.1
+
+### Changed
+
+- `VideoAnalysisConfig` now accepts `analyzer_params` to configure individual predictors (model size, device, thresholds, etc.) without subclassing or patching internals.
+- Removed hardcoded `_SCENE_VLM_MODEL_SIZE` override in `VideoAnalyzer`; `SceneVLM` uses its own default unless overridden via `analyzer_params`.
+
 ## 0.21.0
 
 ### Breaking Changes
