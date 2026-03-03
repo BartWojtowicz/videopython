@@ -1,5 +1,17 @@
 # Release Notes
 
+## 0.21.4
+
+### Breaking Changes
+
+- `SceneVLM.analyze_scene()` and `SceneVLM.analyze_frame()` now return `str` (plain-text caption) instead of `SceneVLMResult`.
+- Removed `SceneVLMResult` dataclass.
+
+### Changed
+
+- SceneVLM now generates plain-text captions instead of structured JSON. Removes fragile JSON parsing that failed on most segments due to Qwen3 thinking mode output.
+- Disabled Qwen3 thinking mode (`enable_thinking=False`) to avoid `<think>` token overhead.
+
 ## 0.21.3
 
 ### Fixed

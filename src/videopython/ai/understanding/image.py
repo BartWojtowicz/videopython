@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import json
-from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import numpy as np
 from PIL import Image
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from videopython.ai._device import log_device_initialization, select_device
-from videopython.base.description import DetectedObject
 
 SCENE_VLM_MODEL_IDS: dict[str, str] = {
     "2b": "Qwen/Qwen3-VL-2B-Instruct",
@@ -20,92 +16,19 @@ SCENE_VLM_MODEL_IDS: dict[str, str] = {
 DEFAULT_SCENE_VLM_MODEL_SIZE: Literal["2b", "4b"] = "4b"
 
 _DEFAULT_PROMPT = (
-    "Analyze the scene across all provided frames. Return exactly one JSON object and nothing else. "
-    'Schema: {"caption":"string","primary_action":"string","confidence":0.0,'
-    '"objects":[{"label":"string","confidence":0.0}],"text":["string"]}. '
-    "Rules: valid JSON only (double quotes, no trailing commas), confidence values must be numbers in [0,1], "
-    "objects max 6 unique labels, text max 6 unique entries, keep all strings concise, "
-    "and stop generation immediately after the final closing brace."
+    "Describe the visual content of these frames in 1-3 concise sentences. "
+    "Focus on the main subjects, actions, and setting. Be specific and factual."
 )
 
 
-@dataclass
-class SceneVLMResult:
-    """Structured scene understanding result from the VLM."""
-
-    caption: str
-    objects: list[DetectedObject] = field(default_factory=list)
-    text: list[str] = field(default_factory=list)
-    primary_action: str | None = None
-    confidence: float = 0.0
-    raw_response: str | None = None
-
-
-def _normalize_text(value: Any) -> str:
-    if not isinstance(value, str):
-        return ""
-    return " ".join(value.split()).strip()
-
-
-def _to_confidence(value: Any, *, fallback: float) -> float:
-    try:
-        conf = float(value)
-    except (TypeError, ValueError):
-        return fallback
-    return max(0.0, min(1.0, conf))
-
-
-def _extract_json(raw: str) -> dict[str, Any] | None:
-    try:
-        parsed = json.loads(raw)
-        return parsed if isinstance(parsed, dict) else None
-    except json.JSONDecodeError:
-        start = raw.find("{")
-        end = raw.rfind("}")
-        if start == -1 or end == -1 or end <= start:
-            return None
-        try:
-            parsed = json.loads(raw[start : end + 1])
-        except json.JSONDecodeError:
-            return None
-        return parsed if isinstance(parsed, dict) else None
-
-
-class _SceneVLMObjectPayload(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    label: str
-    confidence: float = 0.4
-
-
-class _SceneVLMResponsePayload(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    caption: str
-    primary_action: str | None = None
-    confidence: float = 0.35
-    objects: list[_SceneVLMObjectPayload] = Field(default_factory=list)
-    text: list[str] = Field(default_factory=list)
-
-
-def _parse_payload(raw: str) -> _SceneVLMResponsePayload | None:
-    payload = _extract_json(raw)
-    if payload is None:
-        return None
-    try:
-        return _SceneVLMResponsePayload.model_validate(payload)
-    except ValidationError:
-        return None
-
-
 class SceneVLM:
-    """Generates structured scene understanding with local Qwen3-VL."""
+    """Generates scene captions with local Qwen3-VL."""
 
     def __init__(
         self,
         model_name: str | None = None,
         device: str | None = None,
-        max_new_tokens: int = 384,
+        max_new_tokens: int = 128,
         temperature: float = 0.0,
         model_size: Literal["2b", "4b"] = DEFAULT_SCENE_VLM_MODEL_SIZE,
     ):
@@ -161,8 +84,8 @@ class SceneVLM:
         self,
         image: np.ndarray | Image.Image,
         prompt: str | None = None,
-    ) -> SceneVLMResult:
-        """Analyze one frame and return structured scene understanding."""
+    ) -> str:
+        """Analyze one frame and return a plain-text caption."""
         frame = Image.fromarray(image) if isinstance(image, np.ndarray) else image
         return self.analyze_scene([frame], prompt=prompt)
 
@@ -170,8 +93,8 @@ class SceneVLM:
         self,
         images: list[np.ndarray | Image.Image],
         prompt: str | None = None,
-    ) -> SceneVLMResult:
-        """Analyze a scene with multiple frames in one multi-image inference."""
+    ) -> str:
+        """Analyze a scene with multiple frames and return a plain-text caption."""
         if not images:
             raise ValueError("`images` must contain at least one frame")
 
@@ -181,7 +104,8 @@ class SceneVLM:
         content.append({"type": "text", "text": user_prompt})
         messages = [{"role": "user", "content": content}]
         outputs = self._generate_from_message_batch([messages])
-        return self._parse_response(outputs[0])
+        caption = " ".join(outputs[0].split()).strip()
+        return caption or "No scene description"
 
     def _generate_from_message_batch(self, messages_batch: list[list[dict[str, Any]]]) -> list[str]:
         """Run batch generation for one or more multimodal chat messages."""
@@ -191,7 +115,7 @@ class SceneVLM:
             self._init_local()
 
         texts = [
-            self._processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=True)
+            self._processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=True, enable_thinking=False)
             for msg in messages_batch
         ]
 
@@ -243,53 +167,3 @@ class SceneVLM:
         ]
         output_texts = self._processor.batch_decode(generated_ids_trimmed, skip_special_tokens=True)
         return [text.strip() for text in output_texts]
-
-    def _parse_response(self, raw: str) -> SceneVLMResult:
-        payload = _parse_payload(raw)
-        if payload is None:
-            raw_text = _normalize_text(raw)
-            fallback_caption = raw_text if raw_text and not raw_text.startswith("{") else "No scene description"
-            return SceneVLMResult(
-                caption=fallback_caption,
-                objects=[],
-                text=[],
-                primary_action=None,
-                confidence=0.35,
-                raw_response=raw,
-            )
-
-        caption = _normalize_text(payload.caption) or "No scene description"
-        primary_action = _normalize_text(payload.primary_action) or None
-        confidence = _to_confidence(payload.confidence, fallback=0.35)
-
-        objects: list[DetectedObject] = []
-        for item in payload.objects:
-            label = _normalize_text(item.label)
-            if not label:
-                continue
-            objects.append(
-                DetectedObject(
-                    label=label,
-                    confidence=_to_confidence(item.confidence, fallback=0.4),
-                    bounding_box=None,
-                )
-            )
-
-        text: list[str] = []
-        seen: set[str] = set()
-        for token_value in payload.text:
-            token = _normalize_text(token_value)
-            key = token.lower()
-            if not token or key in seen:
-                continue
-            seen.add(key)
-            text.append(token)
-
-        return SceneVLMResult(
-            caption=caption,
-            objects=objects,
-            text=text,
-            primary_action=primary_action,
-            confidence=confidence,
-            raw_response=raw,
-        )

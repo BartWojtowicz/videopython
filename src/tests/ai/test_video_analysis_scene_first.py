@@ -17,13 +17,6 @@ from videopython.base.text.transcription import Transcription, TranscriptionSegm
 from videopython.base.video import Video
 
 
-class _FakeSceneResult:
-    def __init__(self, caption: str):
-        self.caption = caption
-        self.objects = [DetectedObject(label="person", confidence=0.9)]
-        self.text = ["SCORE", "score"]
-
-
 class _FakeAudioToText:
     def __init__(self, **_kwargs):
         pass
@@ -57,7 +50,7 @@ class _FakeSceneVLM:
         pass
 
     def analyze_scene(self, frames):
-        return _FakeSceneResult(caption=f"scene_with_{len(frames)}_frames")
+        return f"scene_with_{len(frames)}_frames"
 
 
 class _FailingSceneVLM:
@@ -166,8 +159,6 @@ def test_scene_first_full_run_outputs_scene_payload(monkeypatch: pytest.MonkeyPa
     ]
     assert analysis.scenes.samples[0].visual_segments
     assert analysis.scenes.samples[0].visual_segments[0].caption is not None
-    assert analysis.scenes.samples[0].visual_segments[0].objects
-    assert analysis.scenes.samples[0].visual_segments[0].text == ["SCORE"]
     assert analysis.scenes.samples[0].audio_classification is not None
     assert not hasattr(analysis, "frames")
     payload = analysis.to_dict()
