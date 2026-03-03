@@ -614,42 +614,12 @@ class VideoAnalyzer:
             if not frames:
                 continue
 
-            result = scene_vlm.analyze_scene(frames)
-            caption = _normalize_text(getattr(result, "caption", None))
-
-            objects_by_label: dict[str, DetectedObject] = {}
-            for obj in getattr(result, "objects", []) or []:
-                key = _normalize_text(obj.label).lower()
-                if not key:
-                    continue
-                existing = objects_by_label.get(key)
-                if existing is None or float(obj.confidence) > float(existing.confidence):
-                    objects_by_label[key] = DetectedObject(
-                        label=_normalize_text(obj.label) or obj.label,
-                        confidence=float(obj.confidence),
-                        bounding_box=obj.bounding_box,
-                    )
-
-            text_tokens: list[str] = []
-            seen_text: set[str] = set()
-            for token in getattr(result, "text", []) or []:
-                normalized = _normalize_text(token)
-                if not normalized:
-                    continue
-                lowered = normalized.lower()
-                if lowered in seen_text:
-                    continue
-                seen_text.add(lowered)
-                text_tokens.append(normalized)
-
-            objects = sorted(objects_by_label.values(), key=lambda item: float(item.confidence), reverse=True)
+            caption = scene_vlm.analyze_scene(frames)
             segments.append(
                 SceneVisualSegment(
                     start_second=round(window_start, 6),
                     end_second=round(window_end, 6),
                     caption=caption or None,
-                    objects=objects,
-                    text=text_tokens,
                 )
             )
         return segments
