@@ -1,5 +1,11 @@
 # Release Notes
 
+## 0.21.3
+
+### Fixed
+
+- Removed unsupported `use_model_defaults` kwarg from SceneVLM generation call that caused `ValueError` with transformers versions that don't recognize it.
+
 ## 0.21.2
 
 ### Fixed

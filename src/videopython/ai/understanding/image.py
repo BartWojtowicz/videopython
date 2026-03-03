@@ -230,7 +230,6 @@ class SceneVLM:
         generation_config = self._generation_config_for_run()
         if generation_config is not None:
             generation_kwargs["generation_config"] = generation_config
-            generation_kwargs["use_model_defaults"] = False
         elif self.temperature > 0:
             generation_kwargs.update({"do_sample": True, "temperature": self.temperature})
         else:
