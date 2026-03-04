@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import gc
 import json
 import logging
+import math
 import re
 import subprocess
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from importlib import metadata as importlib_metadata
@@ -14,7 +18,6 @@ import numpy as np
 from PIL import Image
 
 from videopython.ai.understanding import (
-    ActionRecognizer,
     AudioClassifier,
     AudioToText,
     SceneVLM,
@@ -24,8 +27,6 @@ from videopython.base.audio import Audio
 from videopython.base.description import (
     AudioClassification,
     AudioEvent,
-    DetectedAction,
-    DetectedObject,
     SceneBoundary,
 )
 from videopython.base.text.transcription import Transcription
@@ -38,14 +39,12 @@ logger = logging.getLogger(__name__)
 AUDIO_TO_TEXT = "audio_to_text"
 AUDIO_CLASSIFIER = "audio_classifier"
 SEMANTIC_SCENE_DETECTOR = "semantic_scene_detector"
-ACTION_RECOGNIZER = "action_recognizer"
 SCENE_VLM = "scene_vlm"
 
 ALL_ANALYZER_IDS: tuple[str, ...] = (
     AUDIO_TO_TEXT,
     AUDIO_CLASSIFIER,
     SEMANTIC_SCENE_DETECTOR,
-    ACTION_RECOGNIZER,
     SCENE_VLM,
 )
 
@@ -61,8 +60,9 @@ _GEO_TAG_KEYS: tuple[str, ...] = (
     "location-eng",
 )
 
-_SCENE_VLM_MAX_SEGMENT_SECONDS = 10.0
-_SCENE_VLM_FRAMES_PER_SEGMENT = 2
+_SCENE_VLM_FRAME_SCALE = 3.0  # controls log curve steepness for frame sampling
+_SCENE_VLM_FRAME_BASE = 5.0  # seconds per unit in log formula
+_SCENE_VLM_MAX_FRAMES = 30  # hard cap on frames per scene
 
 
 @dataclass
@@ -176,7 +176,6 @@ class VideoAnalysisConfig:
             analyzer_params={
                 "audio_to_text": {"model_name": "large"},
                 "scene_vlm": {"model_size": "2b"},
-                "action_recognizer": {"model_size": "large"},
             }
         )
     """
@@ -236,36 +235,6 @@ class AudioAnalysisSection:
 
 
 @dataclass
-class SceneVisualSegment:
-    """Chunk-level visual understanding output inside one scene."""
-
-    start_second: float
-    end_second: float
-    caption: str | None = None
-    objects: list[DetectedObject] = field(default_factory=list)
-    text: list[str] = field(default_factory=list)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "start_second": self.start_second,
-            "end_second": self.end_second,
-            "caption": self.caption,
-            "objects": [obj.to_dict() for obj in self.objects],
-            "text": self.text,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "SceneVisualSegment":
-        return cls(
-            start_second=float(data["start_second"]),
-            end_second=float(data["end_second"]),
-            caption=data.get("caption"),
-            objects=[DetectedObject.from_dict(item) for item in data.get("objects", [])],
-            text=[str(item) for item in data.get("text", [])],
-        )
-
-
-@dataclass
 class SceneAnalysisSample:
     """Flat scene payload with all per-scene analyzer outputs."""
 
@@ -274,8 +243,7 @@ class SceneAnalysisSample:
     end_second: float
     start_frame: int | None = None
     end_frame: int | None = None
-    visual_segments: list[SceneVisualSegment] = field(default_factory=list)
-    actions: list[DetectedAction] = field(default_factory=list)
+    caption: str | None = None
     audio_classification: AudioClassification | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -285,8 +253,7 @@ class SceneAnalysisSample:
             "end_second": self.end_second,
             "start_frame": self.start_frame,
             "end_frame": self.end_frame,
-            "visual_segments": [segment.to_dict() for segment in self.visual_segments],
-            "actions": [action.to_dict() for action in self.actions],
+            "caption": self.caption,
             "audio_classification": self.audio_classification.to_dict() if self.audio_classification else None,
         }
 
@@ -298,8 +265,7 @@ class SceneAnalysisSample:
             end_second=float(data["end_second"]),
             start_frame=data.get("start_frame"),
             end_frame=data.get("end_frame"),
-            visual_segments=[SceneVisualSegment.from_dict(item) for item in data.get("visual_segments", [])],
-            actions=[DetectedAction.from_dict(item) for item in data.get("actions", [])],
+            caption=data.get("caption"),
             audio_classification=(
                 AudioClassification.from_dict(data["audio_classification"])
                 if data.get("audio_classification")
@@ -427,44 +393,60 @@ class VideoAnalyzer:
             library_version=_library_version(),
         )
 
+        t_analysis_start = time.perf_counter()
+
+        run_whisper = AUDIO_TO_TEXT in enabled
+        run_scene_det = SEMANTIC_SCENE_DETECTOR in enabled
+
         transcription: Transcription | None = None
-        if AUDIO_TO_TEXT in enabled:
-            try:
-                transcription = AudioToText(**self.config.get_params(AUDIO_TO_TEXT)).transcribe(
-                    Audio.from_path(source_path) if source_path is not None else _require_video(video)
-                )
-            except Exception:
-                logger.warning("AudioToText failed, skipping transcription", exc_info=True)
-                transcription = None
+        detected: list[SceneBoundary] | None = None
+
+        # Whisper and TransNetV2 operate on independent data (audio vs video
+        # frames) and both fit comfortably in GPU memory together. Run them
+        # concurrently via threads -- the GIL is released during GPU compute
+        # and ffmpeg I/O so real parallelism is achieved.
+        if run_whisper and run_scene_det:
+            transcription, detected = self._run_whisper_and_scene_detection(source_path=source_path, video=video)
+        else:
+            if run_whisper:
+                t0 = time.perf_counter()
+                transcription = self._run_whisper(source_path=source_path, video=video)
+                logger.info("Whisper transcription completed in %.2fs", time.perf_counter() - t0)
+
+            if run_scene_det:
+                t0 = time.perf_counter()
+                detected = self._run_scene_detection(source_path=source_path, video=video)
+                logger.info("Scene detection completed in %.2fs", time.perf_counter() - t0)
+
+        if run_scene_det:
+            self._reset_transnetv2_torch_state()
+
+        # Whisper and TransNetV2 are done -- free their GPU memory before
+        # loading SceneVLM (~9GB). Python GC doesn't guarantee immediate
+        # cleanup, so force it and release the CUDA cache.
+        if run_whisper or run_scene_det:
+            gc.collect()
+            self._release_gpu_cache()
 
         scenes = self._default_scene_boundaries(metadata)
-        if SEMANTIC_SCENE_DETECTOR in enabled:
-            detected: list[SceneBoundary] | None = None
-            try:
-                scene_detector = SemanticSceneDetector(**self.config.get_params(SEMANTIC_SCENE_DETECTOR))
-                detected = (
-                    scene_detector.detect_streaming(source_path)
-                    if source_path is not None
-                    else scene_detector.detect(_require_video(video))
-                )
-            except Exception:
-                logger.warning("SemanticSceneDetector failed, using default scene boundaries", exc_info=True)
-                detected = None
-            if detected is not None:
-                scenes = self._normalize_scene_boundaries(detected, metadata)
+        if detected is not None:
+            scenes = self._normalize_scene_boundaries(detected, metadata)
 
         if not scenes:
             scenes = self._default_scene_boundaries(metadata)
 
+        t0 = time.perf_counter()
         scene_section = self._analyze_scenes(
             source_path=source_path,
             video=video,
             metadata=metadata,
             scenes=scenes,
         )
+        logger.info("Scene analysis completed in %.2fs", time.perf_counter() - t0)
 
         audio_section = AudioAnalysisSection(transcription=transcription) if transcription is not None else None
 
+        logger.info("Total analysis completed in %.2fs", time.perf_counter() - t_analysis_start)
         return VideoAnalysis(
             source=source,
             config=self.config,
@@ -472,6 +454,72 @@ class VideoAnalyzer:
             audio=audio_section,
             scenes=scene_section if scene_section.samples else None,
         )
+
+    def _run_whisper(self, *, source_path: Path | None, video: Video | None) -> Transcription | None:
+        try:
+            return AudioToText(**self.config.get_params(AUDIO_TO_TEXT)).transcribe(
+                Audio.from_path(source_path) if source_path is not None else _require_video(video)
+            )
+        except Exception:
+            logger.warning("AudioToText failed, skipping transcription", exc_info=True)
+            return None
+
+    def _run_scene_detection(self, *, source_path: Path | None, video: Video | None) -> list[SceneBoundary] | None:
+        try:
+            scene_detector = SemanticSceneDetector(**self.config.get_params(SEMANTIC_SCENE_DETECTOR))
+            return (
+                scene_detector.detect_streaming(source_path)
+                if source_path is not None
+                else scene_detector.detect(_require_video(video))
+            )
+        except Exception:
+            logger.warning("SemanticSceneDetector failed, using default scene boundaries", exc_info=True)
+            return None
+
+    def _run_whisper_and_scene_detection(
+        self, *, source_path: Path | None, video: Video | None
+    ) -> tuple[Transcription | None, list[SceneBoundary] | None]:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            t0 = time.perf_counter()
+            whisper_future = pool.submit(self._run_whisper, source_path=source_path, video=video)
+            scene_future = pool.submit(self._run_scene_detection, source_path=source_path, video=video)
+
+            transcription = whisper_future.result()
+            detected = scene_future.result()
+            elapsed = time.perf_counter() - t0
+            logger.info("Whisper + scene detection (parallel) completed in %.2fs", elapsed)
+
+        return transcription, detected
+
+    @staticmethod
+    def _reset_transnetv2_torch_state() -> None:
+        """Reset global torch state that TransNetV2 sets during init.
+
+        TransNetV2 sets torch.use_deterministic_algorithms(True) and
+        cudnn.benchmark=False globally. Reset to defaults so subsequent
+        models (especially SceneVLM's convolution-heavy ViT) can use cuDNN
+        autotuner and non-deterministic kernels for better throughput.
+        """
+        try:
+            import torch
+
+            torch.use_deterministic_algorithms(False)
+            if torch.backends.cudnn.is_available():
+                torch.backends.cudnn.deterministic = False
+                torch.backends.cudnn.benchmark = True
+        except ImportError:
+            pass
+
+    @staticmethod
+    def _release_gpu_cache() -> None:
+        """Force-release unused GPU memory back to the CUDA allocator."""
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
 
     def _analyze_scenes(
         self,
@@ -488,14 +536,6 @@ class VideoAnalyzer:
         except Exception:
             logger.warning("Failed to initialize SceneVLM, skipping visual understanding", exc_info=True)
             scene_vlm = None
-
-        try:
-            action_recognizer = (
-                ActionRecognizer(**self.config.get_params(ACTION_RECOGNIZER)) if ACTION_RECOGNIZER in enabled else None
-            )
-        except Exception:
-            logger.warning("Failed to initialize ActionRecognizer, skipping action recognition", exc_info=True)
-            action_recognizer = None
 
         try:
             audio_classifier = (
@@ -516,6 +556,7 @@ class VideoAnalyzer:
                 path_audio = None
 
         samples: list[SceneAnalysisSample] = []
+        t_audio_total = 0.0
         for index, scene in enumerate(scenes):
             sample = SceneAnalysisSample(
                 scene_index=index,
@@ -526,10 +567,7 @@ class VideoAnalyzer:
             )
 
             scene_clip: Video | None = None
-            needs_scene_clip = (action_recognizer is not None and source_path is None) or (
-                audio_classifier is not None and path_audio is None
-            )
-            if needs_scene_clip:
+            if audio_classifier is not None and path_audio is None:
                 try:
                     scene_clip = self._load_scene_video_clip(
                         source_path=source_path,
@@ -542,7 +580,7 @@ class VideoAnalyzer:
 
             if scene_vlm is not None:
                 try:
-                    sample.visual_segments = self._run_scene_vlm(
+                    sample.caption = self._run_scene_vlm(
                         scene_vlm=scene_vlm,
                         source_path=source_path,
                         video=video,
@@ -555,26 +593,8 @@ class VideoAnalyzer:
                         "SceneVLM failed for scene %d (%.1f-%.1fs)", index, scene.start, scene.end, exc_info=True
                     )
 
-            if action_recognizer is not None:
-                try:
-                    sample.actions = self._run_scene_actions(
-                        action_recognizer=action_recognizer,
-                        source_path=source_path,
-                        scene_clip=scene_clip,
-                        scene_start=scene.start,
-                        scene_end=scene.end,
-                        start_frame_offset=scene.start_frame,
-                    )
-                except Exception:
-                    logger.warning(
-                        "ActionRecognizer failed for scene %d (%.1f-%.1fs)",
-                        index,
-                        scene.start,
-                        scene.end,
-                        exc_info=True,
-                    )
-
             if audio_classifier is not None:
+                t0 = time.perf_counter()
                 try:
                     sample.audio_classification = self._run_scene_audio_classification(
                         audio_classifier=audio_classifier,
@@ -587,8 +607,12 @@ class VideoAnalyzer:
                     logger.warning(
                         "AudioClassifier failed for scene %d (%.1f-%.1fs)", index, scene.start, scene.end, exc_info=True
                     )
+                t_audio_total += time.perf_counter() - t0
 
             samples.append(sample)
+
+        if audio_classifier is not None:
+            logger.info("AudioClassifier inference total: %.2fs across %d scenes", t_audio_total, len(scenes))
 
         return SceneAnalysisSection(samples=samples)
 
@@ -601,64 +625,24 @@ class VideoAnalyzer:
         metadata: VideoMetadata,
         start_second: float,
         end_second: float,
-    ) -> list[SceneVisualSegment]:
-        segments: list[SceneVisualSegment] = []
-        for window_start, window_end in self._scene_vlm_windows(start_second, end_second):
-            frames = self._sample_scene_frames(
-                source_path=source_path,
-                video=video,
-                metadata=metadata,
-                start_second=window_start,
-                end_second=window_end,
-            )
-            if not frames:
-                continue
-
-            caption = scene_vlm.analyze_scene(frames)
-            segments.append(
-                SceneVisualSegment(
-                    start_second=round(window_start, 6),
-                    end_second=round(window_end, 6),
-                    caption=caption or None,
-                )
-            )
-        return segments
-
-    def _run_scene_actions(
-        self,
-        *,
-        action_recognizer: ActionRecognizer,
-        source_path: Path | None,
-        scene_clip: Video | None,
-        scene_start: float,
-        scene_end: float,
-        start_frame_offset: int | None,
-    ) -> list[DetectedAction]:
-        if scene_end <= scene_start:
-            return []
-
-        if source_path is not None:
-            return action_recognizer.recognize_path(
-                source_path,
-                start_second=scene_start,
-                end_second=scene_end,
-            )
-
-        if scene_clip is None:
-            return []
-
-        clip_actions = action_recognizer.recognize(scene_clip)
-        offset = int(start_frame_offset or 0)
-        for action in clip_actions:
-            if action.start_frame is not None:
-                action.start_frame = action.start_frame + offset
-            if action.end_frame is not None:
-                action.end_frame = action.end_frame + offset
-            if action.start_time is not None:
-                action.start_time = scene_start + action.start_time
-            if action.end_time is not None:
-                action.end_time = scene_start + action.end_time
-        return clip_actions
+    ) -> str | None:
+        duration = max(0.0, end_second - start_second)
+        frame_count = min(
+            _SCENE_VLM_MAX_FRAMES,
+            max(1, math.ceil(_SCENE_VLM_FRAME_SCALE * math.log(duration / _SCENE_VLM_FRAME_BASE + 1))),
+        )
+        frames = self._sample_scene_frames(
+            source_path=source_path,
+            video=video,
+            metadata=metadata,
+            start_second=start_second,
+            end_second=end_second,
+            frame_count=frame_count,
+        )
+        if not frames:
+            return None
+        caption = scene_vlm.analyze_scene(frames)
+        return caption or None
 
     def _run_scene_audio_classification(
         self,
@@ -691,19 +675,6 @@ class VideoAnalyzer:
         ]
         return AudioClassification(events=offset_events, clip_predictions=classification.clip_predictions)
 
-    def _scene_vlm_windows(self, start_second: float, end_second: float) -> list[tuple[float, float]]:
-        if end_second <= start_second:
-            return []
-
-        windows: list[tuple[float, float]] = []
-        cursor = float(start_second)
-        max_window = float(_SCENE_VLM_MAX_SEGMENT_SECONDS)
-        while cursor < end_second:
-            window_end = min(end_second, cursor + max_window)
-            windows.append((cursor, window_end))
-            cursor = window_end
-        return windows
-
     def _sample_scene_frames(
         self,
         *,
@@ -712,8 +683,9 @@ class VideoAnalyzer:
         metadata: VideoMetadata,
         start_second: float,
         end_second: float,
+        frame_count: int,
     ) -> list[np.ndarray | Image.Image]:
-        timestamps = self._sample_timestamps(start_second=start_second, end_second=end_second)
+        timestamps = self._sample_timestamps(start_second=start_second, end_second=end_second, frame_count=frame_count)
         if not timestamps:
             return []
 
@@ -729,18 +701,19 @@ class VideoAnalyzer:
         in_memory_frames.extend(current_video.frames[idx] for idx in indices)
         return in_memory_frames
 
-    def _sample_timestamps(self, *, start_second: float, end_second: float) -> list[float]:
+    @staticmethod
+    def _sample_timestamps(*, start_second: float, end_second: float, frame_count: int) -> list[float]:
         duration = max(0.0, end_second - start_second)
         if duration <= 0.0:
             return []
 
-        frame_count = max(1, int(_SCENE_VLM_FRAMES_PER_SEGMENT))
-        if frame_count == 1:
+        count = max(1, frame_count)
+        if count == 1:
             return [start_second + (duration * 0.5)]
 
         # Center samples inside the interval so we avoid exact boundaries.
-        step = duration / float(frame_count + 1)
-        timestamps = [start_second + (step * (idx + 1)) for idx in range(frame_count)]
+        step = duration / float(count + 1)
+        timestamps = [start_second + (step * (idx + 1)) for idx in range(count)]
         epsilon = 1e-3
         return [min(end_second - epsilon, max(start_second + epsilon, ts)) for ts in timestamps]
 

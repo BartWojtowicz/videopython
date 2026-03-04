@@ -11,7 +11,6 @@ For a single aggregate, serializable analysis object across multiple analyzers, 
 | SceneVLM | Qwen3-VL |
 | AudioToText | Whisper |
 | AudioClassifier | AST |
-| ActionRecognizer | VideoMAE |
 | SemanticSceneDetector | TransNetV2 |
 
 ## AudioToText
@@ -50,26 +49,6 @@ for event in result.events:
 Device selection is automatic by default (`cuda` -> `cpu`).
 
 ::: videopython.ai.SceneVLM
-
-### ActionRecognizer
-
-Recognize actions and activities in video clips using VideoMAE, a masked autoencoder fine-tuned on Kinetics-400 (400 action classes like "walking", "running", "dancing", "answering questions").
-
-```python
-from videopython.ai import ActionRecognizer
-
-recognizer = ActionRecognizer(model_size="base", confidence_threshold=0.1)
-
-# Recognize actions in entire video
-actions = recognizer.recognize_path("video.mp4", top_k=5)
-for action in actions:
-    print(f"{action.label}: {action.confidence:.1%}")
-
-# Output: answering questions: 37.2%
-#         using computer: 12.2%
-```
-
-::: videopython.ai.ActionRecognizer
 
 ### SemanticSceneDetector
 

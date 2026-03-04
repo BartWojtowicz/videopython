@@ -9,8 +9,6 @@ import videopython.ai.video_analysis as va
 from videopython.base.description import (
     AudioClassification,
     AudioEvent,
-    DetectedAction,
-    DetectedObject,
     SceneBoundary,
 )
 from videopython.base.text.transcription import Transcription, TranscriptionSegment
@@ -61,25 +59,6 @@ class _FailingSceneVLM:
         raise RuntimeError("scene vlm failure")
 
 
-class _FakeActionRecognizer:
-    def __init__(self, **_kwargs):
-        pass
-
-    def recognize_path(self, _path, top_k=5, start_second=None, end_second=None):
-        del top_k
-        return [
-            DetectedAction(
-                label="run",
-                confidence=0.8,
-                start_time=start_second,
-                end_time=end_second,
-            )
-        ]
-
-    def recognize(self, _video):
-        return [DetectedAction(label="run", confidence=0.8, start_time=0.2, end_time=0.8)]
-
-
 class _FakeAudioClassifier:
     def __init__(self, **_kwargs):
         pass
@@ -95,7 +74,6 @@ def _patch_scene_first_analyzers(monkeypatch: pytest.MonkeyPatch, *, failing_vlm
     monkeypatch.setattr(va, "AudioToText", _FakeAudioToText)
     monkeypatch.setattr(va, "SemanticSceneDetector", _FakeSceneDetector)
     monkeypatch.setattr(va, "SceneVLM", _FailingSceneVLM if failing_vlm else _FakeSceneVLM)
-    monkeypatch.setattr(va, "ActionRecognizer", _FakeActionRecognizer)
     monkeypatch.setattr(va, "AudioClassifier", _FakeAudioClassifier)
 
 
@@ -116,16 +94,7 @@ def test_scene_analysis_sample_roundtrip_dict() -> None:
         end_second=2.0,
         start_frame=0,
         end_frame=20,
-        visual_segments=[
-            va.SceneVisualSegment(
-                start_second=0.0,
-                end_second=2.0,
-                caption="two people talking",
-                objects=[DetectedObject(label="person", confidence=0.9)],
-                text=["EXIT"],
-            )
-        ],
-        actions=[DetectedAction(label="talking", confidence=0.8, start_time=0.2, end_time=1.5)],
+        caption="two people talking",
         audio_classification=AudioClassification(
             events=[AudioEvent(start=0.1, end=0.9, label="Speech", confidence=0.8)],
             clip_predictions={"Speech": 0.8},
@@ -157,8 +126,7 @@ def test_scene_first_full_run_outputs_scene_payload(monkeypatch: pytest.MonkeyPa
         "second line",
         "third line",
     ]
-    assert analysis.scenes.samples[0].visual_segments
-    assert analysis.scenes.samples[0].visual_segments[0].caption is not None
+    assert analysis.scenes.samples[0].caption is not None
     assert analysis.scenes.samples[0].audio_classification is not None
     assert not hasattr(analysis, "frames")
     payload = analysis.to_dict()
@@ -174,8 +142,7 @@ def test_disabled_analyzers_do_not_run(monkeypatch: pytest.MonkeyPatch) -> None:
     assert analysis.audio is None
     assert analysis.scenes is not None
     assert analysis.scenes.samples
-    assert analysis.scenes.samples[0].visual_segments == []
-    assert not analysis.scenes.samples[0].actions
+    assert analysis.scenes.samples[0].caption is None
     assert analysis.scenes.samples[0].audio_classification is None
 
 
@@ -186,20 +153,15 @@ def test_scene_payload_survives_vlm_failure(monkeypatch: pytest.MonkeyPatch) -> 
 
     assert analysis.scenes is not None
     assert len(analysis.scenes.samples) == 2
-    assert analysis.scenes.samples[0].visual_segments == []
+    assert analysis.scenes.samples[0].caption is None
 
 
-def test_scene_vlm_outputs_chunk_level_visual_segments(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_scene_vlm_produces_single_caption_with_scaled_frames(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_scene_first_analyzers(monkeypatch)
     config = va.VideoAnalysisConfig(enabled_analyzers={va.SCENE_VLM})
     analysis = va.VideoAnalyzer(config=config).analyze(_video_30s())
 
     assert analysis.scenes is not None
     assert len(analysis.scenes.samples) == 1
-    segments = analysis.scenes.samples[0].visual_segments
-    assert len(segments) == 3
-    assert [(item.start_second, item.end_second) for item in segments] == [
-        (0.0, 10.0),
-        (10.0, 20.0),
-        (20.0, 30.0),
-    ]
+    # 30s scene: ceil(3 * ln(30/5 + 1)) = 6 frames
+    assert analysis.scenes.samples[0].caption == "scene_with_6_frames"

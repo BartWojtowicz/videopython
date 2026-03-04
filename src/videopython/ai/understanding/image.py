@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from typing import Any, Literal
 
 import numpy as np
 from PIL import Image
 
 from videopython.ai._device import log_device_initialization, select_device
+
+logger = logging.getLogger(__name__)
 
 SCENE_VLM_MODEL_IDS: dict[str, str] = {
     "2b": "Qwen/Qwen3-VL-2B-Instruct",
@@ -48,6 +52,7 @@ class SceneVLM:
         """Initialize local Qwen3-VL model."""
         from transformers import AutoModelForImageTextToText, AutoProcessor  # type: ignore[attr-defined]
 
+        t0 = time.perf_counter()
         requested_device = self.device
         resolved_device = select_device(self.device, mps_allowed=False)
 
@@ -62,6 +67,7 @@ class SceneVLM:
             requested_device=requested_device,
             resolved_device=resolved_device,
         )
+        logger.info("SceneVLM model weights loaded in %.2fs", time.perf_counter() - t0)
 
     def _generation_config_for_run(self) -> Any | None:
         base_config = getattr(self._model, "generation_config", None)
@@ -147,6 +153,10 @@ class SceneVLM:
             if video_inputs is not None:
                 processor_kwargs["videos"] = video_inputs
 
+        num_images = sum(
+            len(items) if isinstance(items, list) else 1 for items in (processor_kwargs.get("images") or [])
+        )
+
         inputs = self._processor(**processor_kwargs)
         inputs = inputs.to(self.device) if hasattr(inputs, "to") else {k: v.to(self.device) for k, v in inputs.items()}
 
@@ -159,8 +169,12 @@ class SceneVLM:
         else:
             generation_kwargs["do_sample"] = False
 
+        t0 = time.perf_counter()
         with torch.no_grad():
             output_ids = self._model.generate(**inputs, **generation_kwargs)
+        logger.info(
+            "SceneVLM inference: %.2fs, %d images, %d messages", time.perf_counter() - t0, num_images, len(texts)
+        )
 
         generated_ids_trimmed = [
             out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs["input_ids"], output_ids, strict=False)
