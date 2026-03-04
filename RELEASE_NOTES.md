@@ -1,5 +1,11 @@
 # Release Notes
 
+## 0.21.6
+
+### Dependencies
+
+- Bumped `whisperx>=3.8.1` (from `>=3.4.2`) for pyannote-audio 4.x compatibility, fixing `torchaudio.AudioMetaData` and `use_auth_token` errors when speaker diarization is enabled.
+
 ## 0.21.5
 
 ### Breaking Changes

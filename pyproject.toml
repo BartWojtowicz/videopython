@@ -1,6 +1,6 @@
 [project]
 name = "videopython"
-version = "0.21.5"
+version = "0.21.6"
 description = "Minimal video generation and processing library."
 authors = [
     { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
@@ -60,7 +60,7 @@ ai = [
     "torch>=2.1.0",
     "transformers>=4.57.0",
     "openai-whisper>=20240930",
-    "whisperx>=3.4.2",
+    "whisperx>=3.8.1",
     "numba>=0.61.0",
     "ollama>=0.4.5",
     "scipy>=1.10.0",
@@ -95,7 +95,7 @@ ai = [
     "torch>=2.1.0",
     "transformers>=4.57.0",
     "openai-whisper>=20240930",
-    "whisperx>=3.4.2",
+    "whisperx>=3.8.1",
     "numba>=0.61.0",
     "ollama>=0.4.5",
     "scipy>=1.10.0",
