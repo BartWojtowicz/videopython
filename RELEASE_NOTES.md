@@ -1,5 +1,22 @@
 # Release Notes
 
+## 0.21.5
+
+### Breaking Changes
+
+- Removed `ActionRecognizer` from the `VideoAnalysis` pipeline. The standalone `ActionRecognizer` class remains available for direct use.
+- `SceneAnalysisSample.visual_segments` replaced with `SceneAnalysisSample.caption: str | None`. Each scene now produces a single caption instead of a list of per-segment captions.
+- Removed `SceneVisualSegment` dataclass.
+- `action_recognizer` is no longer a valid analyzer id in `VideoAnalysisConfig.enabled_analyzers`.
+
+### Changed
+
+- SceneVLM now sends all frames for a scene in a single multi-image inference call instead of splitting into 10-second windows with separate calls. Frame count scales with scene duration (1 frame per 5 seconds).
+- Whisper transcription and TransNetV2 scene detection now run in parallel when both are enabled.
+- After TransNetV2 finishes, global torch deterministic mode and cuDNN benchmark settings are reset to defaults for better SceneVLM throughput.
+- Whisper and TransNetV2 GPU memory is explicitly freed before SceneVLM loads.
+- Added per-step timing logs throughout the analysis pipeline and inside SceneVLM (model load and inference time with image count).
+
 ## 0.21.4
 
 ### Breaking Changes
