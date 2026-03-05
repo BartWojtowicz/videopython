@@ -97,9 +97,9 @@ video.add_audio(audio).save("ai_video.mp4")
 
 - Video I/O and metadata: `Video`, `VideoMetadata`, `FrameIterator`
 - Editing plans: `VideoEdit`, `SegmentConfig` (JSON/LLM-friendly multi-segment plans with schema generation)
-- Transformations: cut by time/frame, resize, crop, FPS resampling, speed change, picture-in-picture
+- Transformations: cut by time/frame, resize, crop, FPS resampling, speed change, picture-in-picture, reverse, freeze frame, silence removal
 - Clip composition: concatenate, split, transitions (`FadeTransition`, `BlurTransition`, `InstantTransition`)
-- Visual effects: blur, zoom, color grading, vignette, Ken Burns, image overlays
+- Visual effects: blur, zoom, color grading, vignette, Ken Burns, image overlays, fade, text overlay, volume adjust
 - Audio pipeline: load/save audio, overlay/concat, normalize, time-stretch, silence detection, segment classification
 - Text/subtitles: transcription data classes and `TranscriptionOverlay`
 - Scene detection: histogram-based scene boundaries (`detect`, `detect_streaming`, `detect_parallel`)

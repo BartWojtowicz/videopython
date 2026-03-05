@@ -382,15 +382,28 @@ def _json_type_from_python_types(types: set[type[Any]]) -> str:
 
 def _register_base_operations() -> None:
     from videopython.base.combine import StackVideos
-    from videopython.base.effects import Blur, ColorGrading, FullImageOverlay, KenBurns, Vignette, Zoom
+    from videopython.base.effects import (
+        Blur,
+        ColorGrading,
+        Fade,
+        FullImageOverlay,
+        KenBurns,
+        TextOverlay,
+        Vignette,
+        VolumeAdjust,
+        Zoom,
+    )
     from videopython.base.text.overlay import TranscriptionOverlay
     from videopython.base.transforms import (
         Crop,
         CutFrames,
         CutSeconds,
+        FreezeFrame,
         PictureInPicture,
         ResampleFPS,
         Resize,
+        Reverse,
+        SilenceRemoval,
         SpeedChange,
     )
     from videopython.base.transitions import BlurTransition, FadeTransition, InstantTransition
@@ -567,6 +580,71 @@ def _register_base_operations() -> None:
             category=OperationCategory.SPECIAL,
             tags={"requires_transcript"},
             aliases=("transcription_overlay",),
+        )
+    )
+    register(
+        spec_from_class(
+            Reverse,
+            op_id="reverse",
+            category=OperationCategory.TRANSFORMATION,
+        )
+    )
+    register(
+        spec_from_class(
+            SilenceRemoval,
+            op_id="silence_removal",
+            category=OperationCategory.TRANSFORMATION,
+            tags={"requires_transcript", "changes_duration"},
+            aliases=("remove_silence", "jump_cut"),
+            param_overrides={
+                "min_silence_duration": {"exclusive_minimum": 0},
+                "padding": {"minimum": 0},
+                "speed_factor": {"exclusive_minimum": 1},
+            },
+        )
+    )
+    register(
+        spec_from_class(
+            FreezeFrame,
+            op_id="freeze_frame",
+            category=OperationCategory.TRANSFORMATION,
+            tags={"changes_duration"},
+            aliases=("freeze",),
+            param_overrides={
+                "timestamp": {"minimum": 0},
+                "duration": {"exclusive_minimum": 0},
+            },
+        )
+    )
+    register(
+        spec_from_class(
+            Fade,
+            op_id="fade",
+            category=OperationCategory.EFFECT,
+            param_overrides={
+                "duration": {"exclusive_minimum": 0},
+            },
+        )
+    )
+    register(
+        spec_from_class(
+            VolumeAdjust,
+            op_id="volume_adjust",
+            category=OperationCategory.EFFECT,
+            aliases=("volume",),
+            param_overrides={
+                "volume": {"minimum": 0},
+                "ramp_duration": {"minimum": 0},
+            },
+        )
+    )
+    register(
+        spec_from_class(
+            TextOverlay,
+            op_id="text_overlay",
+            category=OperationCategory.EFFECT,
+            aliases=("lower_third", "title_card"),
+            exclude_params={"font_filename"},
         )
     )
 

@@ -11,7 +11,19 @@ from .description import (
     SceneBoundary,
 )
 from .edit import SegmentConfig, VideoEdit
-from .effects import Blur, ColorGrading, Effect, FullImageOverlay, KenBurns, Vignette, Zoom
+from .effects import (
+    AudioEffect,
+    Blur,
+    ColorGrading,
+    Effect,
+    Fade,
+    FullImageOverlay,
+    KenBurns,
+    TextOverlay,
+    Vignette,
+    VolumeAdjust,
+    Zoom,
+)
 from .exceptions import (
     AudioError,
     AudioLoadError,
@@ -52,9 +64,12 @@ from .transforms import (
     CropMode,
     CutFrames,
     CutSeconds,
+    FreezeFrame,
     PictureInPicture,
     ResampleFPS,
     Resize,
+    Reverse,
+    SilenceRemoval,
     SpeedChange,
     Transformation,
 )
@@ -94,6 +109,9 @@ __all__ = [
     "CropMode",
     "SpeedChange",
     "PictureInPicture",
+    "Reverse",
+    "FreezeFrame",
+    "SilenceRemoval",
     # Transitions
     "Transition",
     "InstantTransition",
@@ -101,12 +119,16 @@ __all__ = [
     "BlurTransition",
     # Effects
     "Effect",
+    "AudioEffect",
     "FullImageOverlay",
     "Blur",
     "Zoom",
     "ColorGrading",
     "Vignette",
     "KenBurns",
+    "Fade",
+    "VolumeAdjust",
+    "TextOverlay",
     # Text & Transcription
     "Transcription",
     "TranscriptionSegment",

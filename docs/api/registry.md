@@ -139,6 +139,12 @@ Transformations and transitions typically have an empty apply schema (no extra a
 | `fade_transition` | `FadeTransition` | transition | `changes_duration`, `multi_source_only` |
 | `blur_transition` | `BlurTransition` | transition | `changes_duration`, `multi_source_only` |
 | `stack_videos` | `StackVideos` | special | `multi_source_only`, `changes_dimensions` |
+| `reverse` | `Reverse` | transformation | -- |
+| `freeze_frame` | `FreezeFrame` | transformation | `changes_duration` |
+| `silence_removal` | `SilenceRemoval` | transformation | `requires_transcript`, `changes_duration` |
+| `fade` | `Fade` | effect | -- |
+| `volume_adjust` | `VolumeAdjust` | effect | -- |
+| `text_overlay` | `TextOverlay` | effect | -- |
 | `add_subtitles` | `TranscriptionOverlay` | special | `requires_transcript` |
 
 ### AI Operations (require `import videopython.ai`)

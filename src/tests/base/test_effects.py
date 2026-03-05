@@ -1,8 +1,22 @@
 import numpy as np
 import pytest
 
+from tests.test_config import TEST_FONT_PATH
+from videopython.base.audio import Audio, AudioMetadata
 from videopython.base.description import BoundingBox
-from videopython.base.effects import Blur, ColorGrading, FullImageOverlay, KenBurns, Vignette, Zoom
+from videopython.base.effects import (
+    AudioEffect,
+    Blur,
+    ColorGrading,
+    Fade,
+    FullImageOverlay,
+    KenBurns,
+    TextOverlay,
+    Vignette,
+    VolumeAdjust,
+    Zoom,
+)
+from videopython.base.video import Video
 
 
 def test_full_image_overlay_rgba(black_frames_test_video):
@@ -279,3 +293,181 @@ class TestKenBurns:
 
         # First frame should be unchanged
         assert np.array_equal(result.frames[0], original_first)
+
+
+@pytest.fixture
+def video_1s():
+    """1-second video at 30fps with non-black frames."""
+    frames = np.full((30, 64, 64, 3), 200, dtype=np.uint8)
+    return Video.from_frames(frames, fps=30)
+
+
+@pytest.fixture
+def video_with_audio():
+    """1-second video at 30fps with a sine wave audio track."""
+    frames = np.full((30, 64, 64, 3), 200, dtype=np.uint8)
+    video = Video.from_frames(frames, fps=30)
+    sample_rate = 44100
+    t = np.linspace(0, 1.0, sample_rate, dtype=np.float32)
+    audio_data = (np.sin(2 * np.pi * 440 * t) * 0.5).astype(np.float32)
+    video.audio = Audio(
+        data=audio_data,
+        metadata=AudioMetadata(
+            sample_rate=sample_rate,
+            channels=1,
+            sample_width=2,
+            duration_seconds=1.0,
+            frame_count=sample_rate,
+        ),
+    )
+    return video
+
+
+class TestFade:
+    def test_fade_in_starts_black(self, video_1s):
+        result = Fade(mode="in", duration=0.5).apply(video_1s)
+        assert result.frames[0].mean() == 0
+
+    def test_fade_out_ends_black(self, video_1s):
+        result = Fade(mode="out", duration=0.5).apply(video_1s)
+        assert result.frames[-1].mean() == 0
+
+    def test_fade_in_out(self, video_1s):
+        result = Fade(mode="in_out", duration=0.3).apply(video_1s)
+        assert result.frames[0].mean() == 0
+        assert result.frames[-1].mean() == 0
+        mid = len(result.frames) // 2
+        assert result.frames[mid].mean() > 100
+
+    def test_preserves_shape(self, video_1s):
+        original_shape = video_1s.video_shape
+        result = Fade(mode="in", duration=0.5).apply(video_1s)
+        assert result.video_shape == original_shape
+
+    def test_partial_apply(self, video_1s):
+        original_first = video_1s.frames[0].copy()
+        result = Fade(mode="out", duration=0.3).apply(video_1s, start=0.5)
+        assert np.array_equal(result.frames[0], original_first)
+
+    def test_audio_fade_in(self, video_with_audio):
+        result = Fade(mode="in", duration=0.5).apply(video_with_audio)
+        assert abs(result.audio.data[0]) < 0.01
+
+    def test_audio_fade_out(self, video_with_audio):
+        result = Fade(mode="out", duration=0.5).apply(video_with_audio)
+        assert abs(result.audio.data[-1]) < 0.01
+
+    def test_all_curves(self, video_1s):
+        for curve in ("sqrt", "linear", "exponential"):
+            result = Fade(mode="in", duration=0.3, curve=curve).apply(video_1s.copy())
+            assert result.frames[0].mean() == 0
+            assert result.video_shape == video_1s.video_shape
+
+    def test_invalid_mode_raises(self):
+        with pytest.raises(ValueError, match="mode"):
+            Fade(mode="invalid")
+
+    def test_invalid_duration_raises(self):
+        with pytest.raises(ValueError, match="duration"):
+            Fade(mode="in", duration=0)
+
+
+class TestVolumeAdjust:
+    def test_mute(self, video_with_audio):
+        result = VolumeAdjust(volume=0.0).apply(video_with_audio)
+        assert np.allclose(result.audio.data, 0.0)
+
+    def test_unchanged(self, video_with_audio):
+        original_audio = video_with_audio.audio.data.copy()
+        result = VolumeAdjust(volume=1.0).apply(video_with_audio)
+        assert np.allclose(result.audio.data, original_audio)
+
+    def test_half_volume(self, video_with_audio):
+        original_rms = np.sqrt(np.mean(video_with_audio.audio.data**2))
+        result = VolumeAdjust(volume=0.5).apply(video_with_audio)
+        new_rms = np.sqrt(np.mean(result.audio.data**2))
+        assert np.isclose(new_rms, original_rms * 0.5, atol=0.01)
+
+    def test_partial_apply(self, video_with_audio):
+        original_start = video_with_audio.audio.data[:100].copy()
+        result = VolumeAdjust(volume=0.0).apply(video_with_audio, start=0.5)
+        assert np.allclose(result.audio.data[:100], original_start)
+
+    def test_ramp_duration(self, video_with_audio):
+        result = VolumeAdjust(volume=0.0, ramp_duration=0.1).apply(video_with_audio)
+        assert abs(result.audio.data[1000]) > 0.01
+
+    def test_frames_unchanged(self, video_with_audio):
+        original_frames = video_with_audio.frames.copy()
+        result = VolumeAdjust(volume=0.5).apply(video_with_audio)
+        assert np.array_equal(result.frames, original_frames)
+
+    def test_isinstance_effect(self):
+        from videopython.base.effects import Effect
+
+        assert isinstance(VolumeAdjust(), Effect)
+        assert isinstance(VolumeAdjust(), AudioEffect)
+
+    def test_invalid_volume_raises(self):
+        with pytest.raises(ValueError, match="volume"):
+            VolumeAdjust(volume=-1.0)
+
+    def test_invalid_ramp_raises(self):
+        with pytest.raises(ValueError, match="ramp_duration"):
+            VolumeAdjust(ramp_duration=-0.1)
+
+    def test_silent_audio_passthrough(self, video_1s):
+        result = VolumeAdjust(volume=0.5).apply(video_1s)
+        assert result.audio is not None
+
+
+class TestTextOverlay:
+    def test_renders_text_on_black(self):
+        frames = np.zeros((10, 100, 200, 3), dtype=np.uint8)
+        video = Video.from_frames(frames, fps=10)
+        result = TextOverlay(text="Hello", font_size=20, font_filename=TEST_FONT_PATH).apply(video)
+        assert result.frames.max() > 0
+
+    def test_preserves_shape(self, video_1s):
+        original_shape = video_1s.video_shape
+        result = TextOverlay(text="Test", font_size=16).apply(video_1s)
+        assert result.video_shape == original_shape
+
+    def test_partial_apply(self, video_1s):
+        original_first = video_1s.frames[0].copy()
+        result = TextOverlay(text="Late", font_size=16).apply(video_1s, start=0.5)
+        assert np.array_equal(result.frames[0], original_first)
+
+    def test_multiline_text(self, video_1s):
+        result = TextOverlay(text="Line 1\nLine 2", font_size=16).apply(video_1s)
+        assert result.video_shape == video_1s.video_shape
+
+    def test_no_background(self):
+        frames = np.full((5, 100, 200, 3), 128, dtype=np.uint8)
+        video = Video.from_frames(frames, fps=10)
+        result = TextOverlay(text="Hi", font_size=16, background_color=None).apply(video)
+        assert result.video_shape == video.video_shape
+
+    def test_all_anchors(self, video_1s):
+        for anchor in ("center", "top_left", "top_center", "bottom_center", "bottom_left", "bottom_right"):
+            result = TextOverlay(text="X", font_size=16, anchor=anchor).apply(video_1s.copy())
+            assert result.video_shape == video_1s.video_shape
+
+    def test_empty_text_raises(self):
+        with pytest.raises(ValueError, match="text"):
+            TextOverlay(text="")
+
+    def test_invalid_position_raises(self):
+        with pytest.raises(ValueError, match="position"):
+            TextOverlay(text="Hi", position=(1.5, 0.5))
+
+    def test_invalid_font_size_raises(self):
+        with pytest.raises(ValueError, match="font_size"):
+            TextOverlay(text="Hi", font_size=0)
+
+    def test_word_wrap(self):
+        frames = np.zeros((5, 100, 200, 3), dtype=np.uint8)
+        video = Video.from_frames(frames, fps=10)
+        long_text = "This is a very long text that should definitely wrap to multiple lines"
+        result = TextOverlay(text=long_text, font_size=16, max_width=0.5, font_filename=TEST_FONT_PATH).apply(video)
+        assert result.frames.max() > 0

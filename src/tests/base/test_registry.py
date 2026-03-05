@@ -35,6 +35,12 @@ BASE_OPERATION_IDS = {
     "blur_transition",
     "stack_videos",
     "add_subtitles",
+    "reverse",
+    "freeze_frame",
+    "silence_removal",
+    "fade",
+    "volume_adjust",
+    "text_overlay",
 }
 
 AI_OPERATION_IDS = {
@@ -265,3 +271,26 @@ def test_paramspec_count_matches_apply_signature(
         name for name in inspect.signature(cls.apply).parameters if name != "self" and name not in excluded_apply_params
     ]
     assert len(spec.apply_params) == len(apply_params)
+
+
+def test_new_operation_aliases_registered() -> None:
+    registry = _reload_registry()
+    for alias in ("freeze", "volume", "lower_third", "title_card", "remove_silence", "jump_cut"):
+        spec = registry.get_operation_spec(alias)
+        assert spec is not None, f"Alias '{alias}' not found in registry"
+
+
+def test_json_schema_includes_new_ops() -> None:
+    from videopython.base.edit import VideoEdit
+
+    schema = VideoEdit.json_schema()
+    transform_schemas = schema["properties"]["segments"]["items"]["properties"]["transforms"]["items"]["oneOf"]
+    transform_ops = {s["properties"]["op"]["const"] for s in transform_schemas}
+    assert "reverse" in transform_ops
+    assert "freeze_frame" in transform_ops
+
+    effect_schemas = schema["properties"]["segments"]["items"]["properties"]["effects"]["items"]["oneOf"]
+    effect_ops = {s["properties"]["op"]["const"] for s in effect_schemas}
+    assert "fade" in effect_ops
+    assert "volume_adjust" in effect_ops
+    assert "text_overlay" in effect_ops
