@@ -67,18 +67,22 @@ class Transcription:
         self,
         segments: list[TranscriptionSegment] | None = None,
         words: list[TranscriptionWord] | None = None,
+        language: str | None = None,
     ):
         """Initialize Transcription from either segments or words.
 
         Args:
             segments: Pre-constructed segments (backward compatible)
             words: Words to group into segments by speaker (for diarization)
+            language: ISO 639-1 language code detected during transcription (e.g. "en", "pl")
 
         Raises:
             ValueError: If both or neither arguments are provided
         """
         if (segments is None) == (words is None):
             raise ValueError("Exactly one of 'segments' or 'words' must be provided")
+
+        self.language = language
 
         if segments is not None:
             self.segments = segments
@@ -185,7 +189,7 @@ class Transcription:
                 )
             )
 
-        return Transcription(segments=offset_segments)
+        return Transcription(segments=offset_segments, language=self.language)
 
     def standardize_segments(self, *, time: float | None = None, num_words: int | None = None) -> Transcription:
         """Return a new Transcription with standardized segments.
@@ -212,7 +216,7 @@ class Transcription:
             all_words.extend(segment.words)
 
         if not all_words:
-            return Transcription(segments=[])
+            return Transcription(segments=[], language=self.language)
 
         standardized_segments = []
 
@@ -266,7 +270,7 @@ class Transcription:
                     )
                 )
 
-        return Transcription(segments=standardized_segments)
+        return Transcription(segments=standardized_segments, language=self.language)
 
     def slice(self, start: float, end: float) -> Transcription | None:
         """Return a new Transcription containing only words within the time range.
@@ -334,15 +338,19 @@ class Transcription:
                 )
             )
 
-        return Transcription(segments=sliced_segments)
+        return Transcription(segments=sliced_segments, language=self.language)
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
         return {
             "segments": [s.to_dict() for s in self.segments],
+            "language": self.language,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> Transcription:
         """Create Transcription from dictionary."""
-        return cls(segments=[TranscriptionSegment.from_dict(s) for s in data["segments"]])
+        return cls(
+            segments=[TranscriptionSegment.from_dict(s) for s in data["segments"]],
+            language=data.get("language"),
+        )

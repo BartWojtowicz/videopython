@@ -567,6 +567,54 @@ def test_slice_across_multiple_segments(dummy_transcription):
     assert "Final" in all_words  # From third segment
 
 
+def test_language_stored_on_transcription():
+    """Test that language field is stored and defaults to None."""
+    words = [TranscriptionWord(start=0.0, end=1.0, word="test")]
+    segment = TranscriptionSegment(start=0.0, end=1.0, text="test", words=words)
+
+    # Default is None
+    t = Transcription(segments=[segment])
+    assert t.language is None
+
+    # Explicit language
+    t = Transcription(segments=[segment], language="pl")
+    assert t.language == "pl"
+
+    # Via words path
+    t = Transcription(words=[TranscriptionWord(start=0.0, end=1.0, word="test")], language="en")
+    assert t.language == "en"
+
+
+def test_language_propagated_by_offset():
+    """Test that offset() carries language forward."""
+    words = [TranscriptionWord(start=0.0, end=1.0, word="test")]
+    segment = TranscriptionSegment(start=0.0, end=1.0, text="test", words=words)
+    t = Transcription(segments=[segment], language="de")
+
+    assert t.offset(1.0).language == "de"
+
+
+def test_language_propagated_by_standardize_segments():
+    """Test that standardize_segments() carries language forward."""
+    words = [TranscriptionWord(start=0.0, end=1.0, word="test")]
+    segment = TranscriptionSegment(start=0.0, end=1.0, text="test", words=words)
+    t = Transcription(segments=[segment], language="fr")
+
+    assert t.standardize_segments(num_words=1).language == "fr"
+    assert t.standardize_segments(time=5.0).language == "fr"
+
+
+def test_language_propagated_by_slice():
+    """Test that slice() carries language forward."""
+    words = [TranscriptionWord(start=0.0, end=1.0, word="test")]
+    segment = TranscriptionSegment(start=0.0, end=1.0, text="test", words=words)
+    t = Transcription(segments=[segment], language="ja")
+
+    sliced = t.slice(0.0, 2.0)
+    assert sliced is not None
+    assert sliced.language == "ja"
+
+
 class TestTranscriptionSerialization:
     """Tests for to_dict/from_dict serialization methods."""
 
@@ -649,3 +697,21 @@ class TestTranscriptionSerialization:
         restored = Transcription.from_dict(data)
 
         assert len(restored.segments) == 0
+
+    def test_language_roundtrip(self):
+        """Test that language survives serialization roundtrip."""
+        words = [TranscriptionWord(start=0.0, end=1.0, word="test")]
+        segment = TranscriptionSegment(start=0.0, end=1.0, text="test", words=words)
+        transcription = Transcription(segments=[segment], language="pl")
+
+        data = transcription.to_dict()
+        assert data["language"] == "pl"
+
+        restored = Transcription.from_dict(data)
+        assert restored.language == "pl"
+
+    def test_language_missing_from_dict(self):
+        """Test backwards compatibility: from_dict with no language key."""
+        data = {"segments": []}
+        restored = Transcription.from_dict(data)
+        assert restored.language is None
