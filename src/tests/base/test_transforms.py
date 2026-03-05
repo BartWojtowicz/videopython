@@ -2,14 +2,19 @@ import cv2
 import numpy as np
 import pytest
 
+from videopython.base.audio import Audio, AudioMetadata
+from videopython.base.text.transcription import Transcription, TranscriptionSegment, TranscriptionWord
 from videopython.base.transforms import (
     Crop,
     CropMode,
     CutFrames,
     CutSeconds,
+    FreezeFrame,
     PictureInPicture,
     ResampleFPS,
     Resize,
+    Reverse,
+    SilenceRemoval,
     SpeedChange,
 )
 from videopython.base.video import Video
@@ -497,3 +502,183 @@ class TestSpeedChangeAudio:
         # Audio duration should match video duration
         new_video_duration = len(result.frames) / result.fps
         assert abs(result.audio.metadata.duration_seconds - new_video_duration) < 0.3
+
+
+@pytest.fixture
+def video_1s():
+    """1-second video at 30fps with non-black frames."""
+    frames = np.full((30, 64, 64, 3), 200, dtype=np.uint8)
+    return Video.from_frames(frames, fps=30)
+
+
+@pytest.fixture
+def video_with_audio_1s():
+    """1-second video at 30fps with a sine wave audio track."""
+    frames = np.full((30, 64, 64, 3), 200, dtype=np.uint8)
+    video = Video.from_frames(frames, fps=30)
+    sample_rate = 44100
+    t = np.linspace(0, 1.0, sample_rate, dtype=np.float32)
+    audio_data = (np.sin(2 * np.pi * 440 * t) * 0.5).astype(np.float32)
+    video.audio = Audio(
+        data=audio_data,
+        metadata=AudioMetadata(
+            sample_rate=sample_rate,
+            channels=1,
+            sample_width=2,
+            duration_seconds=1.0,
+            frame_count=sample_rate,
+        ),
+    )
+    return video
+
+
+def _make_transcription(words_data: list[tuple[float, float, str]]) -> Transcription:
+    """Helper to create a Transcription from (start, end, word) tuples."""
+    words = [TranscriptionWord(start=s, end=e, word=w) for s, e, w in words_data]
+    segment = TranscriptionSegment(
+        start=words[0].start, end=words[-1].end, text=" ".join(w.word for w in words), words=words
+    )
+    return Transcription(segments=[segment])
+
+
+class TestReverse:
+    def test_reverses_frame_order(self, video_1s):
+        video_1s.frames[0] = 0
+        video_1s.frames[-1] = 255
+        result = Reverse().apply(video_1s)
+        assert result.frames[0].mean() == 255
+        assert result.frames[-1].mean() == 0
+
+    def test_preserves_shape(self, video_1s):
+        original_shape = video_1s.video_shape
+        result = Reverse().apply(video_1s)
+        assert result.video_shape == original_shape
+
+    def test_reverse_audio(self, video_with_audio_1s):
+        original_first_sample = video_with_audio_1s.audio.data[0].copy()
+        original_last_sample = video_with_audio_1s.audio.data[-1].copy()
+        result = Reverse(reverse_audio=True).apply(video_with_audio_1s)
+        assert np.isclose(result.audio.data[0], original_last_sample)
+        assert np.isclose(result.audio.data[-1], original_first_sample)
+
+    def test_reverse_audio_false(self, video_with_audio_1s):
+        original_audio = video_with_audio_1s.audio.data.copy()
+        result = Reverse(reverse_audio=False).apply(video_with_audio_1s)
+        assert np.array_equal(result.audio.data, original_audio)
+
+
+class TestFreezeFrame:
+    def test_freeze_after_increases_duration(self, video_1s):
+        original_frames = len(video_1s.frames)
+        result = FreezeFrame(timestamp=0.5, duration=1.0, position="after").apply(video_1s)
+        expected = original_frames + round(1.0 * video_1s.fps)
+        assert len(result.frames) == expected
+
+    def test_freeze_before_increases_duration(self, video_1s):
+        original_frames = len(video_1s.frames)
+        result = FreezeFrame(timestamp=0.5, duration=1.0, position="before").apply(video_1s)
+        expected = original_frames + round(1.0 * video_1s.fps)
+        assert len(result.frames) == expected
+
+    def test_freeze_replace_maintains_approx_duration(self, video_1s):
+        original_frames = len(video_1s.frames)
+        result = FreezeFrame(timestamp=0.0, duration=0.5, position="replace").apply(video_1s)
+        assert abs(len(result.frames) - original_frames) <= 1
+
+    def test_frozen_frame_content(self, video_1s):
+        video_1s.frames[15] = 42
+        result = FreezeFrame(timestamp=0.5, duration=0.5, position="after").apply(video_1s)
+        freeze_start = 16
+        freeze_count = round(0.5 * video_1s.fps)
+        for i in range(freeze_start, freeze_start + freeze_count):
+            assert (result.frames[i] == 42).all()
+
+    def test_replace_clamps_to_end(self, video_1s):
+        result = FreezeFrame(timestamp=0.9, duration=5.0, position="replace").apply(video_1s)
+        assert len(result.frames) > 0
+
+    def test_timestamp_out_of_range_raises(self, video_1s):
+        with pytest.raises(ValueError, match="must be less than"):
+            FreezeFrame(timestamp=5.0).apply(video_1s)
+
+    def test_negative_timestamp_raises(self):
+        with pytest.raises(ValueError, match="must be >= 0"):
+            FreezeFrame(timestamp=-1.0)
+
+    def test_zero_duration_raises(self):
+        with pytest.raises(ValueError, match="must be > 0"):
+            FreezeFrame(timestamp=0.5, duration=0)
+
+
+class TestSilenceRemoval:
+    @pytest.fixture
+    def video_5s(self):
+        """5-second video at 10fps (50 frames) for silence removal tests."""
+        frames = np.full((50, 32, 32, 3), 128, dtype=np.uint8)
+        return Video.from_frames(frames, fps=10)
+
+    @pytest.fixture
+    def transcription_with_gap(self):
+        """Transcription with speech at 0-1s and 3-4s (silence gap 1-3s)."""
+        return _make_transcription(
+            [
+                (0.0, 0.5, "hello"),
+                (0.5, 1.0, "world"),
+                (3.0, 3.5, "foo"),
+                (3.5, 4.0, "bar"),
+            ]
+        )
+
+    def test_cut_removes_silence(self, video_5s, transcription_with_gap):
+        original_frames = len(video_5s.frames)
+        result = SilenceRemoval(min_silence_duration=1.0, padding=0.0, mode="cut").apply(
+            video_5s, transcription=transcription_with_gap
+        )
+        assert len(result.frames) < original_frames
+
+    def test_speed_up_reduces_duration(self, video_5s, transcription_with_gap):
+        original_frames = len(video_5s.frames)
+        result = SilenceRemoval(min_silence_duration=1.0, padding=0.0, mode="speed_up", speed_factor=3.0).apply(
+            video_5s, transcription=transcription_with_gap
+        )
+        assert len(result.frames) < original_frames
+        cut_result = SilenceRemoval(min_silence_duration=1.0, padding=0.0, mode="cut").apply(
+            Video.from_frames(np.full((50, 32, 32, 3), 128, dtype=np.uint8), fps=10),
+            transcription=transcription_with_gap,
+        )
+        assert len(result.frames) > len(cut_result.frames)
+
+    def test_no_silence_returns_unchanged(self, video_5s):
+        transcription = _make_transcription(
+            [
+                (0.0, 1.0, "word1"),
+                (1.0, 2.0, "word2"),
+                (2.0, 3.0, "word3"),
+                (3.0, 4.0, "word4"),
+                (4.0, 5.0, "word5"),
+            ]
+        )
+        result = SilenceRemoval(min_silence_duration=1.0, padding=0.0).apply(video_5s, transcription=transcription)
+        assert len(result.frames) == len(video_5s.frames)
+
+    def test_padding_preserves_context(self, video_5s, transcription_with_gap):
+        result = SilenceRemoval(min_silence_duration=1.0, padding=0.5, mode="cut").apply(
+            video_5s, transcription=transcription_with_gap
+        )
+        result_no_pad = SilenceRemoval(min_silence_duration=1.0, padding=0.0, mode="cut").apply(
+            Video.from_frames(np.full((50, 32, 32, 3), 128, dtype=np.uint8), fps=10),
+            transcription=transcription_with_gap,
+        )
+        assert len(result.frames) >= len(result_no_pad.frames)
+
+    def test_no_transcription_raises(self, video_5s):
+        with pytest.raises(ValueError, match="requires transcription"):
+            SilenceRemoval().apply(video_5s)
+
+    def test_invalid_params(self):
+        with pytest.raises(ValueError, match="min_silence_duration"):
+            SilenceRemoval(min_silence_duration=0)
+        with pytest.raises(ValueError, match="padding"):
+            SilenceRemoval(padding=-1)
+        with pytest.raises(ValueError, match="speed_factor"):
+            SilenceRemoval(speed_factor=0.5)

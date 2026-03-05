@@ -96,6 +96,19 @@ Notes:
   - effect step: `op`, optional `args`, optional `apply`
 - Unknown top-level keys are ignored for forward compatibility.
 
+## Context Data
+
+Some operations need side-channel data that shouldn't be part of the JSON plan (e.g. transcription for `silence_removal`). Pass it via the `context` parameter:
+
+```python
+from videopython.base import VideoEdit
+
+edit = VideoEdit.from_dict(plan)
+video = edit.run(context={"transcription": my_transcription})
+```
+
+Operations whose registry spec has the `requires_transcript` tag automatically receive `context["transcription"]` as a keyword argument. Other operations are unaffected.
+
 ## Pipeline Order (Enforced)
 
 `VideoEdit` always runs operations in this order:

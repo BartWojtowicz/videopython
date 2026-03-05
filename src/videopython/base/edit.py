@@ -84,15 +84,21 @@ class SegmentConfig:
                     f"SegmentConfig.effect_records must contain Effect operations, got {type(record.operation)}"
                 )
 
-    def process_segment(self) -> Video:
-        """Load the segment and apply transforms then effects."""
+    def process_segment(self, context: dict[str, Any] | None = None) -> Video:
+        """Load the segment and apply transforms then effects.
+
+        Args:
+            context: Optional side-channel data for context-dependent operations.
+                Operations whose registry spec has a ``requires_transcript`` tag
+                receive ``context["transcription"]`` as a keyword argument.
+        """
         video = Video.from_path(
             str(self.source_video),
             start_second=self.start_second,
             end_second=self.end_second,
         )
         for record in self.transform_records:
-            video = record.operation.apply(video)
+            video = _apply_transform_with_context(record, video, context)
         for record in self.effect_records:
             if not isinstance(record.operation, Effect):
                 raise TypeError(
@@ -242,11 +248,17 @@ class VideoEdit:
             "required": ["segments"],
         }
 
-    def run(self) -> Video:
-        """Execute the editing plan and return the final video."""
-        video = self._assemble_segments()
+    def run(self, context: dict[str, Any] | None = None) -> Video:
+        """Execute the editing plan and return the final video.
+
+        Args:
+            context: Optional side-channel data for context-dependent operations.
+                Operations whose registry spec has a ``requires_transcript`` tag
+                receive ``context["transcription"]`` as a keyword argument.
+        """
+        video = self._assemble_segments(context)
         for record in self.post_transform_records:
-            video = record.operation.apply(video)
+            video = _apply_transform_with_context(record, video, context)
         for record in self.post_effect_records:
             if not isinstance(record.operation, Effect):
                 raise TypeError(
@@ -331,13 +343,21 @@ class VideoEdit:
             _validate_effect_bounds(record, meta.total_seconds, context=ctx)
         return meta
 
-    def _assemble_segments(self) -> Video:
+    def _assemble_segments(self, context: dict[str, Any] | None = None) -> Video:
         result: Video | None = None
         for segment in self.segments:
-            video = segment.process_segment()
+            video = segment.process_segment(context)
             result = video if result is None else result + video
         assert result is not None
         return result
+
+
+def _apply_transform_with_context(record: _StepRecord, video: Video, context: dict[str, Any] | None) -> Video:
+    """Apply a transform, injecting context data for operations that require it."""
+    spec = get_operation_spec(record.op_id)
+    if spec is not None and "requires_transcript" in spec.tags and context and "transcription" in context:
+        return record.operation.apply(video, transcription=context["transcription"])  # type: ignore[call-arg]
+    return record.operation.apply(video)
 
 
 def _parse_segment(segment_data: Any, location: str) -> SegmentConfig:

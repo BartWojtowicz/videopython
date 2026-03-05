@@ -1,5 +1,22 @@
 # Release Notes
 
+## 0.22.0
+
+### New Operations
+
+- **Fade** effect: fades video to/from black with synchronized audio fade. Supports `in`, `out`, and `in_out` modes with `sqrt`, `linear`, and `exponential` curves.
+- **VolumeAdjust** effect: adjusts audio volume within a time range with optional smooth ramps. Does not affect video frames.
+- **TextOverlay** effect: renders text on video frames with configurable position, font size, color, background box, word wrap, and 6 anchor points.
+- **Reverse** transform: reverses video frame order with optional audio reversal.
+- **FreezeFrame** transform: holds a single frame for a specified duration, inserting it before, after, or replacing frames at the given timestamp.
+- **SilenceRemoval** transform: removes or speeds up silent gaps between speech using word-level transcription timing. Supports `cut` and `speed_up` modes.
+
+### Changed
+
+- `Effect.apply()` is no longer `@final`, allowing subclasses like `Fade` and `AudioEffect` to override it when frame-only processing is insufficient.
+- `AudioEffect` base class added for effects that modify only audio (inherits from `Effect` for execution engine compatibility).
+- `VideoEdit.run()` and `SegmentConfig.process_segment()` accept an optional `context` dict for passing side-channel data (e.g. transcription) to context-dependent operations.
+
 ## 0.21.6
 
 ### Dependencies

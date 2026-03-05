@@ -29,6 +29,9 @@ print(f"Output will be: {output_meta}")
 | `video.transition_to(other, t)` | `meta.transition_to(other, time)` | Combine videos |
 | `video.ken_burns(start, end, easing)` | - | Pan-and-zoom effect |
 | `video.picture_in_picture(overlay, ...)` | - | Overlay video as PiP |
+| `Reverse().apply(video)` | - | Reverse playback order |
+| `FreezeFrame(t, d).apply(video)` | - | Hold a frame for a duration |
+| `SilenceRemoval().apply(video, transcription=t)` | - | Remove/speed up silent gaps |
 
 ## Transformation (Base Class)
 
@@ -82,6 +85,20 @@ Crop(width=0.5, height=1.0, x=0.5, y=0.0, mode=CropMode.CUSTOM).apply(video)
 ## PictureInPicture
 
 ::: videopython.base.PictureInPicture
+
+## Reverse
+
+::: videopython.base.Reverse
+
+## FreezeFrame
+
+::: videopython.base.FreezeFrame
+
+## SilenceRemoval
+
+Removes or speeds up silent gaps between speech using word-level transcription timing. Requires transcription data passed via `VideoEdit.run(context={"transcription": ...})` or directly to `apply(video, transcription=...)`.
+
+::: videopython.base.SilenceRemoval
 
 ---
 

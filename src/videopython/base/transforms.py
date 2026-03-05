@@ -12,6 +12,7 @@ from videopython.base.video import Video, _round_dimension_to_even
 
 if TYPE_CHECKING:
     from videopython.base.audio import Audio
+    from videopython.base.text.transcription import Transcription
 
 __all__ = [
     "Transformation",
@@ -23,6 +24,9 @@ __all__ = [
     "CropMode",
     "SpeedChange",
     "PictureInPicture",
+    "Reverse",
+    "FreezeFrame",
+    "SilenceRemoval",
 ]
 
 
@@ -646,3 +650,261 @@ class PictureInPicture(Transformation):
         else:
             # Slice to match main video duration
             return overlay_audio.slice(0, target_duration)
+
+
+class Reverse(Transformation):
+    """Reverses video playback order (and optionally audio)."""
+
+    def __init__(self, reverse_audio: bool = True):
+        """Initialize reverse transform.
+
+        Args:
+            reverse_audio: If True, reverse audio waveform along with video frames.
+                If False, keep original audio (intentional mismatch for creative use).
+        """
+        self.reverse_audio = reverse_audio
+
+    def apply(self, video: Video) -> Video:
+        video.frames = video.frames[::-1].copy()
+        if self.reverse_audio and video.audio is not None:
+            video.audio.data = np.flip(video.audio.data, axis=0).copy()
+        return video
+
+
+class FreezeFrame(Transformation):
+    """Holds a single frame for a specified duration, inserting static frames into the timeline."""
+
+    def __init__(
+        self,
+        timestamp: float,
+        duration: float = 2.0,
+        position: Literal["before", "after", "replace"] = "after",
+    ):
+        """Initialize freeze frame transform.
+
+        Args:
+            timestamp: Time in seconds to capture the frame from.
+            duration: How long to hold the frozen frame in seconds.
+            position: Where to insert the frozen frames relative to the timestamp.
+                - "after": insert after the timestamp
+                - "before": insert before the timestamp
+                - "replace": replace video starting at timestamp for the given duration
+        """
+        if timestamp < 0:
+            raise ValueError(f"timestamp must be >= 0, got {timestamp}")
+        if duration <= 0:
+            raise ValueError(f"duration must be > 0, got {duration}")
+        self.timestamp = timestamp
+        self.duration = duration
+        self.position = position
+
+    def apply(self, video: Video) -> Video:
+        if self.timestamp >= video.total_seconds:
+            raise ValueError(f"timestamp ({self.timestamp}) must be less than video duration ({video.total_seconds})")
+
+        frame_idx = round(self.timestamp * video.fps)
+        freeze_count = round(self.duration * video.fps)
+        frozen = np.tile(video.frames[frame_idx : frame_idx + 1], (freeze_count, 1, 1, 1))
+
+        if self.position == "after":
+            insert_idx = frame_idx + 1
+            video.frames = np.concatenate([video.frames[:insert_idx], frozen, video.frames[insert_idx:]], axis=0)
+        elif self.position == "before":
+            video.frames = np.concatenate([video.frames[:frame_idx], frozen, video.frames[frame_idx:]], axis=0)
+        elif self.position == "replace":
+            replace_end = min(frame_idx + freeze_count, len(video.frames))
+            video.frames = np.concatenate([video.frames[:frame_idx], frozen, video.frames[replace_end:]], axis=0)
+
+        # Rebuild audio to match new video duration
+        if video.audio is not None:
+            target_duration = len(video.frames) / video.fps
+            sample_rate = video.audio.metadata.sample_rate
+            channels = video.audio.metadata.channels
+
+            silence_samples = round(self.duration * sample_rate)
+            silence_shape = (silence_samples, channels) if channels > 1 else (silence_samples,)
+            silence = np.zeros(silence_shape, dtype=np.float32)
+
+            timestamp_sample = round(self.timestamp * sample_rate)
+
+            if self.position == "after":
+                insert_sample = min(timestamp_sample + round(sample_rate / video.fps), len(video.audio.data))
+                video.audio.data = np.concatenate(
+                    [video.audio.data[:insert_sample], silence, video.audio.data[insert_sample:]], axis=0
+                )
+            elif self.position == "before":
+                video.audio.data = np.concatenate(
+                    [video.audio.data[:timestamp_sample], silence, video.audio.data[timestamp_sample:]], axis=0
+                )
+            elif self.position == "replace":
+                replace_end_sample = min(timestamp_sample + silence_samples, len(video.audio.data))
+                video.audio.data = np.concatenate(
+                    [video.audio.data[:timestamp_sample], silence, video.audio.data[replace_end_sample:]], axis=0
+                )
+
+            video.audio = video.audio.fit_to_duration(target_duration)
+
+        return video
+
+
+class SilenceRemoval(Transformation):
+    """Removes or speeds up silent gaps between speech using transcription timing.
+
+    Requires word-level transcription data passed via the ``transcription`` keyword
+    argument to ``apply()``. In the VideoEdit execution engine, this is injected
+    automatically from the ``context`` dict when the operation's registry spec has
+    the ``requires_transcript`` tag.
+    """
+
+    def __init__(
+        self,
+        min_silence_duration: float = 1.0,
+        padding: float = 0.15,
+        mode: Literal["cut", "speed_up"] = "cut",
+        speed_factor: float = 3.0,
+    ):
+        """Initialize silence removal transform.
+
+        Args:
+            min_silence_duration: Only remove/speed-up gaps longer than this (seconds).
+            padding: Seconds of silence to preserve around speech boundaries.
+            mode: "cut" to hard-cut silence, "speed_up" to speed up silent sections.
+            speed_factor: Speed multiplier for silent sections (only used with mode="speed_up").
+        """
+        if min_silence_duration <= 0:
+            raise ValueError(f"min_silence_duration must be > 0, got {min_silence_duration}")
+        if padding < 0:
+            raise ValueError(f"padding must be >= 0, got {padding}")
+        if speed_factor <= 1.0:
+            raise ValueError(f"speed_factor must be > 1.0, got {speed_factor}")
+        self.min_silence_duration = min_silence_duration
+        self.padding = padding
+        self.mode = mode
+        self.speed_factor = speed_factor
+
+    def apply(self, video: Video, transcription: Transcription | None = None) -> Video:  # type: ignore[override]
+        """Apply silence removal to video.
+
+        Args:
+            video: Input video.
+            transcription: Word-level transcription (Transcription object).
+                Required -- raises ValueError if not provided.
+        """
+        if transcription is None:
+            raise ValueError(
+                "SilenceRemoval requires transcription data. "
+                "Pass it via VideoEdit.run(context={'transcription': ...}) or directly to apply()."
+            )
+
+        words = transcription.words
+        if not words:
+            return video
+
+        # Build speech ranges from word timestamps (with padding)
+        speech_ranges: list[tuple[float, float]] = []
+        for word in words:
+            start = max(0, word.start - self.padding)
+            end = min(video.total_seconds, word.end + self.padding)
+            if speech_ranges and start <= speech_ranges[-1][1]:
+                speech_ranges[-1] = (speech_ranges[-1][0], max(speech_ranges[-1][1], end))
+            else:
+                speech_ranges.append((start, end))
+
+        # Identify silence gaps
+        silence_ranges: list[tuple[float, float]] = []
+        prev_end = 0.0
+        for s_start, s_end in speech_ranges:
+            if s_start - prev_end >= self.min_silence_duration:
+                silence_ranges.append((prev_end, s_start))
+            prev_end = s_end
+        # Trailing silence
+        if video.total_seconds - prev_end >= self.min_silence_duration:
+            silence_ranges.append((prev_end, video.total_seconds))
+
+        if not silence_ranges:
+            return video
+
+        if self.mode == "cut":
+            return self._apply_cut(video, silence_ranges)
+        else:
+            return self._apply_speed_up(video, silence_ranges)
+
+    def _apply_cut(self, video: Video, silence_ranges: list[tuple[float, float]]) -> Video:
+        """Cut silent sections out of the video."""
+        keep_ranges: list[tuple[int, int]] = []
+        prev_frame = 0
+        for s_start, s_end in silence_ranges:
+            cut_start = round(s_start * video.fps)
+            cut_end = round(s_end * video.fps)
+            if cut_start > prev_frame:
+                keep_ranges.append((prev_frame, cut_start))
+            prev_frame = cut_end
+        if prev_frame < len(video.frames):
+            keep_ranges.append((prev_frame, len(video.frames)))
+
+        if not keep_ranges:
+            return video
+
+        frame_segments = [video.frames[start:end] for start, end in keep_ranges]
+        video.frames = np.concatenate(frame_segments, axis=0)
+
+        if video.audio is not None:
+            sample_rate = video.audio.metadata.sample_rate
+            audio_segments = []
+            for start_f, end_f in keep_ranges:
+                a_start = round((start_f / video.fps) * sample_rate)
+                a_end = round((end_f / video.fps) * sample_rate)
+                audio_segments.append(video.audio.data[a_start:a_end])
+            video.audio.data = np.concatenate(audio_segments, axis=0)
+            video.audio = video.audio.fit_to_duration(len(video.frames) / video.fps)
+
+        return video
+
+    def _apply_speed_up(self, video: Video, silence_ranges: list[tuple[float, float]]) -> Video:
+        """Speed up silent sections instead of cutting them."""
+        segments: list[tuple[int, int, float]] = []
+        prev_frame = 0
+        for s_start, s_end in silence_ranges:
+            silence_start = round(s_start * video.fps)
+            silence_end = round(s_end * video.fps)
+            if silence_start > prev_frame:
+                segments.append((prev_frame, silence_start, 1.0))
+            segments.append((silence_start, silence_end, self.speed_factor))
+            prev_frame = silence_end
+        if prev_frame < len(video.frames):
+            segments.append((prev_frame, len(video.frames), 1.0))
+
+        frame_parts: list[np.ndarray] = []
+        for start_f, end_f, speed in segments:
+            n_frames = end_f - start_f
+            if n_frames <= 0:
+                continue
+            if speed == 1.0:
+                frame_parts.append(video.frames[start_f:end_f])
+            else:
+                target_count = max(1, round(n_frames / speed))
+                indices = np.linspace(start_f, end_f - 1, target_count).astype(int)
+                frame_parts.append(video.frames[indices])
+
+        if not frame_parts:
+            return video
+
+        video.frames = np.concatenate(frame_parts, axis=0)
+
+        if video.audio is not None and not video.audio.is_silent:
+            sample_rate = video.audio.metadata.sample_rate
+            audio_parts: list[np.ndarray] = []
+            for start_f, end_f, speed in segments:
+                a_start = round((start_f / video.fps) * sample_rate)
+                a_end = round((end_f / video.fps) * sample_rate)
+                chunk = video.audio.data[a_start:a_end]
+                if speed == 1.0 or len(chunk) == 0:
+                    audio_parts.append(chunk)
+                else:
+                    target_len = max(1, round(len(chunk) / speed))
+                    indices = np.linspace(0, len(chunk) - 1, target_len).astype(int)
+                    audio_parts.append(chunk[indices])
+            video.audio.data = np.concatenate(audio_parts, axis=0)
+            video.audio = video.audio.fit_to_duration(len(video.frames) / video.fps)
+
+        return video
