@@ -1,5 +1,11 @@
 # Release Notes
 
+## 0.22.1
+
+### Added
+
+- `Transcription` now stores the detected `language` (ISO 639-1 code) from Whisper/WhisperX. The field is propagated through `offset()`, `standardize_segments()`, `slice()`, and serialized via `to_dict()`/`from_dict()`. Defaults to `None` for backwards compatibility.
+
 ## 0.22.0
 
 ### New Operations

@@ -59,7 +59,7 @@ class AudioToText:
             )
             transcription_segments.append(transcription_segment)
 
-        return Transcription(segments=transcription_segments)
+        return Transcription(segments=transcription_segments, language=transcription_result.get("language"))
 
     def _process_whisperx_result(self, whisperx_result: dict, audio_data) -> Transcription:
         """Process whisperx result with diarization."""
@@ -94,7 +94,7 @@ class AudioToText:
                 )
             )
 
-        return Transcription(words=words)
+        return Transcription(words=words, language=whisperx_result.get("language"))
 
     def _transcribe_local(self, audio: Audio) -> Transcription:
         """Transcribe using local Whisper model."""
