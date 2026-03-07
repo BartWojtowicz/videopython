@@ -582,7 +582,7 @@ class Fade(Effect):
         if video.audio is not None and not video.audio.is_silent:
             sample_rate = video.audio.metadata.sample_rate
             audio_start = round(start_s * sample_rate)
-            audio_end = round(stop_s * sample_rate)
+            audio_end = min(round(stop_s * sample_rate), len(video.audio.data))
             n_audio_samples = audio_end - audio_start
             fade_samples = min(round(self.duration * sample_rate), n_audio_samples)
 
@@ -656,7 +656,7 @@ class VolumeAdjust(AudioEffect):
 
         sample_rate = audio.metadata.sample_rate
         start_sample = round(start * sample_rate)
-        end_sample = round(stop * sample_rate)
+        end_sample = min(round(stop * sample_rate), len(audio.data))
         n_samples = end_sample - start_sample
 
         # Build volume envelope
