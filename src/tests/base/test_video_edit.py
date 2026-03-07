@@ -416,6 +416,101 @@ class TestValidation:
             VideoEdit(segments=[segment]).validate()
 
 
+class TestValidateWithMetadata:
+    def test_matches_validate_for_single_source(self):
+        plan = {
+            "segments": [
+                _segment_plan(start=1.0, end=5.0),
+                _segment_plan(start=0.0, end=3.0),
+            ]
+        }
+        edit = VideoEdit.from_dict(plan)
+        expected = edit.validate()
+        result = edit.validate_with_metadata(SMALL_VIDEO_METADATA)
+        assert result.total_seconds == pytest.approx(expected.total_seconds, abs=0.01)
+        assert result.width == expected.width
+        assert result.height == expected.height
+        assert result.fps == expected.fps
+        assert result.frame_count == expected.frame_count
+
+    def test_with_transforms_and_effects(self):
+        plan = {
+            "segments": [
+                _segment_plan(
+                    start=0.0,
+                    end=4.0,
+                    transforms=[{"op": "speed_change", "args": {"speed": 2.0}}],
+                    effects=[
+                        {"op": "blur_effect", "args": {"mode": "constant", "iterations": 1}, "apply": {"stop": 1.5}}
+                    ],
+                )
+            ]
+        }
+        edit = VideoEdit.from_dict(plan)
+        expected = edit.validate()
+        result = edit.validate_with_metadata(SMALL_VIDEO_METADATA)
+        assert result.total_seconds == pytest.approx(expected.total_seconds, abs=0.01)
+
+    def test_effect_bounds_exceeded_after_speed_change(self):
+        plan = {
+            "segments": [
+                _segment_plan(
+                    start=0.0,
+                    end=6.0,
+                    transforms=[{"op": "speed_change", "args": {"speed": 1.5}}],
+                    effects=[
+                        {
+                            "op": "volume_adjust",
+                            "args": {"volume": 0.5},
+                            "apply": {"stop": 6.0},
+                        }
+                    ],
+                )
+            ]
+        }
+        edit = VideoEdit.from_dict(plan)
+        with pytest.raises(ValueError, match="exceeds timeline duration"):
+            edit.validate_with_metadata(SMALL_VIDEO_METADATA)
+
+    def test_end_exceeds_source_duration(self):
+        plan = {"segments": [_segment_plan(start=0.0, end=99.0)]}
+        edit = VideoEdit.from_dict(plan)
+        with pytest.raises(ValueError, match="exceeds source duration"):
+            edit.validate_with_metadata(SMALL_VIDEO_METADATA)
+
+    def test_multi_source_dict(self):
+        plan = {
+            "segments": [
+                _segment_plan(source="video_a.mp4", start=0.0, end=2.0),
+                _segment_plan(source="video_b.mp4", start=0.0, end=3.0),
+            ]
+        }
+        meta_a = VideoMetadata(height=500, width=800, fps=24, frame_count=48, total_seconds=2.0)
+        meta_b = VideoMetadata(height=500, width=800, fps=24, frame_count=72, total_seconds=3.0)
+        edit = VideoEdit.from_dict(plan)
+        result = edit.validate_with_metadata({"video_a.mp4": meta_a, "video_b.mp4": meta_b})
+        assert result.total_seconds == pytest.approx(5.0, abs=0.01)
+
+    def test_missing_source_in_dict_raises(self):
+        plan = {
+            "segments": [
+                _segment_plan(source="video_a.mp4", start=0.0, end=2.0),
+                _segment_plan(source="video_b.mp4", start=0.0, end=3.0),
+            ]
+        }
+        meta_a = VideoMetadata(height=500, width=800, fps=24, frame_count=48, total_seconds=2.0)
+        edit = VideoEdit.from_dict(plan)
+        with pytest.raises(ValueError, match="no metadata provided for source"):
+            edit.validate_with_metadata({"video_a.mp4": meta_a})
+
+    def test_does_not_touch_disk(self):
+        plan = {"segments": [_segment_plan(source="nonexistent_file.mp4", start=0.0, end=2.0)]}
+        meta = VideoMetadata(height=500, width=800, fps=24, frame_count=48, total_seconds=5.0)
+        edit = VideoEdit.from_dict(plan)
+        result = edit.validate_with_metadata(meta)
+        assert isinstance(result, VideoMetadata)
+
+
 class TestParsingErrors:
     def test_from_json_invalid_json_wrapped(self):
         with pytest.raises(ValueError, match="Invalid VideoEdit JSON"):

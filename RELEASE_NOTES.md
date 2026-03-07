@@ -1,5 +1,11 @@
 # Release Notes
 
+## 0.22.2
+
+### Added
+
+- `VideoEdit.validate_with_metadata()` validates editing plans using pre-built `VideoMetadata` instead of loading from disk. Accepts a single `VideoMetadata` for single-source plans or a `dict[str, VideoMetadata]` for multi-source plans. Eliminates the need for downstream projects to import private validation functions.
+
 ## 0.22.1
 
 ### Added

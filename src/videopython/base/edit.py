@@ -272,11 +272,51 @@ class VideoEdit:
         return video
 
     def validate(self) -> VideoMetadata:
-        """Validate the editing plan without loading video data."""
+        """Validate the editing plan without loading video data.
+
+        Requires source video files to be present on disk (uses ``VideoMetadata.from_path``).
+        For validation without file access, use :meth:`validate_with_metadata`.
+        """
         segment_metas: list[VideoMetadata] = []
         for i, segment in enumerate(self.segments):
             segment_metas.append(self._validate_segment(i, segment))
+        return self._validate_assembled(segment_metas)
 
+    def validate_with_metadata(
+        self,
+        source_metadata: VideoMetadata | dict[str, VideoMetadata],
+    ) -> VideoMetadata:
+        """Validate the editing plan using pre-built metadata instead of loading from file.
+
+        Same validation as validate() but accepts a VideoMetadata directly,
+        avoiding the need for the source video file to be on disk.
+
+        Args:
+            source_metadata: VideoMetadata for the source video (duration, dimensions, fps).
+                For multi-source plans, pass a dict mapping source paths to their metadata.
+
+        Returns:
+            Predicted output VideoMetadata after all operations.
+
+        Raises:
+            ValueError: If any validation check fails.
+        """
+        if isinstance(source_metadata, VideoMetadata):
+            meta_map: dict[str, VideoMetadata] = {str(seg.source_video): source_metadata for seg in self.segments}
+        else:
+            meta_map = source_metadata
+
+        segment_metas: list[VideoMetadata] = []
+        for i, segment in enumerate(self.segments):
+            source_key = str(segment.source_video)
+            if source_key not in meta_map:
+                raise ValueError(
+                    f"Segment {i}: no metadata provided for source '{source_key}'. Available keys: {sorted(meta_map)}"
+                )
+            segment_metas.append(self._validate_segment_with_metadata(i, segment, meta_map[source_key]))
+        return self._validate_assembled(segment_metas)
+
+    def _validate_assembled(self, segment_metas: list[VideoMetadata]) -> VideoMetadata:
         if len(segment_metas) > 1:
             first = segment_metas[0]
             for j, other in enumerate(segment_metas[1:], start=1):
@@ -336,6 +376,28 @@ class VideoEdit:
                 f"{ctx}: end_second ({segment.end_second}) exceeds source duration ({meta.total_seconds}s)"
             )
         meta = meta.cut(segment.start_second, segment.end_second)
+
+        for record in segment.transform_records:
+            meta = _predict_transform_metadata(meta, record.op_id, record.args, context=f"{ctx} ({record.op_id})")
+        for record in segment.effect_records:
+            _validate_effect_bounds(record, meta.total_seconds, context=ctx)
+        return meta
+
+    def _validate_segment_with_metadata(
+        self, index: int, segment: SegmentConfig, source_meta: VideoMetadata
+    ) -> VideoMetadata:
+        ctx = f"Segment {index}"
+        if segment.start_second < 0:
+            raise ValueError(f"{ctx}: start_second ({segment.start_second}) must be >= 0")
+        if segment.end_second <= segment.start_second:
+            raise ValueError(
+                f"{ctx}: end_second ({segment.end_second}) must be > start_second ({segment.start_second})"
+            )
+        if segment.end_second > source_meta.total_seconds:
+            raise ValueError(
+                f"{ctx}: end_second ({segment.end_second}) exceeds source duration ({source_meta.total_seconds}s)"
+            )
+        meta = source_meta.cut(segment.start_second, segment.end_second)
 
         for record in segment.transform_records:
             meta = _predict_transform_metadata(meta, record.op_id, record.args, context=f"{ctx} ({record.op_id})")
