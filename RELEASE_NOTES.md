@@ -1,5 +1,11 @@
 # Release Notes
 
+## 0.22.3
+
+### Fixed
+
+- `Fade` and `VolumeAdjust` audio envelope off-by-one: when audio sample count doesn't perfectly match `round(duration * sample_rate)` (common with real-world files), the envelope could be 1 sample longer than the actual audio slice, causing a NumPy broadcast shape mismatch.
+
 ## 0.22.2
 
 ### Added
