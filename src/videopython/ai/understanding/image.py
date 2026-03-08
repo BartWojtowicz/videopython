@@ -28,6 +28,11 @@ _DEFAULT_PROMPT = (
 class SceneVLM:
     """Generates scene captions with local Qwen3-VL."""
 
+    # Default pixel budget per image for scene captioning. Qwen3-VL tiles
+    # images into 28x28 patches; fewer pixels = fewer vision tokens = faster
+    # inference.  384x384 = 147456 is plenty for scene-level captioning.
+    DEFAULT_MAX_IMAGE_PIXELS: int = 384 * 384
+
     def __init__(
         self,
         model_name: str | None = None,
@@ -35,6 +40,7 @@ class SceneVLM:
         max_new_tokens: int = 128,
         temperature: float = 0.0,
         model_size: Literal["2b", "4b"] = DEFAULT_SCENE_VLM_MODEL_SIZE,
+        max_image_pixels: int | None = None,
     ):
         if model_size not in SCENE_VLM_MODEL_IDS:
             supported = ", ".join(sorted(SCENE_VLM_MODEL_IDS))
@@ -45,6 +51,7 @@ class SceneVLM:
         self.device = device
         self.max_new_tokens = max_new_tokens
         self.temperature = temperature
+        self.max_image_pixels = max_image_pixels if max_image_pixels is not None else self.DEFAULT_MAX_IMAGE_PIXELS
         self._processor: Any = None
         self._model: Any = None
 
@@ -54,7 +61,7 @@ class SceneVLM:
 
         t0 = time.perf_counter()
         requested_device = self.device
-        resolved_device = select_device(self.device, mps_allowed=False)
+        resolved_device = select_device(self.device, mps_allowed=True)
 
         self._processor = AutoProcessor.from_pretrained(self.model_name)
         self._model = AutoModelForImageTextToText.from_pretrained(self.model_name, dtype="auto")
@@ -68,6 +75,17 @@ class SceneVLM:
             resolved_device=resolved_device,
         )
         logger.info("SceneVLM model weights loaded in %.2fs", time.perf_counter() - t0)
+
+    def _downscale_image(self, img: Image.Image) -> Image.Image:
+        """Downscale image to fit within max_image_pixels budget, preserving aspect ratio."""
+        w, h = img.size
+        pixels = w * h
+        if pixels <= self.max_image_pixels:
+            return img
+        scale = (self.max_image_pixels / pixels) ** 0.5
+        new_w = max(1, int(w * scale))
+        new_h = max(1, int(h * scale))
+        return img.resize((new_w, new_h), Image.LANCZOS)
 
     def _generation_config_for_run(self) -> Any | None:
         base_config = getattr(self._model, "generation_config", None)
@@ -104,7 +122,9 @@ class SceneVLM:
         if not images:
             raise ValueError("`images` must contain at least one frame")
 
-        pil_images = [Image.fromarray(img) if isinstance(img, np.ndarray) else img for img in images]
+        pil_images = [
+            self._downscale_image(Image.fromarray(img) if isinstance(img, np.ndarray) else img) for img in images
+        ]
         user_prompt = prompt or _DEFAULT_PROMPT
         content: list[dict[str, Any]] = [{"type": "image", "image": img} for img in pil_images]
         content.append({"type": "text", "text": user_prompt})

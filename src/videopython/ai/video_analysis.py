@@ -63,6 +63,7 @@ _GEO_TAG_KEYS: tuple[str, ...] = (
 _SCENE_VLM_FRAME_SCALE = 3.0  # controls log curve steepness for frame sampling
 _SCENE_VLM_FRAME_BASE = 5.0  # seconds per unit in log formula
 _SCENE_VLM_MAX_FRAMES = 30  # hard cap on frames per scene
+_SCENE_VLM_GROUP_THRESHOLD = 10.0  # seconds; adjacent scenes shorter than this get merged for one VLM call
 
 
 @dataclass
@@ -397,9 +398,30 @@ class VideoAnalyzer:
 
         run_whisper = AUDIO_TO_TEXT in enabled
         run_scene_det = SEMANTIC_SCENE_DETECTOR in enabled
+        run_vlm = SCENE_VLM in enabled
 
         transcription: Transcription | None = None
         detected: list[SceneBoundary] | None = None
+
+        # Start loading SceneVLM weights in a background thread while
+        # Whisper and TransNetV2 run.  Model loading is pure I/O + CPU
+        # weight deserialization, so it overlaps well with GPU inference.
+        vlm_preload_future = None
+        scene_vlm_holder: list[SceneVLM | None] = [None]
+        if run_vlm and (run_whisper or run_scene_det):
+            from concurrent.futures import ThreadPoolExecutor as _TPE
+
+            _vlm_pool = _TPE(max_workers=1)
+
+            def _preload_vlm() -> None:
+                try:
+                    vlm = SceneVLM(**self.config.get_params(SCENE_VLM))
+                    vlm._init_local()
+                    scene_vlm_holder[0] = vlm
+                except Exception:
+                    logger.warning("SceneVLM preload failed", exc_info=True)
+
+            vlm_preload_future = _vlm_pool.submit(_preload_vlm)
 
         # Whisper and TransNetV2 operate on independent data (audio vs video
         # frames) and both fit comfortably in GPU memory together. Run them
@@ -421,6 +443,11 @@ class VideoAnalyzer:
         if run_scene_det:
             self._reset_transnetv2_torch_state()
 
+        # Wait for VLM preload to finish before freeing GPU memory.
+        if vlm_preload_future is not None:
+            vlm_preload_future.result()
+            _vlm_pool.shutdown(wait=False)
+
         # Whisper and TransNetV2 are done -- free their GPU memory before
         # loading SceneVLM (~9GB). Python GC doesn't guarantee immediate
         # cleanup, so force it and release the CUDA cache.
@@ -441,6 +468,7 @@ class VideoAnalyzer:
             video=video,
             metadata=metadata,
             scenes=scenes,
+            preloaded_scene_vlm=scene_vlm_holder[0] if run_vlm else None,
         )
         logger.info("Scene analysis completed in %.2fs", time.perf_counter() - t0)
 
@@ -528,14 +556,19 @@ class VideoAnalyzer:
         video: Video | None,
         metadata: VideoMetadata,
         scenes: list[SceneBoundary],
+        preloaded_scene_vlm: SceneVLM | None = None,
     ) -> SceneAnalysisSection:
         enabled = self.config.enabled_analyzers
 
-        try:
-            scene_vlm = SceneVLM(**self.config.get_params(SCENE_VLM)) if SCENE_VLM in enabled else None
-        except Exception:
-            logger.warning("Failed to initialize SceneVLM, skipping visual understanding", exc_info=True)
-            scene_vlm = None
+        scene_vlm: SceneVLM | None
+        if preloaded_scene_vlm is not None:
+            scene_vlm = preloaded_scene_vlm
+        else:
+            try:
+                scene_vlm = SceneVLM(**self.config.get_params(SCENE_VLM)) if SCENE_VLM in enabled else None
+            except Exception:
+                logger.warning("Failed to initialize SceneVLM, skipping visual understanding", exc_info=True)
+                scene_vlm = None
 
         try:
             audio_classifier = (
@@ -555,6 +588,20 @@ class VideoAnalyzer:
                 )
                 path_audio = None
 
+        # -- Batched SceneVLM: collect all timestamps, extract frames once, run one forward pass --
+        captions: list[str | None] = [None] * len(scenes)
+        if scene_vlm is not None:
+            try:
+                captions = self._run_scene_vlm_batched(
+                    scene_vlm=scene_vlm,
+                    source_path=source_path,
+                    video=video,
+                    metadata=metadata,
+                    scenes=scenes,
+                )
+            except Exception:
+                logger.warning("Batched SceneVLM failed, skipping visual understanding", exc_info=True)
+
         samples: list[SceneAnalysisSample] = []
         t_audio_total = 0.0
         for index, scene in enumerate(scenes):
@@ -564,38 +611,23 @@ class VideoAnalyzer:
                 end_second=float(scene.end),
                 start_frame=int(scene.start_frame),
                 end_frame=int(scene.end_frame),
+                caption=captions[index],
             )
-
-            scene_clip: Video | None = None
-            if audio_classifier is not None and path_audio is None:
-                try:
-                    scene_clip = self._load_scene_video_clip(
-                        source_path=source_path,
-                        video=video,
-                        start_second=scene.start,
-                        end_second=scene.end,
-                    )
-                except Exception:
-                    scene_clip = None
-
-            if scene_vlm is not None:
-                try:
-                    sample.caption = self._run_scene_vlm(
-                        scene_vlm=scene_vlm,
-                        source_path=source_path,
-                        video=video,
-                        metadata=metadata,
-                        start_second=scene.start,
-                        end_second=scene.end,
-                    )
-                except Exception:
-                    logger.warning(
-                        "SceneVLM failed for scene %d (%.1f-%.1fs)", index, scene.start, scene.end, exc_info=True
-                    )
 
             if audio_classifier is not None:
                 t0 = time.perf_counter()
                 try:
+                    scene_clip: Video | None = None
+                    if path_audio is None:
+                        try:
+                            scene_clip = self._load_scene_video_clip(
+                                source_path=source_path,
+                                video=video,
+                                start_second=scene.start,
+                                end_second=scene.end,
+                            )
+                        except Exception:
+                            scene_clip = None
                     sample.audio_classification = self._run_scene_audio_classification(
                         audio_classifier=audio_classifier,
                         path_audio=path_audio,
@@ -616,33 +648,91 @@ class VideoAnalyzer:
 
         return SceneAnalysisSection(samples=samples)
 
-    def _run_scene_vlm(
+    def _run_scene_vlm_batched(
         self,
         *,
         scene_vlm: SceneVLM,
         source_path: Path | None,
         video: Video | None,
         metadata: VideoMetadata,
-        start_second: float,
-        end_second: float,
-    ) -> str | None:
-        duration = max(0.0, end_second - start_second)
-        frame_count = min(
-            _SCENE_VLM_MAX_FRAMES,
-            max(1, math.ceil(_SCENE_VLM_FRAME_SCALE * math.log(duration / _SCENE_VLM_FRAME_BASE + 1))),
-        )
-        frames = self._sample_scene_frames(
-            source_path=source_path,
-            video=video,
-            metadata=metadata,
-            start_second=start_second,
-            end_second=end_second,
-            frame_count=frame_count,
-        )
-        if not frames:
-            return None
-        caption = scene_vlm.analyze_scene(frames)
-        return caption or None
+        scenes: list[SceneBoundary],
+    ) -> list[str | None]:
+        """Extract frames for all scenes in one ffmpeg call, then caption each group.
+
+        Adjacent short scenes (< _SCENE_VLM_GROUP_THRESHOLD seconds) are merged
+        into a single VLM call to reduce per-call overhead.
+        """
+        # Group adjacent short scenes to reduce VLM call count.
+        # Each group is a list of scene indices that share one VLM call.
+        groups: list[list[int]] = []
+        current_group: list[int] = []
+        current_group_duration = 0.0
+        for i, scene in enumerate(scenes):
+            dur = max(0.0, scene.end - scene.start)
+            if current_group and current_group_duration + dur > _SCENE_VLM_GROUP_THRESHOLD:
+                groups.append(current_group)
+                current_group = [i]
+                current_group_duration = dur
+            else:
+                current_group.append(i)
+                current_group_duration += dur
+        if current_group:
+            groups.append(current_group)
+
+        # Compute timestamps for each group (treating merged scenes as one span)
+        group_timestamps: list[list[float]] = []
+        all_timestamps: list[float] = []
+        for group in groups:
+            span_start = scenes[group[0]].start
+            span_end = scenes[group[-1]].end
+            duration = max(0.0, span_end - span_start)
+            frame_count = min(
+                _SCENE_VLM_MAX_FRAMES,
+                max(1, math.ceil(_SCENE_VLM_FRAME_SCALE * math.log(duration / _SCENE_VLM_FRAME_BASE + 1))),
+            )
+            timestamps = self._sample_timestamps(start_second=span_start, end_second=span_end, frame_count=frame_count)
+            group_timestamps.append(timestamps)
+            all_timestamps.extend(timestamps)
+
+        if not all_timestamps:
+            return [None] * len(scenes)
+
+        # Extract all frames in a single ffmpeg call
+        if source_path is not None:
+            all_frames_array = extract_frames_at_times(source_path, all_timestamps)
+            all_frames: list[np.ndarray | Image.Image] = list(all_frames_array)
+        else:
+            current_video = _require_video(video)
+            max_frame = max(len(current_video.frames) - 1, 0)
+            indices = [max(0, min(max_frame, int(ts * metadata.fps))) for ts in all_timestamps]
+            all_frames = [current_video.frames[idx] for idx in indices]
+
+        # Caption each group and assign to all scenes in that group
+        captions: list[str | None] = [None] * len(scenes)
+        offset = 0
+        for group, timestamps in zip(groups, group_timestamps):
+            frame_count = len(timestamps)
+            group_frames = all_frames[offset : offset + frame_count]
+            offset += frame_count
+            if not group_frames:
+                continue
+            caption: str | None = None
+            try:
+                caption = scene_vlm.analyze_scene(group_frames) or None
+            except Exception:
+                logger.warning(
+                    "SceneVLM failed for scenes %d-%d (%.1f-%.1fs)",
+                    group[0],
+                    group[-1],
+                    scenes[group[0]].start,
+                    scenes[group[-1]].end,
+                    exc_info=True,
+                )
+                caption = None
+            for i in group:
+                captions[i] = caption
+        logger.info("SceneVLM: %d groups from %d scenes", len(groups), len(scenes))
+        return captions
 
     def _run_scene_audio_classification(
         self,
@@ -674,32 +764,6 @@ class VideoAnalyzer:
             for event in classification.events
         ]
         return AudioClassification(events=offset_events, clip_predictions=classification.clip_predictions)
-
-    def _sample_scene_frames(
-        self,
-        *,
-        source_path: Path | None,
-        video: Video | None,
-        metadata: VideoMetadata,
-        start_second: float,
-        end_second: float,
-        frame_count: int,
-    ) -> list[np.ndarray | Image.Image]:
-        timestamps = self._sample_timestamps(start_second=start_second, end_second=end_second, frame_count=frame_count)
-        if not timestamps:
-            return []
-
-        if source_path is not None:
-            sampled_frames: list[np.ndarray | Image.Image] = []
-            sampled_frames.extend(extract_frames_at_times(source_path, timestamps))
-            return sampled_frames
-
-        current_video = _require_video(video)
-        max_frame = max(len(current_video.frames) - 1, 0)
-        indices = [max(0, min(max_frame, int(ts * metadata.fps))) for ts in timestamps]
-        in_memory_frames: list[np.ndarray | Image.Image] = []
-        in_memory_frames.extend(current_video.frames[idx] for idx in indices)
-        return in_memory_frames
 
     @staticmethod
     def _sample_timestamps(*, start_second: float, end_second: float, frame_count: int) -> list[float]:
