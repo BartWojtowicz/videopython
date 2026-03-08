@@ -47,8 +47,8 @@ def _install_fake_transformers(
     return to_calls, kwargs_seen
 
 
-def test_scene_vlm_uses_dtype_and_non_mps_auto_selection(monkeypatch: pytest.MonkeyPatch) -> None:
-    called: dict[str, bool] = {"mps_allowed": True}
+def test_scene_vlm_uses_dtype_and_mps_auto_selection(monkeypatch: pytest.MonkeyPatch) -> None:
+    called: dict[str, bool] = {"mps_allowed": False}
 
     def fake_select_device(_requested, mps_allowed=False):
         called["mps_allowed"] = mps_allowed
@@ -60,7 +60,7 @@ def test_scene_vlm_uses_dtype_and_non_mps_auto_selection(monkeypatch: pytest.Mon
     scene_vlm = image_mod.SceneVLM(model_name="fake-model", device=None)
     scene_vlm._init_local()
 
-    assert called["mps_allowed"] is False
+    assert called["mps_allowed"] is True
     assert kwargs_seen["dtype"] == "auto"
     assert to_calls == ["cpu"]
     assert scene_vlm.device == "cpu"
