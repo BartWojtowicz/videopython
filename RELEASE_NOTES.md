@@ -1,5 +1,19 @@
 # Release Notes
 
+## 0.22.4
+
+### Performance
+
+- SceneVLM frames are now downscaled to a 384x384 pixel budget before processing, reducing vision token count and inference time (~5.5x faster VLM inference, device-independent).
+- All scene frame timestamps are collected upfront and extracted in a single ffmpeg call instead of one process per scene.
+- Adjacent short scenes (< 10s combined) are grouped into a single VLM call to reduce per-call overhead.
+- SceneVLM model weights now load in a background thread overlapping with Whisper and scene detection.
+
+### Changed
+
+- `SceneVLM` now accepts a `max_image_pixels` parameter to control the per-image pixel budget (default: 147456). Set to a large value to disable downscaling.
+- `SceneVLM` now allows MPS device selection (previously forced CPU).
+
 ## 0.22.3
 
 ### Fixed
