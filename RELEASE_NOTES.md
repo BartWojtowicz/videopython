@@ -1,5 +1,12 @@
 # Release Notes
 
+## 0.22.5
+
+### Added
+
+- Metadata prediction for `reverse`, `freeze_frame`, and `silence_removal` transforms, enabling `VideoEdit.validate()` and `validate_with_metadata()` to accept plans containing these operations.
+- `validate()` and `validate_with_metadata()` now accept an optional `context` parameter to pass runtime data (e.g. transcription) needed by context-dependent operations like `silence_removal`.
+
 ## 0.22.4
 
 ### Performance

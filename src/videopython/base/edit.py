@@ -271,20 +271,26 @@ class VideoEdit:
             )
         return video
 
-    def validate(self) -> VideoMetadata:
+    def validate(self, context: dict[str, Any] | None = None) -> VideoMetadata:
         """Validate the editing plan without loading video data.
 
         Requires source video files to be present on disk (uses ``VideoMetadata.from_path``).
         For validation without file access, use :meth:`validate_with_metadata`.
+
+        Args:
+            context: Optional side-channel data for context-dependent operations.
+                Operations whose registry spec has a ``requires_transcript`` tag
+                use ``context["transcription"]`` for metadata prediction.
         """
         segment_metas: list[VideoMetadata] = []
         for i, segment in enumerate(self.segments):
-            segment_metas.append(self._validate_segment(i, segment))
-        return self._validate_assembled(segment_metas)
+            segment_metas.append(self._validate_segment(i, segment, context))
+        return self._validate_assembled(segment_metas, context)
 
     def validate_with_metadata(
         self,
         source_metadata: VideoMetadata | dict[str, VideoMetadata],
+        context: dict[str, Any] | None = None,
     ) -> VideoMetadata:
         """Validate the editing plan using pre-built metadata instead of loading from file.
 
@@ -294,6 +300,9 @@ class VideoEdit:
         Args:
             source_metadata: VideoMetadata for the source video (duration, dimensions, fps).
                 For multi-source plans, pass a dict mapping source paths to their metadata.
+            context: Optional side-channel data for context-dependent operations.
+                Operations whose registry spec has a ``requires_transcript`` tag
+                use ``context["transcription"]`` for metadata prediction.
 
         Returns:
             Predicted output VideoMetadata after all operations.
@@ -313,10 +322,12 @@ class VideoEdit:
                 raise ValueError(
                     f"Segment {i}: no metadata provided for source '{source_key}'. Available keys: {sorted(meta_map)}"
                 )
-            segment_metas.append(self._validate_segment_with_metadata(i, segment, meta_map[source_key]))
-        return self._validate_assembled(segment_metas)
+            segment_metas.append(self._validate_segment_with_metadata(i, segment, meta_map[source_key], context))
+        return self._validate_assembled(segment_metas, context)
 
-    def _validate_assembled(self, segment_metas: list[VideoMetadata]) -> VideoMetadata:
+    def _validate_assembled(
+        self, segment_metas: list[VideoMetadata], runtime_context: dict[str, Any] | None = None
+    ) -> VideoMetadata:
         if len(segment_metas) > 1:
             first = segment_metas[0]
             for j, other in enumerate(segment_metas[1:], start=1):
@@ -346,6 +357,7 @@ class VideoEdit:
                 record.op_id,
                 record.args,
                 context=f"post-assembly ({record.op_id})",
+                runtime_context=runtime_context,
             )
         for record in self.post_effect_records:
             _validate_effect_bounds(record, meta.total_seconds, context="post-assembly")
@@ -361,7 +373,9 @@ class VideoEdit:
             "effects": [_step_to_dict(record, include_apply=True) for record in segment.effect_records],
         }
 
-    def _validate_segment(self, index: int, segment: SegmentConfig) -> VideoMetadata:
+    def _validate_segment(
+        self, index: int, segment: SegmentConfig, runtime_context: dict[str, Any] | None = None
+    ) -> VideoMetadata:
         ctx = f"Segment {index}"
         if segment.start_second < 0:
             raise ValueError(f"{ctx}: start_second ({segment.start_second}) must be >= 0")
@@ -378,13 +392,19 @@ class VideoEdit:
         meta = meta.cut(segment.start_second, segment.end_second)
 
         for record in segment.transform_records:
-            meta = _predict_transform_metadata(meta, record.op_id, record.args, context=f"{ctx} ({record.op_id})")
+            meta = _predict_transform_metadata(
+                meta, record.op_id, record.args, context=f"{ctx} ({record.op_id})", runtime_context=runtime_context
+            )
         for record in segment.effect_records:
             _validate_effect_bounds(record, meta.total_seconds, context=ctx)
         return meta
 
     def _validate_segment_with_metadata(
-        self, index: int, segment: SegmentConfig, source_meta: VideoMetadata
+        self,
+        index: int,
+        segment: SegmentConfig,
+        source_meta: VideoMetadata,
+        runtime_context: dict[str, Any] | None = None,
     ) -> VideoMetadata:
         ctx = f"Segment {index}"
         if segment.start_second < 0:
@@ -400,7 +420,9 @@ class VideoEdit:
         meta = source_meta.cut(segment.start_second, segment.end_second)
 
         for record in segment.transform_records:
-            meta = _predict_transform_metadata(meta, record.op_id, record.args, context=f"{ctx} ({record.op_id})")
+            meta = _predict_transform_metadata(
+                meta, record.op_id, record.args, context=f"{ctx} ({record.op_id})", runtime_context=runtime_context
+            )
         for record in segment.effect_records:
             _validate_effect_bounds(record, meta.total_seconds, context=ctx)
         return meta
@@ -877,6 +899,7 @@ def _predict_transform_metadata(
     op_id: str,
     args: Mapping[str, Any],
     context: str = "",
+    runtime_context: dict[str, Any] | None = None,
 ) -> VideoMetadata:
     if op_id == "crop":
         try:
@@ -904,6 +927,18 @@ def _predict_transform_metadata(
 
     accepted_params = {p.name for p in inspect.signature(method).parameters.values() if p.name != "self"}
     prepared = _prepare_metadata_args(meta, op_id, args, accepted_params)
+
+    if spec is not None and "requires_transcript" in spec.tags:
+        if runtime_context and "transcription" in runtime_context:
+            if "transcription" in accepted_params:
+                prepared["transcription"] = runtime_context["transcription"]
+        else:
+            prefix = f"{context}: " if context else ""
+            raise ValueError(
+                f"{prefix}Op '{op_id}' requires transcription context for metadata prediction. "
+                "Pass context={'transcription': ...} to validate() or validate_with_metadata()."
+            )
+
     try:
         return getattr(meta, spec.metadata_method)(**prepared)
     except (TypeError, ValueError) as e:
