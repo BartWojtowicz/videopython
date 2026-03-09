@@ -1,11 +1,12 @@
 # videopython
 
-Minimal Python library for video editing, processing, and AI video workflows.
-Built primarily for practical editing workflows, with optional AI capabilities layered on top.
-Open-source and local-first: all AI workflows run on your hardware.
+[![PyPI](https://img.shields.io/pypi/v/videopython)](https://pypi.org/project/videopython/)
+[![Python](https://img.shields.io/pypi/pyversions/videopython)](https://pypi.org/project/videopython/)
+[![License](https://img.shields.io/github/license/BartWojtowicz/videopython)](LICENSE)
 
-Full documentation lives at [videopython.com](https://videopython.com) (guides, examples, and complete API reference).  
-Use this README for quick setup and a feature overview.
+Minimal Python library for programmatic video editing, processing, and local AI video workflows.
+
+Full documentation: [videopython.com](https://videopython.com)
 
 ## Installation
 
@@ -25,18 +26,11 @@ choco install ffmpeg
 ### 2. Install videopython
 
 ```bash
-# Core video/audio features only
-pip install videopython
-# or
-uv add videopython
-
-# Include AI features
-pip install "videopython[ai]"
-# or
-uv add videopython --extra ai
+pip install videopython          # core video/audio editing
+pip install "videopython[ai]"    # + local AI features (GPU recommended)
 ```
 
-Python support: `>=3.10, <3.13`.
+Python `>=3.10, <3.13`. AI features run locally -- no cloud API keys required, but model weights are downloaded on first use.
 
 ## Quick Start
 
@@ -53,32 +47,33 @@ final = final.add_audio_from_file("music.mp3")
 final.save("output.mp4")
 ```
 
-### JSON editing plans (`VideoEdit`)
+### JSON editing plans
+
+Define multi-segment edits as JSON -- useful for LLM-driven workflows. `VideoEdit.json_schema()` returns a schema for plan generation/validation.
 
 ```python
 from videopython.base import VideoEdit
 
 plan = {
-    "segments": [
-        {
-            "source": "raw.mp4",
-            "start": 10.0,
-            "end": 20.0,
-            "transforms": [{"op": "resize", "args": {"height": 1280}}, {"op": "speed_change", "args": {"speed": 1.25}}],
-        }
-    ],
+    "segments": [{
+        "source": "raw.mp4",
+        "start": 10.0,
+        "end": 20.0,
+        "transforms": [
+            {"op": "resize", "args": {"height": 1280}},
+            {"op": "speed_change", "args": {"speed": 1.25}},
+        ],
+    }],
     "post_effects": [
-        {"op": "blur_effect", "args": {"mode": "constant", "iterations": 1}, "apply": {"start": 0.0, "stop": 1.0}}
+        {"op": "fade", "args": {"mode": "in", "duration": 0.5}, "apply": {"start": 0.0, "stop": 0.5}},
     ],
 }
 
 edit = VideoEdit.from_dict(plan)
-edit.validate()  # dry run via VideoMetadata (no frame loading)
+edit.validate()   # dry-run via metadata (no frame loading)
 final = edit.run()
 final.save("output.mp4")
 ```
-
-Use `post_transforms` for transforms and `post_effects` for effects. `VideoEdit.json_schema()` returns a parser-aligned JSON Schema for plan generation/validation.
 
 ### AI generation
 
@@ -91,51 +86,36 @@ audio = TextToSpeech().generate_audio("Welcome to videopython.")
 video.add_audio(audio).save("ai_video.mp4")
 ```
 
-## Functionality Overview
+## Features
 
-### `videopython.base` (no AI dependencies)
+### `videopython.base` -- core editing (no AI dependencies)
 
-- Video I/O and metadata: `Video`, `VideoMetadata`, `FrameIterator`
-- Editing plans: `VideoEdit`, `SegmentConfig` (JSON/LLM-friendly multi-segment plans with schema generation)
-- Transformations: cut by time/frame, resize, crop, FPS resampling, speed change, picture-in-picture, reverse, freeze frame, silence removal
-- Clip composition: concatenate, split, transitions (`FadeTransition`, `BlurTransition`, `InstantTransition`)
-- Visual effects: blur, zoom, color grading, vignette, Ken Burns, image overlays, fade, text overlay, volume adjust
-- Audio pipeline: load/save audio, overlay/concat, normalize, time-stretch, silence detection, segment classification
-- Text/subtitles: transcription data classes and `TranscriptionOverlay`
-- Scene detection: histogram-based scene boundaries (`detect`, `detect_streaming`, `detect_parallel`)
+| Area | Highlights |
+|---|---|
+| **Video I/O** | `Video`, `VideoMetadata`, `FrameIterator` -- load, save, inspect |
+| **Editing plans** | `VideoEdit`, `SegmentConfig` -- JSON/LLM-friendly multi-segment plans with schema generation |
+| **Transforms** | Cut (time/frame), resize, crop, FPS resampling, speed change, picture-in-picture, reverse, freeze frame, silence removal |
+| **Transitions** | `FadeTransition`, `BlurTransition`, `InstantTransition` |
+| **Effects** | Blur, zoom, color grading, vignette, Ken Burns, image overlay, fade, text overlay, volume adjust |
+| **Audio** | Load/save, overlay, concat, normalize, time-stretch, silence detection, segment classification |
+| **Text** | Transcription data classes, `TranscriptionOverlay` for subtitle rendering |
+| **Scene detection** | Histogram-based scene boundaries (`detect`, `detect_streaming`, `detect_parallel`) |
 
-Docs:
-- [Core API](https://videopython.com/api/index/)
-- [Video](https://videopython.com/api/core/video/)
-- [Audio](https://videopython.com/api/core/audio/)
-- [Editing Plans (`VideoEdit`)](https://videopython.com/api/editing/)
-- [Transforms](https://videopython.com/api/transforms/)
-- [Transitions](https://videopython.com/api/transitions/)
-- [Effects](https://videopython.com/api/effects/)
-- [Text & Transcription](https://videopython.com/api/text/)
+API docs: [Core](https://videopython.com/api/index/) | [Video](https://videopython.com/api/core/video/) | [Audio](https://videopython.com/api/core/audio/) | [Editing Plans](https://videopython.com/api/editing/) | [Transforms](https://videopython.com/api/transforms/) | [Transitions](https://videopython.com/api/transitions/) | [Effects](https://videopython.com/api/effects/) | [Text](https://videopython.com/api/text/)
 
-### `videopython.ai` (install with `[ai]`)
+### `videopython.ai` -- local AI features (install with `[ai]`)
 
-- Generation: `TextToVideo`, `ImageToVideo`, `TextToImage`, `TextToSpeech`, `TextToMusic`
-- Understanding:
-  - Transcription and visual scene understanding: `AudioToText`, `SceneVLM`
-  - Scene detection: `SemanticSceneDetector`
-- AI transforms: `FaceTracker`, `FaceTrackingCrop`, `SplitScreenComposite`
-- Dubbing/revoicing: `videopython.ai.dubbing.VideoDubber`
-- Object swapping/inpainting: `ObjectSwapper`
+| Area | Highlights |
+|---|---|
+| **Generation** | `TextToVideo`, `ImageToVideo`, `TextToImage`, `TextToSpeech`, `TextToMusic` |
+| **Understanding** | `AudioToText` (transcription), `AudioClassifier`, `SceneVLM` (visual scene description), `ActionRecognizer` |
+| **Scene detection** | `SemanticSceneDetector` (neural scene boundaries) |
+| **Video analysis** | `VideoAnalyzer` -- full-pipeline analysis combining multiple AI capabilities |
+| **Transforms** | `FaceTracker`, `FaceTrackingCrop`, `SplitScreenComposite` |
+| **Dubbing** | `VideoDubber` -- voice cloning and revoicing with timing sync |
+| **Object swapping** | `ObjectSwapper` -- detect, segment, and inpaint objects in video |
 
-Docs:
-- [AI Generation](https://videopython.com/api/ai/generation/)
-- [AI Understanding](https://videopython.com/api/ai/understanding/)
-- [AI Transforms](https://videopython.com/api/ai/transforms/)
-- [AI Dubbing](https://videopython.com/api/ai/dubbing/)
-- [AI Object Swapping](https://videopython.com/api/ai/swapping/)
-
-## Local AI Runtime Notes
-
-- `videopython.ai` is local-only and does not require cloud API keys.
-- Several AI features download model weights on first run and can require substantial GPU resources.
-- Device/model details by class are documented at [videopython.com](https://videopython.com).
+API docs: [Generation](https://videopython.com/api/ai/generation/) | [Understanding](https://videopython.com/api/ai/understanding/) | [Transforms](https://videopython.com/api/ai/transforms/) | [Dubbing](https://videopython.com/api/ai/dubbing/) | [Object Swapping](https://videopython.com/api/ai/swapping/)
 
 ## Examples
 

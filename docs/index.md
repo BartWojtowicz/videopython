@@ -1,49 +1,48 @@
 # videopython
 
-A minimal Python library for video editing, processing, and AI workflows, built for short-form content.
+Minimal Python library for programmatic video editing, processing, and local AI video workflows.
 
 ## Quick Example
 
 ```python
-from videopython.base import Video
-from videopython.ai import TextToImage, ImageToVideo, TextToSpeech
+from videopython import Video
+from videopython.base import FadeTransition
 
-def create_video():
-    # Generate an image and animate it
-    image = TextToImage().generate_image(
-        "A cozy coffee shop on a rainy evening, warm lighting"
-    )
-    video = ImageToVideo().generate_video(image=image, fps=24)
-    video = video.resize(1080, 1920)  # Vertical format
-
-    # Add narration
-    audio = TextToSpeech().generate_audio(
-        "Sometimes the best ideas come with a cup of coffee and the sound of rain."
-    )
-    video = video.add_audio(audio)
-    video.save("coffee_shop.mp4")
-
-create_video()
+intro = Video.from_path("intro.mp4").resize(1080, 1920)
+clip = Video.from_path("raw.mp4").cut(10, 25).resize(1080, 1920).resample_fps(30)
+final = intro.transition_to(clip, FadeTransition(effect_time_seconds=0.5))
+final = final.add_audio_from_file("music.mp3")
+final.save("output.mp4")
 ```
 
 ## What You Can Do
 
-- **Edit videos** - Cut, resize, crop, resample FPS, combine clips with effects
-- **Add transitions** - Fade, blur, or instant transitions between segments
-- **Generate content** - Create images, videos, speech, and music from text prompts
-- **Transcribe and subtitle** - Auto-generate word-level subtitles from speech
-- **Analyze video** - Detect objects, faces, text, scenes, actions, and motion
-- **Dub and revoice** - Translate speech to 50+ languages with voice cloning
-- **Swap objects** - Replace or remove objects using AI segmentation
+### Core editing (`videopython.base`)
+
+- **Edit videos** -- Cut, resize, crop, change speed, reverse, freeze frames, picture-in-picture
+- **Combine clips** -- Concatenate, split, and join with fade/blur/instant transitions
+- **Apply effects** -- Blur, zoom, color grading, vignette, Ken Burns, text overlay, image overlay, fade
+- **Process audio** -- Load, overlay, concat, normalize, time-stretch, silence detection
+- **Add subtitles** -- Transcription data classes and word-level subtitle rendering
+- **Detect scenes** -- Histogram-based scene boundary detection (single-pass or parallel)
+- **Structured editing** -- Define multi-segment edits as JSON with `VideoEdit` for LLM-driven workflows
+
+### AI features (`videopython[ai]`)
+
+- **Generate content** -- Create images, videos, speech, and music from text prompts
+- **Understand video** -- Transcribe audio, describe scenes, classify audio, recognize actions
+- **Analyze video** -- Full-pipeline analysis combining audio, visual, and temporal understanding
+- **Dub and revoice** -- Translate speech to 50+ languages with voice cloning
+- **Swap objects** -- Replace or remove objects using AI segmentation and inpainting
+- **Track faces** -- Face tracking crops and split-screen composites
 
 ## Installation
 
 ```bash
-# Base features
-pip install videopython
-
-# AI features
-pip install "videopython[ai]"
+pip install videopython          # core editing
+pip install "videopython[ai]"    # + local AI features (GPU recommended)
 ```
 
-See the [Installation Guide](getting-started/installation.md) for FFmpeg setup and configuration.
+Python `>=3.10, <3.13`. AI features run locally -- no cloud API keys required.
+
+See the [Installation Guide](getting-started/installation.md) for FFmpeg setup and details.
