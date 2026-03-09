@@ -7,7 +7,7 @@ import warnings
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
-from typing import TYPE_CHECKING, Generator, Literal, get_args
+from typing import TYPE_CHECKING, Any, Generator, Literal, get_args
 
 import numpy as np
 
@@ -337,6 +337,150 @@ class VideoMetadata:
             fps=self.fps,
             frame_count=new_frame_count,
             total_seconds=new_seconds,
+        )
+
+    def reverse(self) -> VideoMetadata:
+        """Predict metadata after reversing video. No metadata changes."""
+        return VideoMetadata(
+            height=self.height,
+            width=self.width,
+            fps=self.fps,
+            frame_count=self.frame_count,
+            total_seconds=self.total_seconds,
+        )
+
+    def freeze_frame(
+        self,
+        timestamp: float,
+        duration: float = 2.0,
+        position: str = "after",
+    ) -> VideoMetadata:
+        """Predict metadata after freeze frame insertion.
+
+        Mirrors the frame-count logic in FreezeFrame.apply().
+
+        Args:
+            timestamp: Time in seconds to capture the frame from.
+            duration: How long to hold the frozen frame in seconds.
+            position: Where to insert: "before", "after", or "replace".
+        """
+        if timestamp < 0:
+            raise ValueError(f"timestamp must be >= 0, got {timestamp}")
+        if timestamp >= self.total_seconds:
+            raise ValueError(f"timestamp ({timestamp}) must be less than video duration ({self.total_seconds})")
+        if duration <= 0:
+            raise ValueError(f"duration must be > 0, got {duration}")
+
+        freeze_count = round(duration * self.fps)
+
+        if position in ("after", "before"):
+            new_frame_count = self.frame_count + freeze_count
+        elif position == "replace":
+            frame_idx = round(timestamp * self.fps)
+            replace_end = min(frame_idx + freeze_count, self.frame_count)
+            replaced = replace_end - frame_idx
+            new_frame_count = self.frame_count - replaced + freeze_count
+        else:
+            raise ValueError(f"Invalid position: {position}")
+
+        new_total_seconds = round(new_frame_count / self.fps, 4)
+        return VideoMetadata(
+            height=self.height,
+            width=self.width,
+            fps=self.fps,
+            frame_count=new_frame_count,
+            total_seconds=new_total_seconds,
+        )
+
+    def silence_removal(
+        self,
+        min_silence_duration: float = 1.0,
+        padding: float = 0.15,
+        mode: str = "cut",
+        speed_factor: float = 3.0,
+        transcription: Any = None,
+    ) -> VideoMetadata:
+        """Predict metadata after silence removal.
+
+        Replicates the silence-gap detection logic from SilenceRemoval.apply()
+        but only computes frame counts.
+
+        Args:
+            min_silence_duration: Only remove/speed-up gaps longer than this (seconds).
+            padding: Seconds of silence to preserve around speech boundaries.
+            mode: "cut" to hard-cut silence, "speed_up" to speed up silent sections.
+            speed_factor: Speed multiplier for silent sections (only used with mode="speed_up").
+            transcription: Transcription object with word-level timestamps.
+        """
+        if transcription is None or not hasattr(transcription, "words") or not transcription.words:
+            return VideoMetadata(
+                height=self.height,
+                width=self.width,
+                fps=self.fps,
+                frame_count=self.frame_count,
+                total_seconds=self.total_seconds,
+            )
+
+        # Build speech ranges from word timestamps (with padding)
+        speech_ranges: list[tuple[float, float]] = []
+        for word in transcription.words:
+            start = max(0, word.start - padding)
+            end = min(self.total_seconds, word.end + padding)
+            if speech_ranges and start <= speech_ranges[-1][1]:
+                speech_ranges[-1] = (speech_ranges[-1][0], max(speech_ranges[-1][1], end))
+            else:
+                speech_ranges.append((start, end))
+
+        # Identify silence gaps
+        silence_ranges: list[tuple[float, float]] = []
+        prev_end = 0.0
+        for s_start, s_end in speech_ranges:
+            if s_start - prev_end >= min_silence_duration:
+                silence_ranges.append((prev_end, s_start))
+            prev_end = s_end
+        if self.total_seconds - prev_end >= min_silence_duration:
+            silence_ranges.append((prev_end, self.total_seconds))
+
+        if not silence_ranges:
+            return VideoMetadata(
+                height=self.height,
+                width=self.width,
+                fps=self.fps,
+                frame_count=self.frame_count,
+                total_seconds=self.total_seconds,
+            )
+
+        if mode == "cut":
+            # Mirror _apply_cut keep-range logic exactly
+            keep_frames = 0
+            prev_frame = 0
+            for s_start, s_end in silence_ranges:
+                cut_start = round(s_start * self.fps)
+                cut_end = round(s_end * self.fps)
+                if cut_start > prev_frame:
+                    keep_frames += cut_start - prev_frame
+                prev_frame = cut_end
+            if prev_frame < self.frame_count:
+                keep_frames += self.frame_count - prev_frame
+            new_frame_count = keep_frames
+        elif mode == "speed_up":
+            saved_frames = 0
+            for s_start, s_end in silence_ranges:
+                gap_frames = round((s_end - s_start) * self.fps)
+                sped_up_frames = max(1, round(gap_frames / speed_factor))
+                saved_frames += gap_frames - sped_up_frames
+            new_frame_count = self.frame_count - saved_frames
+        else:
+            raise ValueError(f"Invalid mode: {mode}")
+
+        new_frame_count = max(1, new_frame_count)
+        new_total_seconds = round(new_frame_count / self.fps, 4)
+        return VideoMetadata(
+            height=self.height,
+            width=self.width,
+            fps=self.fps,
+            frame_count=new_frame_count,
+            total_seconds=new_total_seconds,
         )
 
     def crop_to_aspect_even(self, target_aspect: tuple[int, int] | list[int] = (9, 16)) -> VideoMetadata:

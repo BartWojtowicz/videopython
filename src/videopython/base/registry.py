@@ -587,6 +587,7 @@ def _register_base_operations() -> None:
             Reverse,
             op_id="reverse",
             category=OperationCategory.TRANSFORMATION,
+            metadata_method="reverse",
         )
     )
     register(
@@ -601,6 +602,7 @@ def _register_base_operations() -> None:
                 "padding": {"minimum": 0},
                 "speed_factor": {"exclusive_minimum": 1},
             },
+            metadata_method="silence_removal",
         )
     )
     register(
@@ -614,6 +616,7 @@ def _register_base_operations() -> None:
                 "timestamp": {"minimum": 0},
                 "duration": {"exclusive_minimum": 0},
             },
+            metadata_method="freeze_frame",
         )
     )
     register(

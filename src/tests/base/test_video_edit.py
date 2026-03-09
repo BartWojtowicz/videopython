@@ -13,6 +13,7 @@ import pytest
 
 from tests.test_config import SMALL_VIDEO_METADATA, SMALL_VIDEO_PATH
 from videopython.base.edit import SegmentConfig, VideoEdit, _StepRecord
+from videopython.base.text.transcription import Transcription, TranscriptionWord
 from videopython.base.transforms import CropMode, PictureInPicture
 from videopython.base.video import Video, VideoMetadata
 
@@ -771,3 +772,250 @@ class TestRegistryAndMetadata:
         result = meta.cut(0.05, 0.15)
         assert result.frame_count == 2
         assert result.total_seconds == pytest.approx(0.2)
+
+    @pytest.mark.parametrize("op_id", ["reverse", "freeze_frame", "silence_removal"])
+    def test_new_transforms_have_metadata_method(self, op_id):
+        from videopython.base.registry import get_operation_spec
+
+        spec = get_operation_spec(op_id)
+        assert spec is not None
+        assert spec.metadata_method == op_id
+
+
+class TestReverseMetadata:
+    def test_reverse_preserves_all_metadata(self):
+        meta = VideoMetadata(height=200, width=300, fps=30, frame_count=150, total_seconds=5.0)
+        result = meta.reverse()
+        assert result.height == meta.height
+        assert result.width == meta.width
+        assert result.fps == meta.fps
+        assert result.frame_count == meta.frame_count
+        assert result.total_seconds == meta.total_seconds
+
+    def test_validate_plan_with_reverse_in_segment(self):
+        plan = {
+            "segments": [
+                _segment_plan(
+                    start=0.0,
+                    end=3.0,
+                    transforms=[{"op": "reverse"}],
+                )
+            ]
+        }
+        meta = VideoEdit.from_dict(plan).validate()
+        assert isinstance(meta, VideoMetadata)
+        assert meta.total_seconds == pytest.approx(3.0, abs=0.1)
+
+    def test_validate_plan_with_reverse_in_post_transforms(self):
+        plan = {
+            "segments": [_segment_plan(start=0.0, end=3.0)],
+            "post_transforms": [{"op": "reverse"}],
+        }
+        meta = VideoEdit.from_dict(plan).validate()
+        assert isinstance(meta, VideoMetadata)
+        assert meta.total_seconds == pytest.approx(3.0, abs=0.1)
+
+    def test_validate_with_metadata_reverse(self):
+        plan = {
+            "segments": [
+                _segment_plan(
+                    source="fake.mp4",
+                    start=0.0,
+                    end=2.0,
+                    transforms=[{"op": "reverse"}],
+                )
+            ],
+            "post_transforms": [{"op": "reverse"}],
+        }
+        source_meta = VideoMetadata(height=500, width=800, fps=24, frame_count=120, total_seconds=5.0)
+        meta = VideoEdit.from_dict(plan).validate_with_metadata(source_meta)
+        assert isinstance(meta, VideoMetadata)
+
+
+class TestFreezeFrameMetadata:
+    def test_freeze_frame_after(self):
+        meta = VideoMetadata(height=100, width=200, fps=30, frame_count=300, total_seconds=10.0)
+        result = meta.freeze_frame(timestamp=5.0, duration=2.0, position="after")
+        expected_added = round(2.0 * 30)
+        assert result.frame_count == 300 + expected_added
+
+    def test_freeze_frame_before(self):
+        meta = VideoMetadata(height=100, width=200, fps=30, frame_count=300, total_seconds=10.0)
+        result = meta.freeze_frame(timestamp=5.0, duration=2.0, position="before")
+        expected_added = round(2.0 * 30)
+        assert result.frame_count == 300 + expected_added
+
+    def test_freeze_frame_replace(self):
+        meta = VideoMetadata(height=100, width=200, fps=30, frame_count=300, total_seconds=10.0)
+        result = meta.freeze_frame(timestamp=5.0, duration=2.0, position="replace")
+        # replace_end = min(150 + 60, 300) = 210, replaced = 60
+        # new = 300 - 60 + 60 = 300
+        assert result.frame_count == 300
+
+    def test_freeze_frame_replace_at_end_clamps(self):
+        meta = VideoMetadata(height=100, width=200, fps=30, frame_count=300, total_seconds=10.0)
+        result = meta.freeze_frame(timestamp=9.0, duration=5.0, position="replace")
+        # frame_idx = round(9.0 * 30) = 270, freeze_count = round(5.0 * 30) = 150
+        # replace_end = min(270 + 150, 300) = 300, replaced = 30
+        # new = 300 - 30 + 150 = 420
+        assert result.frame_count == 420
+
+    def test_freeze_frame_timestamp_validation(self):
+        meta = VideoMetadata(height=100, width=200, fps=30, frame_count=300, total_seconds=10.0)
+        with pytest.raises(ValueError, match="timestamp.*must be less than"):
+            meta.freeze_frame(timestamp=10.0, duration=1.0)
+        with pytest.raises(ValueError, match="timestamp must be >= 0"):
+            meta.freeze_frame(timestamp=-1.0, duration=1.0)
+        with pytest.raises(ValueError, match="duration must be > 0"):
+            meta.freeze_frame(timestamp=1.0, duration=0.0)
+
+    def test_validate_plan_with_freeze_frame(self):
+        plan = {
+            "segments": [
+                _segment_plan(
+                    start=0.0,
+                    end=3.0,
+                    transforms=[{"op": "freeze_frame", "args": {"timestamp": 1.0, "duration": 2.0}}],
+                )
+            ]
+        }
+        meta = VideoEdit.from_dict(plan).validate()
+        assert isinstance(meta, VideoMetadata)
+        assert meta.total_seconds > 3.0
+
+    def test_validate_with_metadata_freeze_frame(self):
+        plan = {
+            "segments": [
+                _segment_plan(
+                    source="fake.mp4",
+                    start=0.0,
+                    end=3.0,
+                    transforms=[
+                        {"op": "freeze_frame", "args": {"timestamp": 1.0, "duration": 1.5, "position": "after"}}
+                    ],
+                )
+            ]
+        }
+        source_meta = VideoMetadata(height=500, width=800, fps=24, frame_count=120, total_seconds=5.0)
+        meta = VideoEdit.from_dict(plan).validate_with_metadata(source_meta)
+        assert meta.total_seconds > 3.0
+
+
+def _make_transcription(words_data: list[tuple[float, float, str]]) -> Transcription:
+    words = [TranscriptionWord(start=s, end=e, word=w) for s, e, w in words_data]
+    return Transcription(words=words)
+
+
+class TestSilenceRemovalMetadata:
+    def test_silence_removal_cut_mode(self):
+        # 10s video at 30fps = 300 frames
+        # Words at 2-3s and 7-8s with padding=0.15 -> speech: [1.85, 3.15] and [6.85, 8.15]
+        # Silence gaps >= 1.0s: [0, 1.85] (1.85s), [3.15, 6.85] (3.7s), [8.15, 10.0] (1.85s)
+        meta = VideoMetadata(height=100, width=200, fps=30, frame_count=300, total_seconds=10.0)
+        transcription = _make_transcription([(2.0, 3.0, "hello"), (7.0, 8.0, "world")])
+        result = meta.silence_removal(min_silence_duration=1.0, padding=0.15, mode="cut", transcription=transcription)
+        assert result.frame_count < meta.frame_count
+        assert result.height == meta.height
+        assert result.width == meta.width
+        assert result.fps == meta.fps
+
+    def test_silence_removal_speed_up_mode(self):
+        meta = VideoMetadata(height=100, width=200, fps=30, frame_count=300, total_seconds=10.0)
+        transcription = _make_transcription([(2.0, 3.0, "hello"), (7.0, 8.0, "world")])
+        result = meta.silence_removal(
+            min_silence_duration=1.0, padding=0.15, mode="speed_up", speed_factor=3.0, transcription=transcription
+        )
+        assert result.frame_count < meta.frame_count
+        # speed_up removes less than cut
+        result_cut = meta.silence_removal(
+            min_silence_duration=1.0, padding=0.15, mode="cut", transcription=transcription
+        )
+        assert result.frame_count > result_cut.frame_count
+
+    def test_silence_removal_no_transcription_returns_self(self):
+        meta = VideoMetadata(height=100, width=200, fps=30, frame_count=300, total_seconds=10.0)
+        result = meta.silence_removal(transcription=None)
+        assert result.frame_count == meta.frame_count
+
+    def test_silence_removal_no_silence_gaps(self):
+        # Continuous speech covering the whole video -> no gaps
+        meta = VideoMetadata(height=100, width=200, fps=30, frame_count=300, total_seconds=10.0)
+        transcription = _make_transcription([(0.0, 10.0, "continuous speech")])
+        result = meta.silence_removal(min_silence_duration=1.0, padding=0.15, mode="cut", transcription=transcription)
+        assert result.frame_count == meta.frame_count
+
+    def test_validate_plan_with_silence_removal_and_context(self):
+        transcription = _make_transcription([(1.0, 2.0, "hello"), (4.0, 5.0, "world")])
+        plan = {
+            "segments": [
+                _segment_plan(
+                    source="fake.mp4",
+                    start=0.0,
+                    end=6.0,
+                    transforms=[{"op": "silence_removal", "args": {"min_silence_duration": 0.5}}],
+                )
+            ]
+        }
+        source_meta = VideoMetadata(height=500, width=800, fps=24, frame_count=240, total_seconds=10.0)
+        meta = VideoEdit.from_dict(plan).validate_with_metadata(source_meta, context={"transcription": transcription})
+        assert isinstance(meta, VideoMetadata)
+        assert meta.frame_count < round(6.0 * 24)
+
+    def test_validate_plan_silence_removal_no_context_raises(self):
+        plan = {
+            "segments": [
+                _segment_plan(
+                    source="fake.mp4",
+                    start=0.0,
+                    end=6.0,
+                    transforms=[{"op": "silence_removal"}],
+                )
+            ]
+        }
+        source_meta = VideoMetadata(height=500, width=800, fps=24, frame_count=240, total_seconds=10.0)
+        with pytest.raises(ValueError, match="requires transcription context"):
+            VideoEdit.from_dict(plan).validate_with_metadata(source_meta)
+
+    def test_validate_plan_silence_removal_in_post_transforms(self):
+        transcription = _make_transcription([(1.0, 2.0, "hello")])
+        plan = {
+            "segments": [_segment_plan(source="fake.mp4", start=0.0, end=4.0)],
+            "post_transforms": [{"op": "silence_removal"}],
+        }
+        source_meta = VideoMetadata(height=500, width=800, fps=24, frame_count=240, total_seconds=10.0)
+        meta = VideoEdit.from_dict(plan).validate_with_metadata(source_meta, context={"transcription": transcription})
+        assert isinstance(meta, VideoMetadata)
+
+    def test_silence_removal_metadata_matches_apply_cut(self):
+        fps = 24.0
+        frame_count = 240
+        total_seconds = frame_count / fps
+        meta = VideoMetadata(height=100, width=200, fps=fps, frame_count=frame_count, total_seconds=total_seconds)
+        transcription = _make_transcription([(1.0, 2.0, "hello"), (5.0, 6.0, "world")])
+
+        from videopython.base.transforms import SilenceRemoval
+
+        video = _make_synthetic_video(200, 100, fps, total_seconds)
+        op = SilenceRemoval(min_silence_duration=1.0, padding=0.15, mode="cut")
+        result_video = op.apply(video, transcription=transcription)
+        predicted = meta.silence_removal(
+            min_silence_duration=1.0, padding=0.15, mode="cut", transcription=transcription
+        )
+        assert predicted.frame_count == len(result_video.frames)
+
+    def test_silence_removal_metadata_matches_apply_speed_up(self):
+        fps = 24.0
+        frame_count = 240
+        total_seconds = frame_count / fps
+        meta = VideoMetadata(height=100, width=200, fps=fps, frame_count=frame_count, total_seconds=total_seconds)
+        transcription = _make_transcription([(1.0, 2.0, "hello"), (5.0, 6.0, "world")])
+
+        from videopython.base.transforms import SilenceRemoval
+
+        video = _make_synthetic_video(200, 100, fps, total_seconds)
+        op = SilenceRemoval(min_silence_duration=1.0, padding=0.15, mode="speed_up", speed_factor=3.0)
+        result_video = op.apply(video, transcription=transcription)
+        predicted = meta.silence_removal(
+            min_silence_duration=1.0, padding=0.15, mode="speed_up", speed_factor=3.0, transcription=transcription
+        )
+        assert predicted.frame_count == len(result_video.frames)
