@@ -11,7 +11,7 @@ SMALL_VIDEO_PATH = str(TEST_DATA_DIR / "small_video.mp4")
 SMALL_VIDEO_METADATA = VideoMetadata(height=500, width=800, fps=24, frame_count=288, total_seconds=12)
 
 BIG_VIDEO_PATH = str(TEST_DATA_DIR / "big_video.mp4")
-BIG_VIDEO_METADATA = VideoMetadata(height=1920, width=1080, fps=30, frame_count=401, total_seconds=13.37)
+BIG_VIDEO_METADATA = VideoMetadata(height=1920, width=1080, fps=30, frame_count=401, total_seconds=13.3667)
 
 # Other
 TEST_AUDIO_PATH = str(TEST_DATA_DIR / "test_audio.mp3")
