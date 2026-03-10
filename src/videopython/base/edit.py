@@ -1020,18 +1020,20 @@ def _validate_effect_bounds(
 
     start = _coerce_optional_number(record.apply_args.get("start"), "start")
     stop = _coerce_optional_number(record.apply_args.get("stop"), "stop")
+    # Tolerance for floating-point rounding in frame-based duration calculations.
+    eps = 1e-3
 
     if start is not None:
         if start < 0:
             raise ValueError(f"{prefix}Effect '{op_label}' ({effect_name}) start ({start}) must be >= 0")
-        if start > duration:
+        if start > duration + eps:
             raise ValueError(
                 f"{prefix}Effect '{op_label}' ({effect_name}) start ({start}) exceeds timeline duration ({duration}s)"
             )
     if stop is not None:
         if stop < 0:
             raise ValueError(f"{prefix}Effect '{op_label}' ({effect_name}) stop ({stop}) must be >= 0")
-        if stop > duration:
+        if stop > duration + eps:
             raise ValueError(
                 f"{prefix}Effect '{op_label}' ({effect_name}) stop ({stop}) exceeds timeline duration ({duration}s)"
             )
