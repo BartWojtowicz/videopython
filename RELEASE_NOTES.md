@@ -1,5 +1,12 @@
 # Release Notes
 
+## 0.22.6
+
+### Fixed
+
+- Standardized duration rounding to 4 decimal places across all `VideoMetadata` methods (`from_path`, `from_video`, `cut_frames`, `with_duration`). Previously some paths used 2 decimals, some 4, and some none, causing effect stop times to exceed segment duration in validation.
+- Added 1ms tolerance to effect bounds validation to prevent false positives from residual floating-point arithmetic.
+
 ## 0.22.5
 
 ### Added

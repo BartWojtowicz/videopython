@@ -118,7 +118,7 @@ class VideoMetadata:
                 duration = float(probe_data["format"]["duration"])
                 frame_count = int(round(duration * fps))
 
-            total_seconds = round(frame_count / fps, 2)
+            total_seconds = round(frame_count / fps, 4)
 
             return cls(height=height, width=width, fps=fps, frame_count=frame_count, total_seconds=total_seconds)
 
@@ -131,7 +131,7 @@ class VideoMetadata:
     def from_video(cls, video: Video) -> VideoMetadata:
         """Creates VideoMetadata object from Video instance."""
         frame_count, height, width, _ = video.frames.shape
-        total_seconds = round(frame_count / video.fps, 2)
+        total_seconds = round(frame_count / video.fps, 4)
 
         return cls(height=height, width=width, fps=video.fps, frame_count=frame_count, total_seconds=total_seconds)
 
@@ -157,7 +157,7 @@ class VideoMetadata:
             width=self.width,
             fps=self.fps,
             frame_count=round(self.fps * seconds),
-            total_seconds=seconds,
+            total_seconds=round(seconds, 4),
         )
 
     def with_dimensions(self, width: int, height: int) -> VideoMetadata:
@@ -245,7 +245,7 @@ class VideoMetadata:
             raise ValueError(f"Start frame ({start}) cannot be negative")
         if end > self.frame_count:
             raise ValueError(f"End frame ({end}) exceeds frame count ({self.frame_count})")
-        duration = (end - start) / self.fps
+        duration = round((end - start) / self.fps, 4)
         return self.with_duration(duration)
 
     def resize(
