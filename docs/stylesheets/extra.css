@@ -1,0 +1,147 @@
+/* -- Typography ----------------------------------------------------------- */
+
+:root {
+  --md-text-font: "Inter", sans-serif;
+  --md-code-font: "JetBrains Mono", monospace;
+}
+
+/* -- Color palette overrides --------------------------------------------- */
+
+:root,
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #1a1a2e;
+  --md-primary-fg-color--light: #2d2d4a;
+  --md-primary-fg-color--dark: #0f0f1a;
+  --md-accent-fg-color: #e94560;
+  --md-accent-fg-color--transparent: rgba(233, 69, 96, 0.1);
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #1a1a2e;
+  --md-primary-fg-color--light: #2d2d4a;
+  --md-primary-fg-color--dark: #0f0f1a;
+  --md-accent-fg-color: #ff6b81;
+  --md-accent-fg-color--transparent: rgba(255, 107, 129, 0.1);
+}
+
+/* -- Hero section on homepage -------------------------------------------- */
+
+.md-typeset .hero {
+  text-align: center;
+  padding: 1.5rem 1rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.md-typeset .hero h1 {
+  font-size: 2rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin-bottom: 0.25rem;
+  background: linear-gradient(135deg, var(--md-primary-fg-color) 0%, var(--md-accent-fg-color) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+[data-md-color-scheme="slate"] .md-typeset .hero h1 {
+  background: linear-gradient(135deg, #e2e2e8 0%, var(--md-accent-fg-color) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.md-typeset .hero p {
+  font-size: 1rem;
+  color: var(--md-default-fg-color--light);
+  max-width: 34rem;
+  margin: 0 auto 1.25rem;
+}
+
+.md-typeset .hero .hero-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.md-typeset .hero .hero-buttons a {
+  display: inline-block;
+  padding: 0.6rem 1.5rem;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 0.85rem;
+  text-decoration: none;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.md-typeset .hero .hero-buttons a:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.md-typeset .hero .hero-buttons .btn-primary {
+  background: var(--md-accent-fg-color);
+  color: #fff;
+}
+
+.md-typeset .hero .hero-buttons .btn-secondary {
+  border: 2px solid var(--md-default-fg-color--lighter);
+  color: var(--md-default-fg-color);
+}
+
+/* -- Feature cards ------------------------------------------------------- */
+
+.md-typeset .feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 1rem;
+  margin: 1.5rem 0 2rem;
+}
+
+.md-typeset .feature-card {
+  padding: 1.25rem;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 8px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.md-typeset .feature-card:hover {
+  border-color: var(--md-accent-fg-color);
+  box-shadow: 0 2px 12px var(--md-accent-fg-color--transparent);
+}
+
+.md-typeset .feature-card h3 {
+  margin-top: 0;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.md-typeset .feature-card p {
+  font-size: 0.85rem;
+  color: var(--md-default-fg-color--light);
+  margin-bottom: 0;
+}
+
+/* -- Code blocks --------------------------------------------------------- */
+
+.md-typeset code {
+  border-radius: 4px;
+}
+
+.md-typeset pre > code {
+  border-radius: 6px;
+}
+
+/* -- Heading anchors ----------------------------------------------------- */
+
+.md-typeset h2 {
+  font-weight: 700;
+  border-bottom: 2px solid var(--md-default-fg-color--lightest);
+  padding-bottom: 0.3rem;
+}
+
+/* -- Footer tweaks ------------------------------------------------------- */
+
+.md-footer {
+  margin-top: 3rem;
+}
