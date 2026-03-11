@@ -64,6 +64,8 @@ nav:
   - Getting Started:
       - Installation: getting-started/installation.md
       - Quick Start: getting-started/quickstart.md
+  - Guides:
+      - LLM & AI Agent Integration: guides/llm-integration.md
   - Examples:
       - Social Media Clip: examples/social-clip.md
       - AI-Generated Video: examples/ai-video.md
@@ -75,6 +77,8 @@ nav:
           - Video: api/core/video.md
           - Audio: api/core/audio.md
           - Scene Detection: api/core/scene.md
+      - Editing Plans: api/editing.md
+      - Operation Registry: api/registry.md
       - Transforms: api/transforms.md
       - Transitions: api/transitions.md
       - Effects: api/effects.md
