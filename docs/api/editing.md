@@ -185,7 +185,7 @@ edit = VideoEdit.from_dict(plan)
 
 ## Schema Generation (`json_schema`)
 
-Use `VideoEdit.json_schema()` to get a parser-aligned JSON Schema for the current registry state:
+Use `VideoEdit.json_schema()` to get a parser-aligned JSON Schema for the current registry state. The schema is designed to be passed directly to LLM APIs as a tool definition or structured-output format.
 
 ```python
 from videopython.base import VideoEdit
@@ -194,13 +194,31 @@ schema = VideoEdit.json_schema()
 print(schema["properties"]["segments"]["minItems"])  # 1
 ```
 
-Schema properties:
+### Using the schema with LLMs
+
+The schema encodes all structural rules - valid operation IDs, required fields, parameter types, and value constraints - so the LLM does not need to learn them from examples:
+
+```python
+from videopython.base import VideoEdit
+
+schema = VideoEdit.json_schema()
+
+# Pass as a tool/function schema to any LLM API:
+# - OpenAI: tools=[{"type": "function", "function": {"parameters": schema}}]
+# - Anthropic: tools=[{"input_schema": schema}]
+# - Any structured-output API that accepts JSON Schema
+```
+
+For complete examples with OpenAI and Anthropic APIs, see the [LLM Integration Guide](../guides/llm-integration.md).
+
+### Schema properties
 
 - Built dynamically from the operation registry
 - Canonical op IDs only (aliases omitted)
 - Excludes unsupported categories/tags/non-JSON-instantiable ops
 - Reflects current registration state (AI ops appear only if `videopython.ai` was imported)
 - Encodes parser-aligned constraints (for example `resize` requires at least one non-null dimension)
+- Includes rich value constraints (`minimum`, `maximum`, `exclusive_minimum`, `enum`) for all parameters
 
 ## Serialization (`to_dict`)
 

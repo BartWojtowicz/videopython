@@ -1,6 +1,8 @@
 # Operation Registry
 
-The operation registry provides machine-readable metadata for all video operations in videopython. It allows downstream tools to discover available operations, their parameters, and capabilities without importing internal modules or parsing docstrings.
+The operation registry provides machine-readable metadata for all video operations in videopython. It allows downstream tools - including LLMs and AI agents - to discover available operations, their parameters, and capabilities without importing internal modules or parsing docstrings.
+
+Every operation has an LLM-optimized description and rich JSON Schema constraints (`minimum`, `maximum`, `enum`, `exclusive_minimum`, etc.) so models can generate valid parameters on the first try. For a complete guide on using the registry in LLM workflows, see the [LLM Integration Guide](../guides/llm-integration.md).
 
 ## Quick Start
 
