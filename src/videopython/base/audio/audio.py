@@ -26,6 +26,11 @@ class AudioMetadata:
     duration_seconds: float
     frame_count: int
 
+    def __post_init__(self) -> None:
+        # Match VideoMetadata's 4-decimal-place rounding convention so that
+        # audio and video durations stay aligned after slicing.
+        self.duration_seconds = round(self.duration_seconds, 4)
+
     @property
     def bits_per_sample(self) -> int:
         """Returns the number of bits per sample"""
@@ -550,7 +555,11 @@ class Audio:
             raise ValueError("start_seconds must be non-negative")
 
         duration_seconds = self.metadata.duration_seconds
-        duration_tolerance = 1e-6
+        # Container formats (.mov, .mp4) often have audio/video duration
+        # mismatch of up to ~50ms because ffprobe metadata duration differs
+        # from the frame-derived video duration. Values within tolerance are
+        # clamped (line below), not rejected.
+        duration_tolerance = 0.1
 
         if end_seconds is not None:
             if end_seconds < start_seconds:

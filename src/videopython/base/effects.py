@@ -49,11 +49,15 @@ class Effect(ABC):
         original_shape = video.video_shape
         start = start if start is not None else 0
         stop = stop if stop is not None else video.total_seconds
+        # Clamp to video duration (frame rounding can make stop slightly exceed
+        # actual duration after segment assembly).
+        stop = min(stop, video.total_seconds)
+        start = min(start, video.total_seconds)
         # Check for start and stop correctness
-        if not 0 <= start <= video.total_seconds:
-            raise ValueError(f"Video is only {video.total_seconds} long, but passed start: {start}!")
-        elif not start <= stop <= video.total_seconds:
-            raise ValueError(f"Video is only {video.total_seconds} long, but passed stop: {stop}!")
+        if start < 0:
+            raise ValueError(f"Effect start must be non-negative, got {start}!")
+        if stop < start:
+            raise ValueError(f"Effect stop ({stop}) must be >= start ({start})!")
         # Apply effect on video slice
         effect_start_frame = round(start * video.fps)
         effect_end_frame = round(stop * video.fps)
