@@ -39,6 +39,13 @@ class Effect(ABC):
     """
 
     def apply(self, video: Video, start: float | None = None, stop: float | None = None) -> Video:
+        """Apply the effect to a video, optionally within a time range.
+
+        Args:
+            video: Input video.
+            start: Start time in seconds. Defaults to beginning of video.
+            stop: Stop time in seconds. Defaults to end of video.
+        """
         original_shape = video.video_shape
         start = start if start is not None else 0
         stop = stop if stop is not None else video.total_seconds
@@ -74,15 +81,22 @@ class Effect(ABC):
 
 
 class FullImageOverlay(Effect):
-    """Overlays an image on top of video frames with optional transparency and fade."""
+    """Composites a full-frame image on top of every video frame.
+
+    Useful for watermarks, logos, or static graphic overlays. Supports
+    transparency via RGBA images and an overall opacity control.
+    """
 
     def __init__(self, overlay_image: np.ndarray, alpha: float | None = None, fade_time: float = 0.0):
         """Initialize image overlay effect.
 
         Args:
-            overlay_image: RGB or RGBA image to overlay, must match video dimensions.
-            alpha: Overall opacity from 0 (transparent) to 1 (opaque), defaults to 1.0.
-            fade_time: Duration in seconds for fade in/out at start and end.
+            overlay_image: RGB or RGBA image array. Must match the video's
+                width and height.
+            alpha: Overall opacity. 0 = fully transparent, 1 = fully opaque.
+                Defaults to 1.0.
+            fade_time: Seconds to fade the overlay in at the start and out
+                at the end of its time range.
         """
         if alpha is not None and not 0 <= alpha <= 1:
             raise ValueError("Alpha must be in range [0, 1]!")
@@ -136,7 +150,7 @@ class FullImageOverlay(Effect):
 
 
 class Blur(Effect):
-    """Applies Gaussian blur with constant, ascending, or descending intensity."""
+    """Applies Gaussian blur that can stay constant or ramp up/down over the clip."""
 
     def __init__(
         self,
@@ -147,9 +161,12 @@ class Blur(Effect):
         """Initialize blur effect.
 
         Args:
-            mode: Blur mode - "constant" (same blur), "ascending" (increasing blur), or "descending" (decreasing blur).
-            iterations: Number of blur iterations to apply.
-            kernel_size: Gaussian kernel size for blur operation.
+            mode: "constant" applies uniform blur, "ascending" ramps from sharp
+                to blurry, "descending" ramps from blurry to sharp.
+            iterations: Blur strength. Higher values produce a stronger blur
+                (e.g. 5 for subtle, 50+ for heavy).
+            kernel_size: Gaussian kernel [width, height] in pixels. Must be odd
+                numbers. Larger kernels spread the blur wider.
         """
         if iterations < 1:
             raise ValueError("Iterations must be at least 1!")
@@ -209,14 +226,16 @@ class Blur(Effect):
 
 
 class Zoom(Effect):
-    """Applies zoom in or out effect by cropping and scaling frames progressively."""
+    """Progressively zooms into or out of the frame center over the clip duration."""
 
     def __init__(self, zoom_factor: float, mode: Literal["in", "out"]):
         """Initialize zoom effect.
 
         Args:
-            zoom_factor: Maximum zoom level, must be greater than 1.
-            mode: Zoom direction - "in" for zoom in effect, "out" for zoom out effect.
+            zoom_factor: How far to zoom. 1.5 is a subtle push, 2.0 is
+                moderate, 3.0+ is dramatic. Must be greater than 1.
+            mode: "in" starts wide and pushes into the center,
+                "out" starts tight and pulls back.
         """
         if zoom_factor <= 1:
             raise ValueError("Zoom factor must be greater than 1!")
@@ -277,10 +296,14 @@ class ColorGrading(Effect):
         """Initialize color grading effect.
 
         Args:
-            brightness: Brightness adjustment (-1.0 to 1.0, default 0).
-            contrast: Contrast multiplier (0.5 to 2.0, default 1.0).
-            saturation: Saturation multiplier (0.0 to 2.0, default 1.0).
-            temperature: Color temperature shift (-1.0=cooler/blue to 1.0=warmer/orange, default 0).
+            brightness: Shift brightness. -1.0 = much darker, 0 = unchanged,
+                1.0 = much brighter.
+            contrast: Scale contrast. 0.5 = flat/washed out, 1.0 = unchanged,
+                2.0 = high contrast.
+            saturation: Scale color intensity. 0.0 = grayscale, 1.0 = unchanged,
+                2.0 = vivid/oversaturated.
+            temperature: Shift color temperature. -1.0 = cool/blue tint,
+                0 = neutral, 1.0 = warm/orange tint.
         """
         if not -1.0 <= brightness <= 1.0:
             raise ValueError("Brightness must be between -1.0 and 1.0!")
@@ -343,14 +366,16 @@ class ColorGrading(Effect):
 
 
 class Vignette(Effect):
-    """Applies a vignette effect (darkening at edges)."""
+    """Darkens the edges of the frame, drawing attention to the center."""
 
     def __init__(self, strength: float = 0.5, radius: float = 1.0):
         """Initialize vignette effect.
 
         Args:
-            strength: How dark the edges become (0.0 to 1.0, default 0.5).
-            radius: How far the vignette extends from center (0.5 to 2.0, default 1.0).
+            strength: Edge darkness amount. 0.0 = no darkening, 0.5 = moderate,
+                1.0 = fully black edges.
+            radius: Size of the bright center area. Smaller values (0.5) create
+                a tight spotlight, larger values (2.0) keep more of the frame lit.
         """
         if not 0.0 <= strength <= 1.0:
             raise ValueError("Strength must be between 0.0 and 1.0!")
@@ -393,11 +418,11 @@ class Vignette(Effect):
 
 
 class KenBurns(Effect):
-    """Cinematic pan-and-zoom effect that animates between two regions.
+    """Cinematic pan-and-zoom that smoothly animates between two crop regions.
 
-    Named after documentarian Ken Burns who popularized the technique. The effect
-    smoothly transitions from a start region to an end region over the duration
-    of the video, creating dynamic movement from static content.
+    Creates movement by transitioning from a start region to an end region over
+    the clip. Use it to add motion to still images or to guide the viewer's eye
+    across a scene.
     """
 
     def __init__(
@@ -409,9 +434,13 @@ class KenBurns(Effect):
         """Initialize Ken Burns effect.
 
         Args:
-            start_region: Starting crop region (normalized 0-1 coordinates).
-            end_region: Ending crop region (normalized 0-1 coordinates).
-            easing: Animation easing function - "linear", "ease_in", "ease_out", or "ease_in_out".
+            start_region: Starting crop region as a BoundingBox with normalized
+                0-1 coordinates.
+            end_region: Ending crop region as a BoundingBox with normalized
+                0-1 coordinates.
+            easing: Animation curve. "linear" moves at constant speed,
+                "ease_in" starts slow, "ease_out" ends slow,
+                "ease_in_out" starts and ends slow.
         """
         from videopython.base.description import BoundingBox
 
@@ -520,7 +549,7 @@ def _compute_curve(t: np.ndarray, curve: str) -> np.ndarray:
 
 
 class Fade(Effect):
-    """Fades video to/from black with synchronized audio fade."""
+    """Fades video and audio to or from black."""
 
     def __init__(
         self,
@@ -531,12 +560,12 @@ class Fade(Effect):
         """Initialize fade effect.
 
         Args:
-            mode: Fade direction -- "in" (from black), "out" (to black), or "in_out" (both).
-            duration: Duration of each fade in seconds.
-            curve: Ramp shape for brightness/volume.
-                - "sqrt": perceptually linear (default).
-                - "linear": mathematically linear.
-                - "exponential": slow start, fast finish.
+            mode: "in" fades from black at the start, "out" fades to black
+                at the end, "in_out" does both.
+            duration: Length of each fade in seconds.
+            curve: Brightness ramp shape. "sqrt" feels perceptually even
+                (recommended), "linear" is mathematically even, "exponential"
+                starts slow and finishes fast.
         """
         if mode not in ("in", "out", "in_out"):
             raise ValueError(f"mode must be 'in', 'out', or 'in_out', got '{mode}'")
@@ -618,6 +647,13 @@ class AudioEffect(Effect):
         raise NotImplementedError("AudioEffect does not process frames -- use _apply_audio()")
 
     def apply(self, video: Video, start: float | None = None, stop: float | None = None) -> Video:
+        """Apply the audio effect to a video, optionally within a time range.
+
+        Args:
+            video: Input video.
+            start: Start time in seconds. Defaults to beginning of video.
+            stop: Stop time in seconds. Defaults to end of video.
+        """
         start_s = start if start is not None else 0
         stop_s = stop if stop is not None else video.total_seconds
         if not 0 <= start_s <= video.total_seconds:
@@ -633,15 +669,16 @@ class AudioEffect(Effect):
 
 
 class VolumeAdjust(AudioEffect):
-    """Adjusts audio volume within a time range. Does not affect video frames."""
+    """Changes audio volume within a time range without affecting video frames."""
 
     def __init__(self, volume: float = 1.0, ramp_duration: float = 0.0):
         """Initialize volume adjustment effect.
 
         Args:
-            volume: Target volume multiplier (0.0 = mute, 1.0 = unchanged).
-            ramp_duration: Smooth ramp at edges of the apply window in seconds
-                to avoid audible clicks. Uses sqrt curve.
+            volume: Volume multiplier. 0.0 = silence, 1.0 = original level,
+                2.0 = twice as loud (may clip).
+            ramp_duration: Seconds to smoothly ramp volume at the start and end
+                of the window, preventing audible clicks.
         """
         if volume < 0:
             raise ValueError(f"volume must be >= 0, got {volume}")
@@ -685,7 +722,7 @@ class VolumeAdjust(AudioEffect):
 
 
 class TextOverlay(Effect):
-    """Renders arbitrary text on video frames within a time range."""
+    """Draws text on video frames, with auto word-wrap and optional background box."""
 
     def __init__(
         self,
@@ -702,15 +739,18 @@ class TextOverlay(Effect):
         """Initialize text overlay effect.
 
         Args:
-            text: Text to render. Supports explicit newlines via backslash-n.
-            position: Normalized (x, y) position where (0,0) is top-left and (1,1) is bottom-right.
+            text: The string to display. Use \\n for line breaks.
+            position: Where to place the text as normalized (x, y) coordinates.
+                (0, 0) = top-left corner, (1, 1) = bottom-right corner.
             font_size: Font size in pixels.
-            text_color: RGB color tuple for the text.
-            background_color: RGBA color tuple for the background box, or None for no background.
-            background_padding: Padding in pixels around text for the background box.
-            max_width: Maximum text width as fraction of frame width (0.0-1.0) for word wrapping.
-            anchor: Anchor point for text positioning relative to the position coordinate.
-            font_filename: Path to a .ttf font file, or None to use PIL default.
+            text_color: Text color as [R, G, B], each 0-255.
+            background_color: Background box color as [R, G, B, A] (0-255),
+                or null to disable the background.
+            background_padding: Padding in pixels between text and background edge.
+            max_width: Maximum text width as a fraction of frame width (0-1).
+                Text longer than this wraps to the next line.
+            anchor: Which point of the text box sits at the position coordinate.
+            font_filename: Path to a .ttf font file, or None for the default font.
         """
         if not text:
             raise ValueError("text must not be empty")

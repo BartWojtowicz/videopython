@@ -7,13 +7,14 @@ from videopython.base.video import Video
 
 
 class StackVideos:
-    """Stacks two videos together horizontally or vertically."""
+    """Places two videos side by side (horizontal) or top-and-bottom (vertical)."""
 
     def __init__(self, mode: Literal["horizontal", "vertical"]) -> None:
         """Initialize video stacker.
 
         Args:
-            mode: Stack direction, either "horizontal" or "vertical".
+            mode: "horizontal" puts videos left and right, "vertical" stacks
+                them top and bottom.
         """
         self.mode = mode
 

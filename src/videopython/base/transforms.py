@@ -211,11 +211,10 @@ class CropMode(Enum):
 
 
 class Crop(Transformation):
-    """Crops video to specified dimensions.
+    """Crops the frame to a smaller region.
 
-    Supports both pixel values (int) and normalized coordinates (float 0-1).
-    When using normalized coordinates, values are converted to pixels based on
-    the input video dimensions.
+    Accepts pixel values (int) or normalized 0-1 fractions (float). For
+    example, width=0.5 crops to 50% of the original width.
     """
 
     def __init__(
@@ -229,15 +228,16 @@ class Crop(Transformation):
         """Initialize cropper.
 
         Args:
-            width: Target crop width. If int, interpreted as pixels.
-                If float in range (0, 1], interpreted as normalized (e.g., 0.5 = 50% of width).
-            height: Target crop height. If int, interpreted as pixels.
-                If float in range (0, 1], interpreted as normalized (e.g., 0.5 = 50% of height).
-            x: Left edge X coordinate. If int, pixels. If float in [0, 1], normalized.
-                Only used when mode is not CENTER. Defaults to 0.
-            y: Top edge Y coordinate. If int, pixels. If float in [0, 1], normalized.
-                Only used when mode is not CENTER. Defaults to 0.
-            mode: Crop mode, defaults to center crop.
+            width: Crop width. Pass an int for pixels, or a float in (0, 1]
+                as a fraction of the video width.
+            height: Crop height. Pass an int for pixels, or a float in (0, 1]
+                as a fraction of the video height.
+            x: Left edge X position. Only used when mode is "custom". Pass an
+                int for pixels or a float in [0, 1] for a fraction.
+            y: Top edge Y position. Only used when mode is "custom". Pass an
+                int for pixels or a float in [0, 1] for a fraction.
+            mode: "center" crops from the middle of the frame, "custom" uses
+                the x/y coordinates you provide.
         """
         self.width = width
         self.height = height
@@ -291,10 +291,10 @@ class Crop(Transformation):
 
 
 class SpeedChange(Transformation):
-    """Changes video playback speed with optional smooth ramping.
+    """Speeds up or slows down video playback.
 
-    Speed > 1.0 = faster playback (fewer frames)
-    Speed < 1.0 = slower playback (more frames, with interpolation)
+    Values above 1.0 speed up (2.0 = twice as fast), values below 1.0 slow
+    down (0.5 = half speed). Can also smoothly ramp between two speeds.
     """
 
     def __init__(
@@ -307,12 +307,14 @@ class SpeedChange(Transformation):
         """Initialize speed changer.
 
         Args:
-            speed: Playback speed multiplier (2.0 = 2x faster, 0.5 = half speed).
-            end_speed: If provided, smoothly ramp from speed to end_speed over duration.
-            interpolate: Whether to interpolate frames when slowing down (default True).
-            adjust_audio: Whether to time-stretch audio to match video speed (default True).
-                If False, audio will be sliced/padded to match new video duration.
-                Note: For speed ramps, the average speed is used for audio time-stretching.
+            speed: Playback speed multiplier. 2.0 = twice as fast, 0.5 = half
+                speed, 1.0 = original speed.
+            end_speed: If set, smoothly ramp from speed to end_speed over the
+                clip duration. Omit for constant speed.
+            interpolate: Blend between frames when slowing down for smoother
+                motion. Disable for a choppy/stylistic look.
+            adjust_audio: Time-stretch audio to match the new speed. If false,
+                audio is sliced or padded instead (no pitch correction).
         """
         if speed <= 0:
             raise ValueError("Speed must be positive!")
@@ -409,10 +411,10 @@ class SpeedChange(Transformation):
 
 
 class PictureInPicture(Transformation):
-    """Overlays a smaller video on top of a main video.
+    """Places a smaller video on top of the main video (picture-in-picture).
 
-    Commonly used for reaction videos, gaming streams with facecam,
-    tutorials with presenter overlay, and news broadcasts.
+    Useful for reaction videos, facecam overlays, tutorials with presenter
+    inset, and side-by-side commentary.
     """
 
     def __init__(
@@ -430,21 +432,19 @@ class PictureInPicture(Transformation):
         """Initialize picture-in-picture transform.
 
         Args:
-            overlay: Video to overlay on the main video.
-            position: Normalized (x, y) position where (0, 0) is top-left, (1, 1) is bottom-right.
-                The position refers to the center of the overlay.
-            scale: Size of overlay relative to main video width (0.25 = 25% of main video width).
-            border_width: Border width in pixels (default 0, no border).
-            border_color: Border color as RGB tuple (default white).
-            corner_radius: Radius for rounded corners in pixels (default 0, square corners).
-            opacity: Overlay transparency from 0 (invisible) to 1 (opaque), default 1.0.
-            audio_mode: How to handle audio.
-                - "main": Keep only main video audio (default, current behavior).
-                - "overlay": Use only overlay video audio.
-                - "mix": Mix both audio tracks.
-            audio_mix: Volume factors for mixing as (main_factor, overlay_factor).
-                Only used when audio_mode="mix". Default (1.0, 1.0) gives equal mix.
-                Values < 1.0 reduce volume, > 1.0 increase (may clip).
+            overlay: The video to show as the small inset.
+            position: Center of the inset as normalized (x, y). (0, 0) = top-left
+                corner, (1, 1) = bottom-right corner.
+            scale: Inset width as a fraction of the main video width.
+                0.25 = 25% of main width.
+            border_width: Border thickness in pixels. 0 = no border.
+            border_color: Border color as [R, G, B], each 0-255.
+            corner_radius: Rounded corner radius in pixels. 0 = square corners.
+            opacity: Inset transparency. 0 = invisible, 1 = fully opaque.
+            audio_mode: "main" keeps only the main audio, "overlay" uses only
+                the inset audio, "mix" blends both tracks together.
+            audio_mix: Volume levels as [main, overlay] when audio_mode is "mix".
+                1.0 = original level. Values above 1.0 amplify (may clip).
         """
         if not 0 <= position[0] <= 1 or not 0 <= position[1] <= 1:
             raise ValueError("Position must be normalized values in range [0, 1]!")
@@ -653,14 +653,14 @@ class PictureInPicture(Transformation):
 
 
 class Reverse(Transformation):
-    """Reverses video playback order (and optionally audio)."""
+    """Plays the video backwards, with optional audio reversal."""
 
     def __init__(self, reverse_audio: bool = True):
         """Initialize reverse transform.
 
         Args:
-            reverse_audio: If True, reverse audio waveform along with video frames.
-                If False, keep original audio (intentional mismatch for creative use).
+            reverse_audio: If true, reverse the audio track along with the
+                video. Set to false to keep original audio over reversed footage.
         """
         self.reverse_audio = reverse_audio
 
@@ -672,7 +672,11 @@ class Reverse(Transformation):
 
 
 class FreezeFrame(Transformation):
-    """Holds a single frame for a specified duration, inserting static frames into the timeline."""
+    """Pauses video at a specific moment by holding a single frame.
+
+    The frozen frame is inserted into the timeline, making the video longer
+    (or replacing existing frames in "replace" mode).
+    """
 
     def __init__(
         self,
@@ -683,12 +687,11 @@ class FreezeFrame(Transformation):
         """Initialize freeze frame transform.
 
         Args:
-            timestamp: Time in seconds to capture the frame from.
-            duration: How long to hold the frozen frame in seconds.
-            position: Where to insert the frozen frames relative to the timestamp.
-                - "after": insert after the timestamp
-                - "before": insert before the timestamp
-                - "replace": replace video starting at timestamp for the given duration
+            timestamp: Time in seconds at which to capture the frame.
+            duration: How long to hold the frozen frame, in seconds.
+            position: Where to place the frozen frames. "after" inserts them
+                after the timestamp, "before" inserts them before it,
+                "replace" swaps out existing video at that point.
         """
         if timestamp < 0:
             raise ValueError(f"timestamp must be >= 0, got {timestamp}")
@@ -748,12 +751,11 @@ class FreezeFrame(Transformation):
 
 
 class SilenceRemoval(Transformation):
-    """Removes or speeds up silent gaps between speech using transcription timing.
+    """Cuts or fast-forwards through silent gaps between speech.
 
-    Requires word-level transcription data passed via the ``transcription`` keyword
-    argument to ``apply()``. In the VideoEdit execution engine, this is injected
-    automatically from the ``context`` dict when the operation's registry spec has
-    the ``requires_transcript`` tag.
+    Uses word-level transcription timestamps to identify silent sections
+    and either removes them entirely or speeds them up. Requires a
+    transcription to be available.
     """
 
     def __init__(
@@ -766,10 +768,14 @@ class SilenceRemoval(Transformation):
         """Initialize silence removal transform.
 
         Args:
-            min_silence_duration: Only remove/speed-up gaps longer than this (seconds).
-            padding: Seconds of silence to preserve around speech boundaries.
-            mode: "cut" to hard-cut silence, "speed_up" to speed up silent sections.
-            speed_factor: Speed multiplier for silent sections (only used with mode="speed_up").
+            min_silence_duration: Ignore silences shorter than this many
+                seconds. Keeps natural pauses intact.
+            padding: Seconds of breathing room to keep around each speech
+                boundary so cuts don't feel abrupt.
+            mode: "cut" removes silent sections entirely, "speed_up" plays
+                them at a faster speed instead.
+            speed_factor: How fast to play silent sections when mode is
+                "speed_up". 3.0 = three times normal speed.
         """
         if min_silence_duration <= 0:
             raise ValueError(f"min_silence_duration must be > 0, got {min_silence_duration}")

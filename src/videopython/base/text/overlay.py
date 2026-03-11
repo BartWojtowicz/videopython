@@ -948,6 +948,12 @@ class ImageText:
 
 
 class TranscriptionOverlay:
+    """Renders animated word-by-word subtitles with the current word highlighted.
+
+    Each word lights up in the highlight color as it is spoken, based on
+    transcription timestamps. Requires a word-level transcription.
+    """
+
     def __init__(
         self,
         font_filename: str,
@@ -965,24 +971,30 @@ class TranscriptionOverlay:
         highlight_size_multiplier: float = 1.2,
         highlight_bold_font: str | None = None,
     ):
-        """
-        Initialize TranscriptionOverlay effect.
+        """Initialize transcription overlay effect.
 
         Args:
-            font_filename: Path to font file for text rendering
-            font_size: Base font size for text
-            text_color: RGB color for normal text
-            font_border_size: Size of border around text in pixels (0 for no border)
-            background_color: RGBA background color (None for no background)
-            background_padding: Padding around text background
-            position: Position of text box (relative 0-1 or absolute pixels)
-            box_width: Width of text box (relative 0-1 or absolute pixels)
-            text_align: Text alignment within box
-            anchor: Anchor point for text positioning
-            margin: Margin around text box
-            highlight_color: RGB color for highlighted words
-            highlight_size_multiplier: Size multiplier for highlighted words
-            highlight_bold_font: Optional bold font for highlighting
+            font_filename: Path to a .ttf font file for rendering subtitle text.
+            font_size: Base font size in pixels.
+            font_border_size: Outline thickness around each character in pixels.
+                0 = no outline.
+            text_color: Default text color as [R, G, B], each 0-255.
+            background_color: Subtitle box background as [R, G, B, A] (0-255),
+                or None to disable the background.
+            background_padding: Pixels of space between text and background edge.
+            position: Text box center as normalized (x, y). (0, 0) = top-left,
+                (1, 1) = bottom-right. Can also be absolute pixel values.
+            box_width: Width of the text box. Float in (0, 1] is a fraction of
+                frame width; int is absolute pixels.
+            text_align: Text alignment within the box: "left", "right", or "center".
+            anchor: Which point of the text box sits at the position coordinate.
+            margin: Space around the text box in pixels, or a dict with
+                per-side values.
+            highlight_color: Color for the currently spoken word as [R, G, B].
+            highlight_size_multiplier: Scale factor for the highlighted word.
+                1.0 = same size, 1.2 = 20% larger.
+            highlight_bold_font: Path to a bold .ttf font for the highlighted
+                word, or None to use the regular font.
         """
         self.font_filename = font_filename
         self.font_size = font_size

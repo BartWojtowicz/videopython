@@ -1,5 +1,13 @@
 # Release Notes
 
+## 0.22.7
+
+### Improved
+
+- Operation registry now exposes rich JSON Schema constraints (`exclusiveMinimum`, `minimum`, `maximum`, `enum`) for all operations, preventing invalid parameter values (e.g. `zoom_factor <= 1`).
+- All operation and parameter descriptions are auto-extracted from class docstrings, making docstrings the single source of truth.
+- Refined all operation docstrings to be actionable and LLM-friendly, with concrete guidance on parameter values and their visual effects.
+
 ## 0.22.6
 
 ### Fixed
