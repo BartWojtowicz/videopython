@@ -1,5 +1,14 @@
 # Release Notes
 
+## 0.23.0
+
+### Changed
+
+- SceneVLM upgraded from Qwen3-VL to Qwen 3.5 unified vision-language models (`Qwen/Qwen3.5-4B`, `Qwen/Qwen3.5-2B`). Requires `transformers>=5.2.0`.
+- Replaced `whisperx` with `openai-whisper` + `pyannote-audio` for transcription and speaker diarization. whisperx pinned `huggingface-hub<1.0.0`, incompatible with transformers 5.x.
+- Speaker diarization now uses `pyannote/speaker-diarization-community-1` directly with overlap-based word-speaker assignment.
+- Removed `compute_type` parameter from `AudioToText` (was whisperx-specific).
+
 ## 0.22.8
 
 ### Fixed

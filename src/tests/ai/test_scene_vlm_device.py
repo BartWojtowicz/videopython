@@ -26,8 +26,8 @@ def _install_fake_transformers(
     class FakeModel:
         @classmethod
         def from_pretrained(cls, _name, **kwargs):
-            if "dtype" in kwargs:
-                kwargs_seen["dtype"] = str(kwargs["dtype"])
+            if "torch_dtype" in kwargs:
+                kwargs_seen["torch_dtype"] = str(kwargs["torch_dtype"])
             return cls()
 
         def to(self, device):
@@ -61,7 +61,7 @@ def test_scene_vlm_uses_dtype_and_mps_auto_selection(monkeypatch: pytest.MonkeyP
     scene_vlm._init_local()
 
     assert called["mps_allowed"] is True
-    assert kwargs_seen["dtype"] == "auto"
+    assert kwargs_seen["torch_dtype"] == "auto"
     assert to_calls == ["cpu"]
     assert scene_vlm.device == "cpu"
 

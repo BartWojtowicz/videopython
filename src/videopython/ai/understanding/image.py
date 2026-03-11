@@ -1,4 +1,4 @@
-"""Visual understanding using local Qwen VLM models."""
+"""Visual understanding using local Qwen 3.5 VLM models."""
 
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ from videopython.ai._device import log_device_initialization, select_device
 logger = logging.getLogger(__name__)
 
 SCENE_VLM_MODEL_IDS: dict[str, str] = {
-    "2b": "Qwen/Qwen3-VL-2B-Instruct",
-    "4b": "Qwen/Qwen3-VL-4B-Instruct",
+    "2b": "Qwen/Qwen3.5-2B",
+    "4b": "Qwen/Qwen3.5-4B",
 }
 DEFAULT_SCENE_VLM_MODEL_SIZE: Literal["2b", "4b"] = "4b"
 
@@ -26,11 +26,11 @@ _DEFAULT_PROMPT = (
 
 
 class SceneVLM:
-    """Generates scene captions with local Qwen3-VL."""
+    """Generates scene captions with local Qwen3.5."""
 
-    # Default pixel budget per image for scene captioning. Qwen3-VL tiles
-    # images into 28x28 patches; fewer pixels = fewer vision tokens = faster
-    # inference.  384x384 = 147456 is plenty for scene-level captioning.
+    # Default pixel budget per image for scene captioning. Qwen3.5 tiles
+    # images into patches; fewer pixels = fewer vision tokens = faster
+    # inference. 384x384 = 147456 is plenty for scene-level captioning.
     DEFAULT_MAX_IMAGE_PIXELS: int = 384 * 384
 
     def __init__(
@@ -56,7 +56,7 @@ class SceneVLM:
         self._model: Any = None
 
     def _init_local(self) -> None:
-        """Initialize local Qwen3-VL model."""
+        """Initialize local Qwen3.5 model."""
         from transformers import AutoModelForImageTextToText, AutoProcessor  # type: ignore[attr-defined]
 
         t0 = time.perf_counter()
@@ -64,7 +64,7 @@ class SceneVLM:
         resolved_device = select_device(self.device, mps_allowed=True)
 
         self._processor = AutoProcessor.from_pretrained(self.model_name)
-        self._model = AutoModelForImageTextToText.from_pretrained(self.model_name, dtype="auto")
+        self._model = AutoModelForImageTextToText.from_pretrained(self.model_name, torch_dtype="auto")
         self._model.to(resolved_device)
         self._model.eval()
         self.device = resolved_device
@@ -180,14 +180,18 @@ class SceneVLM:
         inputs = self._processor(**processor_kwargs)
         inputs = inputs.to(self.device) if hasattr(inputs, "to") else {k: v.to(self.device) for k, v in inputs.items()}
 
-        generation_kwargs: dict[str, Any] = {"max_new_tokens": self.max_new_tokens}
         generation_config = self._generation_config_for_run()
         if generation_config is not None:
-            generation_kwargs["generation_config"] = generation_config
+            generation_config.max_new_tokens = self.max_new_tokens
+            generation_kwargs: dict[str, Any] = {"generation_config": generation_config}
         elif self.temperature > 0:
-            generation_kwargs.update({"do_sample": True, "temperature": self.temperature})
+            generation_kwargs = {
+                "max_new_tokens": self.max_new_tokens,
+                "do_sample": True,
+                "temperature": self.temperature,
+            }
         else:
-            generation_kwargs["do_sample"] = False
+            generation_kwargs = {"max_new_tokens": self.max_new_tokens, "do_sample": False}
 
         t0 = time.perf_counter()
         with torch.no_grad():

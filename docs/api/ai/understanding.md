@@ -8,7 +8,7 @@ For a single aggregate, serializable analysis object across multiple analyzers, 
 
 | Class | Local Model Family |
 |-------|--------------------|
-| SceneVLM | Qwen3-VL |
+| SceneVLM | Qwen3.5 |
 | AudioToText | Whisper |
 | AudioClassifier | AST |
 | SemanticSceneDetector | TransNetV2 |
@@ -45,7 +45,7 @@ for event in result.events:
 
 ## SceneVLM
 
-`SceneVLM` supports both Qwen3-VL `2B` and `4B` model variants.
+`SceneVLM` supports both Qwen3.5 `2B` and `4B` model variants.
 Device selection is automatic by default (`cuda` -> `cpu`).
 
 ::: videopython.ai.SceneVLM

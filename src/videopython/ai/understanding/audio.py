@@ -12,14 +12,19 @@ from videopython.base.video import Video
 
 
 class AudioToText:
-    """Transcription service for audio and video using local Whisper models."""
+    """Transcription service for audio and video using local Whisper models.
+
+    Uses openai-whisper for transcription (with word-level timestamps) and
+    pyannote-audio for optional speaker diarization.
+    """
+
+    PYANNOTE_DIARIZATION_MODEL = "pyannote/speaker-diarization-community-1"
 
     def __init__(
         self,
         model_name: Literal["tiny", "base", "small", "medium", "large", "turbo"] = "small",
         enable_diarization: bool = False,
         device: str | None = None,
-        compute_type: str = "float32",
     ):
         self.model_name = model_name
         self.enable_diarization = enable_diarization
@@ -29,19 +34,22 @@ class AudioToText:
             requested_device=device,
             resolved_device=self.device,
         )
-        self.compute_type = compute_type
         self._model: Any = None
+        self._diarization_pipeline: Any = None
 
     def _init_local(self) -> None:
         """Initialize local Whisper model."""
-        if self.enable_diarization:
-            import whisperx  # type: ignore
+        import whisper
 
-            self._model = whisperx.load_model(self.model_name, device=self.device, compute_type=self.compute_type)
-        else:
-            import whisper
+        self._model = whisper.load_model(name=self.model_name, device=self.device)
 
-            self._model = whisper.load_model(name=self.model_name, device=self.device)
+    def _init_diarization(self) -> None:
+        """Initialize pyannote speaker diarization pipeline."""
+        import torch
+        from pyannote.audio import Pipeline  # type: ignore[import-untyped]
+
+        self._diarization_pipeline = Pipeline.from_pretrained(self.PYANNOTE_DIARIZATION_MODEL)
+        self._diarization_pipeline.to(torch.device(self.device))
 
     def _process_transcription_result(self, transcription_result: dict) -> Transcription:
         """Process raw transcription result into a Transcription object."""
@@ -61,40 +69,84 @@ class AudioToText:
 
         return Transcription(segments=transcription_segments, language=transcription_result.get("language"))
 
-    def _process_whisperx_result(self, whisperx_result: dict, audio_data) -> Transcription:
-        """Process whisperx result with diarization."""
-        import torch.serialization
-        import whisperx  # type: ignore
-        from omegaconf import DictConfig, ListConfig, OmegaConf
+    @staticmethod
+    def _assign_speakers_to_words(
+        words: list[TranscriptionWord],
+        diarization_result: Any,
+    ) -> list[TranscriptionWord]:
+        """Assign speaker labels to words based on diarization segment overlap.
 
-        torch.serialization.add_safe_globals([DictConfig, ListConfig, OmegaConf])
+        For each word, finds the diarization segment with the greatest time overlap
+        and assigns that speaker. Words with no overlapping diarization segment get
+        the nearest speaker by midpoint distance.
+        """
+        speaker_segments: list[tuple[float, float, str]] = []
+        # pyannote-audio 4.x returns DiarizeOutput; use exclusive_speaker_diarization
+        # (no overlapping turns) for cleaner word assignment.
+        annotation = getattr(diarization_result, "exclusive_speaker_diarization", diarization_result)
+        for turn, _, speaker in annotation.itertracks(yield_label=True):
+            speaker_segments.append((turn.start, turn.end, speaker))
 
-        model_a, metadata = whisperx.load_align_model(language_code=whisperx_result["language"], device=self.device)
-        aligned_result = whisperx.align(
-            whisperx_result["segments"],
-            model_a,
-            metadata,
-            audio_data,
-            self.device,
-            return_char_alignments=False,
-        )
+        if not speaker_segments:
+            return words
 
-        diarize_model = whisperx.diarize.DiarizationPipeline(device=self.device)
-        diarize_segments = diarize_model(audio_data)
-        result_with_speakers = whisperx.assign_word_speakers(diarize_segments, aligned_result)
+        result = []
+        for word in words:
+            best_speaker: str | None = None
+            best_overlap = 0.0
 
-        words = []
-        for item in result_with_speakers["word_segments"]:
-            words.append(
+            for seg_start, seg_end, speaker in speaker_segments:
+                overlap = max(0.0, min(word.end, seg_end) - max(word.start, seg_start))
+                if overlap > best_overlap:
+                    best_overlap = overlap
+                    best_speaker = speaker
+
+            if best_speaker is None:
+                word_mid = (word.start + word.end) / 2.0
+                best_dist = float("inf")
+                for seg_start, seg_end, speaker in speaker_segments:
+                    seg_mid = (seg_start + seg_end) / 2.0
+                    dist = abs(word_mid - seg_mid)
+                    if dist < best_dist:
+                        best_dist = dist
+                        best_speaker = speaker
+
+            result.append(
                 TranscriptionWord(
-                    word=item["word"],
-                    start=item["start"],
-                    end=item["end"],
-                    speaker=item.get("speaker", None),
+                    word=word.word,
+                    start=word.start,
+                    end=word.end,
+                    speaker=best_speaker,
                 )
             )
+        return result
 
-        return Transcription(words=words, language=whisperx_result.get("language"))
+    def _transcribe_with_diarization(self, audio_mono: Audio) -> Transcription:
+        """Transcribe with word timestamps and assign speakers via pyannote."""
+        import numpy as np
+        import torch
+
+        if self._diarization_pipeline is None:
+            self._init_diarization()
+
+        audio_data = audio_mono.data
+        transcription_result = self._model.transcribe(audio=audio_data, word_timestamps=True)
+
+        waveform = torch.from_numpy(audio_data.astype(np.float32)).unsqueeze(0)
+        diarization_result = self._diarization_pipeline(
+            {"waveform": waveform, "sample_rate": audio_mono.metadata.sample_rate}
+        )
+
+        transcription = self._process_transcription_result(transcription_result)
+
+        all_words: list[TranscriptionWord] = []
+        for seg in transcription.segments:
+            all_words.extend(seg.words)
+
+        if all_words:
+            all_words = self._assign_speakers_to_words(all_words, diarization_result)
+
+        return Transcription(words=all_words, language=transcription.language)
 
     def _transcribe_local(self, audio: Audio) -> Transcription:
         """Transcribe using local Whisper model."""
@@ -106,9 +158,7 @@ class AudioToText:
         audio_mono = audio.to_mono().resample(whisper.audio.SAMPLE_RATE)
 
         if self.enable_diarization:
-            audio_data = audio_mono.data
-            transcription_result = self._model.transcribe(audio_data)
-            return self._process_whisperx_result(transcription_result, audio_data)
+            return self._transcribe_with_diarization(audio_mono)
 
         transcription_result = self._model.transcribe(audio=audio_mono.data, word_timestamps=True)
         return self._process_transcription_result(transcription_result)
