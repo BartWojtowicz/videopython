@@ -1,5 +1,11 @@
 # Release Notes
 
+## 0.23.2
+
+### Fixed
+
+- Fixed `RuntimeError: expected scalar type Float but found BFloat16` when Whisper and SceneVLM run concurrently. `AutoModelForImageTextToText.from_pretrained(torch_dtype="auto")` mutated the global `torch.get_default_dtype()` to BFloat16, causing Whisper's LayerNorm to fail. The default dtype is now saved and restored around model loading.
+
 ## 0.23.1
 
 ### Fixed

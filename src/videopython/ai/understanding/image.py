@@ -57,6 +57,7 @@ class SceneVLM:
 
     def _init_local(self) -> None:
         """Initialize local Qwen3.5 model."""
+        import torch
         from transformers import AutoModelForImageTextToText, AutoProcessor  # type: ignore[attr-defined]
 
         t0 = time.perf_counter()
@@ -64,7 +65,14 @@ class SceneVLM:
         resolved_device = select_device(self.device, mps_allowed=True)
 
         self._processor = AutoProcessor.from_pretrained(self.model_name)
-        self._model = AutoModelForImageTextToText.from_pretrained(self.model_name, torch_dtype="auto")
+        # Save and restore default dtype -- transformers torch_dtype="auto" can
+        # mutate torch.get_default_dtype(), which breaks concurrent models
+        # (e.g. Whisper) that expect float32.
+        saved_dtype = torch.get_default_dtype()
+        try:
+            self._model = AutoModelForImageTextToText.from_pretrained(self.model_name, torch_dtype="auto")
+        finally:
+            torch.set_default_dtype(saved_dtype)
         self._model.to(resolved_device)
         self._model.eval()
         self.device = resolved_device
