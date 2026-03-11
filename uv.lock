@@ -4432,12 +4432,12 @@ wheels = [
 
 [[package]]
 name = "videopython"
-version = "0.23.0"
+version = "0.23.1"
 source = { editable = "." }
 dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "opencv-python" },
+    { name = "opencv-python-headless" },
     { name = "pillow" },
     { name = "pydantic" },
     { name = "torchcodec" },
@@ -4523,7 +4523,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.25.2" },
     { name = "ollama", marker = "extra == 'ai'", specifier = ">=0.4.5" },
     { name = "openai-whisper", marker = "extra == 'ai'", specifier = ">=20240930" },
-    { name = "opencv-python", specifier = ">=4.9.0.80" },
+    { name = "opencv-python-headless", specifier = ">=4.9.0.80" },
     { name = "pillow", specifier = ">=12.1.1" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.8.0" },
     { name = "pyannote-audio", marker = "extra == 'ai'", specifier = ">=4.0.0" },
