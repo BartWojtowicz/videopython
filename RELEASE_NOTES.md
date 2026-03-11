@@ -1,5 +1,13 @@
 # Release Notes
 
+## 0.22.8
+
+### Fixed
+
+- `AudioMetadata.duration_seconds` is now rounded to 4 decimal places, matching `VideoMetadata` convention. Previously unrounded sample-count division caused audio/video duration drift after slicing (e.g. `36.04997916666667s` vs `36.05s`), leading to `end_seconds cannot exceed audio duration` errors during effect application.
+- `Audio.slice()` tolerance increased from 1 microsecond to 100ms. Container formats (.mov, .mp4) routinely have audio/video stream duration mismatches of 1-50ms; the old tolerance rejected valid slices. Values within tolerance are clamped, not silently accepted.
+- `Effect.apply()` now clamps `start`/`stop` to video duration instead of raising when they slightly exceed it. This handles frame-rounding mismatches where post-effects carry `stop` values from the plan that exceed the assembled video duration after segment cutting (e.g. plan says `stop=36.05` but 746 frames at 20.69fps = 36.0567s video with 36.05s audio).
+
 ## 0.22.7
 
 ### Improved
