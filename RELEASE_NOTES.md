@@ -1,5 +1,11 @@
 # Release Notes
 
+## 0.23.1
+
+### Fixed
+
+- Switched core dependency from `opencv-python` to `opencv-python-headless` to resolve conflict with `easyocr` (which pulls in `opencv-python-headless`). Both packages provide the `cv2` module and clash when installed side by side. The headless variant works identically for videopython's use case (no GUI bindings needed).
+
 ## 0.23.0
 
 ### Changed
