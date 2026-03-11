@@ -35,16 +35,25 @@ class Transition(ABC):
 
 
 class InstantTransition(Transition):
-    """Instant cut without any transition."""
+    """Hard cut between two videos with no transition effect."""
 
     def _apply(self, videos: tuple[Video, Video]) -> Video:
         return videos[0] + videos[1]
 
 
 class FadeTransition(Transition):
-    """Fade transition. Each video must last at least half of effect time."""
+    """Cross-dissolve between two videos by blending overlapping frames.
+
+    Each video must be at least as long as the overlap duration.
+    """
 
     def __init__(self, effect_time_seconds: float):
+        """Initialize fade transition.
+
+        Args:
+            effect_time_seconds: Seconds of overlap where the first video
+                fades out while the second fades in.
+        """
         self.effect_time_seconds = effect_time_seconds
 
     def fade(self, frames1, frames2):
@@ -82,9 +91,20 @@ class FadeTransition(Transition):
 
 
 class BlurTransition(Transition):
+    """Transitions between two videos by blurring the first out and the second in."""
+
     def __init__(
         self, effect_time_seconds: float = 1.5, blur_iterations: int = 400, blur_kernel_size: tuple[int, int] = (11, 11)
     ):
+        """Initialize blur transition.
+
+        Args:
+            effect_time_seconds: Duration of the blur transition in seconds.
+            blur_iterations: Blur strength at the peak of the transition.
+                Higher values make the mid-point more heavily blurred.
+            blur_kernel_size: Gaussian kernel [width, height] in pixels.
+                Must be odd numbers. Larger values spread the blur wider.
+        """
         self.effect_time_seconds = effect_time_seconds
         self.blur_iterations = blur_iterations
         self.blur_kernel_size = blur_kernel_size

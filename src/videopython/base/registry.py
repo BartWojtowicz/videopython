@@ -134,6 +134,8 @@ def _spec_params_from_callable(
     except (AttributeError, NameError, TypeError):
         type_hints = {}
 
+    docstring_args = _parse_google_docstring_args(inspect.getdoc(fn))
+
     params: list[ParamSpec] = []
     for parameter in signature.parameters.values():
         if parameter.name == "self" or parameter.name in excluded:
@@ -144,10 +146,13 @@ def _spec_params_from_callable(
         default = UNSET if required else _to_json_value(parameter.default)
         json_type, enum_values, items_type, nullable = _annotation_to_schema(annotation)
 
+        doc_desc = docstring_args.get(parameter.name)
+        description = doc_desc if doc_desc else f"{description_prefix} argument '{parameter.name}'."
+
         param_spec = ParamSpec(
             name=parameter.name,
             json_type=json_type,
-            description=f"{description_prefix} argument '{parameter.name}'.",
+            description=description,
             required=required,
             default=default,
             enum=enum_values,
@@ -226,6 +231,7 @@ def spec_from_class(
     *,
     op_id: str,
     category: OperationCategory,
+    description: str | None = None,
     tags: Iterable[str] | None = None,
     aliases: Iterable[str] | None = None,
     exclude_params: Iterable[str] | None = None,
@@ -253,9 +259,10 @@ def spec_from_class(
         description_prefix="Apply",
     )
 
-    description = _first_line(inspect.getdoc(cls))
-    if not description:
-        description = f"{cls.__name__} operation."
+    if description is None:
+        description = _clean_docstring(inspect.getdoc(cls))
+        if not description:
+            description = f"{cls.__name__} operation."
 
     return OperationSpec(
         id=op_id,
@@ -289,6 +296,80 @@ def _first_line(docstring: str | None) -> str:
     if not docstring:
         return ""
     return docstring.strip().splitlines()[0].strip()
+
+
+def _clean_docstring(docstring: str | None) -> str:
+    """Return full docstring with Args/Returns/Raises sections stripped."""
+    if not docstring:
+        return ""
+    lines = docstring.strip().splitlines()
+    result: list[str] = []
+    skip = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.rstrip(":") in ("Args", "Returns", "Raises", "Attributes", "Examples", "Note", "Notes"):
+            skip = True
+            continue
+        if skip:
+            # Non-indented line (or blank after a section) means a new top-level block.
+            if stripped and not line[0].isspace():
+                skip = False
+            else:
+                continue
+        if not skip:
+            result.append(stripped)
+    text = " ".join(result).strip()
+    # Collapse multiple spaces from joining lines.
+    while "  " in text:
+        text = text.replace("  ", " ")
+    return text
+
+
+def _parse_google_docstring_args(docstring: str | None) -> dict[str, str]:
+    """Extract {param_name: description} from Google-style Args section."""
+    if not docstring:
+        return {}
+    lines = docstring.strip().splitlines()
+    in_args = False
+    args: dict[str, str] = {}
+    current_name: str | None = None
+    current_desc_parts: list[str] = []
+
+    for line in lines:
+        stripped = line.strip()
+        # Detect start of Args: section
+        if stripped == "Args:":
+            in_args = True
+            continue
+        if not in_args:
+            continue
+        # A non-indented non-blank line ends the Args section
+        if stripped and not line[0].isspace():
+            break
+        if not stripped:
+            continue
+        # Check if this is a new parameter line (name: description) or
+        # (name (type): description). Param lines are indented once,
+        # continuation lines are indented further.
+        # Heuristic: param line contains ": " and is at the first indent level.
+        lstripped = line.lstrip()
+        indent = len(line) - len(lstripped)
+        if ": " in lstripped and indent <= 12:
+            # Save previous param
+            if current_name is not None:
+                args[current_name] = " ".join(current_desc_parts).strip()
+            name_part, _, desc = lstripped.partition(": ")
+            # Strip type annotation in parens: "name (type)" -> "name"
+            current_name = name_part.split("(")[0].split(":")[0].strip()
+            current_desc_parts = [desc] if desc else []
+        elif current_name is not None:
+            # Continuation of previous param description
+            current_desc_parts.append(stripped)
+
+    if current_name is not None:
+        args[current_name] = " ".join(current_desc_parts).strip()
+
+    return args
 
 
 def _annotation_to_schema(annotation: Any) -> tuple[str, tuple[Any, ...] | None, str | None, bool]:
@@ -408,6 +489,15 @@ def _register_base_operations() -> None:
     )
     from videopython.base.transitions import BlurTransition, FadeTransition, InstantTransition
 
+    # Common apply-param overrides: only numeric constraints (descriptions come from
+    # the Effect.apply / AudioEffect.apply docstrings).
+    _time_range_apply_overrides = {
+        "start": {"minimum": 0},
+        "stop": {"minimum": 0},
+    }
+
+    # -- Transformations --
+
     register(
         spec_from_class(
             CutFrames,
@@ -441,6 +531,10 @@ def _register_base_operations() -> None:
             op_id="resize",
             category=OperationCategory.TRANSFORMATION,
             tags={"changes_dimensions"},
+            param_overrides={
+                "width": {"exclusive_minimum": 0},
+                "height": {"exclusive_minimum": 0},
+            },
             metadata_method="resize",
         )
     )
@@ -487,99 +581,12 @@ def _register_base_operations() -> None:
             category=OperationCategory.TRANSFORMATION,
             tags={"multi_source"},
             exclude_params={"overlay"},
-        )
-    )
-    register(
-        spec_from_class(
-            Blur,
-            op_id="blur_effect",
-            category=OperationCategory.EFFECT,
-            aliases=("blur",),
-            param_overrides={"iterations": {"minimum": 1}},
-            apply_param_overrides={
-                "start": {"minimum": 0},
-                "stop": {"minimum": 0},
+            param_overrides={
+                "scale": {"exclusive_minimum": 0, "maximum": 1},
+                "border_width": {"minimum": 0},
+                "corner_radius": {"minimum": 0},
+                "opacity": {"minimum": 0, "maximum": 1},
             },
-        )
-    )
-    register(
-        spec_from_class(
-            Zoom,
-            op_id="zoom_effect",
-            category=OperationCategory.EFFECT,
-            aliases=("zoom",),
-        )
-    )
-    register(
-        spec_from_class(
-            ColorGrading,
-            op_id="color_adjust",
-            category=OperationCategory.EFFECT,
-            aliases=("color_grading",),
-        )
-    )
-    register(
-        spec_from_class(
-            Vignette,
-            op_id="vignette",
-            category=OperationCategory.EFFECT,
-        )
-    )
-    register(
-        spec_from_class(
-            KenBurns,
-            op_id="ken_burns",
-            category=OperationCategory.EFFECT,
-            exclude_params={"start_region", "end_region"},
-        )
-    )
-    register(
-        spec_from_class(
-            FullImageOverlay,
-            op_id="full_image_overlay",
-            category=OperationCategory.EFFECT,
-            exclude_params={"overlay_image"},
-        )
-    )
-    register(
-        spec_from_class(
-            InstantTransition,
-            op_id="instant_transition",
-            category=OperationCategory.TRANSITION,
-            tags={"multi_source_only"},
-        )
-    )
-    register(
-        spec_from_class(
-            FadeTransition,
-            op_id="fade_transition",
-            category=OperationCategory.TRANSITION,
-            tags={"changes_duration", "multi_source_only"},
-        )
-    )
-    register(
-        spec_from_class(
-            BlurTransition,
-            op_id="blur_transition",
-            category=OperationCategory.TRANSITION,
-            tags={"changes_duration", "multi_source_only"},
-        )
-    )
-    register(
-        spec_from_class(
-            StackVideos,
-            op_id="stack_videos",
-            category=OperationCategory.SPECIAL,
-            tags={"multi_source_only", "changes_dimensions"},
-        )
-    )
-    register(
-        spec_from_class(
-            TranscriptionOverlay,
-            op_id="add_subtitles",
-            category=OperationCategory.SPECIAL,
-            tags={"requires_transcript"},
-            aliases=("transcription_overlay",),
         )
     )
     register(
@@ -619,14 +626,92 @@ def _register_base_operations() -> None:
             metadata_method="freeze_frame",
         )
     )
+
+    # -- Effects --
+
+    register(
+        spec_from_class(
+            Blur,
+            op_id="blur_effect",
+            category=OperationCategory.EFFECT,
+            aliases=("blur",),
+            param_overrides={"iterations": {"minimum": 1}},
+            apply_param_overrides=_time_range_apply_overrides,
+        )
+    )
+    register(
+        spec_from_class(
+            Zoom,
+            op_id="zoom_effect",
+            category=OperationCategory.EFFECT,
+            aliases=("zoom",),
+            param_overrides={"zoom_factor": {"exclusive_minimum": 1}},
+            apply_param_overrides=_time_range_apply_overrides,
+        )
+    )
+    register(
+        spec_from_class(
+            ColorGrading,
+            op_id="color_adjust",
+            category=OperationCategory.EFFECT,
+            aliases=("color_grading",),
+            param_overrides={
+                "brightness": {"minimum": -1, "maximum": 1},
+                "contrast": {"minimum": 0.5, "maximum": 2.0},
+                "saturation": {"minimum": 0, "maximum": 2.0},
+                "temperature": {"minimum": -1, "maximum": 1},
+            },
+            apply_param_overrides=_time_range_apply_overrides,
+        )
+    )
+    register(
+        spec_from_class(
+            Vignette,
+            op_id="vignette",
+            category=OperationCategory.EFFECT,
+            param_overrides={
+                "strength": {"minimum": 0, "maximum": 1},
+                "radius": {"minimum": 0.5, "maximum": 2.0},
+            },
+            apply_param_overrides=_time_range_apply_overrides,
+        )
+    )
+    register(
+        spec_from_class(
+            KenBurns,
+            op_id="ken_burns",
+            category=OperationCategory.EFFECT,
+            exclude_params={"start_region", "end_region"},
+            # BoundingBox forward ref breaks get_type_hints, so fix easing type manually.
+            param_overrides={
+                "easing": {
+                    "json_type": "string",
+                    "enum": ("linear", "ease_in", "ease_out", "ease_in_out"),
+                },
+            },
+            apply_param_overrides=_time_range_apply_overrides,
+        )
+    )
+    register(
+        spec_from_class(
+            FullImageOverlay,
+            op_id="full_image_overlay",
+            category=OperationCategory.EFFECT,
+            exclude_params={"overlay_image"},
+            param_overrides={
+                "alpha": {"minimum": 0, "maximum": 1},
+                "fade_time": {"minimum": 0},
+            },
+            apply_param_overrides=_time_range_apply_overrides,
+        )
+    )
     register(
         spec_from_class(
             Fade,
             op_id="fade",
             category=OperationCategory.EFFECT,
-            param_overrides={
-                "duration": {"exclusive_minimum": 0},
-            },
+            param_overrides={"duration": {"exclusive_minimum": 0}},
+            apply_param_overrides=_time_range_apply_overrides,
         )
     )
     register(
@@ -639,6 +724,7 @@ def _register_base_operations() -> None:
                 "volume": {"minimum": 0},
                 "ramp_duration": {"minimum": 0},
             },
+            apply_param_overrides=_time_range_apply_overrides,
         )
     )
     register(
@@ -648,6 +734,71 @@ def _register_base_operations() -> None:
             category=OperationCategory.EFFECT,
             aliases=("lower_third", "title_card"),
             exclude_params={"font_filename"},
+            param_overrides={
+                "font_size": {"minimum": 1},
+                "background_padding": {"minimum": 0},
+                "max_width": {"exclusive_minimum": 0, "maximum": 1},
+            },
+            apply_param_overrides=_time_range_apply_overrides,
+        )
+    )
+
+    # -- Transitions --
+
+    register(
+        spec_from_class(
+            InstantTransition,
+            op_id="instant_transition",
+            category=OperationCategory.TRANSITION,
+            tags={"multi_source_only"},
+            exclude_params={"args", "kwargs"},
+        )
+    )
+    register(
+        spec_from_class(
+            FadeTransition,
+            op_id="fade_transition",
+            category=OperationCategory.TRANSITION,
+            tags={"changes_duration", "multi_source_only"},
+            param_overrides={"effect_time_seconds": {"exclusive_minimum": 0}},
+        )
+    )
+    register(
+        spec_from_class(
+            BlurTransition,
+            op_id="blur_transition",
+            category=OperationCategory.TRANSITION,
+            tags={"changes_duration", "multi_source_only"},
+            param_overrides={
+                "effect_time_seconds": {"exclusive_minimum": 0},
+                "blur_iterations": {"minimum": 1},
+            },
+        )
+    )
+
+    # -- Special --
+
+    register(
+        spec_from_class(
+            StackVideos,
+            op_id="stack_videos",
+            category=OperationCategory.SPECIAL,
+            tags={"multi_source_only", "changes_dimensions"},
+        )
+    )
+    register(
+        spec_from_class(
+            TranscriptionOverlay,
+            op_id="add_subtitles",
+            category=OperationCategory.SPECIAL,
+            tags={"requires_transcript"},
+            aliases=("transcription_overlay",),
+            param_overrides={
+                "font_size": {"minimum": 1},
+                "font_border_size": {"minimum": 0},
+                "background_padding": {"minimum": 0},
+                "highlight_size_multiplier": {"exclusive_minimum": 0},
+            },
         )
     )
 
