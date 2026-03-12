@@ -11,7 +11,7 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from tests.test_config import SMALL_VIDEO_METADATA, SMALL_VIDEO_PATH
+from tests.test_config import BIG_VIDEO_PATH, SMALL_VIDEO_METADATA, SMALL_VIDEO_PATH
 from videopython.base.edit import SegmentConfig, VideoEdit, _StepRecord
 from videopython.base.text.transcription import Transcription, TranscriptionWord
 from videopython.base.transforms import CropMode, PictureInPicture
@@ -420,25 +420,29 @@ class TestValidation:
 
 class TestSegmentMatching:
     def test_match_to_lowest_fps_validation_passes(self):
+        meta1 = VideoMetadata(width=320, height=240, fps=30.0, frame_count=60, total_seconds=2.0)
+        meta2 = VideoMetadata(width=320, height=240, fps=24.0, frame_count=48, total_seconds=2.0)
         plan = {
             "segments": [
-                _segment_plan(start=0.0, end=2.0),
-                _segment_plan(start=2.0, end=4.0, transforms=[{"op": "resample_fps", "args": {"fps": 23}}]),
+                _segment_plan(source="a.mp4", start=0.0, end=2.0),
+                _segment_plan(source="b.mp4", start=0.0, end=2.0),
             ]
         }
-        meta = VideoEdit.from_dict(plan).validate()
-        assert meta.fps == 23.0
+        meta = VideoEdit.from_dict(plan).validate_with_metadata({"a.mp4": meta1, "b.mp4": meta2})
+        assert meta.fps == 24.0
 
     def test_match_to_lowest_fps_disabled_raises(self):
+        meta1 = VideoMetadata(width=320, height=240, fps=30.0, frame_count=60, total_seconds=2.0)
+        meta2 = VideoMetadata(width=320, height=240, fps=24.0, frame_count=48, total_seconds=2.0)
         plan = {
             "segments": [
-                _segment_plan(start=0.0, end=2.0),
-                _segment_plan(start=2.0, end=4.0, transforms=[{"op": "resample_fps", "args": {"fps": 23}}]),
+                _segment_plan(source="a.mp4", start=0.0, end=2.0),
+                _segment_plan(source="b.mp4", start=0.0, end=2.0),
             ],
             "match_to_lowest_fps": False,
         }
         with pytest.raises(ValueError, match="fps"):
-            VideoEdit.from_dict(plan).validate()
+            VideoEdit.from_dict(plan).validate_with_metadata({"a.mp4": meta1, "b.mp4": meta2})
 
     def test_match_to_lowest_resolution_validation_passes(self):
         meta1 = VideoMetadata(width=640, height=480, fps=24.0, frame_count=48, total_seconds=2.0)
@@ -449,8 +453,7 @@ class TestSegmentMatching:
                 _segment_plan(source="b.mp4", start=0.0, end=2.0),
             ]
         }
-        edit = VideoEdit.from_dict(plan)
-        meta = edit.validate_with_metadata({"a.mp4": meta1, "b.mp4": meta2})
+        meta = VideoEdit.from_dict(plan).validate_with_metadata({"a.mp4": meta1, "b.mp4": meta2})
         assert meta.width == 320
         assert meta.height == 240
 
@@ -464,9 +467,8 @@ class TestSegmentMatching:
             ],
             "match_to_lowest_resolution": False,
         }
-        edit = VideoEdit.from_dict(plan)
         with pytest.raises(ValueError, match="dimensions"):
-            edit.validate_with_metadata({"a.mp4": meta1, "b.mp4": meta2})
+            VideoEdit.from_dict(plan).validate_with_metadata({"a.mp4": meta1, "b.mp4": meta2})
 
     def test_matching_flags_default_true(self):
         plan = {"segments": [_segment_plan()]}
@@ -488,22 +490,32 @@ class TestSegmentMatching:
         assert "match_to_lowest_resolution" not in out
 
     def test_match_to_lowest_fps_run(self):
-        v1 = _make_synthetic_video(100, 100, 30, 2.0)
-        v2 = _make_synthetic_video(100, 100, 24, 2.0)
+        meta1 = VideoMetadata(width=100, height=100, fps=30.0, frame_count=60, total_seconds=2.0)
+        meta2 = VideoMetadata(width=100, height=100, fps=24.0, frame_count=48, total_seconds=2.0)
+        # After matching, both should be loaded at 24fps
+        v_matched = _make_synthetic_video(100, 100, 24, 2.0)
         segment1 = SegmentConfig(source_video=Path("a.mp4"), start_second=0, end_second=2)
         segment2 = SegmentConfig(source_video=Path("b.mp4"), start_second=0, end_second=2)
         edit = VideoEdit(segments=[segment1, segment2])
-        with patch.object(SegmentConfig, "process_segment", side_effect=[v1, v2]):
+        with (
+            patch.object(VideoMetadata, "from_path", side_effect=[meta1, meta2]),
+            patch.object(SegmentConfig, "load_segment", return_value=v_matched),
+        ):
             result = edit.run()
         assert result.fps == 24.0
 
     def test_match_to_lowest_resolution_run(self):
-        v1 = _make_synthetic_video(640, 480, 24, 2.0)
-        v2 = _make_synthetic_video(320, 240, 24, 2.0)
+        meta1 = VideoMetadata(width=640, height=480, fps=24.0, frame_count=48, total_seconds=2.0)
+        meta2 = VideoMetadata(width=320, height=240, fps=24.0, frame_count=48, total_seconds=2.0)
+        # After matching, both should be loaded at 320x240
+        v_matched = _make_synthetic_video(320, 240, 24, 2.0)
         segment1 = SegmentConfig(source_video=Path("a.mp4"), start_second=0, end_second=2)
         segment2 = SegmentConfig(source_video=Path("b.mp4"), start_second=0, end_second=2)
         edit = VideoEdit(segments=[segment1, segment2])
-        with patch.object(SegmentConfig, "process_segment", side_effect=[v1, v2]):
+        with (
+            patch.object(VideoMetadata, "from_path", side_effect=[meta1, meta2]),
+            patch.object(SegmentConfig, "load_segment", return_value=v_matched),
+        ):
             result = edit.run()
         assert result.frame_shape[1] == 320
         assert result.frame_shape[0] == 240
@@ -512,10 +524,50 @@ class TestSegmentMatching:
         v1 = _make_synthetic_video(640, 480, 30, 2.0)
         segment = SegmentConfig(source_video=Path("a.mp4"), start_second=0, end_second=2)
         edit = VideoEdit(segments=[segment])
-        with patch.object(SegmentConfig, "process_segment", return_value=v1):
+        with patch.object(SegmentConfig, "load_segment", return_value=v1):
             result = edit.run()
         assert result.fps == 30.0
         assert result.frame_shape[:2] == (480, 640)
+
+    def test_match_fps_and_resolution_with_real_videos(self):
+        """Integration: small_video (800x500 @24fps) + big_video (1080x1920 @30fps)."""
+        plan = {
+            "segments": [
+                {"source": SMALL_VIDEO_PATH, "start": 0.0, "end": 2.0},
+                {"source": BIG_VIDEO_PATH, "start": 0.0, "end": 2.0},
+            ]
+        }
+        edit = VideoEdit.from_dict(plan)
+        meta = edit.validate()
+        assert meta.fps == 24.0
+        assert meta.width == 800
+        assert meta.height == 500
+
+        result = edit.run()
+        assert result.fps == 24.0
+        assert result.frame_shape[1] == 800
+        assert result.frame_shape[0] == 500
+
+    def test_match_disabled_with_real_videos_raises(self):
+        """Integration: mismatched sources must fail when matching is off."""
+        plan = {
+            "segments": [
+                {"source": SMALL_VIDEO_PATH, "start": 0.0, "end": 2.0},
+                {"source": BIG_VIDEO_PATH, "start": 0.0, "end": 2.0},
+            ],
+            "match_to_lowest_fps": False,
+            "match_to_lowest_resolution": False,
+        }
+        edit = VideoEdit.from_dict(plan)
+        with pytest.raises(ValueError):
+            edit.validate()
+
+    def test_from_path_with_fps_and_resolution(self):
+        """Integration: Video.from_path applies ffmpeg-level resampling."""
+        video = Video.from_path(BIG_VIDEO_PATH, start_second=0, end_second=2, fps=15, width=320, height=240)
+        assert video.fps == 15.0
+        assert video.frame_shape[1] == 320
+        assert video.frame_shape[0] == 240
 
 
 class TestValidateWithMetadata:

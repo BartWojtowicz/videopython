@@ -7,7 +7,9 @@
 - `VideoEdit` now automatically matches segments before concatenation with two new parameters (both `True` by default):
   - `match_to_lowest_fps` -- resamples all segments to the lowest fps among them.
   - `match_to_lowest_resolution` -- resizes all segments to the smallest width and height among them.
-- Set either to `False` to get the previous strict behavior that raises on mismatched segments.
+- Matching is applied at the ffmpeg decode level (first step in the pipeline), avoiding unnecessary memory allocation for full-resolution frames.
+- `Video.from_path` now accepts optional `fps`, `width`, and `height` parameters for ffmpeg-level resampling and scaling during decode.
+- Set either matching flag to `False` to get the previous strict behavior that raises on mismatched segments.
 - Both flags are supported in JSON plans (`match_to_lowest_fps`, `match_to_lowest_resolution`) and only serialized when `False`.
 
 ## 0.23.3
