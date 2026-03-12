@@ -1,5 +1,15 @@
 # Release Notes
 
+## 0.24.1
+
+### Fixed
+
+- Fixed `AudioEffect.apply()` and `Fade.apply()` crashing with "Video is only X long, but passed stop: Y" when effect stop time slightly exceeded video duration due to floating-point rounding after segment assembly. Both now clamp start/stop to video duration, matching the existing behavior in `Effect.apply()`.
+
+### Improved
+
+- Updated `Effect.apply()`, `AudioEffect.apply()`, and `Fade.apply()` docstrings to recommend omitting `start`/`stop` for full-range effects instead of passing explicit values. This guidance flows through to the JSON schema descriptions used by LLM integrations.
+
 ## 0.24.0
 
 ### Added

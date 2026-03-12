@@ -41,10 +41,17 @@ class Effect(ABC):
     def apply(self, video: Video, start: float | None = None, stop: float | None = None) -> Video:
         """Apply the effect to a video, optionally within a time range.
 
+        Omit ``start`` to apply from the beginning, omit ``stop`` to apply until
+        the end.  Prefer omitting over passing explicit values when the intent is
+        full-range application -- this avoids floating-point mismatches with the
+        actual video duration.
+
         Args:
             video: Input video.
-            start: Start time in seconds. Defaults to beginning of video.
-            stop: Stop time in seconds. Defaults to end of video.
+            start: Start time in seconds. Omit to apply from the beginning.
+                Only set when the effect should begin partway through.
+            stop: Stop time in seconds. Omit to apply until the end.
+                Only set when the effect should end before the video does.
         """
         original_shape = video.video_shape
         start = start if start is not None else 0
@@ -580,13 +587,30 @@ class Fade(Effect):
         self.curve = curve
 
     def apply(self, video: Video, start: float | None = None, stop: float | None = None) -> Video:
+        """Apply fade effect to video and audio.
+
+        Omit ``start`` to apply from the beginning, omit ``stop`` to apply
+        until the end. Prefer omitting over passing explicit values when
+        the intent is full-range application.
+
+        Args:
+            video: Input video.
+            start: Start time in seconds. Omit to apply from the beginning.
+                Only set when the effect should begin partway through.
+            stop: Stop time in seconds. Omit to apply until the end.
+                Only set when the effect should end before the video does.
+        """
         original_shape = video.video_shape
         start_s = start if start is not None else 0
         stop_s = stop if stop is not None else video.total_seconds
-        if not 0 <= start_s <= video.total_seconds:
-            raise ValueError(f"Video is only {video.total_seconds} long, but passed start: {start_s}!")
-        if not start_s <= stop_s <= video.total_seconds:
-            raise ValueError(f"Video is only {video.total_seconds} long, but passed stop: {stop_s}!")
+        # Clamp to video duration (frame rounding can make stop slightly exceed
+        # actual duration after segment assembly).
+        stop_s = min(stop_s, video.total_seconds)
+        start_s = min(start_s, video.total_seconds)
+        if start_s < 0:
+            raise ValueError(f"Effect start must be non-negative, got {start_s}!")
+        if stop_s < start_s:
+            raise ValueError(f"Effect stop ({stop_s}) must be >= start ({start_s})!")
 
         effect_start_frame = round(start_s * video.fps)
         effect_end_frame = round(stop_s * video.fps)
@@ -653,17 +677,28 @@ class AudioEffect(Effect):
     def apply(self, video: Video, start: float | None = None, stop: float | None = None) -> Video:
         """Apply the audio effect to a video, optionally within a time range.
 
+        Omit ``start`` to apply from the beginning, omit ``stop`` to apply until
+        the end.  Prefer omitting over passing explicit values when the intent is
+        full-range application -- this avoids floating-point mismatches with the
+        actual video duration.
+
         Args:
             video: Input video.
-            start: Start time in seconds. Defaults to beginning of video.
-            stop: Stop time in seconds. Defaults to end of video.
+            start: Start time in seconds. Omit to apply from the beginning.
+                Only set when the effect should begin partway through.
+            stop: Stop time in seconds. Omit to apply until the end.
+                Only set when the effect should end before the video does.
         """
         start_s = start if start is not None else 0
         stop_s = stop if stop is not None else video.total_seconds
-        if not 0 <= start_s <= video.total_seconds:
-            raise ValueError(f"Video is only {video.total_seconds} long, but passed start: {start_s}!")
-        if not start_s <= stop_s <= video.total_seconds:
-            raise ValueError(f"Video is only {video.total_seconds} long, but passed stop: {stop_s}!")
+        # Clamp to video duration (frame rounding can make stop slightly exceed
+        # actual duration after segment assembly).
+        stop_s = min(stop_s, video.total_seconds)
+        start_s = min(start_s, video.total_seconds)
+        if start_s < 0:
+            raise ValueError(f"Effect start must be non-negative, got {start_s}!")
+        if stop_s < start_s:
+            raise ValueError(f"Effect stop ({stop_s}) must be >= start ({start_s})!")
         video.audio = self._apply_audio(video.audio, start_s, stop_s, video.fps)
         return video
 
