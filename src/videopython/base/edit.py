@@ -84,19 +84,27 @@ class SegmentConfig:
                     f"SegmentConfig.effect_records must contain Effect operations, got {type(record.operation)}"
                 )
 
-    def process_segment(self, context: dict[str, Any] | None = None) -> Video:
-        """Load the segment and apply transforms then effects.
+    def load_segment(
+        self,
+        fps: float | None = None,
+        width: int | None = None,
+        height: int | None = None,
+    ) -> Video:
+        """Load the raw segment from disk (cut only, no transforms or effects).
 
-        Args:
-            context: Optional side-channel data for context-dependent operations.
-                Operations whose registry spec has a ``requires_transcript`` tag
-                receive ``context["transcription"]`` as a keyword argument.
+        Optional fps/width/height are applied during decoding via ffmpeg filters.
         """
-        video = Video.from_path(
+        return Video.from_path(
             str(self.source_video),
             start_second=self.start_second,
             end_second=self.end_second,
+            fps=fps,
+            width=width,
+            height=height,
         )
+
+    def apply_operations(self, video: Video, context: dict[str, Any] | None = None) -> Video:
+        """Apply per-segment transforms and effects to a loaded video."""
         for record in self.transform_records:
             video = _apply_transform_with_context(record, video, context)
         for record in self.effect_records:
@@ -111,6 +119,10 @@ class SegmentConfig:
             )
         return video
 
+    def process_segment(self, context: dict[str, Any] | None = None) -> Video:
+        """Load the segment and apply transforms then effects."""
+        return self.apply_operations(self.load_segment(), context)
+
 
 class VideoEdit:
     """Represents a complete multi-segment video editing plan."""
@@ -120,12 +132,16 @@ class VideoEdit:
         segments: Sequence[SegmentConfig],
         post_transform_records: Sequence[_StepRecord] | None = None,
         post_effect_records: Sequence[_StepRecord] | None = None,
+        match_to_lowest_fps: bool = True,
+        match_to_lowest_resolution: bool = True,
     ):
         if not segments:
             raise ValueError("VideoEdit requires at least one segment")
         self.segments: tuple[SegmentConfig, ...] = tuple(segments)
         self.post_transform_records: tuple[_StepRecord, ...] = tuple(post_transform_records or ())
         self.post_effect_records: tuple[_StepRecord, ...] = tuple(post_effect_records or ())
+        self.match_to_lowest_fps: bool = match_to_lowest_fps
+        self.match_to_lowest_resolution: bool = match_to_lowest_resolution
 
         for record in self.post_transform_records:
             if not isinstance(record.operation, Transformation):
@@ -183,6 +199,8 @@ class VideoEdit:
             segments=segments,
             post_transform_records=post_transform_records,
             post_effect_records=post_effect_records,
+            match_to_lowest_fps=data.get("match_to_lowest_fps", True),
+            match_to_lowest_resolution=data.get("match_to_lowest_resolution", True),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -191,11 +209,16 @@ class VideoEdit:
         Serialization uses `_StepRecord` snapshots as the source of truth. Mutating
         live operation objects after parsing/construction does not affect output.
         """
-        return {
+        result: dict[str, Any] = {
             "segments": [self._segment_to_dict(segment) for segment in self.segments],
             "post_transforms": [_step_to_dict(record, include_apply=False) for record in self.post_transform_records],
             "post_effects": [_step_to_dict(record, include_apply=True) for record in self.post_effect_records],
         }
+        if not self.match_to_lowest_fps:
+            result["match_to_lowest_fps"] = False
+        if not self.match_to_lowest_resolution:
+            result["match_to_lowest_resolution"] = False
+        return result
 
     @classmethod
     def json_schema(cls) -> dict[str, Any]:
@@ -282,9 +305,12 @@ class VideoEdit:
                 Operations whose registry spec has a ``requires_transcript`` tag
                 use ``context["transcription"]`` for metadata prediction.
         """
-        segment_metas: list[VideoMetadata] = []
-        for i, segment in enumerate(self.segments):
-            segment_metas.append(self._validate_segment(i, segment, context))
+        source_metas = [self._validate_source_meta(i, seg) for i, seg in enumerate(self.segments)]
+        source_metas = self._match_metas(source_metas)
+        segment_metas = [
+            self._apply_segment_meta_ops(i, seg, meta, context)
+            for i, (seg, meta) in enumerate(zip(self.segments, source_metas))
+        ]
         return self._validate_assembled(segment_metas, context)
 
     def validate_with_metadata(
@@ -315,14 +341,19 @@ class VideoEdit:
         else:
             meta_map = source_metadata
 
-        segment_metas: list[VideoMetadata] = []
+        source_metas: list[VideoMetadata] = []
         for i, segment in enumerate(self.segments):
             source_key = str(segment.source_video)
             if source_key not in meta_map:
                 raise ValueError(
                     f"Segment {i}: no metadata provided for source '{source_key}'. Available keys: {sorted(meta_map)}"
                 )
-            segment_metas.append(self._validate_segment_with_metadata(i, segment, meta_map[source_key], context))
+            source_metas.append(self._validate_source_meta(i, segment, meta_map[source_key]))
+        source_metas = self._match_metas(source_metas)
+        segment_metas = [
+            self._apply_segment_meta_ops(i, seg, meta, context)
+            for i, (seg, meta) in enumerate(zip(self.segments, source_metas))
+        ]
         return self._validate_assembled(segment_metas, context)
 
     def _validate_assembled(
@@ -373,9 +404,10 @@ class VideoEdit:
             "effects": [_step_to_dict(record, include_apply=True) for record in segment.effect_records],
         }
 
-    def _validate_segment(
-        self, index: int, segment: SegmentConfig, runtime_context: dict[str, Any] | None = None
+    def _validate_source_meta(
+        self, index: int, segment: SegmentConfig, source_meta: VideoMetadata | None = None
     ) -> VideoMetadata:
+        """Validate segment bounds and return cut source metadata (no transforms/effects)."""
         ctx = f"Segment {index}"
         if segment.start_second < 0:
             raise ValueError(f"{ctx}: start_second ({segment.start_second}) must be >= 0")
@@ -383,42 +415,22 @@ class VideoEdit:
             raise ValueError(
                 f"{ctx}: end_second ({segment.end_second}) must be > start_second ({segment.start_second})"
             )
-
-        meta = VideoMetadata.from_path(str(segment.source_video))
+        meta = source_meta if source_meta is not None else VideoMetadata.from_path(str(segment.source_video))
         if segment.end_second > meta.total_seconds:
             raise ValueError(
                 f"{ctx}: end_second ({segment.end_second}) exceeds source duration ({meta.total_seconds}s)"
             )
-        meta = meta.cut(segment.start_second, segment.end_second)
+        return meta.cut(segment.start_second, segment.end_second)
 
-        for record in segment.transform_records:
-            meta = _predict_transform_metadata(
-                meta, record.op_id, record.args, context=f"{ctx} ({record.op_id})", runtime_context=runtime_context
-            )
-        for record in segment.effect_records:
-            _validate_effect_bounds(record, meta.total_seconds, context=ctx)
-        return meta
-
-    def _validate_segment_with_metadata(
+    def _apply_segment_meta_ops(
         self,
         index: int,
         segment: SegmentConfig,
-        source_meta: VideoMetadata,
+        meta: VideoMetadata,
         runtime_context: dict[str, Any] | None = None,
     ) -> VideoMetadata:
+        """Apply per-segment transform/effect metadata predictions."""
         ctx = f"Segment {index}"
-        if segment.start_second < 0:
-            raise ValueError(f"{ctx}: start_second ({segment.start_second}) must be >= 0")
-        if segment.end_second <= segment.start_second:
-            raise ValueError(
-                f"{ctx}: end_second ({segment.end_second}) must be > start_second ({segment.start_second})"
-            )
-        if segment.end_second > source_meta.total_seconds:
-            raise ValueError(
-                f"{ctx}: end_second ({segment.end_second}) exceeds source duration ({source_meta.total_seconds}s)"
-            )
-        meta = source_meta.cut(segment.start_second, segment.end_second)
-
         for record in segment.transform_records:
             meta = _predict_transform_metadata(
                 meta, record.op_id, record.args, context=f"{ctx} ({record.op_id})", runtime_context=runtime_context
@@ -427,12 +439,41 @@ class VideoEdit:
             _validate_effect_bounds(record, meta.total_seconds, context=ctx)
         return meta
 
+    def _match_metas(self, metas: list[VideoMetadata]) -> list[VideoMetadata]:
+        """Apply matching to source metadata list."""
+        if len(metas) <= 1:
+            return metas
+        if self.match_to_lowest_fps:
+            min_fps = min(m.fps for m in metas)
+            metas = [m.resample_fps(min_fps) if m.fps != min_fps else m for m in metas]
+        if self.match_to_lowest_resolution:
+            min_w = min(m.width for m in metas)
+            min_h = min(m.height for m in metas)
+            metas = [m.resize(width=min_w, height=min_h) if (m.width, m.height) != (min_w, min_h) else m for m in metas]
+        return metas
+
     def _assemble_segments(self, context: dict[str, Any] | None = None) -> Video:
-        result: Video | None = None
-        for segment in self.segments:
-            video = segment.process_segment(context)
-            result = video if result is None else result + video
-        assert result is not None
+        # Compute matching targets from source metadata before loading.
+        target_fps, target_w, target_h = None, None, None
+        if len(self.segments) > 1 and (self.match_to_lowest_fps or self.match_to_lowest_resolution):
+            source_metas = [VideoMetadata.from_path(str(seg.source_video)) for seg in self.segments]
+            if self.match_to_lowest_fps:
+                target_fps = min(m.fps for m in source_metas)
+            if self.match_to_lowest_resolution:
+                target_w = min(m.width for m in source_metas)
+                target_h = min(m.height for m in source_metas)
+
+        # Load segments with matching applied via ffmpeg, then apply per-segment ops.
+        videos = [
+            segment.apply_operations(
+                segment.load_segment(fps=target_fps, width=target_w, height=target_h),
+                context,
+            )
+            for segment in self.segments
+        ]
+        result = videos[0]
+        for video in videos[1:]:
+            result = result + video
         return result
 
 

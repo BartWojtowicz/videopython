@@ -781,15 +781,22 @@ class Video:
 
     @classmethod
     def from_path(
-        cls, path: str, read_batch_size: int = 100, start_second: float | None = None, end_second: float | None = None
+        cls,
+        path: str,
+        read_batch_size: int = 100,
+        start_second: float | None = None,
+        end_second: float | None = None,
+        fps: float | None = None,
+        width: int | None = None,
+        height: int | None = None,
     ) -> Video:
         try:
             # Get video metadata using VideoMetadata.from_path
             metadata = VideoMetadata.from_path(path)
 
-            width = metadata.width
-            height = metadata.height
-            fps = metadata.fps
+            out_width = width if width is not None else metadata.width
+            out_height = height if height is not None else metadata.height
+            out_fps = fps if fps is not None else metadata.fps
             total_duration = metadata.total_seconds
 
             # Validate time bounds
@@ -809,8 +816,8 @@ class Video:
             elif start_second is not None:
                 segment_duration = total_duration - start_second
 
-            estimated_frames = int(segment_duration * fps)
-            estimated_bytes = estimated_frames * height * width * 3
+            estimated_frames = int(segment_duration * out_fps)
+            estimated_bytes = estimated_frames * out_height * out_width * 3
             estimated_gb = estimated_bytes / (1024**3)
             if estimated_gb > 10:
                 warnings.warn(
@@ -835,6 +842,15 @@ class Video:
                 ffmpeg_cmd.extend(["-t", str(duration)])
             elif end_second is not None:
                 ffmpeg_cmd.extend(["-t", str(end_second)])
+
+            # Apply video filters for resize and fps resampling
+            vf_filters: list[str] = []
+            if width is not None or height is not None:
+                vf_filters.append(f"scale={out_width}:{out_height}")
+            if fps is not None and fps != metadata.fps:
+                vf_filters.append(f"fps={out_fps}")
+            if vf_filters:
+                ffmpeg_cmd.extend(["-vf", ",".join(vf_filters)])
 
             # Output format settings - removed problematic -vsync 0
             ffmpeg_cmd.extend(
@@ -861,7 +877,7 @@ class Video:
             )
 
             # Calculate frame size in bytes
-            frame_size = width * height * 3  # 3 bytes per pixel for RGB
+            frame_size = out_width * out_height * 3  # 3 bytes per pixel for RGB
 
             # Estimate frame count for pre-allocation
             if start_second is not None and end_second is not None:
@@ -874,10 +890,10 @@ class Video:
                 estimated_duration = total_duration
 
             # Add buffer to handle frame rate variations and rounding
-            estimated_frames = int(estimated_duration * fps * FRAME_BUFFER_MULTIPLIER) + FRAME_BUFFER_PADDING
+            estimated_frames = int(estimated_duration * out_fps * FRAME_BUFFER_MULTIPLIER) + FRAME_BUFFER_PADDING
 
             # Pre-allocate numpy array
-            frames = np.empty((estimated_frames, height, width, 3), dtype=np.uint8)
+            frames = np.empty((estimated_frames, out_height, out_width, 3), dtype=np.uint8)
             frames_read = 0
 
             try:
@@ -896,20 +912,20 @@ class Video:
                     batch_frames = np.frombuffer(batch_data, dtype=np.uint8)
 
                     # Calculate how many complete frames we got
-                    complete_frames = len(batch_frames) // (height * width * 3)
+                    complete_frames = len(batch_frames) // (out_height * out_width * 3)
 
                     if complete_frames == 0:
                         break
 
                     # Only keep complete frames
-                    complete_data = batch_frames[: complete_frames * height * width * 3]
-                    batch_frames_array = complete_data.reshape(complete_frames, height, width, 3)
+                    complete_data = batch_frames[: complete_frames * out_height * out_width * 3]
+                    batch_frames_array = complete_data.reshape(complete_frames, out_height, out_width, 3)
 
                     # Check if we have room in pre-allocated array
                     if frames_read + complete_frames > estimated_frames:
                         # Need to expand array - this should be rare with our buffer
                         new_size = max(estimated_frames * 2, frames_read + complete_frames + 100)
-                        new_frames = np.empty((new_size, height, width, 3), dtype=np.uint8)
+                        new_frames = np.empty((new_size, out_height, out_width, 3), dtype=np.uint8)
                         new_frames[:frames_read] = frames[:frames_read]
                         frames = new_frames
                         estimated_frames = new_size
@@ -954,10 +970,10 @@ class Video:
             except (AudioLoadError, FileNotFoundError, subprocess.CalledProcessError):
                 warnings.warn(f"No audio found for `{path}`, adding silent track.")
                 # Create silent audio based on actual frames read
-                segment_duration = frames_read / fps
+                segment_duration = frames_read / out_fps
                 audio = Audio.create_silent(duration_seconds=round(segment_duration, 2), stereo=True, sample_rate=44100)
 
-            return cls(frames=frames, fps=fps, audio=audio)
+            return cls(frames=frames, fps=out_fps, audio=audio)
 
         except VideoMetadataError:
             raise
