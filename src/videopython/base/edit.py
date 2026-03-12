@@ -120,12 +120,16 @@ class VideoEdit:
         segments: Sequence[SegmentConfig],
         post_transform_records: Sequence[_StepRecord] | None = None,
         post_effect_records: Sequence[_StepRecord] | None = None,
+        match_to_lowest_fps: bool = True,
+        match_to_lowest_resolution: bool = True,
     ):
         if not segments:
             raise ValueError("VideoEdit requires at least one segment")
         self.segments: tuple[SegmentConfig, ...] = tuple(segments)
         self.post_transform_records: tuple[_StepRecord, ...] = tuple(post_transform_records or ())
         self.post_effect_records: tuple[_StepRecord, ...] = tuple(post_effect_records or ())
+        self.match_to_lowest_fps: bool = match_to_lowest_fps
+        self.match_to_lowest_resolution: bool = match_to_lowest_resolution
 
         for record in self.post_transform_records:
             if not isinstance(record.operation, Transformation):
@@ -183,6 +187,8 @@ class VideoEdit:
             segments=segments,
             post_transform_records=post_transform_records,
             post_effect_records=post_effect_records,
+            match_to_lowest_fps=data.get("match_to_lowest_fps", True),
+            match_to_lowest_resolution=data.get("match_to_lowest_resolution", True),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -191,11 +197,16 @@ class VideoEdit:
         Serialization uses `_StepRecord` snapshots as the source of truth. Mutating
         live operation objects after parsing/construction does not affect output.
         """
-        return {
+        result: dict[str, Any] = {
             "segments": [self._segment_to_dict(segment) for segment in self.segments],
             "post_transforms": [_step_to_dict(record, include_apply=False) for record in self.post_transform_records],
             "post_effects": [_step_to_dict(record, include_apply=True) for record in self.post_effect_records],
         }
+        if not self.match_to_lowest_fps:
+            result["match_to_lowest_fps"] = False
+        if not self.match_to_lowest_resolution:
+            result["match_to_lowest_resolution"] = False
+        return result
 
     @classmethod
     def json_schema(cls) -> dict[str, Any]:
@@ -329,6 +340,17 @@ class VideoEdit:
         self, segment_metas: list[VideoMetadata], runtime_context: dict[str, Any] | None = None
     ) -> VideoMetadata:
         if len(segment_metas) > 1:
+            if self.match_to_lowest_fps:
+                min_fps = min(m.fps for m in segment_metas)
+                segment_metas = [m.resample_fps(min_fps) if m.fps != min_fps else m for m in segment_metas]
+            if self.match_to_lowest_resolution:
+                min_w = min(m.width for m in segment_metas)
+                min_h = min(m.height for m in segment_metas)
+                segment_metas = [
+                    m.resize(width=min_w, height=min_h) if (m.width, m.height) != (min_w, min_h) else m
+                    for m in segment_metas
+                ]
+
             first = segment_metas[0]
             for j, other in enumerate(segment_metas[1:], start=1):
                 if first.fps != other.fps:
@@ -428,11 +450,27 @@ class VideoEdit:
         return meta
 
     def _assemble_segments(self, context: dict[str, Any] | None = None) -> Video:
-        result: Video | None = None
-        for segment in self.segments:
-            video = segment.process_segment(context)
-            result = video if result is None else result + video
-        assert result is not None
+        from videopython.base.transforms import ResampleFPS, Resize
+
+        videos = [segment.process_segment(context) for segment in self.segments]
+
+        if len(videos) > 1:
+            if self.match_to_lowest_fps:
+                min_fps = min(v.fps for v in videos)
+                videos = [ResampleFPS(fps=min_fps).apply(v) if v.fps != min_fps else v for v in videos]
+            if self.match_to_lowest_resolution:
+                min_w = min(v.frame_shape[1] for v in videos)
+                min_h = min(v.frame_shape[0] for v in videos)
+                videos = [
+                    Resize(width=min_w, height=min_h).apply(v)
+                    if (v.frame_shape[1], v.frame_shape[0]) != (min_w, min_h)
+                    else v
+                    for v in videos
+                ]
+
+        result = videos[0]
+        for video in videos[1:]:
+            result = result + video
         return result
 
 
