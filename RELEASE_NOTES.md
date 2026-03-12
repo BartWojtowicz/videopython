@@ -1,5 +1,11 @@
 # Release Notes
 
+## 0.23.3
+
+### Fixed
+
+- Fixed `RuntimeError: expected scalar type Float but found BFloat16` when Whisper and SceneVLM run concurrently. Removed concurrent SceneVLM preload during Whisper/TransNetV2 phase -- `transformers.from_pretrained(torch_dtype="auto")` mutates the process-global `torch.get_default_dtype()` to BFloat16 during model construction, corrupting Whisper's model weights when initialized in a parallel thread. SceneVLM now loads sequentially after Whisper/TransNetV2 complete.
+
 ## 0.23.2
 
 ### Fixed
