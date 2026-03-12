@@ -398,35 +398,20 @@ class VideoAnalyzer:
 
         run_whisper = AUDIO_TO_TEXT in enabled
         run_scene_det = SEMANTIC_SCENE_DETECTOR in enabled
-        run_vlm = SCENE_VLM in enabled
 
         transcription: Transcription | None = None
         detected: list[SceneBoundary] | None = None
-
-        # Start loading SceneVLM weights in a background thread while
-        # Whisper and TransNetV2 run.  Model loading is pure I/O + CPU
-        # weight deserialization, so it overlaps well with GPU inference.
-        vlm_preload_future = None
-        scene_vlm_holder: list[SceneVLM | None] = [None]
-        if run_vlm and (run_whisper or run_scene_det):
-            from concurrent.futures import ThreadPoolExecutor as _TPE
-
-            _vlm_pool = _TPE(max_workers=1)
-
-            def _preload_vlm() -> None:
-                try:
-                    vlm = SceneVLM(**self.config.get_params(SCENE_VLM))
-                    vlm._init_local()
-                    scene_vlm_holder[0] = vlm
-                except Exception:
-                    logger.warning("SceneVLM preload failed", exc_info=True)
-
-            vlm_preload_future = _vlm_pool.submit(_preload_vlm)
 
         # Whisper and TransNetV2 operate on independent data (audio vs video
         # frames) and both fit comfortably in GPU memory together. Run them
         # concurrently via threads -- the GIL is released during GPU compute
         # and ffmpeg I/O so real parallelism is achieved.
+        #
+        # SceneVLM is loaded *after* Whisper/TransNetV2 finish (not concurrently)
+        # because transformers' from_pretrained(torch_dtype="auto") mutates the
+        # process-global torch.get_default_dtype() during model construction,
+        # which corrupts Whisper's model weights if they're initialized at the
+        # same time.
         if run_whisper and run_scene_det:
             transcription, detected = self._run_whisper_and_scene_detection(source_path=source_path, video=video)
         else:
@@ -442,11 +427,6 @@ class VideoAnalyzer:
 
         if run_scene_det:
             self._reset_transnetv2_torch_state()
-
-        # Wait for VLM preload to finish before freeing GPU memory.
-        if vlm_preload_future is not None:
-            vlm_preload_future.result()
-            _vlm_pool.shutdown(wait=False)
 
         # Whisper and TransNetV2 are done -- free their GPU memory before
         # loading SceneVLM (~9GB). Python GC doesn't guarantee immediate
@@ -468,7 +448,7 @@ class VideoAnalyzer:
             video=video,
             metadata=metadata,
             scenes=scenes,
-            preloaded_scene_vlm=scene_vlm_holder[0] if run_vlm else None,
+            preloaded_scene_vlm=None,
         )
         logger.info("Scene analysis completed in %.2fs", time.perf_counter() - t0)
 
