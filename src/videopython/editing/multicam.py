@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
@@ -106,8 +107,11 @@ class MultiCamEdit:
                     f"All sources must have the same resolution."
                 )
 
-        # Cuts must not exceed source duration
+        # Cache source metadata for validate() and run()
+        self._source_meta = first
         self._source_duration = first.total_seconds
+
+        # Cuts must not exceed source duration
         for i, cut in enumerate(self.cuts):
             if cut.time > self._source_duration:
                 raise ValueError(f"Cut {i} time ({cut.time}) exceeds source duration ({self._source_duration}s)")
@@ -149,6 +153,129 @@ class MultiCamEdit:
         result.audio = audio
 
         return result
+
+    def validate(self) -> VideoMetadata:
+        """Validate the plan and predict output metadata without loading frames."""
+        total_seconds = self._source_duration
+        fps = self._source_meta.fps
+
+        # Subtract overlap consumed by transitions
+        for i in range(1, len(self.cuts)):
+            transition = self.cuts[i].transition or self.default_transition
+            effect_time = getattr(transition, "effect_time_seconds", 0.0)
+            if effect_time > 0:
+                total_seconds -= effect_time
+
+        total_seconds = round(total_seconds, 4)
+        frame_count = math.floor(total_seconds * fps)
+
+        return VideoMetadata(
+            width=self._source_meta.width,
+            height=self._source_meta.height,
+            fps=fps,
+            frame_count=frame_count,
+            total_seconds=total_seconds,
+        )
+
+    @classmethod
+    def json_schema(cls) -> dict[str, Any]:
+        """Return a JSON Schema for MultiCamEdit plans."""
+        transition_schemas = [
+            {
+                "type": "object",
+                "properties": {"type": {"const": "instant"}},
+                "required": ["type"],
+                "additionalProperties": False,
+            },
+            {
+                "type": "object",
+                "properties": {
+                    "type": {"const": "fade"},
+                    "effect_time_seconds": {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "description": "Duration of the crossfade in seconds.",
+                    },
+                },
+                "required": ["type", "effect_time_seconds"],
+                "additionalProperties": False,
+            },
+            {
+                "type": "object",
+                "properties": {
+                    "type": {"const": "blur"},
+                    "effect_time_seconds": {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "description": "Duration of the blur transition in seconds.",
+                    },
+                    "blur_iterations": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Blur strength at peak.",
+                    },
+                    "blur_kernel_size": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "minItems": 2,
+                        "maxItems": 2,
+                        "description": "Gaussian kernel [width, height] in pixels.",
+                    },
+                },
+                "required": ["type"],
+                "additionalProperties": False,
+            },
+        ]
+
+        cut_schema: dict[str, Any] = {
+            "type": "object",
+            "properties": {
+                "time": {
+                    "type": "number",
+                    "minimum": 0,
+                    "description": "Seconds into the timeline where this cut happens.",
+                },
+                "camera": {
+                    "type": "string",
+                    "description": "Camera name (key into sources).",
+                },
+                "transition": {
+                    "oneOf": transition_schemas,
+                    "description": "Transition to use at this cut. Omit to use default_transition.",
+                },
+            },
+            "required": ["time", "camera"],
+            "additionalProperties": False,
+        }
+
+        return {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+                "sources": {
+                    "type": "object",
+                    "description": "Named camera sources. Keys are camera names, values are file paths.",
+                    "additionalProperties": {"type": "string"},
+                    "minProperties": 1,
+                },
+                "audio_source": {
+                    "type": "string",
+                    "description": "Path to external audio track. Omit for silent output.",
+                },
+                "cuts": {
+                    "type": "array",
+                    "items": cut_schema,
+                    "minItems": 1,
+                    "description": "Ordered list of camera switches. First cut must have time=0.",
+                },
+                "default_transition": {
+                    "oneOf": transition_schemas,
+                    "description": "Transition used between cuts when not specified per-cut.",
+                },
+            },
+            "required": ["sources", "cuts"],
+            "additionalProperties": False,
+        }
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-compatible dict."""

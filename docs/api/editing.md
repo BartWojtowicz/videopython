@@ -278,6 +278,26 @@ video.save("podcast.mp4")
 - All sources must be synchronized (same start time and duration).
 - Cuts must be in strictly ascending order.
 
+## Validation
+
+Validate the plan and predict output metadata without loading video frames:
+
+```python
+predicted = edit.validate()
+print(predicted)  # VideoMetadata(width=1280, height=720, fps=25, ...)
+```
+
+Validation accounts for duration consumed by fade/blur transitions.
+
+## JSON Schema
+
+Use `MultiCamEdit.json_schema()` to get a JSON Schema describing valid plans. Pass it to an LLM API as a tool definition or structured-output format:
+
+```python
+schema = MultiCamEdit.json_schema()
+# schema includes sources, cuts, transitions, audio_source
+```
+
 ## JSON Serialization
 
 ```python

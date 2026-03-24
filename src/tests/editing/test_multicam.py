@@ -276,3 +276,109 @@ class TestSerialization:
     def test_from_dict_missing_cuts(self, cam_paths):
         with pytest.raises(ValueError, match="non-empty 'cuts'"):
             MultiCamEdit.from_dict({"sources": {k: str(v) for k, v in cam_paths.items()}})
+
+
+# ---------------------------------------------------------------------------
+# Validate tests
+# ---------------------------------------------------------------------------
+
+
+class TestValidate:
+    def test_validate_single_cut(self, cam_paths):
+        edit = MultiCamEdit(
+            sources=cam_paths,
+            cuts=[CutPoint(time=0.0, camera="cam1")],
+        )
+        meta = edit.validate()
+        assert meta.fps == FPS
+        assert meta.width == WIDTH
+        assert meta.height == HEIGHT
+        assert abs(meta.total_seconds - DURATION) < 0.5
+
+    def test_validate_hard_cuts_preserves_duration(self, cam_paths):
+        edit = MultiCamEdit(
+            sources=cam_paths,
+            cuts=[
+                CutPoint(time=0.0, camera="cam1"),
+                CutPoint(time=3.0, camera="cam2"),
+                CutPoint(time=7.0, camera="cam3"),
+            ],
+        )
+        meta = edit.validate()
+        assert abs(meta.total_seconds - DURATION) < 0.5
+
+    def test_validate_fade_subtracts_overlap(self, cam_paths):
+        edit = MultiCamEdit(
+            sources=cam_paths,
+            cuts=[
+                CutPoint(time=0.0, camera="cam1"),
+                CutPoint(time=3.0, camera="cam2", transition=FadeTransition(0.5)),
+                CutPoint(time=7.0, camera="cam3", transition=FadeTransition(0.5)),
+            ],
+        )
+        meta = edit.validate()
+        # 2 fade transitions at 0.5s each = 1.0s subtracted
+        assert meta.total_seconds < DURATION
+        assert meta.total_seconds > DURATION - 2
+
+    def test_validate_matches_run(self, cam_paths):
+        edit = MultiCamEdit(
+            sources=cam_paths,
+            cuts=[
+                CutPoint(time=0.0, camera="cam1"),
+                CutPoint(time=3.0, camera="cam2", transition=FadeTransition(0.5)),
+                CutPoint(time=7.0, camera="cam3"),
+            ],
+        )
+        predicted = edit.validate()
+        actual = edit.run()
+        assert predicted.fps == actual.fps
+        assert predicted.width == actual.metadata.width
+        assert predicted.height == actual.metadata.height
+        assert abs(predicted.total_seconds - actual.total_seconds) < 0.5
+
+    def test_validate_default_fade_transition(self, cam_paths):
+        edit = MultiCamEdit(
+            sources=cam_paths,
+            cuts=[
+                CutPoint(time=0.0, camera="cam1"),
+                CutPoint(time=5.0, camera="cam2"),
+            ],
+            default_transition=FadeTransition(0.5),
+        )
+        meta = edit.validate()
+        # 1 fade at 0.5s
+        assert meta.total_seconds < DURATION
+
+
+# ---------------------------------------------------------------------------
+# JSON Schema tests
+# ---------------------------------------------------------------------------
+
+
+class TestJsonSchema:
+    def test_schema_structure(self):
+        schema = MultiCamEdit.json_schema()
+        assert schema["type"] == "object"
+        assert "sources" in schema["properties"]
+        assert "cuts" in schema["properties"]
+        assert schema["required"] == ["sources", "cuts"]
+
+    def test_schema_has_transition_options(self):
+        schema = MultiCamEdit.json_schema()
+        cut_props = schema["properties"]["cuts"]["items"]["properties"]
+        transition_types = {s["properties"]["type"]["const"] for s in cut_props["transition"]["oneOf"]}
+        assert transition_types == {"instant", "fade", "blur"}
+
+    def test_schema_plan_roundtrip(self, cam_paths):
+        plan = {
+            "sources": {k: str(v) for k, v in cam_paths.items()},
+            "cuts": [
+                {"time": 0.0, "camera": "cam1"},
+                {"time": 5.0, "camera": "cam2", "transition": {"type": "fade", "effect_time_seconds": 0.5}},
+            ],
+            "default_transition": {"type": "instant"},
+        }
+        edit = MultiCamEdit.from_dict(plan)
+        assert len(edit.cuts) == 2
+        assert isinstance(edit.cuts[1].transition, FadeTransition)

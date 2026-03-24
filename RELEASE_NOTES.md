@@ -1,5 +1,12 @@
 # Release Notes
 
+## 0.25.1
+
+### Added
+
+- `MultiCamEdit.validate()` -- predict output `VideoMetadata` (dimensions, fps, duration) without loading video frames. Accounts for duration consumed by fade/blur transitions.
+- `MultiCamEdit.json_schema()` -- returns a JSON Schema for MultiCamEdit plans, suitable for LLM tool definitions or structured-output formats.
+
 ## 0.25.0
 
 ### Added

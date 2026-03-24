@@ -75,26 +75,6 @@ final = edit.run()
 final.save("output.mp4")
 ```
 
-### Multicam podcast editing
-
-Switch between synchronized camera angles with transitions:
-
-```python
-from videopython.editing import MultiCamEdit, CutPoint
-from videopython.base import FadeTransition
-
-edit = MultiCamEdit(
-    sources={"wide": "cam1.mp4", "closeup": "cam2.mp4"},
-    audio_source="podcast_audio.aac",
-    cuts=[
-        CutPoint(time=0.0, camera="wide"),
-        CutPoint(time=15.0, camera="closeup", transition=FadeTransition(0.5)),
-        CutPoint(time=45.0, camera="wide", transition=FadeTransition(0.5)),
-    ],
-)
-edit.run().save("podcast.mp4")
-```
-
 ### AI generation
 
 ```python
