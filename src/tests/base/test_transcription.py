@@ -715,3 +715,83 @@ class TestTranscriptionSerialization:
         data = {"segments": []}
         restored = Transcription.from_dict(data)
         assert restored.language is None
+
+
+class TestTranscriptionSrt:
+    """Tests for SRT export and import methods."""
+
+    def test_to_srt_basic(self, dummy_transcription):
+        """Test basic SRT export with multiple segments."""
+        srt = dummy_transcription.to_srt()
+
+        assert "1\n00:00:00,000 --> 00:00:01,800\nHello world this is test" in srt
+        assert "2\n00:00:02,000 --> 00:00:03,500\nSecond segment of transcription" in srt
+        assert "3\n00:00:05,000 --> 00:00:06,800\nFinal words in video" in srt
+
+    def test_to_srt_empty(self):
+        """Test SRT export with empty transcription."""
+        transcription = Transcription(segments=[])
+        assert transcription.to_srt() == ""
+
+    def test_to_srt_timestamp_formatting(self):
+        """Test that timestamps over an hour are formatted correctly."""
+        words = [TranscriptionWord(start=3723.456, end=3725.789, word="late")]
+        segment = TranscriptionSegment(start=3723.456, end=3725.789, text="late", words=words)
+        transcription = Transcription(segments=[segment])
+        srt = transcription.to_srt()
+
+        assert "01:02:03,456 --> 01:02:05,789" in srt
+
+    def test_save_srt(self, dummy_transcription, tmp_path):
+        """Test saving SRT to a file."""
+        output_path = tmp_path / "output.srt"
+        dummy_transcription.save_srt(output_path)
+
+        content = output_path.read_text(encoding="utf-8")
+        assert content == dummy_transcription.to_srt()
+
+    def test_from_srt_basic(self):
+        """Test parsing a basic SRT string."""
+        srt = "1\n00:00:00,000 --> 00:00:01,800\nHello world\n\n2\n00:00:02,000 --> 00:00:03,500\nSecond line\n"
+        transcription = Transcription.from_srt(srt)
+
+        assert len(transcription.segments) == 2
+        assert transcription.segments[0].text == "Hello world"
+        assert transcription.segments[0].start == 0.0
+        assert transcription.segments[0].end == 1.8
+        assert transcription.segments[1].text == "Second line"
+        assert transcription.segments[1].start == 2.0
+        assert transcription.segments[1].end == 3.5
+
+    def test_from_srt_empty(self):
+        """Test parsing an empty SRT string."""
+        transcription = Transcription.from_srt("")
+        assert len(transcription.segments) == 0
+
+    def test_from_srt_hour_timestamps(self):
+        """Test parsing SRT with timestamps over an hour."""
+        srt = "1\n01:02:03,456 --> 01:02:05,789\nlate\n"
+        transcription = Transcription.from_srt(srt)
+
+        assert len(transcription.segments) == 1
+        assert abs(transcription.segments[0].start - 3723.456) < 0.001
+        assert abs(transcription.segments[0].end - 3725.789) < 0.001
+
+    def test_from_srt_multiline_text(self):
+        """Test parsing SRT blocks with multi-line text."""
+        srt = "1\n00:00:00,000 --> 00:00:02,000\nFirst line\nSecond line\n"
+        transcription = Transcription.from_srt(srt)
+
+        assert len(transcription.segments) == 1
+        assert transcription.segments[0].text == "First line\nSecond line"
+
+    def test_srt_roundtrip(self, dummy_transcription):
+        """Test that to_srt -> from_srt preserves segment text and timing."""
+        srt = dummy_transcription.to_srt()
+        restored = Transcription.from_srt(srt)
+
+        assert len(restored.segments) == len(dummy_transcription.segments)
+        for orig, rest in zip(dummy_transcription.segments, restored.segments):
+            assert rest.text == orig.text
+            assert abs(rest.start - orig.start) < 0.001
+            assert abs(rest.end - orig.end) < 0.001

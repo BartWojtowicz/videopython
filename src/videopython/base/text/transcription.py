@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 __all__ = ["Transcription", "TranscriptionSegment", "TranscriptionWord"]
 
@@ -339,6 +340,71 @@ class Transcription:
             )
 
         return Transcription(segments=sliced_segments, language=self.language)
+
+    @staticmethod
+    def _format_srt_time(seconds: float) -> str:
+        """Format seconds as SRT timestamp (HH:MM:SS,mmm)."""
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        millis = int(round((seconds - int(seconds)) * 1000))
+        return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+
+    @staticmethod
+    def _parse_srt_time(timestamp: str) -> float:
+        """Parse SRT timestamp (HH:MM:SS,mmm) to seconds."""
+        hours, minutes, rest = timestamp.strip().split(":")
+        seconds, millis = rest.split(",")
+        return int(hours) * 3600 + int(minutes) * 60 + int(seconds) + int(millis) / 1000
+
+    def to_srt(self) -> str:
+        """Export transcription as an SRT subtitle string."""
+        blocks = []
+        for i, segment in enumerate(self.segments, start=1):
+            start = self._format_srt_time(segment.start)
+            end = self._format_srt_time(segment.end)
+            blocks.append(f"{i}\n{start} --> {end}\n{segment.text}")
+        return "\n\n".join(blocks) + "\n" if blocks else ""
+
+    @classmethod
+    def from_srt(cls, srt: str) -> Transcription:
+        """Parse an SRT string into a Transcription.
+
+        Each SRT block becomes a segment with a single word spanning the full
+        segment duration (word-level timing is not available in SRT).
+
+        Args:
+            srt: SRT-formatted string.
+
+        Returns:
+            Transcription with one segment per SRT block.
+        """
+        segments: list[TranscriptionSegment] = []
+        blocks = [b.strip() for b in srt.strip().split("\n\n") if b.strip()]
+
+        for block in blocks:
+            lines = block.split("\n")
+            # SRT block: index, timestamp line, one or more text lines
+            if len(lines) < 3:
+                continue
+            timestamp_line = lines[1]
+            start_str, end_str = timestamp_line.split("-->")
+            start = cls._parse_srt_time(start_str)
+            end = cls._parse_srt_time(end_str)
+            text = "\n".join(lines[2:]).strip()
+
+            words = [TranscriptionWord(start=start, end=end, word=text)]
+            segments.append(TranscriptionSegment(start=start, end=end, text=text, words=words))
+
+        return cls(segments=segments)
+
+    def save_srt(self, path: str | Path) -> None:
+        """Write transcription to an SRT file.
+
+        Args:
+            path: Output file path.
+        """
+        Path(path).write_text(self.to_srt(), encoding="utf-8")
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""

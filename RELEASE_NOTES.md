@@ -1,5 +1,13 @@
 # Release Notes
 
+## 0.24.2
+
+### Added
+
+- `Transcription.to_srt()` -- export transcription as an SRT subtitle string.
+- `Transcription.from_srt()` -- parse an SRT string into a Transcription (one segment per subtitle block; word-level timing is not available in SRT).
+- `Transcription.save_srt()` -- write transcription directly to an SRT file.
+
 ## 0.24.1
 
 ### Fixed
