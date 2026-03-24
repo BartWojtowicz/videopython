@@ -12,7 +12,7 @@ The typical LLM-driven video editing workflow:
 4. **Execute** - call `edit.run()` to produce the final video
 
 ```python
-from videopython.base import VideoEdit
+from videopython.editing import VideoEdit
 
 # 1. Get the schema to pass to your LLM
 schema = VideoEdit.json_schema()
@@ -39,7 +39,7 @@ video.save("output.mp4")
 ```python
 import json
 from openai import OpenAI
-from videopython.base import VideoEdit
+from videopython.editing import VideoEdit
 
 client = OpenAI()
 schema = VideoEdit.json_schema()
@@ -73,7 +73,7 @@ video.save("output.mp4")
 
 ```python
 import anthropic
-from videopython.base import VideoEdit
+from videopython.editing import VideoEdit
 
 client = anthropic.Anthropic()
 schema = VideoEdit.json_schema()
@@ -231,7 +231,7 @@ This makes it cheap to let an LLM retry if its first plan is invalid - validate,
 Some operations need data that shouldn't be part of the JSON plan itself. For example, `silence_removal` needs a transcription object. Pass these via `context`:
 
 ```python
-from videopython.base import VideoEdit
+from videopython.editing import VideoEdit
 
 # Assume `transcription` was produced by AudioToText or provided externally
 edit = VideoEdit.from_dict(plan)
@@ -246,7 +246,7 @@ AI-powered operations (face tracking crop, split screen composite) are registere
 
 ```python
 import videopython.ai  # registers AI operation specs
-from videopython.base import VideoEdit
+from videopython.editing import VideoEdit
 
 schema = VideoEdit.json_schema()  # now includes AI ops
 ```

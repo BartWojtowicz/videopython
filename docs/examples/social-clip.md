@@ -93,7 +93,7 @@ final = title_card.transition_to(video, FadeTransition(effect_time_seconds=0.5))
 For LLM-generated or UI-generated edits, use `VideoEdit` instead of manual orchestration:
 
 ```python
-from videopython.base import VideoEdit
+from videopython.editing import VideoEdit
 
 plan = {
     "segments": [

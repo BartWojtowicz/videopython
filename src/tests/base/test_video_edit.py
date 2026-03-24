@@ -12,10 +12,10 @@ import numpy as np
 import pytest
 
 from tests.test_config import BIG_VIDEO_PATH, SMALL_VIDEO_METADATA, SMALL_VIDEO_PATH
-from videopython.base.edit import SegmentConfig, VideoEdit, _StepRecord
 from videopython.base.text.transcription import Transcription, TranscriptionWord
 from videopython.base.transforms import CropMode, PictureInPicture
 from videopython.base.video import Video, VideoMetadata
+from videopython.editing.video_edit import SegmentConfig, VideoEdit, _StepRecord
 
 
 def _make_synthetic_video(width: int, height: int, fps: float, seconds: float) -> Video:

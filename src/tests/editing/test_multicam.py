@@ -1,0 +1,278 @@
+from __future__ import annotations
+
+import json
+import subprocess
+import tempfile
+from pathlib import Path
+
+import pytest
+
+from videopython.base.transitions import FadeTransition, InstantTransition
+from videopython.editing.multicam import CutPoint, MultiCamEdit
+
+# ---------------------------------------------------------------------------
+# Fixtures: generate short test videos with ffmpeg
+# ---------------------------------------------------------------------------
+
+FPS = 25
+DURATION = 10  # seconds
+WIDTH, HEIGHT = 320, 240
+
+
+@pytest.fixture(scope="module")
+def test_dir():
+    with tempfile.TemporaryDirectory() as d:
+        yield Path(d)
+
+
+def _make_color_video(path: Path, color: str, duration: int = DURATION) -> Path:
+    """Generate a solid-color video with silent audio using ffmpeg."""
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            f"color=c={color}:s={WIDTH}x{HEIGHT}:r={FPS}:d={duration}",
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=r=44100:cl=stereo",
+            "-t",
+            str(duration),
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            str(path),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return path
+
+
+def _make_audio(path: Path, duration: int = DURATION) -> Path:
+    """Generate a sine wave audio file."""
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            f"sine=frequency=440:duration={duration}",
+            "-c:a",
+            "aac",
+            str(path),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return path
+
+
+@pytest.fixture(scope="module")
+def cam_paths(test_dir):
+    """Create 3 camera source videos (red, green, blue)."""
+    return {
+        "cam1": _make_color_video(test_dir / "cam1.mp4", "red"),
+        "cam2": _make_color_video(test_dir / "cam2.mp4", "green"),
+        "cam3": _make_color_video(test_dir / "cam3.mp4", "blue"),
+    }
+
+
+@pytest.fixture(scope="module")
+def audio_path(test_dir):
+    return _make_audio(test_dir / "audio.aac")
+
+
+# ---------------------------------------------------------------------------
+# Validation tests
+# ---------------------------------------------------------------------------
+
+
+class TestValidation:
+    def test_empty_sources(self, cam_paths):
+        with pytest.raises(ValueError, match="at least one source"):
+            MultiCamEdit(sources={}, cuts=[CutPoint(time=0.0, camera="cam1")])
+
+    def test_empty_cuts(self, cam_paths):
+        with pytest.raises(ValueError, match="at least one cut"):
+            MultiCamEdit(sources=cam_paths, cuts=[])
+
+    def test_first_cut_not_at_zero(self, cam_paths):
+        with pytest.raises(ValueError, match="First cut must start at time 0.0"):
+            MultiCamEdit(sources=cam_paths, cuts=[CutPoint(time=5.0, camera="cam1")])
+
+    def test_cuts_not_ascending(self, cam_paths):
+        with pytest.raises(ValueError, match="strictly ascending"):
+            MultiCamEdit(
+                sources=cam_paths,
+                cuts=[
+                    CutPoint(time=0.0, camera="cam1"),
+                    CutPoint(time=5.0, camera="cam2"),
+                    CutPoint(time=3.0, camera="cam3"),
+                ],
+            )
+
+    def test_unknown_camera(self, cam_paths):
+        with pytest.raises(ValueError, match="unknown camera 'nonexistent'"):
+            MultiCamEdit(
+                sources=cam_paths,
+                cuts=[CutPoint(time=0.0, camera="nonexistent")],
+            )
+
+    def test_missing_source_file(self, test_dir):
+        with pytest.raises(FileNotFoundError, match="not found"):
+            MultiCamEdit(
+                sources={"cam1": test_dir / "does_not_exist.mp4"},
+                cuts=[CutPoint(time=0.0, camera="cam1")],
+            )
+
+    def test_missing_audio_file(self, cam_paths, test_dir):
+        with pytest.raises(FileNotFoundError, match="Audio source not found"):
+            MultiCamEdit(
+                sources=cam_paths,
+                cuts=[CutPoint(time=0.0, camera="cam1")],
+                audio_source=test_dir / "missing_audio.aac",
+            )
+
+    def test_cut_exceeds_duration(self, cam_paths):
+        with pytest.raises(ValueError, match="exceeds source duration"):
+            MultiCamEdit(
+                sources=cam_paths,
+                cuts=[
+                    CutPoint(time=0.0, camera="cam1"),
+                    CutPoint(time=999.0, camera="cam2"),
+                ],
+            )
+
+
+# ---------------------------------------------------------------------------
+# Execution tests
+# ---------------------------------------------------------------------------
+
+
+class TestRun:
+    def test_single_cut_full_video(self, cam_paths):
+        """Single cut at 0 = use one camera for the whole duration."""
+        edit = MultiCamEdit(
+            sources=cam_paths,
+            cuts=[CutPoint(time=0.0, camera="cam1")],
+        )
+        result = edit.run()
+        assert result.fps == FPS
+        assert result.frames.shape[1:3] == (HEIGHT, WIDTH)
+        # Should be roughly DURATION seconds
+        assert abs(result.total_seconds - DURATION) < 0.5
+
+    def test_hard_cuts(self, cam_paths):
+        """Multiple hard cuts between cameras."""
+        edit = MultiCamEdit(
+            sources=cam_paths,
+            cuts=[
+                CutPoint(time=0.0, camera="cam1"),
+                CutPoint(time=3.0, camera="cam2"),
+                CutPoint(time=7.0, camera="cam3"),
+            ],
+        )
+        result = edit.run()
+        assert abs(result.total_seconds - DURATION) < 0.5
+
+    def test_fade_transitions(self, cam_paths):
+        """Fade transitions between cameras."""
+        edit = MultiCamEdit(
+            sources=cam_paths,
+            cuts=[
+                CutPoint(time=0.0, camera="cam1"),
+                CutPoint(time=3.0, camera="cam2", transition=FadeTransition(0.5)),
+                CutPoint(time=7.0, camera="cam3", transition=FadeTransition(0.5)),
+            ],
+        )
+        result = edit.run()
+        # Fade transitions consume some frames, so result is slightly shorter
+        assert result.total_seconds < DURATION
+        assert result.total_seconds > DURATION - 2  # at most 1s lost from 2 fades
+
+    def test_default_transition(self, cam_paths):
+        """Default transition applies when cut has no explicit transition."""
+        edit = MultiCamEdit(
+            sources=cam_paths,
+            cuts=[
+                CutPoint(time=0.0, camera="cam1"),
+                CutPoint(time=5.0, camera="cam2"),
+            ],
+            default_transition=FadeTransition(0.5),
+        )
+        result = edit.run()
+        assert result.total_seconds < DURATION
+
+    def test_audio_replacement(self, cam_paths, audio_path):
+        """External audio replaces camera audio."""
+        edit = MultiCamEdit(
+            sources=cam_paths,
+            cuts=[CutPoint(time=0.0, camera="cam1")],
+            audio_source=audio_path,
+        )
+        result = edit.run()
+        assert not result.audio.is_silent
+
+    def test_silence_when_no_audio(self, cam_paths):
+        """No audio source means silent output."""
+        edit = MultiCamEdit(
+            sources=cam_paths,
+            cuts=[CutPoint(time=0.0, camera="cam1")],
+        )
+        result = edit.run()
+        assert result.audio.is_silent
+
+
+# ---------------------------------------------------------------------------
+# Serialization tests
+# ---------------------------------------------------------------------------
+
+
+class TestSerialization:
+    def test_roundtrip(self, cam_paths, audio_path):
+        edit = MultiCamEdit(
+            sources=cam_paths,
+            cuts=[
+                CutPoint(time=0.0, camera="cam1"),
+                CutPoint(time=3.0, camera="cam2", transition=FadeTransition(0.5)),
+                CutPoint(time=7.0, camera="cam3"),
+            ],
+            audio_source=audio_path,
+            default_transition=InstantTransition(),
+        )
+        data = edit.to_dict()
+        restored = MultiCamEdit.from_dict(data)
+
+        assert restored.to_dict() == data
+
+    def test_from_json(self, cam_paths):
+        data = {
+            "sources": {k: str(v) for k, v in cam_paths.items()},
+            "cuts": [
+                {"time": 0.0, "camera": "cam1"},
+                {"time": 5.0, "camera": "cam2"},
+            ],
+        }
+        edit = MultiCamEdit.from_json(json.dumps(data))
+        assert len(edit.cuts) == 2
+        assert isinstance(edit.default_transition, InstantTransition)
+
+    def test_from_json_invalid(self):
+        with pytest.raises(ValueError, match="Invalid MultiCamEdit JSON"):
+            MultiCamEdit.from_json("not json")
+
+    def test_from_dict_missing_sources(self):
+        with pytest.raises(ValueError, match="non-empty 'sources'"):
+            MultiCamEdit.from_dict({"cuts": [{"time": 0, "camera": "x"}]})
+
+    def test_from_dict_missing_cuts(self, cam_paths):
+        with pytest.raises(ValueError, match="non-empty 'cuts'"):
+            MultiCamEdit.from_dict({"sources": {k: str(v) for k, v in cam_paths.items()}})
