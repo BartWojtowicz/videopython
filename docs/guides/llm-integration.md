@@ -251,6 +251,29 @@ from videopython.editing import VideoEdit
 schema = VideoEdit.json_schema()  # now includes AI ops
 ```
 
+## Multicam Editing Plans
+
+For podcast-style multicam editing, use `MultiCamEdit.json_schema()` the same way:
+
+```python
+from videopython.editing import MultiCamEdit
+
+schema = MultiCamEdit.json_schema()
+
+# LLM generates a multicam plan
+plan = call_your_llm(
+    schema=schema,
+    prompt="Edit this podcast with 3 cameras. Switch every 15-30 seconds with fade transitions.",
+)
+
+edit = MultiCamEdit.from_dict(plan)
+predicted = edit.validate()  # fast metadata-only check
+video = edit.run()
+video.save("podcast.mp4")
+```
+
+The schema includes transition types (instant, fade, blur) with their parameters and constraints. The LLM decides which camera to use at each cut point and which transitions to apply.
+
 ## Tips for Building LLM Video Agents
 
 - **Start with the schema.** Pass `VideoEdit.json_schema()` as the tool schema - it encodes all structural rules so the LLM doesn't need to learn them from examples.
