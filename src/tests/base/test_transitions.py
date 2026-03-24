@@ -1,9 +1,11 @@
 import numpy as np
+import pytest
 
 from videopython.base.transitions import (
     BlurTransition,
     FadeTransition,
     InstantTransition,
+    Transition,
 )
 from videopython.base.video import Video
 
@@ -38,3 +40,28 @@ def test_blur_transition(small_video):
     org_length = len(small_video.frames)
     result = BlurTransition(effect_time_seconds=2.0).apply((small_video, small_video.copy()))
     assert len(result.frames) == 2 * org_length
+
+
+@pytest.mark.parametrize(
+    "transition",
+    [
+        InstantTransition(),
+        FadeTransition(effect_time_seconds=0.5),
+        BlurTransition(effect_time_seconds=1.5, blur_iterations=400, blur_kernel_size=(11, 11)),
+    ],
+)
+def test_transition_serialization_roundtrip(transition):
+    data = transition.to_dict()
+    restored = Transition.from_dict(data)
+    assert type(restored) is type(transition)
+    assert restored.to_dict() == data
+
+
+def test_transition_from_dict_unknown_type():
+    with pytest.raises(ValueError, match="Unknown transition type"):
+        Transition.from_dict({"type": "nonexistent"})
+
+
+def test_transition_from_dict_missing_type():
+    with pytest.raises(ValueError, match="must have a 'type' key"):
+        Transition.from_dict({})

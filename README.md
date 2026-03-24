@@ -52,7 +52,7 @@ final.save("output.mp4")
 Define multi-segment edits as JSON - useful for LLM-driven workflows. `VideoEdit.json_schema()` returns a schema for plan generation/validation.
 
 ```python
-from videopython.base import VideoEdit
+from videopython.editing import VideoEdit
 
 plan = {
     "segments": [{
@@ -75,6 +75,26 @@ final = edit.run()
 final.save("output.mp4")
 ```
 
+### Multicam podcast editing
+
+Switch between synchronized camera angles with transitions:
+
+```python
+from videopython.editing import MultiCamEdit, CutPoint
+from videopython.base import FadeTransition
+
+edit = MultiCamEdit(
+    sources={"wide": "cam1.mp4", "closeup": "cam2.mp4"},
+    audio_source="podcast_audio.aac",
+    cuts=[
+        CutPoint(time=0.0, camera="wide"),
+        CutPoint(time=15.0, camera="closeup", transition=FadeTransition(0.5)),
+        CutPoint(time=45.0, camera="wide", transition=FadeTransition(0.5)),
+    ],
+)
+edit.run().save("podcast.mp4")
+```
+
 ### AI generation
 
 ```python
@@ -93,7 +113,7 @@ videopython is designed to be controlled by LLMs. Every video operation exposes 
 **Schema generation** - `VideoEdit.json_schema()` returns a complete JSON Schema describing valid edit plans. Pass it directly as a tool schema or structured-output format to any LLM API:
 
 ```python
-from videopython.base import VideoEdit
+from videopython.editing import VideoEdit
 
 schema = VideoEdit.json_schema()
 # Pass `schema` to your LLM as a function/tool definition or response format.
@@ -130,6 +150,7 @@ Docs: [Editing Plans](https://videopython.com/api/editing/) | [Operation Registr
 |---|---|
 | **Video I/O** | `Video`, `VideoMetadata`, `FrameIterator` - load, save, inspect |
 | **Editing plans** | `VideoEdit`, `SegmentConfig` - JSON/LLM-friendly multi-segment plans with full JSON Schema generation, dry-run validation, and operation registry |
+| **Multicam editing** | `MultiCamEdit`, `CutPoint` - switch between synchronized camera angles with transitions, replace audio with external track |
 | **Transforms** | Cut (time/frame), resize, crop, FPS resampling, speed change, picture-in-picture, reverse, freeze frame, silence removal |
 | **Transitions** | `FadeTransition`, `BlurTransition`, `InstantTransition` |
 | **Effects** | Blur, zoom, color grading, vignette, Ken Burns, image overlay, fade, text overlay, volume adjust |

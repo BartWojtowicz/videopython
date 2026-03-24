@@ -1,4 +1,4 @@
-# Editing Plans (`VideoEdit`)
+# Editing Plans
 
 `VideoEdit` represents a complete multi-segment editing plan:
 
@@ -19,7 +19,7 @@ This is the recommended API for JSON/LLM-generated editing plans.
 ## Quick Start
 
 ```python
-from videopython.base import VideoEdit
+from videopython.editing import VideoEdit
 
 plan = {
     "segments": [
@@ -101,7 +101,7 @@ Notes:
 Some operations need side-channel data that shouldn't be part of the JSON plan (e.g. transcription for `silence_removal`). Pass it via the `context` parameter:
 
 ```python
-from videopython.base import VideoEdit
+from videopython.editing import VideoEdit
 
 edit = VideoEdit.from_dict(plan)
 video = edit.run(context={"transcription": my_transcription})
@@ -176,7 +176,7 @@ If a plan references AI ops (for example `face_crop`, `split_screen`), import AI
 
 ```python
 import videopython.ai  # registers AI ops
-from videopython.base import VideoEdit
+from videopython.editing import VideoEdit
 
 edit = VideoEdit.from_dict(plan)
 ```
@@ -188,7 +188,7 @@ edit = VideoEdit.from_dict(plan)
 Use `VideoEdit.json_schema()` to get a parser-aligned JSON Schema for the current registry state. The schema is designed to be passed directly to LLM APIs as a tool definition or structured-output format.
 
 ```python
-from videopython.base import VideoEdit
+from videopython.editing import VideoEdit
 
 schema = VideoEdit.json_schema()
 print(schema["properties"]["segments"]["minItems"])  # 1
@@ -199,7 +199,7 @@ print(schema["properties"]["segments"]["minItems"])  # 1
 The schema encodes all structural rules - valid operation IDs, required fields, parameter types, and value constraints - so the LLM does not need to learn them from examples:
 
 ```python
-from videopython.base import VideoEdit
+from videopython.editing import VideoEdit
 
 schema = VideoEdit.json_schema()
 
@@ -228,14 +228,83 @@ For complete examples with OpenAI and Anthropic APIs, see the [LLM Integration G
 - deep-copied step args / apply args
 - stable output even if live operation instances are mutated after parsing
 
+---
+
+# Multicam Editing (`MultiCamEdit`)
+
+`MultiCamEdit` is for podcast-style multicam recordings: switch between synchronized
+camera angles at specified cut points with transitions, and replace audio with an
+external track.
+
+## Quick Start
+
+```python
+from videopython.editing import MultiCamEdit, CutPoint
+from videopython.base import FadeTransition
+
+edit = MultiCamEdit(
+    sources={
+        "wide": "cam1.mp4",
+        "closeup1": "cam2.mp4",
+        "closeup2": "cam3.mp4",
+    },
+    audio_source="podcast_audio.aac",
+    cuts=[
+        CutPoint(time=0.0, camera="wide"),
+        CutPoint(time=15.0, camera="closeup1", transition=FadeTransition(0.5)),
+        CutPoint(time=45.0, camera="wide", transition=FadeTransition(0.5)),
+        CutPoint(time=60.0, camera="closeup2"),
+    ],
+)
+
+video = edit.run()
+video.save("podcast.mp4")
+```
+
+## Data Model
+
+- **`sources`**: Named camera angles as `dict[str, Path]`.
+- **`cuts`**: Ordered list of `CutPoint`s. First cut must start at `time=0.0`.
+  Each segment runs from its `time` until the next cut's `time` (last segment
+  runs to end of source).
+- **`audio_source`**: Optional external audio file. If `None`, output is silent.
+  Camera mic audio is always discarded.
+- **`default_transition`**: Transition used between cuts when a `CutPoint` has no
+  explicit `transition`. Defaults to `InstantTransition` (hard cut).
+
+## Requirements
+
+- All sources must have identical fps and resolution.
+- All sources must be synchronized (same start time and duration).
+- Cuts must be in strictly ascending order.
+
+## JSON Serialization
+
+```python
+# Serialize
+data = edit.to_dict()
+
+# Deserialize
+edit = MultiCamEdit.from_dict(data)
+edit = MultiCamEdit.from_json('{"sources": {...}, "cuts": [...]}')
+```
+
 ## API Reference
 
 ### VideoEdit
 
-::: videopython.base.VideoEdit
+::: videopython.editing.VideoEdit
 
 ### SegmentConfig
 
 `SegmentConfig` is still exported, but most users should construct plans via `VideoEdit.from_dict(...)` or `VideoEdit.from_json(...)`.
 
-::: videopython.base.SegmentConfig
+::: videopython.editing.SegmentConfig
+
+### MultiCamEdit
+
+::: videopython.editing.MultiCamEdit
+
+### CutPoint
+
+::: videopython.editing.CutPoint

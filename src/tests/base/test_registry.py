@@ -281,7 +281,7 @@ def test_new_operation_aliases_registered() -> None:
 
 
 def test_json_schema_includes_new_ops() -> None:
-    from videopython.base.edit import VideoEdit
+    from videopython.editing.video_edit import VideoEdit
 
     schema = VideoEdit.json_schema()
     transform_schemas = schema["properties"]["segments"]["items"]["properties"]["transforms"]["items"]["oneOf"]

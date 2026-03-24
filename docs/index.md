@@ -34,7 +34,7 @@ final.save("output.mp4")
 
 ### Core Editing
 
-Cut, resize, crop, change speed, reverse, freeze frames, picture-in-picture. Combine clips with fade, blur, and instant transitions.
+Cut, resize, crop, change speed, reverse, freeze frames, picture-in-picture. Combine clips with fade, blur, and instant transitions. Multicam editing for podcast-style recordings.
 
 </div>
 

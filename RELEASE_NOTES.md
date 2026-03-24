@@ -1,5 +1,17 @@
 # Release Notes
 
+## 0.25.0
+
+### Added
+
+- `MultiCamEdit` and `CutPoint` for multicam podcast-style editing -- switch between synchronized camera angles at specified cut points with transitions, and replace audio with an external track.
+- `Transition.to_dict()` and `Transition.from_dict()` for JSON serialization of all transition types (`InstantTransition`, `FadeTransition`, `BlurTransition`).
+- New `videopython.editing` package grouping all editing plan logic (`VideoEdit`, `SegmentConfig`, `MultiCamEdit`, `CutPoint`).
+
+### Changed
+
+- **Breaking:** `VideoEdit` and `SegmentConfig` moved from `videopython.base.edit` to `videopython.editing`. Update imports from `from videopython.base import VideoEdit` to `from videopython.editing import VideoEdit`.
+
 ## 0.24.2
 
 ### Added

@@ -1,0 +1,218 @@
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Sequence
+
+from videopython.base.audio import Audio
+from videopython.base.transitions import InstantTransition, Transition
+from videopython.base.video import Video, VideoMetadata
+
+__all__ = [
+    "CutPoint",
+    "MultiCamEdit",
+]
+
+
+@dataclass(frozen=True)
+class CutPoint:
+    """A camera switch point in a multicam timeline.
+
+    Attributes:
+        time: Seconds into the timeline where this cut happens.
+        camera: Key into the MultiCamEdit.sources dict.
+        transition: Transition to use when switching to this camera.
+            None means use the MultiCamEdit.default_transition.
+    """
+
+    time: float
+    camera: str
+    transition: Transition | None = None
+
+
+class MultiCamEdit:
+    """Multicam timeline editor for podcast-style recordings.
+
+    Switches between synchronized camera angles at specified cut points,
+    joining segments with transitions and replacing audio with an external
+    track (or silence).
+    """
+
+    def __init__(
+        self,
+        sources: dict[str, str | Path],
+        cuts: Sequence[CutPoint],
+        audio_source: str | Path | None = None,
+        default_transition: Transition | None = None,
+    ):
+        if not sources:
+            raise ValueError("MultiCamEdit requires at least one source")
+        if not cuts:
+            raise ValueError("MultiCamEdit requires at least one cut point")
+
+        self.sources: dict[str, Path] = {k: Path(v) for k, v in sources.items()}
+        self.cuts: tuple[CutPoint, ...] = tuple(cuts)
+        self.audio_source: Path | None = Path(audio_source) if audio_source else None
+        self.default_transition: Transition = default_transition or InstantTransition()
+
+        self._validate()
+
+    def _validate(self) -> None:
+        # Sources must exist
+        for name, path in self.sources.items():
+            if not path.exists():
+                raise FileNotFoundError(f"Source '{name}' not found: {path}")
+
+        # Audio source must exist if provided
+        if self.audio_source and not self.audio_source.exists():
+            raise FileNotFoundError(f"Audio source not found: {self.audio_source}")
+
+        # First cut must start at time 0
+        if self.cuts[0].time != 0.0:
+            raise ValueError(f"First cut must start at time 0.0, got {self.cuts[0].time}")
+
+        # Cuts must be in ascending order
+        for i in range(1, len(self.cuts)):
+            if self.cuts[i].time <= self.cuts[i - 1].time:
+                raise ValueError(
+                    f"Cuts must be in strictly ascending order: "
+                    f"cut {i} time ({self.cuts[i].time}) <= cut {i - 1} time ({self.cuts[i - 1].time})"
+                )
+
+        # All camera references must be valid
+        for i, cut in enumerate(self.cuts):
+            if cut.camera not in self.sources:
+                raise ValueError(
+                    f"Cut {i} references unknown camera '{cut.camera}'. Available: {sorted(self.sources.keys())}"
+                )
+
+        # All sources must have compatible fps and resolution
+        metas: dict[str, VideoMetadata] = {}
+        for name, path in self.sources.items():
+            metas[name] = VideoMetadata.from_path(str(path))
+
+        meta_list = list(metas.values())
+        first = meta_list[0]
+        for name, meta in metas.items():
+            if meta.fps != first.fps:
+                raise ValueError(
+                    f"Source '{name}' has fps {meta.fps}, expected {first.fps}. All sources must have the same fps."
+                )
+            if (meta.width, meta.height) != (first.width, first.height):
+                raise ValueError(
+                    f"Source '{name}' has resolution {meta.width}x{meta.height}, "
+                    f"expected {first.width}x{first.height}. "
+                    f"All sources must have the same resolution."
+                )
+
+        # Cuts must not exceed source duration
+        self._source_duration = first.total_seconds
+        for i, cut in enumerate(self.cuts):
+            if cut.time > self._source_duration:
+                raise ValueError(f"Cut {i} time ({cut.time}) exceeds source duration ({self._source_duration}s)")
+
+    def run(self) -> Video:
+        """Execute the multicam edit and return the final video."""
+        source_duration = self._source_duration
+
+        # Build time ranges: each segment runs from its cut time to the next cut time
+        segments: list[tuple[CutPoint, float, float]] = []
+        for i, cut in enumerate(self.cuts):
+            start = cut.time
+            end = self.cuts[i + 1].time if i + 1 < len(self.cuts) else source_duration
+            segments.append((cut, start, end))
+
+        # Load and join segments
+        result: Video | None = None
+        for i, (cut, start, end) in enumerate(segments):
+            source_path = self.sources[cut.camera]
+            segment = Video.from_path(str(source_path), start_second=start, end_second=end)
+
+            if result is None:
+                result = segment
+            else:
+                transition = cut.transition or self.default_transition
+                result = transition.apply((result, segment))
+
+        assert result is not None
+
+        # Replace audio
+        if self.audio_source:
+            audio = Audio.from_path(self.audio_source)
+            audio = audio.fit_to_duration(result.total_seconds)
+        else:
+            audio = Audio.create_silent(
+                duration_seconds=result.total_seconds,
+                sample_rate=result.audio.metadata.sample_rate,
+            )
+        result.audio = audio
+
+        return result
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a JSON-compatible dict."""
+        result: dict[str, Any] = {
+            "sources": {k: str(v) for k, v in self.sources.items()},
+            "cuts": [],
+            "default_transition": self.default_transition.to_dict(),
+        }
+        if self.audio_source:
+            result["audio_source"] = str(self.audio_source)
+
+        for cut in self.cuts:
+            cut_dict: dict[str, Any] = {"time": cut.time, "camera": cut.camera}
+            if cut.transition is not None:
+                cut_dict["transition"] = cut.transition.to_dict()
+            result["cuts"].append(cut_dict)
+
+        return result
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> MultiCamEdit:
+        """Deserialize from a dict."""
+        if not isinstance(data, dict):
+            raise ValueError("MultiCamEdit plan must be a JSON object")
+
+        sources = data.get("sources")
+        if not isinstance(sources, dict) or not sources:
+            raise ValueError("MultiCamEdit plan must have a non-empty 'sources' dict")
+
+        cuts_data = data.get("cuts")
+        if not isinstance(cuts_data, list) or not cuts_data:
+            raise ValueError("MultiCamEdit plan must have a non-empty 'cuts' list")
+
+        cuts: list[CutPoint] = []
+        for i, cut_data in enumerate(cuts_data):
+            if not isinstance(cut_data, dict):
+                raise ValueError(f"cuts[{i}] must be an object")
+            transition = None
+            if "transition" in cut_data:
+                transition = Transition.from_dict(cut_data["transition"])
+            cuts.append(
+                CutPoint(
+                    time=cut_data["time"],
+                    camera=cut_data["camera"],
+                    transition=transition,
+                )
+            )
+
+        default_transition = None
+        if "default_transition" in data:
+            default_transition = Transition.from_dict(data["default_transition"])
+
+        return cls(
+            sources=sources,
+            cuts=cuts,
+            audio_source=data.get("audio_source"),
+            default_transition=default_transition,
+        )
+
+    @classmethod
+    def from_json(cls, text: str) -> MultiCamEdit:
+        """Deserialize from a JSON string."""
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid MultiCamEdit JSON: {e.msg} at line {e.lineno} column {e.colno}") from e
+        return cls.from_dict(data)

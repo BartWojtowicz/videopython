@@ -1,6 +1,6 @@
 import math
 from abc import ABC, abstractmethod
-from typing import final
+from typing import Any, final
 
 import numpy as np
 
@@ -14,6 +14,8 @@ __all__ = [
     "FadeTransition",
     "BlurTransition",
 ]
+
+_TRANSITION_REGISTRY: dict[str, type["Transition"]] = {}
 
 
 class Transition(ABC):
@@ -33,12 +35,36 @@ class Transition(ABC):
     def _apply(self, videos: tuple[Video, Video]) -> Video:
         pass
 
+    @abstractmethod
+    def to_dict(self) -> dict[str, Any]:
+        pass
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Transition":
+        if not isinstance(data, dict) or "type" not in data:
+            raise ValueError("Transition dict must have a 'type' key")
+        transition_type = data["type"]
+        if transition_type not in _TRANSITION_REGISTRY:
+            raise ValueError(f"Unknown transition type: '{transition_type}'")
+        return _TRANSITION_REGISTRY[transition_type]._from_dict(data)
+
+    @classmethod
+    def _from_dict(cls, data: dict[str, Any]) -> "Transition":
+        raise NotImplementedError
+
 
 class InstantTransition(Transition):
     """Hard cut between two videos with no transition effect."""
 
     def _apply(self, videos: tuple[Video, Video]) -> Video:
         return videos[0] + videos[1]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"type": "instant"}
+
+    @classmethod
+    def _from_dict(cls, data: dict[str, Any]) -> "InstantTransition":
+        return cls()
 
 
 class FadeTransition(Transition):
@@ -55,6 +81,13 @@ class FadeTransition(Transition):
                 fades out while the second fades in.
         """
         self.effect_time_seconds = effect_time_seconds
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"type": "fade", "effect_time_seconds": self.effect_time_seconds}
+
+    @classmethod
+    def _from_dict(cls, data: dict[str, Any]) -> "FadeTransition":
+        return cls(effect_time_seconds=data["effect_time_seconds"])
 
     def fade(self, frames1, frames2):
         if len(frames1) != len(frames2):
@@ -109,6 +142,25 @@ class BlurTransition(Transition):
         self.blur_iterations = blur_iterations
         self.blur_kernel_size = blur_kernel_size
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "type": "blur",
+            "effect_time_seconds": self.effect_time_seconds,
+            "blur_iterations": self.blur_iterations,
+            "blur_kernel_size": list(self.blur_kernel_size),
+        }
+
+    @classmethod
+    def _from_dict(cls, data: dict[str, Any]) -> "BlurTransition":
+        kwargs: dict[str, Any] = {}
+        if "effect_time_seconds" in data:
+            kwargs["effect_time_seconds"] = data["effect_time_seconds"]
+        if "blur_iterations" in data:
+            kwargs["blur_iterations"] = data["blur_iterations"]
+        if "blur_kernel_size" in data:
+            kwargs["blur_kernel_size"] = tuple(data["blur_kernel_size"])
+        return cls(**kwargs)
+
     def _apply(self, videos: tuple[Video, Video]) -> Video:
         video_fps = videos[0].fps
         for video in videos:
@@ -136,3 +188,12 @@ class BlurTransition(Transition):
         )
         blurred_videos.audio = videos[0].audio.concat(videos[1].audio)
         return blurred_videos
+
+
+_TRANSITION_REGISTRY.update(
+    {
+        "instant": InstantTransition,
+        "fade": FadeTransition,
+        "blur": BlurTransition,
+    }
+)
