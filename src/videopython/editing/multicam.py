@@ -46,6 +46,7 @@ class MultiCamEdit:
         cuts: Sequence[CutPoint],
         audio_source: str | Path | None = None,
         default_transition: Transition | None = None,
+        source_offsets: dict[str, float] | None = None,
     ):
         if not sources:
             raise ValueError("MultiCamEdit requires at least one source")
@@ -56,6 +57,7 @@ class MultiCamEdit:
         self.cuts: tuple[CutPoint, ...] = tuple(cuts)
         self.audio_source: Path | None = Path(audio_source) if audio_source else None
         self.default_transition: Transition = default_transition or InstantTransition()
+        self.source_offsets: dict[str, float] = source_offsets or {}
 
         self._validate()
 
@@ -88,6 +90,13 @@ class MultiCamEdit:
                     f"Cut {i} references unknown camera '{cut.camera}'. Available: {sorted(self.sources.keys())}"
                 )
 
+        # All offset keys must reference valid sources
+        for name in self.source_offsets:
+            if name not in self.sources:
+                raise ValueError(
+                    f"source_offsets references unknown source '{name}'. Available: {sorted(self.sources.keys())}"
+                )
+
         # All sources must have compatible fps and resolution
         metas: dict[str, VideoMetadata] = {}
         for name, path in self.sources.items():
@@ -110,11 +119,32 @@ class MultiCamEdit:
         # Cache source metadata for validate() and run()
         self._source_meta = first
         self._source_duration = first.total_seconds
+        self._source_metas = metas
 
-        # Cuts must not exceed source duration
+        # Build per-camera time ranges (cut start, cut end) from the timeline
+        camera_ranges: dict[str, list[tuple[float, float]]] = {}
         for i, cut in enumerate(self.cuts):
-            if cut.time > self._source_duration:
-                raise ValueError(f"Cut {i} time ({cut.time}) exceeds source duration ({self._source_duration}s)")
+            start = cut.time
+            end = self.cuts[i + 1].time if i + 1 < len(self.cuts) else self._source_duration
+            camera_ranges.setdefault(cut.camera, []).append((start, end))
+
+        # Validate adjusted seek positions per source
+        for camera, ranges in camera_ranges.items():
+            offset = self.source_offsets.get(camera, 0.0)
+            source_dur = metas[camera].total_seconds
+            for start, end in ranges:
+                adj_start = start - offset
+                adj_end = end - offset
+                if adj_start < 0:
+                    raise ValueError(
+                        f"Cut at timeline {start}s for '{camera}' (offset {offset}s) "
+                        f"results in negative seek position ({adj_start}s)"
+                    )
+                if adj_end > source_dur:
+                    raise ValueError(
+                        f"Cut ending at timeline {end}s for '{camera}' (offset {offset}s) "
+                        f"exceeds source duration ({source_dur}s)"
+                    )
 
     def run(self) -> Video:
         """Execute the multicam edit and return the final video."""
@@ -131,7 +161,8 @@ class MultiCamEdit:
         result: Video | None = None
         for i, (cut, start, end) in enumerate(segments):
             source_path = self.sources[cut.camera]
-            segment = Video.from_path(str(source_path), start_second=start, end_second=end)
+            offset = self.source_offsets.get(cut.camera, 0.0)
+            segment = Video.from_path(str(source_path), start_second=start - offset, end_second=end - offset)
 
             if result is None:
                 result = segment
@@ -258,6 +289,12 @@ class MultiCamEdit:
                     "additionalProperties": {"type": "string"},
                     "minProperties": 1,
                 },
+                "source_offsets": {
+                    "type": "object",
+                    "additionalProperties": {"type": "number"},
+                    "description": "Per-source time offsets in seconds. "
+                    "Positive means the source starts later than the timeline origin.",
+                },
                 "audio_source": {
                     "type": "string",
                     "description": "Path to external audio track. Omit for silent output.",
@@ -284,6 +321,8 @@ class MultiCamEdit:
             "cuts": [],
             "default_transition": self.default_transition.to_dict(),
         }
+        if self.source_offsets:
+            result["source_offsets"] = dict(self.source_offsets)
         if self.audio_source:
             result["audio_source"] = str(self.audio_source)
 
@@ -333,6 +372,7 @@ class MultiCamEdit:
             cuts=cuts,
             audio_source=data.get("audio_source"),
             default_transition=default_transition,
+            source_offsets=data.get("source_offsets"),
         )
 
     @classmethod
