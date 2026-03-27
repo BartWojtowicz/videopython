@@ -1,5 +1,11 @@
 # Release Notes
 
+## 0.25.2
+
+### Added
+
+- `MultiCamEdit` now accepts an optional `source_offsets` parameter -- a dict mapping camera names to time offsets in seconds. This allows aligning sources that started recording at different times without pre-trimming files. Fully supported in validation, execution, serialization, and JSON schema.
+
 ## 0.25.1
 
 ### Added

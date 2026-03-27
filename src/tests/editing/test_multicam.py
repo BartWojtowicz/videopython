@@ -151,6 +151,35 @@ class TestValidation:
                 ],
             )
 
+    def test_unknown_offset_key(self, cam_paths):
+        with pytest.raises(ValueError, match="source_offsets references unknown source 'nonexistent'"):
+            MultiCamEdit(
+                sources=cam_paths,
+                cuts=[CutPoint(time=0.0, camera="cam1")],
+                source_offsets={"nonexistent": 1.0},
+            )
+
+    def test_negative_adjusted_seek(self, cam_paths):
+        """Offset larger than cut time results in negative seek."""
+        with pytest.raises(ValueError, match="negative seek position"):
+            MultiCamEdit(
+                sources=cam_paths,
+                cuts=[
+                    CutPoint(time=0.0, camera="cam1"),
+                    CutPoint(time=2.0, camera="cam2"),
+                ],
+                source_offsets={"cam2": 5.0},
+            )
+
+    def test_adjusted_end_exceeds_duration(self, cam_paths):
+        """Negative offset pushes adjusted end past source duration."""
+        with pytest.raises(ValueError, match="exceeds source duration"):
+            MultiCamEdit(
+                sources=cam_paths,
+                cuts=[CutPoint(time=0.0, camera="cam1")],
+                source_offsets={"cam1": -3.0},
+            )
+
 
 # ---------------------------------------------------------------------------
 # Execution tests
@@ -230,6 +259,33 @@ class TestRun:
         result = edit.run()
         assert result.audio.is_silent
 
+    def test_source_offsets(self, cam_paths):
+        """Source offsets adjust seek positions correctly."""
+        edit = MultiCamEdit(
+            sources=cam_paths,
+            cuts=[
+                CutPoint(time=0.0, camera="cam1"),
+                CutPoint(time=5.0, camera="cam2"),
+            ],
+            source_offsets={"cam2": 3.0},
+        )
+        result = edit.run()
+        # cam1: 0-5s from file, cam2: timeline 5-10 -> file 2-7s
+        # Total output should still be ~10s
+        assert abs(result.total_seconds - DURATION) < 0.5
+
+    def test_source_offsets_no_offset_is_default(self, cam_paths):
+        """Omitting source_offsets gives same result as empty dict."""
+        cuts = [
+            CutPoint(time=0.0, camera="cam1"),
+            CutPoint(time=5.0, camera="cam2"),
+        ]
+        edit_no_offsets = MultiCamEdit(sources=cam_paths, cuts=cuts)
+        edit_empty = MultiCamEdit(sources=cam_paths, cuts=cuts, source_offsets={})
+        r1 = edit_no_offsets.run()
+        r2 = edit_empty.run()
+        assert abs(r1.total_seconds - r2.total_seconds) < 0.1
+
 
 # ---------------------------------------------------------------------------
 # Serialization tests
@@ -252,6 +308,30 @@ class TestSerialization:
         restored = MultiCamEdit.from_dict(data)
 
         assert restored.to_dict() == data
+
+    def test_roundtrip_with_offsets(self, cam_paths):
+        edit = MultiCamEdit(
+            sources=cam_paths,
+            cuts=[
+                CutPoint(time=0.0, camera="cam1"),
+                CutPoint(time=5.0, camera="cam2"),
+            ],
+            source_offsets={"cam2": 3.0},
+        )
+        data = edit.to_dict()
+        assert data["source_offsets"] == {"cam2": 3.0}
+        restored = MultiCamEdit.from_dict(data)
+        assert restored.source_offsets == {"cam2": 3.0}
+        assert restored.to_dict() == data
+
+    def test_roundtrip_without_offsets(self, cam_paths):
+        """source_offsets is omitted from dict when empty."""
+        edit = MultiCamEdit(
+            sources=cam_paths,
+            cuts=[CutPoint(time=0.0, camera="cam1")],
+        )
+        data = edit.to_dict()
+        assert "source_offsets" not in data
 
     def test_from_json(self, cam_paths):
         data = {
@@ -363,6 +443,12 @@ class TestJsonSchema:
         assert "sources" in schema["properties"]
         assert "cuts" in schema["properties"]
         assert schema["required"] == ["sources", "cuts"]
+
+    def test_schema_has_source_offsets(self):
+        schema = MultiCamEdit.json_schema()
+        offsets_schema = schema["properties"]["source_offsets"]
+        assert offsets_schema["type"] == "object"
+        assert offsets_schema["additionalProperties"] == {"type": "number"}
 
     def test_schema_has_transition_options(self):
         schema = MultiCamEdit.json_schema()
