@@ -30,7 +30,7 @@ pip install videopython          # core video/audio editing
 pip install "videopython[ai]"    # + local AI features (GPU recommended)
 ```
 
-Python `>=3.10, <3.13`. AI features run locally - no cloud API keys required, but model weights are downloaded on first use.
+Python `>=3.10, <3.14`. AI features run locally - no cloud API keys required, but model weights are downloaded on first use.
 
 ## Quick Start
 

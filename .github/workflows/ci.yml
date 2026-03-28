@@ -5,8 +5,11 @@ on:
 
 jobs:
   base_tests:
-    name: Base tests (no AI)
+    name: Base tests (no AI) - Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["312", "313"]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -17,15 +20,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install ffmpeg -y
       - name: Set up Python
-        run: uv python install 312
+        run: uv python install ${{ matrix.python-version }}
       - name: Install dependencies
-        run: uv sync --dev
+        run: uv sync --python ${{ matrix.python-version }} --dev
       - name: Run base tests
         run: uv run pytest src/tests/base --cov=src/videopython/base --cov-report=term --cov-report=term-missing
 
   ai_tests:
-    name: AI tests (lightweight)
+    name: AI tests (lightweight) - Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["312", "313"]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -36,9 +42,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install ffmpeg -y
       - name: Set up Python
-        run: uv python install 312
+        run: uv python install ${{ matrix.python-version }}
       - name: Install all dependencies
-        run: uv sync --all-extras --group ai
+        run: uv sync --python ${{ matrix.python-version }} --all-extras --group ai
       - name: Run AI tests (skip heavy model downloads)
         run: uv run pytest src/tests/ai -m "not requires_model_download" -v
 

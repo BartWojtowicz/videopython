@@ -1,5 +1,11 @@
 # Release Notes
 
+## 0.25.3
+
+### Added
+
+- Python 3.13 support. Updated `requires-python` to `>=3.10, <3.14` and added 3.13 to CI test matrix.
+
 ## 0.25.2
 
 ### Added
