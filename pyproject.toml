@@ -1,6 +1,6 @@
 [project]
 name = "videopython"
-version = "0.25.2"
+version = "0.25.3"
 description = "Minimal video generation and processing library."
 authors = [
     { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
@@ -9,7 +9,7 @@ authors = [
 ]
 license = { text = "Apache-2.0" }
 readme = "README.md"
-requires-python = ">=3.10, <3.13"
+requires-python = ">=3.10, <3.14"
 keywords = [
     "python",
     "videopython",
@@ -27,6 +27,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Operating System :: OS Independent",
 ]
 
