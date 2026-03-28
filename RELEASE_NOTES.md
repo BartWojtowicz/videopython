@@ -1,5 +1,11 @@
 # Release Notes
 
+## 0.25.4
+
+### Added
+
+- `to_premiere_xml(edit)` -- export a `MultiCamEdit` plan to FCP7 XML (xmeml) for direct import into Adobe Premiere Pro. Supports all sources, cuts, source offsets, external audio, and fade transitions (cross dissolve). Available via `from videopython.editing import to_premiere_xml`.
+
 ## 0.25.3
 
 ### Added
