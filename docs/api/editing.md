@@ -309,6 +309,46 @@ edit = MultiCamEdit.from_dict(data)
 edit = MultiCamEdit.from_json('{"sources": {...}, "cuts": [...]}')
 ```
 
+## Premiere XML Export
+
+Export a `MultiCamEdit` plan to FCP7 XML (xmeml) for direct import into
+Adobe Premiere Pro:
+
+```python
+from videopython.editing import MultiCamEdit, CutPoint, to_premiere_xml
+
+edit = MultiCamEdit(
+    sources={"wide": "cam1.mp4", "closeup": "cam2.mp4"},
+    audio_source="podcast_audio.aac",
+    cuts=[
+        CutPoint(time=0.0, camera="wide"),
+        CutPoint(time=15.0, camera="closeup"),
+        CutPoint(time=45.0, camera="wide"),
+    ],
+)
+
+xml = to_premiere_xml(edit)
+Path("project.xml").write_text(xml)
+```
+
+Import in Premiere via **File > Import** and select the `.xml` file.
+
+### What gets exported
+
+- Each cut becomes a `<clipitem>` on the video track, directly referencing
+  its source file. Source offsets are baked into the `in`/`out` points.
+- External audio becomes a single continuous clip on stereo audio tracks.
+- `FadeTransition` becomes a Cross Dissolve `<transitionitem>` on the
+  video track.
+- `InstantTransition` is a hard cut (no transition element).
+
+### Known limitations
+
+- `BlurTransition` has no xmeml equivalent and is exported as a hard cut.
+- File paths are absolute `file://localhost/` URLs. Not portable across
+  machines without relinking media in Premiere.
+- Audio tracks assume stereo (2 channels).
+
 ## API Reference
 
 ### VideoEdit
