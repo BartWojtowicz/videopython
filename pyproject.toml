@@ -74,6 +74,8 @@ ai = [
     "transnetv2-pytorch>=1.0.5",
     # Voice cloning TTS (coqui-tts is the maintained fork of TTS)
     "coqui-tts>=0.24.0",
+    # Translation (Marian MT tokenizer requires sentencepiece)
+    "sentencepiece>=0.1.99",
     # Audio source separation
     "demucs>=4.0.0",
 ]
@@ -109,6 +111,8 @@ ai = [
     "transnetv2-pytorch>=1.0.5",
     # Voice cloning TTS (coqui-tts is the maintained fork of TTS)
     "coqui-tts>=0.24.0",
+    # Translation (Marian MT tokenizer requires sentencepiece)
+    "sentencepiece>=0.1.99",
     # Audio source separation
     "demucs>=4.0.0",
 ]
