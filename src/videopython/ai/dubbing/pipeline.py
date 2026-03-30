@@ -32,7 +32,7 @@ class LocalDubbingPipeline:
         """Initialize the transcription model."""
         from videopython.ai.understanding.audio import AudioToText
 
-        self._transcriber = AudioToText(device=self.device, enable_diarization=True)
+        self._transcriber = AudioToText(device=self.device)
 
     def _init_translator(self) -> None:
         """Initialize the translation model."""
