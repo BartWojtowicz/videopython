@@ -72,8 +72,10 @@ ai = [
     # Audio classification (AST via transformers - no separate dep needed)
     # Scene detection
     "transnetv2-pytorch>=1.0.5",
-    # Voice cloning TTS (coqui-tts is the maintained fork of TTS)
-    "coqui-tts>=0.24.0",
+    # Voice cloning TTS (Qwen3-TTS with transformers 5.x compat shim)
+    "qwen-tts>=0.1.0",
+    "sox>=1.5.0",
+    "onnxruntime>=1.18.0",
     # Translation (Marian MT tokenizer requires sentencepiece)
     "sentencepiece>=0.1.99",
     # Audio source separation
@@ -109,8 +111,10 @@ ai = [
     # Audio classification (AST via transformers - no separate dep needed)
     # Scene detection
     "transnetv2-pytorch>=1.0.5",
-    # Voice cloning TTS (coqui-tts is the maintained fork of TTS)
-    "coqui-tts>=0.24.0",
+    # Voice cloning TTS (Qwen3-TTS with transformers 5.x compat shim)
+    "qwen-tts>=0.1.0",
+    "sox>=1.5.0",
+    "onnxruntime>=1.18.0",
     # Translation (Marian MT tokenizer requires sentencepiece)
     "sentencepiece>=0.1.99",
     # Audio source separation
@@ -134,12 +138,17 @@ module = [
     "easyocr", "easyocr.*",
     "transformers", "transformers.*",
     "transnetv2_pytorch", "transnetv2_pytorch.*",
-    "TTS", "TTS.*", "coqui", "coqui.*",
+    "qwen_tts", "qwen_tts.*", "sox", "sox.*",
     "demucs", "demucs.*",
     "pyannote", "pyannote.*",
     "cv2", "cv2.*",
 ]
 ignore_missing_imports = true
+
+[tool.uv]
+# qwen-tts pins transformers==4.57.3 but works with 5.x via our compat shim
+# (_qwen3_tts_compat.py). Override to avoid downgrading transformers.
+override-dependencies = ["transformers>=5.2.0"]
 
 [build-system]
 requires = ["hatchling"]

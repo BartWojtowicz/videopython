@@ -40,17 +40,18 @@ class LocalDubbingPipeline:
 
         self._translator = TextTranslator(device=self.device)
 
-    def _init_tts(self, voice_clone: bool = False) -> None:
+    def _init_tts(self, voice_clone: bool = False, language: str = "en") -> None:
         """Initialize the text-to-speech model."""
         from videopython.ai.generation.audio import TextToSpeech
 
         if voice_clone:
             self._tts = TextToSpeech(
-                model_size="xtts",
+                model_size="qwen3",
                 device=self.device,
+                language=language,
             )
         else:
-            self._tts = TextToSpeech(device=self.device)
+            self._tts = TextToSpeech(device=self.device, language=language)
 
     def _init_separator(self) -> None:
         """Initialize the audio separator."""
@@ -163,7 +164,7 @@ class LocalDubbingPipeline:
 
         report_progress("Generating dubbed speech", 0.50)
         if self._tts is None:
-            self._init_tts(voice_clone=voice_clone)
+            self._init_tts(voice_clone=voice_clone, language=target_lang)
 
         dubbed_segments: list[Audio] = []
         target_durations: list[float] = []
