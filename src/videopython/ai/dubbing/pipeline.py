@@ -28,11 +28,11 @@ class LocalDubbingPipeline:
         self._separator: Any = None
         self._synchronizer: TimingSynchronizer | None = None
 
-    def _init_transcriber(self) -> None:
+    def _init_transcriber(self, enable_diarization: bool = False) -> None:
         """Initialize the transcription model."""
         from videopython.ai.understanding.audio import AudioToText
 
-        self._transcriber = AudioToText(device=self.device)
+        self._transcriber = AudioToText(device=self.device, enable_diarization=enable_diarization)
 
     def _init_translator(self) -> None:
         """Initialize the translation model."""
@@ -109,6 +109,7 @@ class LocalDubbingPipeline:
         source_lang: str | None = None,
         preserve_background: bool = True,
         voice_clone: bool = True,
+        enable_diarization: bool = False,
         progress_callback: Callable[[str, float], None] | None = None,
     ) -> DubbingResult:
         """Process a video through the local dubbing pipeline."""
@@ -120,7 +121,7 @@ class LocalDubbingPipeline:
 
         report_progress("Transcribing audio", 0.05)
         if self._transcriber is None:
-            self._init_transcriber()
+            self._init_transcriber(enable_diarization=enable_diarization)
 
         source_audio = video.audio
         transcription = self._transcriber.transcribe(source_audio)
