@@ -79,8 +79,8 @@ class TimingSynchronizer:
         """
         original_duration = audio.metadata.duration_seconds
 
-        if original_duration <= 0:
-            # Empty audio, return as-is
+        if original_duration <= 0 or target_duration <= 0:
+            # Empty audio or zero-length target, return as-is
             return audio, TimingAdjustment(
                 segment_index=segment_index,
                 original_duration=original_duration,

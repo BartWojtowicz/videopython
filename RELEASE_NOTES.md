@@ -1,5 +1,21 @@
 # Release Notes
 
+## 0.25.5
+
+### Fixed
+
+- Dubbing pipeline now uses the language detected by Whisper instead of hardcoding English as the source language.
+- Translation is skipped when source and target languages are the same, avoiding a crash when trying to load a nonexistent same-language translation model.
+- Use explicit `MarianTokenizer`/`MarianMTModel` for translation, fixing compatibility with transformers 5.x (`AutoTokenizer` no longer resolves `MarianConfig`).
+- `TimingSynchronizer` no longer crashes on zero-duration target segments (produced by diarization edge cases).
+
+### Changed
+
+- Replaced Coqui TTS (XTTS) with Chatterbox Multilingual (MIT license, 23 languages) for voice cloning. Coqui TTS was unmaintained and incompatible with transformers 5.x.
+- Added `sentencepiece` dependency required by the Marian MT tokenizer.
+- Speaker diarization is now available as an opt-in parameter (`enable_diarization`) on `VideoDubber.dub()` and `dub_and_replace()`. When enabled, each detected speaker gets their own cloned voice.
+- Segments shorter than 100ms are skipped during TTS generation to avoid generating speech for near-empty diarization artifacts.
+
 ## 0.25.4
 
 ### Added

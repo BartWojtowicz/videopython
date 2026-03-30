@@ -59,7 +59,7 @@ class TextToSpeech:
         from chatterbox.mtl_tts import ChatterboxMultilingualTTS  # type: ignore[import-untyped]
 
         requested_device = self.device
-        device = select_device(self.device, mps_allowed=True)
+        device = select_device(self.device, mps_allowed=False)
 
         self._chatterbox_model = ChatterboxMultilingualTTS.from_pretrained(device=device)
         self.device = device

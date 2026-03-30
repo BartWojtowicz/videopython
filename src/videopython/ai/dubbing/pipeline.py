@@ -172,6 +172,9 @@ class LocalDubbingPipeline:
         start_times: list[float] = []
 
         for i, segment in enumerate(translated_segments):
+            if segment.duration < 0.1:
+                continue
+
             progress = 0.50 + (0.30 * (i / len(translated_segments)))
             report_progress(f"Generating speech ({i + 1}/{len(translated_segments)})", progress)
 

@@ -1,6 +1,6 @@
 [project]
 name = "videopython"
-version = "0.25.4"
+version = "0.25.5"
 description = "Minimal video generation and processing library."
 authors = [
     { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
@@ -142,9 +142,10 @@ module = [
 ignore_missing_imports = true
 
 [tool.uv]
-# chatterbox-tts 0.1.7 pins torch==2.6.0, but pyannote-audio needs torch>=2.8.0.
-# Override to let the resolver pick a compatible torch version.
-override-dependencies = ["torch>=2.8.0", "torchaudio>=2.8.0", "numpy>=2.0.0"]
+# chatterbox-tts 0.1.7 pins strict versions of torch, torchaudio, numpy, and
+# diffusers that conflict with pyannote-audio (torch>=2.8) and CogVideoX
+# (diffusers>=0.30). Override to let the resolver pick compatible versions.
+override-dependencies = ["torch>=2.8.0", "torchaudio>=2.8.0", "numpy>=2.0.0", "diffusers>=0.30.0"]
 
 [build-system]
 requires = ["hatchling"]
