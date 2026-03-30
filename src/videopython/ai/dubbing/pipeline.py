@@ -133,7 +133,7 @@ class LocalDubbingPipeline:
                 target_lang=target_lang,
             )
 
-        detected_lang = source_lang or "en"
+        detected_lang = source_lang or transcription.language or "en"
 
         separated_audio: SeparatedAudio | None = None
         vocal_audio = source_audio

@@ -103,6 +103,8 @@ class TextTranslator:
             return text
 
         effective_source = source_lang or "en"
+        if effective_source == target_lang:
+            return text
         return self._translate_local(text, target_lang, effective_source)
 
     def translate_batch(
@@ -118,6 +120,8 @@ class TextTranslator:
             return []
 
         effective_source = source_lang or "en"
+        if effective_source == target_lang:
+            return list(texts)
         if self._model is None or self._current_lang_pair != (effective_source, target_lang):
             self._init_local(effective_source, target_lang)
 
