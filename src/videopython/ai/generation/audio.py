@@ -11,25 +11,13 @@ from videopython.base.audio import Audio, AudioMetadata
 class TextToSpeech:
     """Generates speech audio from text using local models.
 
-    Supports Bark (`base`, `small`) for general TTS and Qwen3-TTS (`qwen3`)
-    for multilingual voice cloning.
+    Supports Bark (`base`, `small`) for general TTS and Chatterbox Multilingual
+    (`chatterbox`) for multilingual voice cloning.
     """
 
-    SUPPORTED_LOCAL_MODELS: list[str] = ["base", "small", "qwen3"]
+    SUPPORTED_LOCAL_MODELS: list[str] = ["base", "small", "chatterbox"]
 
-    # Qwen3-TTS language code to name mapping
-    QWEN3_LANGUAGES: dict[str, str] = {
-        "en": "English",
-        "zh": "Chinese",
-        "ja": "Japanese",
-        "ko": "Korean",
-        "de": "German",
-        "fr": "French",
-        "ru": "Russian",
-        "pt": "Portuguese",
-        "es": "Spanish",
-        "it": "Italian",
-    }
+    CHATTERBOX_SAMPLE_RATE: int = 24000
 
     def __init__(
         self,
@@ -47,7 +35,7 @@ class TextToSpeech:
         self.language = language
         self._model: Any = None
         self._processor: Any = None
-        self._qwen3_model: Any = None
+        self._chatterbox_model: Any = None
 
     def _init_local(self) -> None:
         """Initialize local Bark model."""
@@ -66,21 +54,14 @@ class TextToSpeech:
             resolved_device=device,
         )
 
-    def _init_qwen3(self) -> None:
-        """Initialize Qwen3-TTS model for voice cloning."""
-        from videopython.ai.generation._qwen3_tts_compat import apply_patches
-
-        apply_patches()
-
-        from qwen_tts import Qwen3TTSModel  # type: ignore[import-untyped]
+    def _init_chatterbox(self) -> None:
+        """Initialize Chatterbox Multilingual model for voice cloning."""
+        from chatterbox.mtl_tts import ChatterboxMultilingualTTS  # type: ignore[import-untyped]
 
         requested_device = self.device
-        device = select_device(self.device, mps_allowed=False)
+        device = select_device(self.device, mps_allowed=True)
 
-        self._qwen3_model = Qwen3TTSModel.from_pretrained(
-            "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
-            device_map=device,
-        )
+        self._chatterbox_model = ChatterboxMultilingualTTS.from_pretrained(device=device)
         self.device = device
         log_device_initialization(
             "TextToSpeech",
@@ -113,45 +94,43 @@ class TextToSpeech:
         )
         return Audio(audio_data, metadata)
 
-    def _generate_qwen3(self, text: str, voice_sample: Audio) -> Audio:
-        """Generate speech using Qwen3-TTS with voice cloning."""
+    def _generate_chatterbox(self, text: str, voice_sample: Audio) -> Audio:
+        """Generate speech using Chatterbox Multilingual with voice cloning."""
         import tempfile
         from pathlib import Path
 
         import numpy as np
 
-        if self._qwen3_model is None:
-            self._init_qwen3()
+        if self._chatterbox_model is None:
+            self._init_chatterbox()
 
-        language = self.QWEN3_LANGUAGES.get(self.language, "English")
-
-        # Save voice sample to temp file for ref_audio
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
             voice_sample.save(f.name)
-            ref_path = Path(f.name)
+            speaker_wav_path = Path(f.name)
 
         try:
-            wavs, sr = self._qwen3_model.generate_voice_clone(
+            wav = self._chatterbox_model.generate(
                 text=text,
-                language=language,
-                ref_audio=str(ref_path),
-                x_vector_only_mode=True,
+                language_id=self.language,
+                audio_prompt_path=str(speaker_wav_path),
             )
+
+            audio_data = wav.cpu().float().numpy().squeeze()
+            if audio_data.ndim == 0:
+                audio_data = np.array([audio_data], dtype=np.float32)
+
+            sample_rate = self.CHATTERBOX_SAMPLE_RATE
+
+            metadata = AudioMetadata(
+                sample_rate=sample_rate,
+                channels=1,
+                sample_width=2,
+                duration_seconds=len(audio_data) / sample_rate,
+                frame_count=len(audio_data),
+            )
+            return Audio(audio_data, metadata)
         finally:
-            ref_path.unlink()
-
-        audio_data = wavs[0] if isinstance(wavs[0], np.ndarray) else wavs[0].cpu().float().numpy()
-        if audio_data.ndim > 1:
-            audio_data = audio_data.squeeze()
-
-        metadata = AudioMetadata(
-            sample_rate=sr,
-            channels=1,
-            sample_width=2,
-            duration_seconds=len(audio_data) / sr,
-            frame_count=len(audio_data),
-        )
-        return Audio(audio_data, metadata)
+            speaker_wav_path.unlink()
 
     def generate_audio(
         self,
@@ -162,13 +141,13 @@ class TextToSpeech:
         """Generate speech audio from text."""
         effective_voice = voice_preset or self.voice
 
-        if self.model_size == "qwen3" or voice_sample is not None:
+        if self.model_size == "chatterbox" or voice_sample is not None:
             if voice_sample is None:
                 raise ValueError(
-                    "voice_sample is required for Qwen3-TTS voice cloning. "
+                    "voice_sample is required for Chatterbox voice cloning. "
                     "Provide an Audio sample of the voice to clone."
                 )
-            return self._generate_qwen3(text, voice_sample)
+            return self._generate_chatterbox(text, voice_sample)
 
         return self._generate_local(text, effective_voice)
 

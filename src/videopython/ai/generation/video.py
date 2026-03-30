@@ -32,7 +32,7 @@ class TextToVideo:
         self._device: str | None = None
 
     def _init_local(self) -> None:
-        from diffusers import CogVideoXPipeline
+        from diffusers import CogVideoXPipeline  # type: ignore[attr-defined]
 
         requested_device = self.device
         self._device, dtype = _get_torch_device_and_dtype(self.device)
@@ -80,7 +80,7 @@ class ImageToVideo:
         self._device: str | None = None
 
     def _init_local(self) -> None:
-        from diffusers import CogVideoXImageToVideoPipeline
+        from diffusers import CogVideoXImageToVideoPipeline  # type: ignore[attr-defined]
 
         requested_device = self.device
         self._device, dtype = _get_torch_device_and_dtype(self.device)

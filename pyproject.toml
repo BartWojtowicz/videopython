@@ -72,10 +72,8 @@ ai = [
     # Audio classification (AST via transformers - no separate dep needed)
     # Scene detection
     "transnetv2-pytorch>=1.0.5",
-    # Voice cloning TTS (Qwen3-TTS with transformers 5.x compat shim)
-    "qwen-tts>=0.1.0",
-    "sox>=1.5.0",
-    "onnxruntime>=1.18.0",
+    # Voice cloning TTS (Chatterbox Multilingual by Resemble AI)
+    "chatterbox-tts>=0.1.7",
     # Translation (Marian MT tokenizer requires sentencepiece)
     "sentencepiece>=0.1.99",
     # Audio source separation
@@ -111,10 +109,8 @@ ai = [
     # Audio classification (AST via transformers - no separate dep needed)
     # Scene detection
     "transnetv2-pytorch>=1.0.5",
-    # Voice cloning TTS (Qwen3-TTS with transformers 5.x compat shim)
-    "qwen-tts>=0.1.0",
-    "sox>=1.5.0",
-    "onnxruntime>=1.18.0",
+    # Voice cloning TTS (Chatterbox Multilingual by Resemble AI)
+    "chatterbox-tts>=0.1.7",
     # Translation (Marian MT tokenizer requires sentencepiece)
     "sentencepiece>=0.1.99",
     # Audio source separation
@@ -138,7 +134,7 @@ module = [
     "easyocr", "easyocr.*",
     "transformers", "transformers.*",
     "transnetv2_pytorch", "transnetv2_pytorch.*",
-    "qwen_tts", "qwen_tts.*", "sox", "sox.*",
+    "chatterbox", "chatterbox.*",
     "demucs", "demucs.*",
     "pyannote", "pyannote.*",
     "cv2", "cv2.*",
@@ -146,9 +142,9 @@ module = [
 ignore_missing_imports = true
 
 [tool.uv]
-# qwen-tts pins transformers==4.57.3 but works with 5.x via our compat shim
-# (_qwen3_tts_compat.py). Override to avoid downgrading transformers.
-override-dependencies = ["transformers>=5.2.0"]
+# chatterbox-tts 0.1.7 pins torch==2.6.0, but pyannote-audio needs torch>=2.8.0.
+# Override to let the resolver pick a compatible torch version.
+override-dependencies = ["torch>=2.8.0", "torchaudio>=2.8.0", "numpy>=2.0.0"]
 
 [build-system]
 requires = ["hatchling"]

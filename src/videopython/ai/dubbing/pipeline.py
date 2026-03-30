@@ -32,7 +32,7 @@ class LocalDubbingPipeline:
         """Initialize the transcription model."""
         from videopython.ai.understanding.audio import AudioToText
 
-        self._transcriber = AudioToText(device=self.device)
+        self._transcriber = AudioToText(device=self.device, enable_diarization=True)
 
     def _init_translator(self) -> None:
         """Initialize the translation model."""
@@ -46,7 +46,7 @@ class LocalDubbingPipeline:
 
         if voice_clone:
             self._tts = TextToSpeech(
-                model_size="qwen3",
+                model_size="chatterbox",
                 device=self.device,
                 language=language,
             )
