@@ -142,7 +142,9 @@ ignore_missing_imports = true
 # resolving similar versions.
 override-dependencies = ["torch>=2.8.0", "torchaudio>=2.8.0", "numpy>=2.0.0", "diffusers>=0.30.0"]
 # Pin minimum versions for transitive deps with known vulnerabilities.
-constraint-dependencies = ["requests>=2.33.0", "pygments>=2.20.0"]
+# Pygments 2.20.0 has a security fix but breaks mkdocs (passes None to html.escape).
+# Keep pygments<2.20.0 until a compatible release is available.
+constraint-dependencies = ["requests>=2.33.0", "pygments>=2.19.2,<2.20.0"]
 
 [build-system]
 requires = ["hatchling"]
