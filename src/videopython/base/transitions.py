@@ -49,8 +49,9 @@ class Transition(ABC):
         return _TRANSITION_REGISTRY[transition_type]._from_dict(data)
 
     @classmethod
+    @abstractmethod
     def _from_dict(cls, data: dict[str, Any]) -> "Transition":
-        raise NotImplementedError
+        pass
 
 
 class InstantTransition(Transition):

@@ -32,6 +32,22 @@ __all__ = [
 ]
 
 
+def _resolve_time_range(start: float | None, stop: float | None, total_seconds: float) -> tuple[float, float]:
+    """Clamp and validate an effect time range against the video duration.
+
+    Returns resolved (start, stop) in seconds.
+    """
+    start_s = start if start is not None else 0
+    stop_s = stop if stop is not None else total_seconds
+    stop_s = min(stop_s, total_seconds)
+    start_s = min(start_s, total_seconds)
+    if start_s < 0:
+        raise ValueError(f"Effect start must be non-negative, got {start_s}!")
+    if stop_s < start_s:
+        raise ValueError(f"Effect stop ({stop_s}) must be >= start ({start_s})!")
+    return start_s, stop_s
+
+
 class Effect(ABC):
     """Abstract class for effect on frames of video.
 
@@ -54,20 +70,10 @@ class Effect(ABC):
                 Only set when the effect should end before the video does.
         """
         original_shape = video.video_shape
-        start = start if start is not None else 0
-        stop = stop if stop is not None else video.total_seconds
-        # Clamp to video duration (frame rounding can make stop slightly exceed
-        # actual duration after segment assembly).
-        stop = min(stop, video.total_seconds)
-        start = min(start, video.total_seconds)
-        # Check for start and stop correctness
-        if start < 0:
-            raise ValueError(f"Effect start must be non-negative, got {start}!")
-        if stop < start:
-            raise ValueError(f"Effect stop ({stop}) must be >= start ({start})!")
+        start_s, stop_s = _resolve_time_range(start, stop, video.total_seconds)
         # Apply effect on video slice
-        effect_start_frame = round(start * video.fps)
-        effect_end_frame = round(stop * video.fps)
+        effect_start_frame = round(start_s * video.fps)
+        effect_end_frame = round(stop_s * video.fps)
         video_with_effect = self._apply(video[effect_start_frame:effect_end_frame])
         old_audio = video.audio
         video = Video.from_frames(
@@ -601,16 +607,7 @@ class Fade(Effect):
                 Only set when the effect should end before the video does.
         """
         original_shape = video.video_shape
-        start_s = start if start is not None else 0
-        stop_s = stop if stop is not None else video.total_seconds
-        # Clamp to video duration (frame rounding can make stop slightly exceed
-        # actual duration after segment assembly).
-        stop_s = min(stop_s, video.total_seconds)
-        start_s = min(start_s, video.total_seconds)
-        if start_s < 0:
-            raise ValueError(f"Effect start must be non-negative, got {start_s}!")
-        if stop_s < start_s:
-            raise ValueError(f"Effect stop ({stop_s}) must be >= start ({start_s})!")
+        start_s, stop_s = _resolve_time_range(start, stop, video.total_seconds)
 
         effect_start_frame = round(start_s * video.fps)
         effect_end_frame = round(stop_s * video.fps)
@@ -689,16 +686,7 @@ class AudioEffect(Effect):
             stop: Stop time in seconds. Omit to apply until the end.
                 Only set when the effect should end before the video does.
         """
-        start_s = start if start is not None else 0
-        stop_s = stop if stop is not None else video.total_seconds
-        # Clamp to video duration (frame rounding can make stop slightly exceed
-        # actual duration after segment assembly).
-        stop_s = min(stop_s, video.total_seconds)
-        start_s = min(start_s, video.total_seconds)
-        if start_s < 0:
-            raise ValueError(f"Effect start must be non-negative, got {start_s}!")
-        if stop_s < start_s:
-            raise ValueError(f"Effect stop ({stop_s}) must be >= start ({start_s})!")
+        start_s, stop_s = _resolve_time_range(start, stop, video.total_seconds)
         video.audio = self._apply_audio(video.audio, start_s, stop_s, video.fps)
         return video
 

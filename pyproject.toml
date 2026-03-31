@@ -1,6 +1,6 @@
 [project]
 name = "videopython"
-version = "0.25.5"
+version = "0.25.6"
 description = "Minimal video generation and processing library."
 authors = [
     { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
@@ -35,7 +35,6 @@ dependencies = [
     "numpy>=1.25.2",
     "opencv-python-headless>=4.9.0.80",
     "pillow>=12.1.1",
-    "torchcodec>=0.9.1",
     "tqdm>=4.66.3",
     "pydantic>=2.8.0",
 ]
@@ -56,9 +55,10 @@ dev = [
 ]
 ai = [
     "accelerate>=0.29.2",
-    "diffusers>=0.26.3",
+    "diffusers>=0.30.0",
     "hf-transfer>=0.1.9",
-    "torch>=2.1.0",
+    "torch>=2.8.0",
+    "torchaudio>=2.8.0",
     "transformers>=5.2.0",
     "openai-whisper>=20240930",
     "pyannote-audio>=4.0.0",
@@ -82,20 +82,12 @@ ai = [
 
 # Required for pip install videopython[ai] - pip uses optional-dependencies, not dependency-groups
 [project.optional-dependencies]
-dev = [
-    "pre-commit>=3.8.0",
-    "ruff>=0.1.14",
-    "mypy>=1.8.0",
-    "pytest>=7.4.0",
-    "types-Pillow>=10.2.0.20240213",
-    "types-tqdm>=4.66.0.20240106",
-    "pytest-cov>=6.1.1",
-]
 ai = [
     "accelerate>=0.29.2",
-    "diffusers>=0.26.3",
+    "diffusers>=0.30.0",
     "hf-transfer>=0.1.9",
-    "torch>=2.1.0",
+    "torch>=2.8.0",
+    "torchaudio>=2.8.0",
     "transformers>=5.2.0",
     "openai-whisper>=20240930",
     "pyannote-audio>=4.0.0",
@@ -136,6 +128,7 @@ module = [
     "transnetv2_pytorch", "transnetv2_pytorch.*",
     "chatterbox", "chatterbox.*",
     "demucs", "demucs.*",
+    "huggingface_hub", "huggingface_hub.*",
     "pyannote", "pyannote.*",
     "cv2", "cv2.*",
 ]
@@ -145,7 +138,19 @@ ignore_missing_imports = true
 # chatterbox-tts 0.1.7 pins strict versions of torch, torchaudio, numpy, and
 # diffusers that conflict with pyannote-audio (torch>=2.8) and CogVideoX
 # (diffusers>=0.30). Override to let the resolver pick compatible versions.
-override-dependencies = ["torch>=2.8.0", "torchaudio>=2.8.0", "numpy>=2.0.0", "diffusers>=0.30.0"]
+# The ai dependency floors are aligned with these overrides to keep pip and uv
+# resolving similar versions.
+override-dependencies = [
+    "torch>=2.8.0", "torchaudio>=2.8.0", "numpy>=2.0.0", "diffusers>=0.30.0",
+    # ultralytics depends on opencv-python which conflicts with our
+    # opencv-python-headless (both provide cv2). Exclude opencv-python so
+    # only the headless variant is installed.
+    "opencv-python ; sys_platform == '_'",
+]
+# Pin minimum versions for transitive deps with known vulnerabilities.
+# Pygments 2.20.0 has a security fix but breaks mkdocs (passes None to html.escape).
+# Keep pygments<2.20.0 until a compatible release is available.
+constraint-dependencies = ["requests>=2.33.0", "pygments>=2.19.2,<2.20.0"]
 
 [build-system]
 requires = ["hatchling"]

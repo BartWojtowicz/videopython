@@ -118,14 +118,12 @@ class MultiCamEdit:
 
         # Cache source metadata for validate() and run()
         self._source_meta = first
-        self._source_duration = first.total_seconds
+        self._source_duration = min(m.total_seconds for m in meta_list)
         self._source_metas = metas
 
         # Build per-camera time ranges (cut start, cut end) from the timeline
         camera_ranges: dict[str, list[tuple[float, float]]] = {}
-        for i, cut in enumerate(self.cuts):
-            start = cut.time
-            end = self.cuts[i + 1].time if i + 1 < len(self.cuts) else self._source_duration
+        for cut, start, end in self._cut_ranges():
             camera_ranges.setdefault(cut.camera, []).append((start, end))
 
         # Validate adjusted seek positions per source
@@ -146,20 +144,20 @@ class MultiCamEdit:
                         f"exceeds source duration ({source_dur}s)"
                     )
 
-    def run(self) -> Video:
-        """Execute the multicam edit and return the final video."""
-        source_duration = self._source_duration
-
-        # Build time ranges: each segment runs from its cut time to the next cut time
-        segments: list[tuple[CutPoint, float, float]] = []
+    def _cut_ranges(self) -> list[tuple[CutPoint, float, float]]:
+        """Build (cut, start_time, end_time) for each segment in the timeline."""
+        ranges: list[tuple[CutPoint, float, float]] = []
         for i, cut in enumerate(self.cuts):
             start = cut.time
-            end = self.cuts[i + 1].time if i + 1 < len(self.cuts) else source_duration
-            segments.append((cut, start, end))
+            end = self.cuts[i + 1].time if i + 1 < len(self.cuts) else self._source_duration
+            ranges.append((cut, start, end))
+        return ranges
 
+    def run(self) -> Video:
+        """Execute the multicam edit and return the final video."""
         # Load and join segments
         result: Video | None = None
-        for i, (cut, start, end) in enumerate(segments):
+        for i, (cut, start, end) in enumerate(self._cut_ranges()):
             source_path = self.sources[cut.camera]
             offset = self.source_offsets.get(cut.camera, 0.0)
             segment = Video.from_path(str(source_path), start_second=start - offset, end_second=end - offset)
@@ -184,6 +182,21 @@ class MultiCamEdit:
         result.audio = audio
 
         return result
+
+    @property
+    def source_meta(self) -> VideoMetadata:
+        """Metadata of the reference source (first listed)."""
+        return self._source_meta
+
+    @property
+    def source_duration(self) -> float:
+        """Timeline duration in seconds (minimum across all sources)."""
+        return self._source_duration
+
+    @property
+    def source_metas(self) -> dict[str, VideoMetadata]:
+        """Per-camera metadata keyed by source name."""
+        return dict(self._source_metas)
 
     def validate(self) -> VideoMetadata:
         """Validate the plan and predict output metadata without loading frames."""

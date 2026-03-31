@@ -23,8 +23,11 @@ class LocalDubbingPipeline:
         logger.info("LocalDubbingPipeline initialized with device=%s", requested)
 
         self._transcriber: Any = None
+        self._transcriber_diarization: bool | None = None
         self._translator: Any = None
         self._tts: Any = None
+        self._tts_voice_clone: bool | None = None
+        self._tts_language: str | None = None
         self._separator: Any = None
         self._synchronizer: TimingSynchronizer | None = None
 
@@ -120,8 +123,9 @@ class LocalDubbingPipeline:
                 progress_callback(stage, progress)
 
         report_progress("Transcribing audio", 0.05)
-        if self._transcriber is None:
+        if self._transcriber is None or self._transcriber_diarization != enable_diarization:
             self._init_transcriber(enable_diarization=enable_diarization)
+            self._transcriber_diarization = enable_diarization
 
         source_audio = video.audio
         transcription = self._transcriber.transcribe(source_audio)
@@ -164,8 +168,10 @@ class LocalDubbingPipeline:
         )
 
         report_progress("Generating dubbed speech", 0.50)
-        if self._tts is None:
+        if self._tts is None or self._tts_voice_clone != voice_clone or self._tts_language != target_lang:
             self._init_tts(voice_clone=voice_clone, language=target_lang)
+            self._tts_voice_clone = voice_clone
+            self._tts_language = target_lang
 
         dubbed_segments: list[Audio] = []
         target_durations: list[float] = []
@@ -240,8 +246,9 @@ class LocalDubbingPipeline:
         original_duration = source_audio.metadata.duration_seconds
 
         report_progress("Analyzing audio", 0.05)
-        if self._transcriber is None:
-            self._init_transcriber()
+        if self._transcriber is None or self._transcriber_diarization is not False:
+            self._init_transcriber(enable_diarization=False)
+            self._transcriber_diarization = False
 
         transcription = self._transcriber.transcribe(source_audio)
 
@@ -269,8 +276,10 @@ class LocalDubbingPipeline:
             voice_sample = vocal_audio.slice(0, sample_duration)
 
         report_progress("Generating speech", 0.60)
-        if self._tts is None:
-            self._init_tts(voice_clone=True)
+        if self._tts is None or self._tts_voice_clone is not True or self._tts_language != "en":
+            self._init_tts(voice_clone=True, language="en")
+            self._tts_voice_clone = True
+            self._tts_language = "en"
 
         generated_speech = self._tts.generate_audio(text, voice_sample=voice_sample)
         speech_duration = generated_speech.metadata.duration_seconds

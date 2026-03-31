@@ -172,7 +172,7 @@ The parser rejects operations that are not supported in `VideoEdit` JSON plans, 
 
 AI operation specs are registered only after importing `videopython.ai`.
 
-If a plan references AI ops (for example `face_crop`, `split_screen`), import AI first:
+If a plan references AI ops (for example `face_crop`), import AI first:
 
 ```python
 import videopython.ai  # registers AI ops

@@ -24,7 +24,7 @@ jobs:
       - name: Install dependencies
         run: uv sync --python ${{ matrix.python-version }} --dev
       - name: Run base tests
-        run: uv run pytest src/tests/base --cov=src/videopython/base --cov-report=term --cov-report=term-missing
+        run: uv run pytest src/tests/base src/tests/editing --cov=src/videopython/base --cov=src/videopython/editing --cov-report=term --cov-report=term-missing
 
   ai_tests:
     name: AI tests (lightweight) - Python ${{ matrix.python-version }}

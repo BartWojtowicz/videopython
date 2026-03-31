@@ -68,7 +68,7 @@ for scene in scenes:
 
 ## Scene Data Classes
 
-These classes are used by `SceneDetector` to represent analysis results:
+These classes are used by scene and audio analyzers to represent analysis results:
 
 ### SceneBoundary
 
