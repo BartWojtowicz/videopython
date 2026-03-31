@@ -5615,7 +5615,6 @@ dependencies = [
     { name = "opencv-python-headless" },
     { name = "pillow" },
     { name = "pydantic" },
-    { name = "torchcodec" },
     { name = "tqdm" },
 ]
 
@@ -5637,18 +5636,10 @@ ai = [
     { name = "scipy", version = "1.16.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "sentencepiece" },
     { name = "torch" },
+    { name = "torchaudio" },
     { name = "transformers" },
     { name = "transnetv2-pytorch" },
     { name = "ultralytics" },
-]
-dev = [
-    { name = "mypy" },
-    { name = "pre-commit" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "ruff" },
-    { name = "types-pillow" },
-    { name = "types-tqdm" },
 ]
 
 [package.dev-dependencies]
@@ -5669,6 +5660,7 @@ ai = [
     { name = "scipy", version = "1.16.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "sentencepiece" },
     { name = "torch" },
+    { name = "torchaudio" },
     { name = "transformers" },
     { name = "transnetv2-pytorch" },
     { name = "ultralytics" },
@@ -5692,42 +5684,35 @@ requires-dist = [
     { name = "accelerate", marker = "extra == 'ai'", specifier = ">=0.29.2" },
     { name = "chatterbox-tts", marker = "extra == 'ai'", specifier = ">=0.1.7" },
     { name = "demucs", marker = "extra == 'ai'", specifier = ">=4.0.0" },
-    { name = "diffusers", marker = "extra == 'ai'", specifier = ">=0.26.3" },
+    { name = "diffusers", marker = "extra == 'ai'", specifier = ">=0.30.0" },
     { name = "easyocr", marker = "extra == 'ai'", specifier = ">=1.7.0" },
     { name = "hf-transfer", marker = "extra == 'ai'", specifier = ">=0.1.9" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.8.0" },
     { name = "numba", marker = "extra == 'ai'", specifier = ">=0.61.0" },
     { name = "numpy", specifier = ">=1.25.2" },
     { name = "ollama", marker = "extra == 'ai'", specifier = ">=0.4.5" },
     { name = "openai-whisper", marker = "extra == 'ai'", specifier = ">=20240930" },
     { name = "opencv-python-headless", specifier = ">=4.9.0.80" },
     { name = "pillow", specifier = ">=12.1.1" },
-    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.8.0" },
     { name = "pyannote-audio", marker = "extra == 'ai'", specifier = ">=4.0.0" },
     { name = "pydantic", specifier = ">=2.8.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4.0" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6.1.1" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.14" },
     { name = "scikit-learn", marker = "extra == 'ai'", specifier = ">=1.3.0" },
     { name = "scipy", marker = "extra == 'ai'", specifier = ">=1.10.0" },
     { name = "sentencepiece", marker = "extra == 'ai'", specifier = ">=0.1.99" },
-    { name = "torch", marker = "extra == 'ai'", specifier = ">=2.1.0" },
-    { name = "torchcodec", specifier = ">=0.9.1" },
+    { name = "torch", marker = "extra == 'ai'", specifier = ">=2.8.0" },
+    { name = "torchaudio", marker = "extra == 'ai'", specifier = ">=2.8.0" },
     { name = "tqdm", specifier = ">=4.66.3" },
     { name = "transformers", marker = "extra == 'ai'", specifier = ">=5.2.0" },
     { name = "transnetv2-pytorch", marker = "extra == 'ai'", specifier = ">=1.0.5" },
-    { name = "types-pillow", marker = "extra == 'dev'", specifier = ">=10.2.0.20240213" },
-    { name = "types-tqdm", marker = "extra == 'dev'", specifier = ">=4.66.0.20240106" },
     { name = "ultralytics", marker = "extra == 'ai'", specifier = ">=8.0.0" },
 ]
-provides-extras = ["dev", "ai"]
+provides-extras = ["ai"]
 
 [package.metadata.requires-dev]
 ai = [
     { name = "accelerate", specifier = ">=0.29.2" },
     { name = "chatterbox-tts", specifier = ">=0.1.7" },
     { name = "demucs", specifier = ">=4.0.0" },
-    { name = "diffusers", specifier = ">=0.26.3" },
+    { name = "diffusers", specifier = ">=0.30.0" },
     { name = "easyocr", specifier = ">=1.7.0" },
     { name = "hf-transfer", specifier = ">=0.1.9" },
     { name = "numba", specifier = ">=0.61.0" },
@@ -5737,7 +5722,8 @@ ai = [
     { name = "scikit-learn", specifier = ">=1.3.0" },
     { name = "scipy", specifier = ">=1.10.0" },
     { name = "sentencepiece", specifier = ">=0.1.99" },
-    { name = "torch", specifier = ">=2.1.0" },
+    { name = "torch", specifier = ">=2.8.0" },
+    { name = "torchaudio", specifier = ">=2.8.0" },
     { name = "transformers", specifier = ">=5.2.0" },
     { name = "transnetv2-pytorch", specifier = ">=1.0.5" },
     { name = "ultralytics", specifier = ">=8.0.0" },
