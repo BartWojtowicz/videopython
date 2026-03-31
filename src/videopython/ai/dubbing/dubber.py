@@ -34,9 +34,15 @@ class VideoDubber:
         source_lang: str | None = None,
         preserve_background: bool = True,
         voice_clone: bool = True,
+        enable_diarization: bool = False,
         progress_callback: Callable[[str, float], None] | None = None,
     ) -> DubbingResult:
-        """Dub a video into a target language."""
+        """Dub a video into a target language.
+
+        Args:
+            enable_diarization: Enable speaker diarization to clone each speaker's
+                voice separately. Requires additional VRAM for the diarization model.
+        """
         if self._local_pipeline is None:
             self._init_local_pipeline()
 
@@ -46,6 +52,7 @@ class VideoDubber:
             source_lang=source_lang,
             preserve_background=preserve_background,
             voice_clone=voice_clone,
+            enable_diarization=enable_diarization,
             progress_callback=progress_callback,
         )
 
@@ -56,6 +63,7 @@ class VideoDubber:
         source_lang: str | None = None,
         preserve_background: bool = True,
         voice_clone: bool = True,
+        enable_diarization: bool = False,
         progress_callback: Callable[[str, float], None] | None = None,
     ) -> Video:
         """Dub a video and return a new video with the dubbed audio."""
@@ -65,6 +73,7 @@ class VideoDubber:
             source_lang=source_lang,
             preserve_background=preserve_background,
             voice_clone=voice_clone,
+            enable_diarization=enable_diarization,
             progress_callback=progress_callback,
         )
         return video.add_audio(result.dubbed_audio, overlay=False)

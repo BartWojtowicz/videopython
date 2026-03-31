@@ -11,10 +11,13 @@ from videopython.base.audio import Audio, AudioMetadata
 class TextToSpeech:
     """Generates speech audio from text using local models.
 
-    Supports Bark (`base`, `small`) and XTTS voice cloning (`xtts`).
+    Supports Bark (`base`, `small`) for general TTS and Chatterbox Multilingual
+    (`chatterbox`) for multilingual voice cloning.
     """
 
-    SUPPORTED_LOCAL_MODELS: list[str] = ["base", "small", "xtts"]
+    SUPPORTED_LOCAL_MODELS: list[str] = ["base", "small", "chatterbox"]
+
+    CHATTERBOX_SAMPLE_RATE: int = 24000
 
     def __init__(
         self,
@@ -32,7 +35,7 @@ class TextToSpeech:
         self.language = language
         self._model: Any = None
         self._processor: Any = None
-        self._xtts_model: Any = None
+        self._chatterbox_model: Any = None
 
     def _init_local(self) -> None:
         """Initialize local Bark model."""
@@ -51,43 +54,14 @@ class TextToSpeech:
             resolved_device=device,
         )
 
-    def _patch_xtts_load_audio(self) -> None:
-        """Patch XTTS load_audio to avoid torchcodec dependency issues."""
-        import TTS.tts.models.xtts as xtts_module
-
-        def load_audio_soundfile(audiopath: str, sampling_rate: int):
-            import soundfile as sf  # type: ignore[import-untyped]
-            import torch
-            import torchaudio.functional as F  # type: ignore[import-untyped]
-
-            audio_np, sr = sf.read(audiopath, dtype="float32")
-
-            audio = torch.from_numpy(audio_np)
-            if audio.dim() == 1:
-                audio = audio.unsqueeze(0)
-            else:
-                audio = audio.T
-
-            if audio.size(0) != 1:
-                audio = torch.mean(audio, dim=0, keepdim=True)
-
-            if sr != sampling_rate:
-                audio = F.resample(audio, sr, sampling_rate)
-
-            return audio
-
-        xtts_module.load_audio = load_audio_soundfile
-
-    def _init_xtts(self) -> None:
-        """Initialize XTTS-v2 model for voice cloning."""
-        from TTS.api import TTS
-
-        self._patch_xtts_load_audio()
+    def _init_chatterbox(self) -> None:
+        """Initialize Chatterbox Multilingual model for voice cloning."""
+        from chatterbox.mtl_tts import ChatterboxMultilingualTTS  # type: ignore[import-untyped]
 
         requested_device = self.device
         device = select_device(self.device, mps_allowed=False)
 
-        self._xtts_model = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(device)
+        self._chatterbox_model = ChatterboxMultilingualTTS.from_pretrained(device=device)
         self.device = device
         log_device_initialization(
             "TextToSpeech",
@@ -120,28 +94,32 @@ class TextToSpeech:
         )
         return Audio(audio_data, metadata)
 
-    def _generate_xtts(self, text: str, voice_sample: Audio) -> Audio:
-        """Generate speech using XTTS-v2 with voice cloning."""
+    def _generate_chatterbox(self, text: str, voice_sample: Audio) -> Audio:
+        """Generate speech using Chatterbox Multilingual with voice cloning."""
         import tempfile
         from pathlib import Path
 
         import numpy as np
 
-        if self._xtts_model is None:
-            self._init_xtts()
+        if self._chatterbox_model is None:
+            self._init_chatterbox()
 
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
             voice_sample.save(f.name)
             speaker_wav_path = Path(f.name)
 
         try:
-            audio_list = self._xtts_model.tts(
+            wav = self._chatterbox_model.generate(
                 text=text,
-                speaker_wav=str(speaker_wav_path),
-                language=self.language,
+                language_id=self.language,
+                audio_prompt_path=str(speaker_wav_path),
             )
-            audio_data = np.array(audio_list, dtype=np.float32)
-            sample_rate = 24000
+
+            audio_data = wav.cpu().float().numpy().squeeze()
+            if audio_data.ndim == 0:
+                audio_data = np.array([audio_data], dtype=np.float32)
+
+            sample_rate = self.CHATTERBOX_SAMPLE_RATE
 
             metadata = AudioMetadata(
                 sample_rate=sample_rate,
@@ -163,12 +141,13 @@ class TextToSpeech:
         """Generate speech audio from text."""
         effective_voice = voice_preset or self.voice
 
-        if self.model_size == "xtts" or voice_sample is not None:
+        if self.model_size == "chatterbox" or voice_sample is not None:
             if voice_sample is None:
                 raise ValueError(
-                    "voice_sample is required for XTTS voice cloning. Provide an Audio sample of the voice to clone."
+                    "voice_sample is required for Chatterbox voice cloning. "
+                    "Provide an Audio sample of the voice to clone."
                 )
-            return self._generate_xtts(text, voice_sample)
+            return self._generate_chatterbox(text, voice_sample)
 
         return self._generate_local(text, effective_voice)
 

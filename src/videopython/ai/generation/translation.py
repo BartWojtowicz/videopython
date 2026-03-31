@@ -61,15 +61,15 @@ class TextTranslator:
         return f"Helsinki-NLP/opus-mt-{source_lang}-{target_lang}"
 
     def _init_local(self, source_lang: str, target_lang: str) -> None:
-        from transformers import AutoModelForSeq2SeqLM, AutoTokenizer  # type: ignore[attr-defined]
+        from transformers import MarianMTModel, MarianTokenizer  # type: ignore[attr-defined]
 
         model_name = self._get_local_model_name(source_lang, target_lang)
 
         requested_device = self.device
         device = select_device(self.device, mps_allowed=True)
 
-        self._tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self._model = AutoModelForSeq2SeqLM.from_pretrained(model_name).to(device)
+        self._tokenizer = MarianTokenizer.from_pretrained(model_name)
+        self._model = MarianMTModel.from_pretrained(model_name).to(device)
         self.device = device
         log_device_initialization(
             "TextTranslator",
@@ -103,6 +103,8 @@ class TextTranslator:
             return text
 
         effective_source = source_lang or "en"
+        if effective_source == target_lang:
+            return text
         return self._translate_local(text, target_lang, effective_source)
 
     def translate_batch(
@@ -118,6 +120,8 @@ class TextTranslator:
             return []
 
         effective_source = source_lang or "en"
+        if effective_source == target_lang:
+            return list(texts)
         if self._model is None or self._current_lang_pair != (effective_source, target_lang):
             self._init_local(effective_source, target_lang)
 

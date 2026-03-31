@@ -28,11 +28,11 @@ class LocalDubbingPipeline:
         self._separator: Any = None
         self._synchronizer: TimingSynchronizer | None = None
 
-    def _init_transcriber(self) -> None:
+    def _init_transcriber(self, enable_diarization: bool = False) -> None:
         """Initialize the transcription model."""
         from videopython.ai.understanding.audio import AudioToText
 
-        self._transcriber = AudioToText(device=self.device)
+        self._transcriber = AudioToText(device=self.device, enable_diarization=enable_diarization)
 
     def _init_translator(self) -> None:
         """Initialize the translation model."""
@@ -40,17 +40,18 @@ class LocalDubbingPipeline:
 
         self._translator = TextTranslator(device=self.device)
 
-    def _init_tts(self, voice_clone: bool = False) -> None:
+    def _init_tts(self, voice_clone: bool = False, language: str = "en") -> None:
         """Initialize the text-to-speech model."""
         from videopython.ai.generation.audio import TextToSpeech
 
         if voice_clone:
             self._tts = TextToSpeech(
-                model_size="xtts",
+                model_size="chatterbox",
                 device=self.device,
+                language=language,
             )
         else:
-            self._tts = TextToSpeech(device=self.device)
+            self._tts = TextToSpeech(device=self.device, language=language)
 
     def _init_separator(self) -> None:
         """Initialize the audio separator."""
@@ -108,6 +109,7 @@ class LocalDubbingPipeline:
         source_lang: str | None = None,
         preserve_background: bool = True,
         voice_clone: bool = True,
+        enable_diarization: bool = False,
         progress_callback: Callable[[str, float], None] | None = None,
     ) -> DubbingResult:
         """Process a video through the local dubbing pipeline."""
@@ -119,7 +121,7 @@ class LocalDubbingPipeline:
 
         report_progress("Transcribing audio", 0.05)
         if self._transcriber is None:
-            self._init_transcriber()
+            self._init_transcriber(enable_diarization=enable_diarization)
 
         source_audio = video.audio
         transcription = self._transcriber.transcribe(source_audio)
@@ -133,7 +135,7 @@ class LocalDubbingPipeline:
                 target_lang=target_lang,
             )
 
-        detected_lang = source_lang or "en"
+        detected_lang = source_lang or transcription.language or "en"
 
         separated_audio: SeparatedAudio | None = None
         vocal_audio = source_audio
@@ -163,13 +165,16 @@ class LocalDubbingPipeline:
 
         report_progress("Generating dubbed speech", 0.50)
         if self._tts is None:
-            self._init_tts(voice_clone=voice_clone)
+            self._init_tts(voice_clone=voice_clone, language=target_lang)
 
         dubbed_segments: list[Audio] = []
         target_durations: list[float] = []
         start_times: list[float] = []
 
         for i, segment in enumerate(translated_segments):
+            if segment.duration < 0.1:
+                continue
+
             progress = 0.50 + (0.30 * (i / len(translated_segments)))
             report_progress(f"Generating speech ({i + 1}/{len(translated_segments)})", progress)
 

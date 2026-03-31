@@ -1,6 +1,6 @@
 [project]
 name = "videopython"
-version = "0.25.4"
+version = "0.25.5"
 description = "Minimal video generation and processing library."
 authors = [
     { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
@@ -72,8 +72,10 @@ ai = [
     # Audio classification (AST via transformers - no separate dep needed)
     # Scene detection
     "transnetv2-pytorch>=1.0.5",
-    # Voice cloning TTS (coqui-tts is the maintained fork of TTS)
-    "coqui-tts>=0.24.0",
+    # Voice cloning TTS (Chatterbox Multilingual by Resemble AI)
+    "chatterbox-tts>=0.1.7",
+    # Translation (Marian MT tokenizer requires sentencepiece)
+    "sentencepiece>=0.1.99",
     # Audio source separation
     "demucs>=4.0.0",
 ]
@@ -107,8 +109,10 @@ ai = [
     # Audio classification (AST via transformers - no separate dep needed)
     # Scene detection
     "transnetv2-pytorch>=1.0.5",
-    # Voice cloning TTS (coqui-tts is the maintained fork of TTS)
-    "coqui-tts>=0.24.0",
+    # Voice cloning TTS (Chatterbox Multilingual by Resemble AI)
+    "chatterbox-tts>=0.1.7",
+    # Translation (Marian MT tokenizer requires sentencepiece)
+    "sentencepiece>=0.1.99",
     # Audio source separation
     "demucs>=4.0.0",
 ]
@@ -130,12 +134,18 @@ module = [
     "easyocr", "easyocr.*",
     "transformers", "transformers.*",
     "transnetv2_pytorch", "transnetv2_pytorch.*",
-    "TTS", "TTS.*", "coqui", "coqui.*",
+    "chatterbox", "chatterbox.*",
     "demucs", "demucs.*",
     "pyannote", "pyannote.*",
     "cv2", "cv2.*",
 ]
 ignore_missing_imports = true
+
+[tool.uv]
+# chatterbox-tts 0.1.7 pins strict versions of torch, torchaudio, numpy, and
+# diffusers that conflict with pyannote-audio (torch>=2.8) and CogVideoX
+# (diffusers>=0.30). Override to let the resolver pick compatible versions.
+override-dependencies = ["torch>=2.8.0", "torchaudio>=2.8.0", "numpy>=2.0.0", "diffusers>=0.30.0"]
 
 [build-system]
 requires = ["hatchling"]
