@@ -140,7 +140,13 @@ ignore_missing_imports = true
 # (diffusers>=0.30). Override to let the resolver pick compatible versions.
 # The ai dependency floors are aligned with these overrides to keep pip and uv
 # resolving similar versions.
-override-dependencies = ["torch>=2.8.0", "torchaudio>=2.8.0", "numpy>=2.0.0", "diffusers>=0.30.0"]
+override-dependencies = [
+    "torch>=2.8.0", "torchaudio>=2.8.0", "numpy>=2.0.0", "diffusers>=0.30.0",
+    # ultralytics depends on opencv-python which conflicts with our
+    # opencv-python-headless (both provide cv2). Exclude opencv-python so
+    # only the headless variant is installed.
+    "opencv-python ; sys_platform == '_'",
+]
 # Pin minimum versions for transitive deps with known vulnerabilities.
 # Pygments 2.20.0 has a security fix but breaks mkdocs (passes None to html.escape).
 # Keep pygments<2.20.0 until a compatible release is available.
