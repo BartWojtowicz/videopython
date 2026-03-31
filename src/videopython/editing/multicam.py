@@ -118,7 +118,7 @@ class MultiCamEdit:
 
         # Cache source metadata for validate() and run()
         self._source_meta = first
-        self._source_duration = first.total_seconds
+        self._source_duration = min(m.total_seconds for m in meta_list)
         self._source_metas = metas
 
         # Build per-camera time ranges (cut start, cut end) from the timeline
