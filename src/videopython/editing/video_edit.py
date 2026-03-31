@@ -664,9 +664,9 @@ def _normalize_effect_apply_args(apply_args: Mapping[str, Any], location: str) -
     """
     normalized = dict(apply_args)
     if "start" in normalized:
-        normalized["start"] = _coerce_optional_number_at_location(normalized["start"], f"{location}.start")
+        normalized["start"] = _coerce_optional_number(normalized["start"], "start", location=f"{location}.start")
     if "stop" in normalized:
-        normalized["stop"] = _coerce_optional_number_at_location(normalized["stop"], f"{location}.stop")
+        normalized["stop"] = _coerce_optional_number(normalized["stop"], "stop", location=f"{location}.stop")
     return normalized
 
 
@@ -1030,6 +1030,12 @@ def _predict_crop_metadata(meta: VideoMetadata, args: Mapping[str, Any]) -> Vide
 
 
 def _crop_value_to_pixels(value: Any, dimension: int) -> int:
+    """Convert a crop value to pixels.
+
+    Float values in the range (0, 1] are treated as fractions of *dimension*
+    (e.g. 0.5 means 50%). All other numeric values (including integers) are
+    treated as absolute pixel counts.
+    """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError("crop values must be numeric")
     if isinstance(value, float) and 0 < value <= 1:
@@ -1088,17 +1094,10 @@ def _require_number(value: Any, location: str) -> float:
     return float(value)
 
 
-def _coerce_optional_number(value: Any, param_name: str) -> float | None:
+def _coerce_optional_number(value: Any, param_name: str, *, location: str | None = None) -> float | None:
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"Effect apply parameter '{param_name}' must be a number")
-    return float(value)
-
-
-def _coerce_optional_number_at_location(value: Any, location: str) -> float | None:
-    if value is None:
-        return None
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"{location} must be a number")
+        label = location if location is not None else f"Effect apply parameter '{param_name}'"
+        raise ValueError(f"{label} must be a number")
     return float(value)

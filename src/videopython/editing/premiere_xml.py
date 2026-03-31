@@ -173,9 +173,9 @@ def to_premiere_xml(edit: MultiCamEdit) -> str:
     """
     from videopython.base.transitions import FadeTransition
 
-    meta = edit._source_meta
+    meta = edit.source_meta
     fps = meta.fps
-    source_duration = edit._source_duration
+    source_duration = edit.source_duration
     total_frames = _seconds_to_frames(source_duration, fps)
 
     def frames(s: float) -> int:
@@ -244,7 +244,7 @@ def to_premiere_xml(edit: MultiCamEdit) -> str:
 
         file_id = f"file-{camera}"
         if file_id not in defined_file_ids:
-            src_meta = edit._source_metas[camera]
+            src_meta = edit.source_metas[camera]
             src_dur_frames = _seconds_to_frames(src_meta.total_seconds, fps)
             _build_file_element(
                 ci,
