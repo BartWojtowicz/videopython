@@ -1,5 +1,26 @@
 # Release Notes
 
+## 0.25.6
+
+### Fixed
+
+- Dubbing pipeline now reinitializes transcriber and TTS models when configuration changes between calls (`enable_diarization`, `voice_clone`, `language`), fixing stale cache bug.
+- Multicam timeline duration now uses the shortest source instead of the first source's duration, preventing cuts from exceeding shorter sources.
+- Fixed `ImageToVideo` example in README (removed non-existent `fps` parameter).
+- Fixed Python version range in docs (`<3.14`, not `<3.13`).
+
+### Changed
+
+- Extracted `_resolve_time_range` helper in effects to deduplicate time validation across `Effect`, `Fade`, and `AudioEffect`.
+- Exposed `MultiCamEdit` metadata as public properties (`source_meta`, `source_duration`, `source_metas`); `premiere_xml` no longer reaches into private attributes.
+- Extracted `_cut_ranges()` method in `MultiCamEdit` to deduplicate the cut-range loop between `_validate()` and `run()`.
+- Marked `Transition._from_dict` as `@abstractmethod` for consistency with `to_dict`.
+- Merged duplicate `_coerce_optional_number` functions in `video_edit.py`.
+- Removed unused `torchcodec` from base dependencies (was never imported, pulled in torch for all users).
+- Removed redundant `[project.optional-dependencies] dev` (contributors use `uv sync --dev`).
+- Aligned AI dependency floors with uv override-dependencies (`torch>=2.8`, `diffusers>=0.30`, added `torchaudio>=2.8`).
+- Added `editing/` tests and coverage to CI pipeline.
+
 ## 0.25.5
 
 ### Fixed
