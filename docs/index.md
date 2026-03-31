@@ -71,6 +71,6 @@ pip install videopython          # core editing
 pip install "videopython[ai]"    # + local AI features (GPU recommended)
 ```
 
-Python `>=3.10, <3.13`. AI features run locally -- no cloud API keys required.
+Python `>=3.10, <3.14`. AI features run locally -- no cloud API keys required.
 
 See the [Installation Guide](getting-started/installation.md) for FFmpeg setup and details.

@@ -81,7 +81,7 @@ final.save("output.mp4")
 from videopython.ai import TextToImage, ImageToVideo, TextToSpeech
 
 image = TextToImage().generate_image("A cinematic mountain sunrise")
-video = ImageToVideo().generate_video(image=image, fps=24).resize(1080, 1920)
+video = ImageToVideo().generate_video(image=image).resize(1080, 1920)
 audio = TextToSpeech().generate_audio("Welcome to videopython.")
 video.add_audio(audio).save("ai_video.mp4")
 ```
