@@ -1,5 +1,16 @@
 # Release Notes
 
+## 0.26.0
+
+### Added
+
+- `VideoEdit.run_to_file(output_path)` streams frames directly from ffmpeg decode through per-frame effect processing to ffmpeg encode, keeping only one frame in memory at a time. Memory usage is now constant regardless of video length (264 MB for any duration, vs 9+ GB previously for a 1-minute 720p video). Falls back to eager mode automatically for non-streamable operations.
+- Streaming interface on `Effect`: `supports_streaming`, `streaming_init()`, `process_frame()`. All built-in effects support streaming: `ColorGrading`, `Blur`, `Zoom`, `Vignette`, `KenBurns`, `Fade`, `FullImageOverlay`, `TextOverlay`, `VolumeAdjust`.
+- `FrameIterator` now accepts `-vf` filter parameters for applying ffmpeg filters (scale, crop, fps) during decode.
+- `FrameEncoder` class for writing raw frames to ffmpeg encode via stdin pipe.
+- `stream_segment()` and `concat_files()` for low-level streaming pipeline control.
+- Streamable transform compilation: `Resize`, `Crop`, `ResampleFPS`, and constant `SpeedChange` compile to ffmpeg `-vf` filters for zero-memory transform application.
+
 ## 0.25.8
 
 ### Changed
