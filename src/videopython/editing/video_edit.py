@@ -1174,13 +1174,16 @@ def _videoedit_step_schema_from_spec(spec: OperationSpec, *, include_apply: bool
         if any(param.required for param in spec.apply_params):
             required.append("apply")
 
-    return {
+    result: dict[str, Any] = {
         "type": "object",
         "description": spec.description,
         "properties": properties,
         "required": required,
         "additionalProperties": False,
     }
+    if "streamable" in spec.tags:
+        result["x-streamable"] = True
+    return result
 
 
 def _ensure_videoedit_step_category_and_tags(
