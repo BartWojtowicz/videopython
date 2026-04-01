@@ -118,6 +118,11 @@ class FrameEncoder:
         return cmd
 
     def __enter__(self) -> FrameEncoder:
+        if self._width % 2 != 0 or self._height % 2 != 0:
+            raise ValueError(
+                f"libx264 with yuv420p requires even dimensions, got {self._width}x{self._height}. "
+                "Resize or crop to even dimensions before encoding."
+            )
         cmd = self._build_command()
         self._process = subprocess.Popen(
             cmd,
@@ -220,16 +225,14 @@ def stream_segment(
                 crf=crf,
             ) as encoder:
                 log("Streaming frames...")
-                for frame_idx, frame in progress_iter(decoder, desc="Streaming", total=total_frames):
-                    # frame_idx from FrameIterator is absolute; convert to 0-based
-                    local_idx = frame_idx - int(plan.start_second * plan.output_fps)
-
+                frame_count = 0
+                for _, frame in progress_iter(decoder, desc="Streaming", total=total_frames):
                     for entry in plan.effect_schedule:
-                        if entry.start_frame <= local_idx < entry.end_frame:
-                            effect_local = local_idx - entry.start_frame
-                            frame = entry.effect.process_frame(frame, effect_local)
+                        if entry.start_frame <= frame_count < entry.end_frame:
+                            frame = entry.effect.process_frame(frame, frame_count - entry.start_frame)
 
                     encoder.write_frame(frame)
+                    frame_count += 1
 
         return output_path
     except Exception:

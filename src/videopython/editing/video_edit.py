@@ -4,13 +4,12 @@ import copy
 import importlib
 import inspect
 import json
+import subprocess
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from types import UnionType
 from typing import Any, Mapping, Sequence, Union, get_args, get_origin, get_type_hints
-
-import numpy as np
 
 from videopython.base.audio import Audio
 from videopython.base.effects import AudioEffect, Effect, Fade
@@ -484,7 +483,7 @@ class VideoEdit:
         try:
             audio = Audio.from_path(str(segment.source_video))
             audio = audio.slice(segment.start_second, segment.end_second)
-        except (AudioLoadError, FileNotFoundError, Exception):
+        except (AudioLoadError, FileNotFoundError, subprocess.CalledProcessError):
             duration = segment.end_second - segment.start_second
             warnings.warn(f"No audio found for `{segment.source_video}`, using silent track.")
             audio = Audio.create_silent(duration_seconds=round(duration, 2), stereo=True, sample_rate=44100)
@@ -497,8 +496,7 @@ class VideoEdit:
             if isinstance(effect, AudioEffect):
                 effect._apply_audio(audio, start_s, stop_s, plan.output_fps)
             elif isinstance(effect, Fade) and audio is not None and not audio.is_silent:
-                # Apply Fade's audio portion
-                _apply_fade_audio(effect, audio, start_s, stop_s)
+                effect.apply_audio(audio, start_s, stop_s)
 
         return audio
 
@@ -695,8 +693,10 @@ class _VfResult:
     out_fps: float
 
 
-# Transforms that can be compiled to ffmpeg -vf filters
-_STREAMABLE_TRANSFORM_OPS = {"cut", "cut_frames", "resize", "resample_fps", "crop", "speed_change"}
+# Transforms that can be compiled to ffmpeg -vf filters.
+# cut/cut_frames are NOT included: the segment's start/end handles the primary cut,
+# and additional cuts within a segment require eager processing.
+_STREAMABLE_TRANSFORM_OPS = {"resize", "resample_fps", "crop", "speed_change"}
 
 
 def _compile_transform_to_vf(
@@ -710,10 +710,6 @@ def _compile_transform_to_vf(
         return None
 
     args = record.args
-
-    if record.op_id in ("cut", "cut_frames"):
-        # Cut is handled by -ss/-t on the FrameIterator, not a -vf filter
-        return _VfResult("", cur_width, cur_height, cur_fps)
 
     if record.op_id == "resize":
         w = args.get("width")
@@ -763,31 +759,6 @@ def _compile_transform_to_vf(
         return _VfResult(f"setpts=PTS/{speed}", cur_width, cur_height, cur_fps)
 
     return None
-
-
-def _apply_fade_audio(fade: Fade, audio: Audio, start_s: float, stop_s: float) -> None:
-    """Apply the audio portion of a Fade effect."""
-    from videopython.base.effects import _compute_curve
-
-    sample_rate = audio.metadata.sample_rate
-    audio_start = round(start_s * sample_rate)
-    audio_end = min(round(stop_s * sample_rate), len(audio.data))
-    n_samples = audio_end - audio_start
-    fade_samples = min(round(fade.duration * sample_rate), n_samples)
-
-    alpha = np.ones(n_samples, dtype=np.float32)
-    if fade.mode in ("in", "in_out"):
-        t = np.linspace(0, 1, fade_samples, dtype=np.float32)
-        alpha[:fade_samples] = _compute_curve(t, fade.curve)
-    if fade.mode in ("out", "in_out"):
-        t = np.linspace(1, 0, fade_samples, dtype=np.float32)
-        alpha[-fade_samples:] = np.minimum(alpha[-fade_samples:], _compute_curve(t, fade.curve))
-
-    if audio.data.ndim == 1:
-        audio.data[audio_start:audio_end] *= alpha
-    else:
-        audio.data[audio_start:audio_end] *= alpha[:, np.newaxis]
-    np.clip(audio.data, -1.0, 1.0, out=audio.data)
 
 
 def _apply_transform_with_context(record: _StepRecord, video: Video, context: dict[str, Any] | None) -> Video:

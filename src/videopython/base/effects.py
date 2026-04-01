@@ -11,6 +11,7 @@ from videopython.base.progress import log, progress_iter
 from videopython.base.video import Video
 
 if TYPE_CHECKING:
+    from videopython.base.audio import Audio
     from videopython.base.description import BoundingBox
 
 __all__ = [
@@ -723,28 +724,37 @@ class Fade(Effect):
 
         # Apply to audio
         if video.audio is not None and not video.audio.is_silent:
-            sample_rate = video.audio.metadata.sample_rate
-            audio_start = round(start_s * sample_rate)
-            audio_end = min(round(stop_s * sample_rate), len(video.audio.data))
-            n_audio_samples = audio_end - audio_start
-            fade_samples = min(round(self.duration * sample_rate), n_audio_samples)
-
-            audio_alpha = np.ones(n_audio_samples, dtype=np.float32)
-            if self.mode in ("in", "in_out"):
-                t = np.linspace(0, 1, fade_samples, dtype=np.float32)
-                audio_alpha[:fade_samples] = _compute_curve(t, self.curve)
-            if self.mode in ("out", "in_out"):
-                t = np.linspace(1, 0, fade_samples, dtype=np.float32)
-                audio_alpha[-fade_samples:] = np.minimum(audio_alpha[-fade_samples:], _compute_curve(t, self.curve))
-
-            audio_data = video.audio.data
-            if audio_data.ndim == 1:
-                audio_data[audio_start:audio_end] *= audio_alpha
-            else:
-                audio_data[audio_start:audio_end] *= audio_alpha[:, np.newaxis]
-            np.clip(audio_data, -1.0, 1.0, out=audio_data)
+            self.apply_audio(video.audio, start_s, stop_s)
 
         return video
+
+    def apply_audio(self, audio: Audio, start_s: float, stop_s: float) -> None:
+        """Apply fade to audio data in-place.
+
+        Args:
+            audio: Audio object to modify.
+            start_s: Start time in seconds.
+            stop_s: Stop time in seconds.
+        """
+        sample_rate = audio.metadata.sample_rate
+        audio_start = round(start_s * sample_rate)
+        audio_end = min(round(stop_s * sample_rate), len(audio.data))
+        n_samples = audio_end - audio_start
+        fade_samples = min(round(self.duration * sample_rate), n_samples)
+
+        alpha = np.ones(n_samples, dtype=np.float32)
+        if self.mode in ("in", "in_out"):
+            t = np.linspace(0, 1, fade_samples, dtype=np.float32)
+            alpha[:fade_samples] = _compute_curve(t, self.curve)
+        if self.mode in ("out", "in_out"):
+            t = np.linspace(1, 0, fade_samples, dtype=np.float32)
+            alpha[-fade_samples:] = np.minimum(alpha[-fade_samples:], _compute_curve(t, self.curve))
+
+        if audio.data.ndim == 1:
+            audio.data[audio_start:audio_end] *= alpha
+        else:
+            audio.data[audio_start:audio_end] *= alpha[:, np.newaxis]
+        np.clip(audio.data, -1.0, 1.0, out=audio.data)
 
     def _apply(self, video: Video) -> Video:
         raise NotImplementedError("Fade overrides apply() directly")
