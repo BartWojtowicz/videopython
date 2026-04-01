@@ -1,5 +1,11 @@
 # Release Notes
 
+## 0.25.7
+
+### Fixed
+
+- `Transcription.standardize_segments()` now preserves speaker information. Segments are split on speaker changes in addition to time/word-count limits, and each segment's `speaker` field is set from its words. Previously speaker info was dropped during regrouping.
+
 ## 0.25.6
 
 ### Fixed
