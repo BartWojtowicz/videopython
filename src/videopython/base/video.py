@@ -558,6 +558,10 @@ class FrameIterator:
         path: str | Path,
         start_second: float | None = None,
         end_second: float | None = None,
+        vf_filters: list[str] | None = None,
+        output_fps: float | None = None,
+        output_width: int | None = None,
+        output_height: int | None = None,
     ):
         """Initialize the frame iterator.
 
@@ -565,6 +569,11 @@ class FrameIterator:
             path: Path to video file
             start_second: Optional start time in seconds (seek before reading)
             end_second: Optional end time in seconds (stop reading after this)
+            vf_filters: Optional list of ffmpeg -vf filter expressions to apply
+                during decode (e.g. ``["scale=1280:720", "fps=30"]``).
+            output_fps: Override output fps (adds fps filter if not in vf_filters).
+            output_width: Override output width for frame size calculation.
+            output_height: Override output height for frame size calculation.
         """
         self.path = Path(path)
         if not self.path.exists():
@@ -574,11 +583,21 @@ class FrameIterator:
         self.start_second = start_second if start_second is not None else 0.0
         self.end_second = end_second
         self._process: subprocess.Popen | None = None
-        self._frame_size = self.metadata.width * self.metadata.height * 3
+
+        # Build -vf filter chain
+        self._vf_filters = list(vf_filters) if vf_filters else []
+        if output_fps is not None and not any(f.startswith("fps=") for f in self._vf_filters):
+            self._vf_filters.append(f"fps={output_fps}")
+
+        # Output dimensions (after filters)
+        self.output_width = output_width or self.metadata.width
+        self.output_height = output_height or self.metadata.height
+        self.output_fps = output_fps or self.metadata.fps
+        self._frame_size = self.output_width * self.output_height * 3
 
     def _build_ffmpeg_command(self) -> list[str]:
         """Build ffmpeg command for frame streaming."""
-        cmd = ["ffmpeg"]
+        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
 
         if self.start_second > 0:
             cmd.extend(["-ss", str(self.start_second)])
@@ -588,6 +607,9 @@ class FrameIterator:
         if self.end_second is not None:
             duration = self.end_second - self.start_second
             cmd.extend(["-t", str(duration)])
+
+        if self._vf_filters:
+            cmd.extend(["-vf", ",".join(self._vf_filters)])
 
         cmd.extend(
             [
@@ -614,12 +636,12 @@ class FrameIterator:
         self._process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
             bufsize=self._frame_size * 2,
         )
 
         # Calculate starting frame index based on start_second
-        start_frame = int(self.start_second * self.metadata.fps)
+        start_frame = int(self.start_second * self.output_fps)
         frame_idx = start_frame
 
         try:
@@ -629,7 +651,7 @@ class FrameIterator:
                     break
 
                 frame = np.frombuffer(raw_frame, dtype=np.uint8).copy()
-                frame = frame.reshape(self.metadata.height, self.metadata.width, 3)
+                frame = frame.reshape(self.output_height, self.output_width, 3)
 
                 yield frame_idx, frame
                 frame_idx += 1

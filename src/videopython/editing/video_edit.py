@@ -10,7 +10,10 @@ from pathlib import Path
 from types import UnionType
 from typing import Any, Mapping, Sequence, Union, get_args, get_origin, get_type_hints
 
-from videopython.base.effects import Effect
+import numpy as np
+
+from videopython.base.audio import Audio
+from videopython.base.effects import AudioEffect, Effect, Fade
 from videopython.base.registry import (
     OperationCategory,
     OperationSpec,
@@ -18,8 +21,9 @@ from videopython.base.registry import (
     get_operation_spec,
     get_operation_specs,
 )
+from videopython.base.streaming import EffectScheduleEntry, StreamingSegmentPlan, concat_files, stream_segment
 from videopython.base.transforms import Transformation
-from videopython.base.video import Video, VideoMetadata
+from videopython.base.video import ALLOWED_VIDEO_FORMATS, ALLOWED_VIDEO_PRESETS, Video, VideoMetadata
 
 __all__ = [
     "SegmentConfig",
@@ -294,6 +298,210 @@ class VideoEdit:
             )
         return video
 
+    def run_to_file(
+        self,
+        output_path: str | Path,
+        format: ALLOWED_VIDEO_FORMATS = "mp4",
+        preset: ALLOWED_VIDEO_PRESETS = "medium",
+        crf: int = 23,
+        context: dict[str, Any] | None = None,
+    ) -> Path:
+        """Execute the editing plan, streaming directly to a file.
+
+        Memory usage is O(1) w.r.t. video length for fully streamable pipelines.
+        Falls back to eager mode (run + save) for non-streamable operations.
+
+        Args:
+            output_path: Destination file path.
+            format: Output container format.
+            preset: x264 encoding preset.
+            crf: Constant rate factor (quality).
+            context: Optional side-channel data for context-dependent operations.
+
+        Returns:
+            Path to the output file.
+        """
+        output_path = Path(output_path).with_suffix(f".{format}")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Fall back to eager if post-transforms or non-streamable post-effects exist
+        if self.post_transform_records:
+            return self._run_to_file_eager(output_path, format, preset, crf, context)
+
+        for record in self.post_effect_records:
+            if not isinstance(record.operation, Effect) or not record.operation.supports_streaming:
+                return self._run_to_file_eager(output_path, format, preset, crf, context)
+
+        # Compute matching targets
+        target_fps, target_w, target_h = self._compute_matching_targets()
+
+        # Analyze each segment
+        plans: list[StreamingSegmentPlan | None] = []
+        for segment in self.segments:
+            plan = self._build_streaming_plan(segment, target_fps, target_w, target_h, context)
+            plans.append(plan)
+
+        # If any segment can't stream, fall back entirely
+        if any(p is None for p in plans):
+            return self._run_to_file_eager(output_path, format, preset, crf, context)
+
+        streaming_plans: list[StreamingSegmentPlan] = plans  # type: ignore[assignment]
+
+        # Fold post-effects into plans (they apply to the full assembled video)
+        # For simplicity, fold into single-segment plans; multi-segment post-effects
+        # require a second pass which we skip for now
+        if self.post_effect_records and len(streaming_plans) > 1:
+            return self._run_to_file_eager(output_path, format, preset, crf, context)
+
+        if self.post_effect_records and len(streaming_plans) == 1:
+            plan = streaming_plans[0]
+            total_frames = round((plan.end_second - plan.start_second) * plan.output_fps)
+            for record in self.post_effect_records:
+                start_s = _coerce_optional_number(record.apply_args.get("start"), "start")
+                stop_s = _coerce_optional_number(record.apply_args.get("stop"), "stop")
+                start_f = round(start_s * plan.output_fps) if start_s is not None else 0
+                end_f = round(stop_s * plan.output_fps) if stop_s is not None else total_frames
+                assert isinstance(record.operation, Effect)
+                plan.effect_schedule.append(EffectScheduleEntry(record.operation, start_f, end_f))
+
+        import tempfile
+
+        if len(streaming_plans) == 1:
+            plan = streaming_plans[0]
+            audio = self._load_segment_audio(self.segments[0], plan, context)
+            return stream_segment(plan, output_path, audio=audio, format=format, preset=preset, crf=crf)
+        else:
+            # Multi-segment: stream each to temp, then concat
+            temp_files: list[Path] = []
+            try:
+                for segment, plan in zip(self.segments, streaming_plans):
+                    temp = tempfile.NamedTemporaryFile(suffix=f".{format}", delete=False)
+                    temp.close()
+                    audio = self._load_segment_audio(segment, plan, context)
+                    stream_segment(plan, Path(temp.name), audio=audio, format=format, preset=preset, crf=crf)
+                    temp_files.append(Path(temp.name))
+                return concat_files(temp_files, output_path)
+            finally:
+                for f in temp_files:
+                    f.unlink(missing_ok=True)
+
+    def _run_to_file_eager(
+        self,
+        output_path: Path,
+        format: ALLOWED_VIDEO_FORMATS,
+        preset: ALLOWED_VIDEO_PRESETS,
+        crf: int,
+        context: dict[str, Any] | None,
+    ) -> Path:
+        """Fallback: run eagerly and save."""
+        video = self.run(context=context)
+        return video.save(output_path, format=format, preset=preset, crf=crf)
+
+    def _compute_matching_targets(self) -> tuple[float | None, int | None, int | None]:
+        """Compute fps/width/height matching targets across segments."""
+        target_fps, target_w, target_h = None, None, None
+        if len(self.segments) > 1 and (self.match_to_lowest_fps or self.match_to_lowest_resolution):
+            source_metas = [VideoMetadata.from_path(str(seg.source_video)) for seg in self.segments]
+            if self.match_to_lowest_fps:
+                target_fps = min(m.fps for m in source_metas)
+            if self.match_to_lowest_resolution:
+                target_w = min(m.width for m in source_metas)
+                target_h = min(m.height for m in source_metas)
+        return target_fps, target_w, target_h
+
+    def _build_streaming_plan(
+        self,
+        segment: SegmentConfig,
+        target_fps: float | None,
+        target_w: int | None,
+        target_h: int | None,
+        context: dict[str, Any] | None,
+    ) -> StreamingSegmentPlan | None:
+        """Try to build a streaming plan for a segment. Returns None if not streamable."""
+        source_meta = VideoMetadata.from_path(str(segment.source_video))
+        vf_filters: list[str] = []
+
+        # Start with matching targets (applied as decode filters)
+        out_fps = target_fps or source_meta.fps
+        out_w = target_w or source_meta.width
+        out_h = target_h or source_meta.height
+
+        if target_w and target_h and (target_w != source_meta.width or target_h != source_meta.height):
+            vf_filters.append(f"scale={target_w}:{target_h}")
+        if target_fps and target_fps != source_meta.fps:
+            vf_filters.append(f"fps={target_fps}")
+
+        # Compile transforms to ffmpeg filters
+        for record in segment.transform_records:
+            vf = _compile_transform_to_vf(record, out_w, out_h, out_fps)
+            if vf is None:
+                return None  # Non-streamable transform
+            if vf.filter_expr:
+                vf_filters.append(vf.filter_expr)
+            out_w = vf.out_width
+            out_h = vf.out_height
+            out_fps = vf.out_fps
+
+        # Check effects are streamable
+        effect_schedule: list[EffectScheduleEntry] = []
+        duration = segment.end_second - segment.start_second
+        total_frames = round(duration * out_fps)
+
+        for record in segment.effect_records:
+            if not isinstance(record.operation, Effect):
+                return None
+            if not record.operation.supports_streaming:
+                return None
+            # Compute frame range
+            start_s = _coerce_optional_number(record.apply_args.get("start"), "start")
+            stop_s = _coerce_optional_number(record.apply_args.get("stop"), "stop")
+            start_f = round(start_s * out_fps) if start_s is not None else 0
+            end_f = round(stop_s * out_fps) if stop_s is not None else total_frames
+            effect_schedule.append(EffectScheduleEntry(record.operation, start_f, end_f))
+
+        return StreamingSegmentPlan(
+            source_path=segment.source_video,
+            start_second=segment.start_second,
+            end_second=segment.end_second,
+            output_fps=out_fps,
+            output_width=out_w,
+            output_height=out_h,
+            vf_filters=vf_filters,
+            effect_schedule=effect_schedule,
+        )
+
+    def _load_segment_audio(
+        self,
+        segment: SegmentConfig,
+        plan: StreamingSegmentPlan,
+        context: dict[str, Any] | None,
+    ) -> Audio | None:
+        """Load and process audio for a segment."""
+        import warnings
+
+        from videopython.base.audio import AudioLoadError
+
+        try:
+            audio = Audio.from_path(str(segment.source_video))
+            audio = audio.slice(segment.start_second, segment.end_second)
+        except (AudioLoadError, FileNotFoundError, Exception):
+            duration = segment.end_second - segment.start_second
+            warnings.warn(f"No audio found for `{segment.source_video}`, using silent track.")
+            audio = Audio.create_silent(duration_seconds=round(duration, 2), stereo=True, sample_rate=44100)
+
+        # Apply audio effects (AudioEffect subclasses + Fade audio component)
+        for entry in plan.effect_schedule:
+            effect = entry.effect
+            start_s = entry.start_frame / plan.output_fps
+            stop_s = entry.end_frame / plan.output_fps
+            if isinstance(effect, AudioEffect):
+                effect._apply_audio(audio, start_s, stop_s, plan.output_fps)
+            elif isinstance(effect, Fade) and audio is not None and not audio.is_silent:
+                # Apply Fade's audio portion
+                _apply_fade_audio(effect, audio, start_s, stop_s)
+
+        return audio
+
     def validate(self, context: dict[str, Any] | None = None) -> VideoMetadata:
         """Validate the editing plan without loading video data.
 
@@ -475,6 +683,111 @@ class VideoEdit:
         for video in videos[1:]:
             result = result + video
         return result
+
+
+@dataclass
+class _VfResult:
+    """Result of compiling a transform to an ffmpeg -vf filter."""
+
+    filter_expr: str  # Empty string if handled by -ss/-t (e.g. CutSeconds)
+    out_width: int
+    out_height: int
+    out_fps: float
+
+
+# Transforms that can be compiled to ffmpeg -vf filters
+_STREAMABLE_TRANSFORM_OPS = {"cut", "cut_frames", "resize", "resample_fps", "crop", "speed_change"}
+
+
+def _compile_transform_to_vf(
+    record: _StepRecord,
+    cur_width: int,
+    cur_height: int,
+    cur_fps: float,
+) -> _VfResult | None:
+    """Compile a transform to an ffmpeg -vf filter. Returns None if not streamable."""
+    if record.op_id not in _STREAMABLE_TRANSFORM_OPS:
+        return None
+
+    args = record.args
+
+    if record.op_id in ("cut", "cut_frames"):
+        # Cut is handled by -ss/-t on the FrameIterator, not a -vf filter
+        return _VfResult("", cur_width, cur_height, cur_fps)
+
+    if record.op_id == "resize":
+        w = args.get("width")
+        h = args.get("height")
+        # Resolve aspect ratio if only one dimension given
+        if w is None and h is not None:
+            w = round(cur_width * h / cur_height)
+            if w % 2 != 0:
+                w += 1
+        elif h is None and w is not None:
+            h = round(cur_height * w / cur_width)
+            if h % 2 != 0:
+                h += 1
+        if w is None or h is None:
+            return None
+        return _VfResult(f"scale={w}:{h}", w, h, cur_fps)
+
+    if record.op_id == "resample_fps":
+        fps = args.get("fps", cur_fps)
+        return _VfResult(f"fps={fps}", cur_width, cur_height, float(fps))
+
+    if record.op_id == "crop":
+        cw = args.get("width", cur_width)
+        ch = args.get("height", cur_height)
+        # Convert float fractions to pixels
+        if isinstance(cw, float) and 0 < cw <= 1:
+            cw = round(cw * cur_width)
+        if isinstance(ch, float) and 0 < ch <= 1:
+            ch = round(ch * cur_height)
+        cx = args.get("x", 0)
+        cy = args.get("y", 0)
+        if isinstance(cx, float) and 0 <= cx <= 1:
+            cx = round(cx * cur_width)
+        if isinstance(cy, float) and 0 <= cy <= 1:
+            cy = round(cy * cur_height)
+        mode = args.get("mode", "center")
+        if mode == "center":
+            cx = (cur_width - cw) // 2
+            cy = (cur_height - ch) // 2
+        return _VfResult(f"crop={cw}:{ch}:{cx}:{cy}", int(cw), int(ch), cur_fps)
+
+    if record.op_id == "speed_change":
+        speed = args.get("speed", 1.0)
+        end_speed = args.get("end_speed")
+        if end_speed is not None:
+            return None  # Speed ramps are not streamable
+        return _VfResult(f"setpts=PTS/{speed}", cur_width, cur_height, cur_fps)
+
+    return None
+
+
+def _apply_fade_audio(fade: Fade, audio: Audio, start_s: float, stop_s: float) -> None:
+    """Apply the audio portion of a Fade effect."""
+    from videopython.base.effects import _compute_curve
+
+    sample_rate = audio.metadata.sample_rate
+    audio_start = round(start_s * sample_rate)
+    audio_end = min(round(stop_s * sample_rate), len(audio.data))
+    n_samples = audio_end - audio_start
+    fade_samples = min(round(fade.duration * sample_rate), n_samples)
+
+    alpha = np.ones(n_samples, dtype=np.float32)
+    if fade.mode in ("in", "in_out"):
+        t = np.linspace(0, 1, fade_samples, dtype=np.float32)
+        alpha[:fade_samples] = _compute_curve(t, fade.curve)
+    if fade.mode in ("out", "in_out"):
+        t = np.linspace(1, 0, fade_samples, dtype=np.float32)
+        alpha[-fade_samples:] = np.minimum(alpha[-fade_samples:], _compute_curve(t, fade.curve))
+
+    if audio.data.ndim == 1:
+        audio.data[audio_start:audio_end] *= alpha
+    else:
+        audio.data[audio_start:audio_end] *= alpha[:, np.newaxis]
+    np.clip(audio.data, -1.0, 1.0, out=audio.data)
 
 
 def _apply_transform_with_context(record: _StepRecord, video: Video, context: dict[str, Any] | None) -> Video:
