@@ -61,13 +61,13 @@ def test_overlaying_video_with_text(place, small_video):
     # Apply overlay to video
     overlay = FullImageOverlay(overlay_image=overlay_array)
     original_video = small_video.copy()
+    first_frame_before = original_video.frames[0].copy()
     overlayed_video = overlay.apply(original_video)
 
     # Check video shape hasn't changed
     assert overlayed_video.video_shape == small_video.video_shape
 
     # Check that the overlay actually modified pixel values in the video
-    first_frame_before = original_video.frames[0].copy()
     first_frame_after = overlayed_video.frames[0]
 
     # There should be differences between original and overlayed frames

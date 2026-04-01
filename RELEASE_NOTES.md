@@ -1,5 +1,14 @@
 # Release Notes
 
+## 0.25.8
+
+### Changed
+
+- Effects now mutate frames in-place instead of creating full array copies. Affected effects: `ColorGrading`, `Blur`, `Zoom`, `FullImageOverlay`, `KenBurns`. This reduces peak memory by ~39% and speeds up effect application by ~65% on a 1-minute 720p benchmark.
+- `Fade` and `Vignette` now process frames in batches instead of allocating a full float32 intermediate array, significantly reducing memory spikes.
+- `Effect.apply()` skips the `np.r_` slice-and-reassemble path when the effect covers the full video (no `start`/`stop`), avoiding an unnecessary full-frame copy.
+- Dropped `multiprocessing.Pool` from `ColorGrading` and `Blur` in favor of serial in-place processing. The IPC serialization overhead of Pool was slower than direct computation for typical video lengths.
+
 ## 0.25.7
 
 ### Fixed
