@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from multiprocessing import Pool
 from typing import TYPE_CHECKING, Literal
 
 import cv2
@@ -10,9 +9,6 @@ from PIL import Image, ImageDraw, ImageFont
 
 from videopython.base.progress import log, progress_iter
 from videopython.base.video import Video
-
-# Minimum frames before using multiprocessing (Pool overhead isn't worth it below this)
-MIN_FRAMES_FOR_MULTIPROCESSING = 100
 
 if TYPE_CHECKING:
     from videopython.base.description import BoundingBox
@@ -70,24 +66,30 @@ class Effect(ABC):
                 Only set when the effect should end before the video does.
         """
         original_shape = video.video_shape
-        start_s, stop_s = _resolve_time_range(start, stop, video.total_seconds)
-        # Apply effect on video slice
-        effect_start_frame = round(start_s * video.fps)
-        effect_end_frame = round(stop_s * video.fps)
-        video_with_effect = self._apply(video[effect_start_frame:effect_end_frame])
-        old_audio = video.audio
-        video = Video.from_frames(
-            np.r_[
-                "0,2",
-                video.frames[:effect_start_frame],
-                video_with_effect.frames,
-                video.frames[effect_end_frame:],
-            ],
-            fps=video.fps,
-        )
-        video.audio = old_audio
+
+        if start is None and stop is None:
+            # Full-range: apply directly without slicing or np.r_ reassembly.
+            video = self._apply(video)
+        else:
+            start_s, stop_s = _resolve_time_range(start, stop, video.total_seconds)
+            # Apply effect on video slice
+            effect_start_frame = round(start_s * video.fps)
+            effect_end_frame = round(stop_s * video.fps)
+            video_with_effect = self._apply(video[effect_start_frame:effect_end_frame])
+            old_audio = video.audio
+            video = Video.from_frames(
+                np.r_[
+                    "0,2",
+                    video.frames[:effect_start_frame],
+                    video_with_effect.frames,
+                    video.frames[effect_end_frame:],
+                ],
+                fps=video.fps,
+            )
+            video.audio = old_audio
+
         # Check if dimensions didn't change
-        if not video.video_shape == original_shape:
+        if video.video_shape != original_shape:
             raise RuntimeError("The effect must not change the number of frames and the shape of the frames!")
 
         return video
@@ -147,22 +149,15 @@ class FullImageOverlay(Effect):
 
         log("Overlaying video...")
         if self.fade_time == 0:
-            video.frames = np.array(
-                [self._overlay(frame) for frame in progress_iter(video.frames, desc="Overlaying frames")],
-                dtype=np.uint8,
-            )
+            for i in progress_iter(range(len(video.frames)), desc="Overlaying frames"):
+                video.frames[i] = self._overlay(video.frames[i])
         else:
             num_video_frames = len(video.frames)
             num_fade_frames = round(self.fade_time * video.fps)
-            new_frames = []
-            for i, frame in enumerate(progress_iter(video.frames, desc="Overlaying frames")):
+            for i in progress_iter(range(num_video_frames), desc="Overlaying frames"):
                 frames_dist_from_end = min(i, num_video_frames - i)
-                if frames_dist_from_end >= num_fade_frames:
-                    fade_alpha = 1.0
-                else:
-                    fade_alpha = frames_dist_from_end / num_fade_frames
-                new_frames.append(self._overlay(frame, fade_alpha))
-            video.frames = np.array(new_frames, dtype=np.uint8)
+                fade_alpha = 1.0 if frames_dist_from_end >= num_fade_frames else frames_dist_from_end / num_fade_frames
+                video.frames[i] = self._overlay(video.frames[i], fade_alpha)
         return video
 
 
@@ -228,17 +223,8 @@ class Blur(Effect):
             raise ValueError(f"Unknown mode: `{self.mode}`.")
 
         log(f"Applying {self.mode} blur...")
-
-        if n_frames >= MIN_FRAMES_FOR_MULTIPROCESSING:
-            with Pool() as pool:
-                new_frames = pool.starmap(
-                    self._blur_frame,
-                    [(frame, sigma) for frame, sigma in zip(video.frames, sigmas)],
-                )
-        else:
-            new_frames = [self._blur_frame(frame, sigma) for frame, sigma in zip(video.frames, sigmas)]
-
-        video.frames = np.array(new_frames, dtype=np.uint8)
+        for i in progress_iter(range(n_frames), desc="Blurring"):
+            video.frames[i] = self._blur_frame(video.frames[i], sigmas[i])
         return video
 
 
@@ -261,42 +247,23 @@ class Zoom(Effect):
 
     def _apply(self, video: Video) -> Video:
         n_frames = len(video.frames)
-        new_frames = []
-
         width = video.metadata.width
         height = video.metadata.height
-        crop_sizes_w, crop_sizes_h = (
-            np.linspace(width // self.zoom_factor, width, n_frames),
-            np.linspace(height // self.zoom_factor, height, n_frames),
-        )
+        crop_sizes_w = np.linspace(width // self.zoom_factor, width, n_frames)
+        crop_sizes_h = np.linspace(height // self.zoom_factor, height, n_frames)
 
         if self.mode == "in":
-            for frame, w, h in progress_iter(
-                zip(video.frames, reversed(crop_sizes_w), reversed(crop_sizes_h)),
-                desc="Zooming",
-                total=n_frames,
-            ):
-                x = width / 2 - w / 2
-                y = height / 2 - h / 2
-
-                cropped_frame = frame[round(y) : round(y + h), round(x) : round(x + w)]
-                zoomed_frame = cv2.resize(cropped_frame, (width, height))
-                new_frames.append(zoomed_frame)
-        elif self.mode == "out":
-            for frame, w, h in progress_iter(
-                zip(video.frames, crop_sizes_w, crop_sizes_h),
-                desc="Zooming",
-                total=n_frames,
-            ):
-                x = width / 2 - w / 2
-                y = height / 2 - h / 2
-
-                cropped_frame = frame[round(y) : round(y + h), round(x) : round(x + w)]
-                zoomed_frame = cv2.resize(cropped_frame, (width, height))
-                new_frames.append(zoomed_frame)
-        else:
+            crop_sizes_w = crop_sizes_w[::-1]
+            crop_sizes_h = crop_sizes_h[::-1]
+        elif self.mode != "out":
             raise ValueError(f"Unknown mode: `{self.mode}`.")
-        video.frames = np.asarray(new_frames)
+
+        for i in progress_iter(range(n_frames), desc="Zooming", total=n_frames):
+            w, h = crop_sizes_w[i], crop_sizes_h[i]
+            x = width / 2 - w / 2
+            y = height / 2 - h / 2
+            cropped_frame = video.frames[i][round(y) : round(y + h), round(x) : round(x + w)]
+            video.frames[i] = cv2.resize(cropped_frame, (width, height))
         return video
 
 
@@ -370,15 +337,8 @@ class ColorGrading(Effect):
 
     def _apply(self, video: Video) -> Video:
         log("Applying color grading...")
-        n_frames = len(video.frames)
-
-        if n_frames >= MIN_FRAMES_FOR_MULTIPROCESSING:
-            with Pool() as pool:
-                new_frames = pool.map(self._grade_frame, video.frames)
-        else:
-            new_frames = [self._grade_frame(frame) for frame in video.frames]
-
-        video.frames = np.array(new_frames, dtype=np.uint8)
+        for i in progress_iter(range(len(video.frames)), desc="Color grading"):
+            video.frames[i] = self._grade_frame(video.frames[i])
         return video
 
 
@@ -426,11 +386,12 @@ class Vignette(Effect):
         if self._mask is None or self._mask.shape != (height, width):
             self._mask = self._create_mask(height, width)
 
-        # Apply mask to all frames using vectorized operation
-        # mask_3d shape: (height, width, 1), frames shape: (n_frames, height, width, 3)
-        # Broadcasting handles the multiplication across all frames and channels
+        # Apply mask in batches to avoid allocating a full float32 copy of all frames
         mask_3d = self._mask[:, :, np.newaxis]
-        video.frames = (video.frames.astype(np.float32) * mask_3d).astype(np.uint8)
+        batch_size = 64
+        for start in range(0, len(video.frames), batch_size):
+            end = min(start + batch_size, len(video.frames))
+            video.frames[start:end] = (video.frames[start:end].astype(np.float32) * mask_3d).astype(np.uint8)
         return video
 
 
@@ -533,8 +494,7 @@ class KenBurns(Effect):
         end_h = int(self.end_region.height * height)
 
         log("Applying Ken Burns effect...")
-        new_frames = []
-        for i, frame in enumerate(progress_iter(video.frames, desc="Ken Burns")):
+        for i in progress_iter(range(n_frames), desc="Ken Burns"):
             t = i / max(1, n_frames - 1)  # Normalized time [0, 1]
             eased_t = self._ease(t)
 
@@ -548,10 +508,7 @@ class KenBurns(Effect):
             x = max(0, min(x, width - crop_w))
             y = max(0, min(y, height - crop_h))
 
-            new_frame = self._crop_and_scale_frame(frame, x, y, crop_w, crop_h, target_w, target_h)
-            new_frames.append(new_frame)
-
-        video.frames = np.array(new_frames, dtype=np.uint8)
+            video.frames[i] = self._crop_and_scale_frame(video.frames[i], x, y, crop_w, crop_h, target_w, target_h)
         return video
 
 
@@ -623,10 +580,19 @@ class Fade(Effect):
             t = np.linspace(1, 0, fade_frames, dtype=np.float32)
             alpha[-fade_frames:] = np.minimum(alpha[-fade_frames:], _compute_curve(t, self.curve))
 
-        # Apply to video frames
-        frames = video.frames[effect_start_frame:effect_end_frame]
-        alpha_3d = alpha[:, np.newaxis, np.newaxis, np.newaxis]
-        video.frames[effect_start_frame:effect_end_frame] = (frames.astype(np.float32) * alpha_3d).astype(np.uint8)
+        # Apply to video frames in batches to avoid a full float32 copy
+        batch_size = 64
+        for batch_start in range(0, n_effect_frames, batch_size):
+            batch_end = min(batch_start + batch_size, n_effect_frames)
+            batch_alpha = alpha[batch_start:batch_end, np.newaxis, np.newaxis, np.newaxis]
+            # Skip batch if all alphas are 1.0 (no change needed)
+            if np.all(batch_alpha == 1.0):
+                continue
+            abs_start = effect_start_frame + batch_start
+            abs_end = effect_start_frame + batch_end
+            video.frames[abs_start:abs_end] = (video.frames[abs_start:abs_end].astype(np.float32) * batch_alpha).astype(
+                np.uint8
+            )
 
         # Verify shape invariant
         if video.video_shape != original_shape:
