@@ -307,6 +307,95 @@ def test_standardize_segments_preserves_word_timing(dummy_transcription):
         assert orig_word.word == result_word.word
 
 
+def test_standardize_segments_preserves_speaker_by_time():
+    """Test that standardize_segments(time=...) preserves speaker info and splits on speaker change."""
+    words = [
+        TranscriptionWord(start=0.0, end=0.5, word="Hello", speaker="SPEAKER_00"),
+        TranscriptionWord(start=0.5, end=1.0, word="world", speaker="SPEAKER_00"),
+        TranscriptionWord(start=1.0, end=1.5, word="Hi", speaker="SPEAKER_01"),
+        TranscriptionWord(start=1.5, end=2.0, word="there", speaker="SPEAKER_01"),
+        TranscriptionWord(start=2.0, end=2.5, word="Back", speaker="SPEAKER_00"),
+    ]
+    transcription = Transcription(words=words)
+
+    # Large time window -- should still split on speaker changes
+    result = transcription.standardize_segments(time=10.0)
+
+    assert len(result.segments) == 3
+    assert result.segments[0].speaker == "SPEAKER_00"
+    assert result.segments[0].text == "Hello world"
+    assert result.segments[1].speaker == "SPEAKER_01"
+    assert result.segments[1].text == "Hi there"
+    assert result.segments[2].speaker == "SPEAKER_00"
+    assert result.segments[2].text == "Back"
+
+
+def test_standardize_segments_preserves_speaker_by_num_words():
+    """Test that standardize_segments(num_words=...) preserves speaker info and splits on speaker change."""
+    words = [
+        TranscriptionWord(start=0.0, end=0.5, word="Hello", speaker="SPEAKER_00"),
+        TranscriptionWord(start=0.5, end=1.0, word="world", speaker="SPEAKER_00"),
+        TranscriptionWord(start=1.0, end=1.5, word="Hi", speaker="SPEAKER_01"),
+        TranscriptionWord(start=1.5, end=2.0, word="there", speaker="SPEAKER_01"),
+    ]
+    transcription = Transcription(words=words)
+
+    # num_words=10 is larger than total words, but speaker change should still split
+    result = transcription.standardize_segments(num_words=10)
+
+    assert len(result.segments) == 2
+    assert result.segments[0].speaker == "SPEAKER_00"
+    assert result.segments[0].text == "Hello world"
+    assert result.segments[1].speaker == "SPEAKER_01"
+    assert result.segments[1].text == "Hi there"
+
+
+def test_standardize_segments_speaker_change_forces_break():
+    """Test that speaker change forces a segment break even within time/word limits."""
+    words = [
+        TranscriptionWord(start=0.0, end=0.3, word="One", speaker="SPEAKER_00"),
+        TranscriptionWord(start=0.3, end=0.5, word="two", speaker="SPEAKER_01"),
+        TranscriptionWord(start=0.5, end=0.8, word="three", speaker="SPEAKER_00"),
+    ]
+    transcription = Transcription(words=words)
+
+    # Time: all within 1 second, but 3 speakers changes -> 3 segments
+    result_time = transcription.standardize_segments(time=5.0)
+    assert len(result_time.segments) == 3
+    assert [s.speaker for s in result_time.segments] == ["SPEAKER_00", "SPEAKER_01", "SPEAKER_00"]
+
+    # Words: num_words=10 but still 3 segments due to speaker changes
+    result_words = transcription.standardize_segments(num_words=10)
+    assert len(result_words.segments) == 3
+    assert [s.speaker for s in result_words.segments] == ["SPEAKER_00", "SPEAKER_01", "SPEAKER_00"]
+
+
+def test_standardize_segments_no_speaker():
+    """Test that standardize_segments works correctly with None speakers (no diarization)."""
+    words = [
+        TranscriptionWord(start=0.0, end=0.5, word="Hello"),
+        TranscriptionWord(start=0.5, end=1.0, word="world"),
+        TranscriptionWord(start=1.0, end=1.5, word="foo"),
+        TranscriptionWord(start=1.5, end=2.0, word="bar"),
+    ]
+    segment = TranscriptionSegment(start=0.0, end=2.0, text="Hello world foo bar", words=words)
+    transcription = Transcription(segments=[segment])
+
+    # All None speakers -- should group normally by time
+    result = transcription.standardize_segments(time=1.5)
+    assert len(result.segments) == 2
+    assert result.segments[0].text == "Hello world foo"
+    assert result.segments[0].speaker is None
+    assert result.segments[1].text == "bar"
+    assert result.segments[1].speaker is None
+
+    # Group normally by word count
+    result = transcription.standardize_segments(num_words=2)
+    assert len(result.segments) == 2
+    assert result.segments[0].text == "Hello world"
+    assert result.segments[1].text == "foo bar"
+
+
 def test_transcription_initialization_with_words():
     """Test Transcription initialization with words parameter for speaker diarization."""
     words = [

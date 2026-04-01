@@ -195,9 +195,12 @@ class Transcription:
     def standardize_segments(self, *, time: float | None = None, num_words: int | None = None) -> Transcription:
         """Return a new Transcription with standardized segments.
 
+        Segments are also split on speaker changes so that each segment contains
+        words from a single speaker.
+
         Args:
             time: Maximum duration in seconds for each segment
-            num_words: Exact number of words per segment
+            num_words: Maximum number of words per segment
 
         Raises:
             ValueError: If both time and num_words are provided or if neither is provided
@@ -212,64 +215,56 @@ class Transcription:
             raise ValueError("Number of words must be positive")
 
         # Collect all words from all segments
-        all_words = []
+        all_words: list[TranscriptionWord] = []
         for segment in self.segments:
             all_words.extend(segment.words)
 
         if not all_words:
             return Transcription(segments=[], language=self.language)
 
-        standardized_segments = []
+        standardized_segments: list[TranscriptionSegment] = []
+
+        def _flush(words: list[TranscriptionWord]) -> None:
+            if not words:
+                return
+            segment_text = " ".join(w.word for w in words)
+            standardized_segments.append(
+                TranscriptionSegment(
+                    start=words[0].start,
+                    end=words[-1].end,
+                    text=segment_text,
+                    words=words.copy(),
+                    speaker=words[0].speaker,
+                )
+            )
 
         if time is not None:
-            # Group words by time constraint
-            current_words = []
-            current_start = None
+            current_words: list[TranscriptionWord] = []
 
             for word in all_words:
-                if current_start is None:
-                    current_start = word.start
+                if not current_words:
                     current_words = [word]
-                elif word.end - current_start <= time:
-                    current_words.append(word)
+                elif word.speaker != current_words[0].speaker or word.end - current_words[0].start > time:
+                    _flush(current_words)
+                    current_words = [word]
                 else:
-                    # Create segment from current words
-                    if current_words:
-                        segment_text = " ".join(w.word for w in current_words)
-                        standardized_segments.append(
-                            TranscriptionSegment(
-                                start=current_start,
-                                end=current_words[-1].end,
-                                text=segment_text,
-                                words=current_words.copy(),
-                            )
-                        )
+                    current_words.append(word)
 
-                    # Start new segment
-                    current_start = word.start
-                    current_words = [word]
+            _flush(current_words)
 
-            # Add final segment
-            if current_words:
-                segment_text = " ".join(w.word for w in current_words)
-                standardized_segments.append(
-                    TranscriptionSegment(
-                        start=current_start,  # type: ignore
-                        end=current_words[-1].end,
-                        text=segment_text,
-                        words=current_words.copy(),
-                    )
-                )
         elif num_words is not None:
-            # Group words by word count constraint
-            for i in range(0, len(all_words), num_words):
-                segment_words = all_words[i : i + num_words]
-                segment_text = " ".join(w.word for w in segment_words)
-                standardized_segments.append(
-                    TranscriptionSegment(
-                        start=segment_words[0].start, end=segment_words[-1].end, text=segment_text, words=segment_words
-                    )
-                )
+            current_words = []
+
+            for word in all_words:
+                if not current_words:
+                    current_words = [word]
+                elif word.speaker != current_words[0].speaker or len(current_words) >= num_words:
+                    _flush(current_words)
+                    current_words = [word]
+                else:
+                    current_words.append(word)
+
+            _flush(current_words)
 
         return Transcription(segments=standardized_segments, language=self.language)
 
