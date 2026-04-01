@@ -54,7 +54,33 @@ print(predicted)
 
 video = edit.run()
 video.save("output.mp4")
+
+# Or stream directly to file (constant memory, any video length):
+edit.run_to_file("output.mp4", crf=20, preset="medium")
 ```
+
+## Streaming Mode (`run_to_file`)
+
+`run_to_file()` streams frames one at a time from ffmpeg decode through per-frame effect processing to ffmpeg encode. Memory usage is constant (~250 MB) regardless of video length.
+
+```python
+edit = VideoEdit.from_dict(plan)
+edit.run_to_file("output.mp4", format="mp4", preset="medium", crf=20)
+```
+
+When all operations in the plan are streamable, frames are never fully loaded into memory. If any operation is not streamable, it falls back to the eager path (`run()` + `save()`) automatically.
+
+**Streamable operations** (check `x-streamable` in `json_schema()` output):
+
+- Transforms: `resize`, `crop`, `resample_fps`
+- Effects: `color_adjust`, `blur_effect`, `zoom_effect`, `vignette`, `ken_burns`, `fade`, `full_image_overlay`, `text_overlay`, `volume_adjust`
+
+**Non-streamable** (triggers eager fallback):
+
+- Transforms: `cut`, `cut_frames`, `speed_change`, `reverse`, `freeze_frame`, `picture_in_picture`, `silence_removal`
+- Post-transforms on multi-segment plans
+
+Use `run()` + `save()` when you need to inspect or modify the result in Python. Use `run_to_file()` for production pipelines processing long videos.
 
 ## JSON Plan Format
 
@@ -219,6 +245,7 @@ For complete examples with OpenAI and Anthropic APIs, see the [LLM Integration G
 - Reflects current registration state (AI ops appear only if `videopython.ai` was imported)
 - Encodes parser-aligned constraints (for example `resize` requires at least one non-null dimension)
 - Includes rich value constraints (`minimum`, `maximum`, `exclusive_minimum`, `enum`) for all parameters
+- Operations compatible with `run_to_file()` streaming are marked with `"x-streamable": true`
 
 ## Serialization (`to_dict`)
 

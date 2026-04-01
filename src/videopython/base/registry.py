@@ -530,7 +530,7 @@ def _register_base_operations() -> None:
             Resize,
             op_id="resize",
             category=OperationCategory.TRANSFORMATION,
-            tags={"changes_dimensions"},
+            tags={"changes_dimensions", "streamable"},
             param_overrides={
                 "width": {"exclusive_minimum": 0},
                 "height": {"exclusive_minimum": 0},
@@ -543,7 +543,7 @@ def _register_base_operations() -> None:
             ResampleFPS,
             op_id="resample_fps",
             category=OperationCategory.TRANSFORMATION,
-            tags={"changes_fps"},
+            tags={"changes_fps", "streamable"},
             param_overrides={"fps": {"minimum": 1}},
             metadata_method="resample_fps",
         )
@@ -553,7 +553,7 @@ def _register_base_operations() -> None:
             Crop,
             op_id="crop",
             category=OperationCategory.TRANSFORMATION,
-            tags={"changes_dimensions"},
+            tags={"changes_dimensions", "streamable"},
             param_overrides={
                 "width": {"exclusive_minimum": 0},
                 "height": {"exclusive_minimum": 0},
@@ -634,6 +634,7 @@ def _register_base_operations() -> None:
             Blur,
             op_id="blur_effect",
             category=OperationCategory.EFFECT,
+            tags={"streamable"},
             aliases=("blur",),
             param_overrides={"iterations": {"minimum": 1}},
             apply_param_overrides=_time_range_apply_overrides,
@@ -644,6 +645,7 @@ def _register_base_operations() -> None:
             Zoom,
             op_id="zoom_effect",
             category=OperationCategory.EFFECT,
+            tags={"streamable"},
             aliases=("zoom",),
             param_overrides={"zoom_factor": {"exclusive_minimum": 1}},
             apply_param_overrides=_time_range_apply_overrides,
@@ -654,6 +656,7 @@ def _register_base_operations() -> None:
             ColorGrading,
             op_id="color_adjust",
             category=OperationCategory.EFFECT,
+            tags={"streamable"},
             aliases=("color_grading",),
             param_overrides={
                 "brightness": {"minimum": -1, "maximum": 1},
@@ -669,6 +672,7 @@ def _register_base_operations() -> None:
             Vignette,
             op_id="vignette",
             category=OperationCategory.EFFECT,
+            tags={"streamable"},
             param_overrides={
                 "strength": {"minimum": 0, "maximum": 1},
                 "radius": {"minimum": 0.5, "maximum": 2.0},
@@ -681,6 +685,7 @@ def _register_base_operations() -> None:
             KenBurns,
             op_id="ken_burns",
             category=OperationCategory.EFFECT,
+            tags={"streamable"},
             exclude_params={"start_region", "end_region"},
             # BoundingBox forward ref breaks get_type_hints, so fix easing type manually.
             param_overrides={
@@ -697,6 +702,7 @@ def _register_base_operations() -> None:
             FullImageOverlay,
             op_id="full_image_overlay",
             category=OperationCategory.EFFECT,
+            tags={"streamable"},
             exclude_params={"overlay_image"},
             param_overrides={
                 "alpha": {"minimum": 0, "maximum": 1},
@@ -710,6 +716,7 @@ def _register_base_operations() -> None:
             Fade,
             op_id="fade",
             category=OperationCategory.EFFECT,
+            tags={"streamable"},
             param_overrides={"duration": {"exclusive_minimum": 0}},
             apply_param_overrides=_time_range_apply_overrides,
         )
@@ -719,6 +726,7 @@ def _register_base_operations() -> None:
             VolumeAdjust,
             op_id="volume_adjust",
             category=OperationCategory.EFFECT,
+            tags={"streamable"},
             aliases=("volume",),
             param_overrides={
                 "volume": {"minimum": 0},
@@ -732,6 +740,7 @@ def _register_base_operations() -> None:
             TextOverlay,
             op_id="text_overlay",
             category=OperationCategory.EFFECT,
+            tags={"streamable"},
             aliases=("lower_third", "title_card"),
             exclude_params={"font_filename"},
             param_overrides={

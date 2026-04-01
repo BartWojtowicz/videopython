@@ -17,6 +17,45 @@ video = Video.from_path("2_hour_movie.mp4")  # Could use 50GB+ RAM
 
 A 2-hour video at 1080p30 has ~216,000 frames. At ~6MB per frame (uncompressed RGB), that's over 1TB of data.
 
+## Solution: Streaming Editing Pipeline
+
+For editing workflows, `VideoEdit.run_to_file()` streams frames one at a time from
+ffmpeg decode through per-frame effect processing to ffmpeg encode. Memory usage is
+constant (~250 MB) regardless of video length.
+
+```python
+from videopython.editing import VideoEdit
+
+plan = {
+    "segments": [
+        {
+            "source": "2_hour_movie.mp4",
+            "start": 0,
+            "end": 7200,
+            "transforms": [
+                {"op": "resize", "args": {"width": 1920, "height": 1080}},
+            ],
+            "effects": [
+                {"op": "color_adjust", "args": {"saturation": 0, "contrast": 1.15}},
+                {"op": "fade", "args": {"mode": "in_out", "duration": 1.0}},
+                {"op": "volume_adjust", "args": {"volume": 1.5}},
+            ],
+        }
+    ],
+}
+
+edit = VideoEdit.from_dict(plan)
+edit.run_to_file("output.mp4", crf=20, preset="medium")
+# Peak memory: ~250 MB regardless of video length
+```
+
+When all operations are streamable, frames are never loaded into memory. If any operation
+is not streamable (e.g. `reverse`, `speed_change`), the pipeline falls back to eager
+mode automatically.
+
+Check `VideoEdit.json_schema()` for `x-streamable: true` on each operation to see which
+ones support streaming.
+
 ## Solution: FrameIterator
 
 `FrameIterator` streams frames one at a time with O(1) memory usage:
@@ -118,8 +157,9 @@ with FrameIterator("movie.mp4", start_second=3600, end_second=4200) as frames:
 
 | Approach | Memory | Speed | Use Case |
 |----------|--------|-------|----------|
+| `VideoEdit.run_to_file()` | O(1) | Fast | Editing long videos with effects/transforms |
 | `Video.from_path()` | O(all frames) | Fast access | Short videos, need random access |
-| `FrameIterator` | O(1) | Sequential | Long videos, single pass |
+| `FrameIterator` | O(1) | Sequential | Long videos, single pass analysis |
 | `SceneDetector.detect_streaming()` | O(1) | Slower | Memory-constrained |
 | `SceneDetector.detect_parallel()` | O(workers) | Fastest | Multi-core systems |
 

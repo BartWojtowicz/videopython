@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, ClassVar, Literal
 
 import cv2
 import numpy as np
@@ -11,6 +11,7 @@ from videopython.base.progress import log, progress_iter
 from videopython.base.video import Video
 
 if TYPE_CHECKING:
+    from videopython.base.audio import Audio
     from videopython.base.description import BoundingBox
 
 __all__ = [
@@ -49,6 +50,27 @@ class Effect(ABC):
 
     The effect must not change the number of frames and the shape of the frames.
     """
+
+    supports_streaming: ClassVar[bool] = False
+
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+        """Called once before streaming begins to precompute per-frame parameters.
+
+        Override in subclasses that need precomputation (e.g., per-frame alpha
+        arrays, sigma schedules, crop regions).
+        """
+
+    def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
+        """Process a single frame in streaming mode.
+
+        Args:
+            frame: Single RGB frame (H, W, 3) uint8.
+            frame_index: 0-based index within this effect's active range.
+
+        Returns:
+            Processed frame, same shape and dtype.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not support streaming")
 
     def apply(self, video: Video, start: float | None = None, stop: float | None = None) -> Video:
         """Apply the effect to a video, optionally within a time range.
@@ -106,6 +128,8 @@ class FullImageOverlay(Effect):
     transparency via RGBA images and an overall opacity control.
     """
 
+    supports_streaming: ClassVar[bool] = True
+
     def __init__(self, overlay_image: np.ndarray, alpha: float | None = None, fade_time: float = 0.0):
         """Initialize image overlay effect.
 
@@ -139,6 +163,17 @@ class FullImageOverlay(Effect):
         img_pil.paste(overlay_pil, (0, 0), overlay_pil)
         return np.array(img_pil)
 
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+        self._stream_total = total_frames
+        self._stream_fade_frames = round(self.fade_time * fps) if self.fade_time > 0 else 0
+
+    def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
+        if self._stream_fade_frames == 0:
+            return self._overlay(frame)
+        dist_from_end = min(frame_index, self._stream_total - 1 - frame_index)
+        fade_alpha = 1.0 if dist_from_end >= self._stream_fade_frames else dist_from_end / self._stream_fade_frames
+        return self._overlay(frame, fade_alpha)
+
     def _apply(self, video: Video) -> Video:
         if not video.frame_shape == self.overlay[:, :, :3].shape:
             raise ValueError(
@@ -163,6 +198,8 @@ class FullImageOverlay(Effect):
 
 class Blur(Effect):
     """Applies Gaussian blur that can stay constant or ramp up/down over the clip."""
+
+    supports_streaming: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -198,29 +235,31 @@ class Blur(Effect):
         """
         return cv2.GaussianBlur(frame, self.kernel_size, sigma)
 
-    def _apply(self, video: Video) -> Video:
-        n_frames = len(video.frames)
-
-        # Calculate base sigma from kernel size (OpenCV formula)
+    def _compute_sigmas(self, n_frames: int) -> np.ndarray:
+        """Compute per-frame sigma values based on mode."""
         base_sigma = 0.3 * ((self.kernel_size[0] - 1) * 0.5 - 1) + 0.8
-
-        # Multiple blur iterations with sigma S approximate single blur with sigma S*sqrt(iterations)
-        # This is much faster than iterative application
         max_sigma = base_sigma * np.sqrt(self.iterations)
 
-        # Calculate sigma for each frame based on mode
         if self.mode == "constant":
-            sigmas = np.full(n_frames, max_sigma)
+            return np.full(n_frames, max_sigma)
         elif self.mode == "ascending":
-            # Linearly increase blur intensity from start to end
-            iteration_ratios = np.linspace(1 / n_frames, 1.0, n_frames)
-            sigmas = base_sigma * np.sqrt(np.maximum(1, np.round(iteration_ratios * self.iterations)))
+            ratios = np.linspace(1 / n_frames, 1.0, n_frames)
         elif self.mode == "descending":
-            # Linearly decrease blur intensity from start to end
-            iteration_ratios = np.linspace(1.0, 1 / n_frames, n_frames)
-            sigmas = base_sigma * np.sqrt(np.maximum(1, np.round(iteration_ratios * self.iterations)))
+            ratios = np.linspace(1.0, 1 / n_frames, n_frames)
         else:
             raise ValueError(f"Unknown mode: `{self.mode}`.")
+        return base_sigma * np.sqrt(np.maximum(1, np.round(ratios * self.iterations)))
+
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+        self._stream_sigmas = self._compute_sigmas(total_frames)
+
+    def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
+        idx = min(frame_index, len(self._stream_sigmas) - 1)
+        return self._blur_frame(frame, self._stream_sigmas[idx])
+
+    def _apply(self, video: Video) -> Video:
+        n_frames = len(video.frames)
+        sigmas = self._compute_sigmas(n_frames)
 
         log(f"Applying {self.mode} blur...")
         for i in progress_iter(range(n_frames), desc="Blurring"):
@@ -230,6 +269,8 @@ class Blur(Effect):
 
 class Zoom(Effect):
     """Progressively zooms into or out of the frame center over the clip duration."""
+
+    supports_streaming: ClassVar[bool] = True
 
     def __init__(self, zoom_factor: float, mode: Literal["in", "out"]):
         """Initialize zoom effect.
@@ -244,6 +285,24 @@ class Zoom(Effect):
             raise ValueError("Zoom factor must be greater than 1!")
         self.zoom_factor = zoom_factor
         self.mode = mode
+
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+        crop_w = np.linspace(width // self.zoom_factor, width, total_frames)
+        crop_h = np.linspace(height // self.zoom_factor, height, total_frames)
+        if self.mode == "in":
+            crop_w, crop_h = crop_w[::-1], crop_h[::-1]
+        self._stream_crops = np.stack([crop_w, crop_h], axis=1)
+        self._stream_width = width
+        self._stream_height = height
+
+    def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
+        idx = min(frame_index, len(self._stream_crops) - 1)
+        w, h = self._stream_crops[idx]
+        width, height = self._stream_width, self._stream_height
+        x = width / 2 - w / 2
+        y = height / 2 - h / 2
+        cropped = frame[round(y) : round(y + h), round(x) : round(x + w)]
+        return cv2.resize(cropped, (width, height))
 
     def _apply(self, video: Video) -> Video:
         n_frames = len(video.frames)
@@ -269,6 +328,8 @@ class Zoom(Effect):
 
 class ColorGrading(Effect):
     """Adjusts color properties: brightness, contrast, saturation, and temperature."""
+
+    supports_streaming: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -335,6 +396,9 @@ class ColorGrading(Effect):
         img = np.clip(img * 255, 0, 255).astype(np.uint8)
         return img
 
+    def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
+        return self._grade_frame(frame)
+
     def _apply(self, video: Video) -> Video:
         log("Applying color grading...")
         for i in progress_iter(range(len(video.frames)), desc="Color grading"):
@@ -344,6 +408,8 @@ class ColorGrading(Effect):
 
 class Vignette(Effect):
     """Darkens the edges of the frame, drawing attention to the center."""
+
+    supports_streaming: ClassVar[bool] = True
 
     def __init__(self, strength: float = 0.5, radius: float = 1.0):
         """Initialize vignette effect.
@@ -378,6 +444,14 @@ class Vignette(Effect):
 
         return mask.astype(np.float32)
 
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+        if self._mask is None or self._mask.shape != (height, width):
+            self._mask = self._create_mask(height, width)
+        self._stream_mask_3d = self._mask[:, :, np.newaxis]
+
+    def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
+        return (frame.astype(np.float32) * self._stream_mask_3d).astype(np.uint8)
+
     def _apply(self, video: Video) -> Video:
         log("Applying vignette effect...")
         height, width = video.frame_shape[:2]
@@ -402,6 +476,8 @@ class KenBurns(Effect):
     the clip. Use it to add motion to still images or to guide the viewer's eye
     across a scene.
     """
+
+    supports_streaming: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -477,6 +553,38 @@ class KenBurns(Effect):
         cropped = frame[y : y + crop_h, x : x + crop_w]
         return cv2.resize(cropped, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
 
+    def _precompute_regions(self, n_frames: int, width: int, height: int) -> np.ndarray:
+        """Precompute (x, y, crop_w, crop_h) for each frame."""
+        sx = int(self.start_region.x * width)
+        sy = int(self.start_region.y * height)
+        sw = int(self.start_region.width * width)
+        sh = int(self.start_region.height * height)
+        ex = int(self.end_region.x * width)
+        ey = int(self.end_region.y * height)
+        ew = int(self.end_region.width * width)
+        eh = int(self.end_region.height * height)
+
+        regions = np.empty((n_frames, 4), dtype=np.int32)
+        for i in range(n_frames):
+            t = i / max(1, n_frames - 1)
+            et = self._ease(t)
+            crop_w = int(sw + (ew - sw) * et)
+            crop_h = int(sh + (eh - sh) * et)
+            x = max(0, min(int(sx + (ex - sx) * et), width - crop_w))
+            y = max(0, min(int(sy + (ey - sy) * et), height - crop_h))
+            regions[i] = (x, y, crop_w, crop_h)
+        return regions
+
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+        self._stream_regions = self._precompute_regions(total_frames, width, height)
+        self._stream_target_w = width
+        self._stream_target_h = height
+
+    def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
+        idx = min(frame_index, len(self._stream_regions) - 1)
+        x, y, cw, ch = self._stream_regions[idx]
+        return self._crop_and_scale_frame(frame, x, y, cw, ch, self._stream_target_w, self._stream_target_h)
+
     def _apply(self, video: Video) -> Video:
         n_frames = len(video.frames)
         height, width = video.frame_shape[:2]
@@ -525,6 +633,8 @@ def _compute_curve(t: np.ndarray, curve: str) -> np.ndarray:
 class Fade(Effect):
     """Fades video and audio to or from black."""
 
+    supports_streaming: ClassVar[bool] = True
+
     def __init__(
         self,
         mode: Literal["in", "out", "in_out"],
@@ -549,6 +659,28 @@ class Fade(Effect):
         self.duration = duration
         self.curve = curve
 
+    def _compute_alpha(self, n_frames: int, fps: float) -> np.ndarray:
+        """Compute per-frame alpha values for the video fade."""
+        fade_frames = min(round(self.duration * fps), n_frames)
+        alpha = np.ones(n_frames, dtype=np.float32)
+        if self.mode in ("in", "in_out"):
+            t = np.linspace(0, 1, fade_frames, dtype=np.float32)
+            alpha[:fade_frames] = _compute_curve(t, self.curve)
+        if self.mode in ("out", "in_out"):
+            t = np.linspace(1, 0, fade_frames, dtype=np.float32)
+            alpha[-fade_frames:] = np.minimum(alpha[-fade_frames:], _compute_curve(t, self.curve))
+        return alpha
+
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+        self._stream_alpha = self._compute_alpha(total_frames, fps)
+
+    def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
+        idx = min(frame_index, len(self._stream_alpha) - 1)
+        a = self._stream_alpha[idx]
+        if a == 1.0:
+            return frame
+        return (frame.astype(np.float32) * a).astype(np.uint8)
+
     def apply(self, video: Video, start: float | None = None, stop: float | None = None) -> Video:
         """Apply fade effect to video and audio.
 
@@ -569,16 +701,8 @@ class Fade(Effect):
         effect_start_frame = round(start_s * video.fps)
         effect_end_frame = round(stop_s * video.fps)
         n_effect_frames = effect_end_frame - effect_start_frame
-        fade_frames = min(round(self.duration * video.fps), n_effect_frames)
 
-        # Build per-frame alpha array (1.0 = fully visible, 0.0 = black)
-        alpha = np.ones(n_effect_frames, dtype=np.float32)
-        if self.mode in ("in", "in_out"):
-            t = np.linspace(0, 1, fade_frames, dtype=np.float32)
-            alpha[:fade_frames] = _compute_curve(t, self.curve)
-        if self.mode in ("out", "in_out"):
-            t = np.linspace(1, 0, fade_frames, dtype=np.float32)
-            alpha[-fade_frames:] = np.minimum(alpha[-fade_frames:], _compute_curve(t, self.curve))
+        alpha = self._compute_alpha(n_effect_frames, video.fps)
 
         # Apply to video frames in batches to avoid a full float32 copy
         batch_size = 64
@@ -600,28 +724,37 @@ class Fade(Effect):
 
         # Apply to audio
         if video.audio is not None and not video.audio.is_silent:
-            sample_rate = video.audio.metadata.sample_rate
-            audio_start = round(start_s * sample_rate)
-            audio_end = min(round(stop_s * sample_rate), len(video.audio.data))
-            n_audio_samples = audio_end - audio_start
-            fade_samples = min(round(self.duration * sample_rate), n_audio_samples)
-
-            audio_alpha = np.ones(n_audio_samples, dtype=np.float32)
-            if self.mode in ("in", "in_out"):
-                t = np.linspace(0, 1, fade_samples, dtype=np.float32)
-                audio_alpha[:fade_samples] = _compute_curve(t, self.curve)
-            if self.mode in ("out", "in_out"):
-                t = np.linspace(1, 0, fade_samples, dtype=np.float32)
-                audio_alpha[-fade_samples:] = np.minimum(audio_alpha[-fade_samples:], _compute_curve(t, self.curve))
-
-            audio_data = video.audio.data
-            if audio_data.ndim == 1:
-                audio_data[audio_start:audio_end] *= audio_alpha
-            else:
-                audio_data[audio_start:audio_end] *= audio_alpha[:, np.newaxis]
-            np.clip(audio_data, -1.0, 1.0, out=audio_data)
+            self.apply_audio(video.audio, start_s, stop_s)
 
         return video
+
+    def apply_audio(self, audio: Audio, start_s: float, stop_s: float) -> None:
+        """Apply fade to audio data in-place.
+
+        Args:
+            audio: Audio object to modify.
+            start_s: Start time in seconds.
+            stop_s: Stop time in seconds.
+        """
+        sample_rate = audio.metadata.sample_rate
+        audio_start = round(start_s * sample_rate)
+        audio_end = min(round(stop_s * sample_rate), len(audio.data))
+        n_samples = audio_end - audio_start
+        fade_samples = min(round(self.duration * sample_rate), n_samples)
+
+        alpha = np.ones(n_samples, dtype=np.float32)
+        if self.mode in ("in", "in_out"):
+            t = np.linspace(0, 1, fade_samples, dtype=np.float32)
+            alpha[:fade_samples] = _compute_curve(t, self.curve)
+        if self.mode in ("out", "in_out"):
+            t = np.linspace(1, 0, fade_samples, dtype=np.float32)
+            alpha[-fade_samples:] = np.minimum(alpha[-fade_samples:], _compute_curve(t, self.curve))
+
+        if audio.data.ndim == 1:
+            audio.data[audio_start:audio_end] *= alpha
+        else:
+            audio.data[audio_start:audio_end] *= alpha[:, np.newaxis]
+        np.clip(audio.data, -1.0, 1.0, out=audio.data)
 
     def _apply(self, video: Video) -> Video:
         raise NotImplementedError("Fade overrides apply() directly")
@@ -633,6 +766,11 @@ class AudioEffect(Effect):
     Inherits from Effect so isinstance checks in the execution engine pass
     without modification. Overrides apply() to skip frame processing.
     """
+
+    supports_streaming: ClassVar[bool] = True
+
+    def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
+        return frame  # Audio effects don't touch frames
 
     def _apply(self, video: Video) -> Video:
         raise NotImplementedError("AudioEffect does not process frames -- use _apply_audio()")
@@ -716,6 +854,8 @@ class VolumeAdjust(AudioEffect):
 
 class TextOverlay(Effect):
     """Draws text on video frames, with auto word-wrap and optional background box."""
+
+    supports_streaming: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -840,6 +980,37 @@ class TextOverlay(Effect):
         elif self.anchor == "bottom_right":
             return px - img_w, py - img_h
         return px - img_w // 2, py - img_h // 2
+
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+        if self._rendered is None:
+            self._rendered = self._render_text_image(width, height)
+        oh, ow = self._rendered.shape[:2]
+        x, y = self._compute_position(width, height, ow, oh)
+        src_x = max(0, -x)
+        src_y = max(0, -y)
+        dst_x = max(0, x)
+        dst_y = max(0, y)
+        paste_w = min(ow - src_x, width - dst_x)
+        paste_h = min(oh - src_y, height - dst_y)
+        if paste_w <= 0 or paste_h <= 0:
+            self._stream_noop = True
+            return
+        self._stream_noop = False
+        overlay_region = self._rendered[src_y : src_y + paste_h, src_x : src_x + paste_w]
+        self._stream_alpha = overlay_region[:, :, 3:4].astype(np.float32) / 255.0
+        self._stream_rgb = overlay_region[:, :, :3].astype(np.float32)
+        self._stream_dst = (dst_y, dst_x, paste_h, paste_w)
+
+    def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
+        if self._stream_noop:
+            return frame
+        dy, dx, ph, pw = self._stream_dst
+        region = frame[dy : dy + ph, dx : dx + pw]
+        blended = (
+            self._stream_rgb * self._stream_alpha + region.astype(np.float32) * (1.0 - self._stream_alpha)
+        ).astype(np.uint8)
+        frame[dy : dy + ph, dx : dx + pw] = blended
+        return frame
 
     def _apply(self, video: Video) -> Video:
         frame_h, frame_w = video.frame_shape[:2]
