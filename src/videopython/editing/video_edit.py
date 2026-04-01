@@ -694,9 +694,10 @@ class _VfResult:
 
 
 # Transforms that can be compiled to ffmpeg -vf filters.
-# cut/cut_frames are NOT included: the segment's start/end handles the primary cut,
-# and additional cuts within a segment require eager processing.
-_STREAMABLE_TRANSFORM_OPS = {"resize", "resample_fps", "crop", "speed_change"}
+# cut/cut_frames: segment start/end handles the primary cut; additional cuts need eager.
+# speed_change: setpts only changes timestamps without dropping/interpolating frames,
+# so it doesn't match SpeedChange's exact behavior. Falls back to eager.
+_STREAMABLE_TRANSFORM_OPS = {"resize", "resample_fps", "crop"}
 
 
 def _compile_transform_to_vf(
@@ -750,13 +751,6 @@ def _compile_transform_to_vf(
             cx = (cur_width - cw) // 2
             cy = (cur_height - ch) // 2
         return _VfResult(f"crop={cw}:{ch}:{cx}:{cy}", int(cw), int(ch), cur_fps)
-
-    if record.op_id == "speed_change":
-        speed = args.get("speed", 1.0)
-        end_speed = args.get("end_speed")
-        if end_speed is not None:
-            return None  # Speed ramps are not streamable
-        return _VfResult(f"setpts=PTS/{speed}", cur_width, cur_height, cur_fps)
 
     return None
 

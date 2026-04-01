@@ -224,6 +224,208 @@ class TestVideoEditRunToFile:
             out_path.unlink(missing_ok=True)
 
 
+class TestStreamableTransforms:
+    """Verify all transforms tagged streamable work via run_to_file."""
+
+    def _run_plan(self, plan_dict):
+        edit = VideoEdit.from_dict(plan_dict)
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
+            out_path = Path(f.name)
+        try:
+            result_path = edit.run_to_file(out_path)
+            assert result_path.exists()
+            assert result_path.stat().st_size > 0
+            return VideoMetadata.from_path(str(result_path))
+        finally:
+            out_path.unlink(missing_ok=True)
+
+    def test_resize(self):
+        meta = self._run_plan(
+            {
+                "segments": [
+                    {
+                        "source": SMALL_VIDEO_PATH,
+                        "start": 0,
+                        "end": 2.0,
+                        "transforms": [{"op": "resize", "args": {"width": 400, "height": 250}}],
+                        "effects": [],
+                    }
+                ]
+            }
+        )
+        assert meta.width == 400
+        assert meta.height == 250
+
+    def test_crop(self):
+        meta = self._run_plan(
+            {
+                "segments": [
+                    {
+                        "source": SMALL_VIDEO_PATH,
+                        "start": 0,
+                        "end": 2.0,
+                        "transforms": [{"op": "crop", "args": {"width": 400, "height": 300, "mode": "center"}}],
+                        "effects": [],
+                    }
+                ]
+            }
+        )
+        assert meta.width == 400
+        assert meta.height == 300
+
+    def test_resample_fps(self):
+        meta = self._run_plan(
+            {
+                "segments": [
+                    {
+                        "source": SMALL_VIDEO_PATH,
+                        "start": 0,
+                        "end": 2.0,
+                        "transforms": [{"op": "resample_fps", "args": {"fps": 12}}],
+                        "effects": [],
+                    }
+                ]
+            }
+        )
+        assert abs(meta.fps - 12) < 1
+
+    def test_speed_change_falls_back_to_eager(self):
+        """speed_change is not streamable -- should fall back to eager and still work."""
+        meta = self._run_plan(
+            {
+                "segments": [
+                    {
+                        "source": SMALL_VIDEO_PATH,
+                        "start": 0,
+                        "end": 4.0,
+                        "transforms": [{"op": "speed_change", "args": {"speed": 2.0}}],
+                        "effects": [],
+                    }
+                ]
+            }
+        )
+        # 4s at 2x speed = ~2s output (via eager fallback)
+        assert meta.total_seconds < 3.0
+
+    def test_transforms_plus_effects(self):
+        meta = self._run_plan(
+            {
+                "segments": [
+                    {
+                        "source": SMALL_VIDEO_PATH,
+                        "start": 0,
+                        "end": 2.0,
+                        "transforms": [
+                            {"op": "resize", "args": {"width": 400, "height": 250}},
+                            {"op": "crop", "args": {"width": 380, "height": 230, "mode": "center"}},
+                        ],
+                        "effects": [
+                            {"op": "color_adjust", "args": {"brightness": 0.1}},
+                            {"op": "fade", "args": {"mode": "in", "duration": 0.5}},
+                        ],
+                    }
+                ]
+            }
+        )
+        assert meta.width == 380
+        assert meta.height == 230
+
+
+class TestStreamableEffects:
+    """Verify all effects tagged streamable work via run_to_file."""
+
+    def _run_effect(self, effect_dict, start=0, end=2.0):
+        plan = {
+            "segments": [
+                {
+                    "source": SMALL_VIDEO_PATH,
+                    "start": start,
+                    "end": end,
+                    "transforms": [],
+                    "effects": [effect_dict],
+                }
+            ]
+        }
+        edit = VideoEdit.from_dict(plan)
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
+            out_path = Path(f.name)
+        try:
+            result_path = edit.run_to_file(out_path)
+            assert result_path.exists()
+            return Video.from_path(str(result_path))
+        finally:
+            out_path.unlink(missing_ok=True)
+
+    def test_color_adjust(self):
+        result = self._run_effect({"op": "color_adjust", "args": {"saturation": 0, "contrast": 1.2}})
+        assert result.frames.shape[0] > 0
+
+    def test_blur_constant(self):
+        result = self._run_effect({"op": "blur_effect", "args": {"mode": "constant", "iterations": 5}})
+        assert result.frames.shape[0] > 0
+
+    def test_blur_ascending(self):
+        result = self._run_effect({"op": "blur_effect", "args": {"mode": "ascending", "iterations": 10}})
+        assert result.frames.shape[0] > 0
+
+    def test_zoom_in(self):
+        result = self._run_effect({"op": "zoom_effect", "args": {"zoom_factor": 1.5, "mode": "in"}})
+        assert result.frames.shape[0] > 0
+
+    def test_zoom_out(self):
+        result = self._run_effect({"op": "zoom_effect", "args": {"zoom_factor": 1.5, "mode": "out"}})
+        assert result.frames.shape[0] > 0
+
+    def test_vignette(self):
+        result = self._run_effect({"op": "vignette", "args": {"strength": 0.8, "radius": 1.0}})
+        assert result.frames.shape[0] > 0
+
+    def test_fade_in(self):
+        result = self._run_effect({"op": "fade", "args": {"mode": "in", "duration": 0.5}})
+        assert result.frames[0].mean() < 5
+
+    def test_fade_out(self):
+        result = self._run_effect({"op": "fade", "args": {"mode": "out", "duration": 0.5}})
+        assert result.frames[-1].mean() < 5
+
+    def test_fade_in_out_all_curves(self):
+        for curve in ("sqrt", "linear", "exponential"):
+            result = self._run_effect({"op": "fade", "args": {"mode": "in_out", "duration": 0.5, "curve": curve}})
+            assert result.frames[0].mean() < 5
+
+    def test_volume_adjust(self):
+        result = self._run_effect({"op": "volume_adjust", "args": {"volume": 0.5}})
+        assert result.frames.shape[0] > 0
+
+    def test_text_overlay(self):
+        result = self._run_effect({"op": "text_overlay", "args": {"text": "Test", "font_size": 24}})
+        assert result.frames.shape[0] > 0
+
+    def test_effect_with_time_range(self):
+        """Effect with start/stop apply args should work in streaming."""
+        plan = {
+            "segments": [
+                {
+                    "source": SMALL_VIDEO_PATH,
+                    "start": 0,
+                    "end": 4.0,
+                    "transforms": [],
+                    "effects": [
+                        {"op": "fade", "args": {"mode": "in", "duration": 1.0}, "apply": {"start": 0, "stop": 2.0}},
+                    ],
+                }
+            ]
+        }
+        edit = VideoEdit.from_dict(plan)
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
+            out_path = Path(f.name)
+        try:
+            result_path = edit.run_to_file(out_path)
+            assert result_path.exists()
+        finally:
+            out_path.unlink(missing_ok=True)
+
+
 class TestFrameEncoder:
     """Test the FrameEncoder class."""
 

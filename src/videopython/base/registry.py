@@ -566,7 +566,7 @@ def _register_base_operations() -> None:
             SpeedChange,
             op_id="speed_change",
             category=OperationCategory.TRANSFORMATION,
-            tags={"changes_duration", "streamable"},
+            tags={"changes_duration"},
             param_overrides={
                 "speed": {"exclusive_minimum": 0},
                 "end_speed": {"exclusive_minimum": 0},
