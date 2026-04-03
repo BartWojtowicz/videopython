@@ -114,21 +114,33 @@ class LocalDubbingPipeline:
         voice_clone: bool = True,
         enable_diarization: bool = False,
         progress_callback: Callable[[str, float], None] | None = None,
+        transcription: Any | None = None,
     ) -> DubbingResult:
-        """Process a video through the local dubbing pipeline."""
+        """Process a video through the local dubbing pipeline.
+
+        Args:
+            transcription: Optional pre-computed Transcription object. When provided,
+                the internal Whisper transcription step is skipped (saving time and VRAM).
+                Must be a ``videopython.base.text.transcription.Transcription`` instance
+                with populated ``segments``.
+        """
         from videopython.base.audio import Audio
 
         def report_progress(stage: str, progress: float) -> None:
             if progress_callback:
                 progress_callback(stage, progress)
 
-        report_progress("Transcribing audio", 0.05)
-        if self._transcriber is None or self._transcriber_diarization != enable_diarization:
-            self._init_transcriber(enable_diarization=enable_diarization)
-            self._transcriber_diarization = enable_diarization
-
         source_audio = video.audio
-        transcription = self._transcriber.transcribe(source_audio)
+
+        if transcription is not None:
+            report_progress("Using provided transcription", 0.05)
+        else:
+            report_progress("Transcribing audio", 0.05)
+            if self._transcriber is None or self._transcriber_diarization != enable_diarization:
+                self._init_transcriber(enable_diarization=enable_diarization)
+                self._transcriber_diarization = enable_diarization
+
+            transcription = self._transcriber.transcribe(source_audio)
 
         if not transcription.segments:
             return DubbingResult(

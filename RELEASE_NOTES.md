@@ -1,5 +1,15 @@
 # Release Notes
 
+## 0.26.1
+
+### Added
+
+- `VideoDubber.dub()`, `dub_and_replace()`, and `LocalDubbingPipeline.process()` accept an optional `transcription` parameter. When a pre-computed `Transcription` object is provided, the internal Whisper transcription step is skipped, saving time and VRAM.
+
+### Fixed
+
+- `TextTranslator` now resolves correct HuggingFace model names for languages without a direct `opus-mt-en-{lang}` model. Portuguese uses `opus-mt-tc-big-en-pt`, Korean uses `opus-mt-tc-big-en-ko`, Japanese uses `opus-mt-en-jap`, and Polish uses `opus-mt-en-zlw`. Previously these languages failed with a 404 at runtime.
+
 ## 0.26.0
 
 ### Added
