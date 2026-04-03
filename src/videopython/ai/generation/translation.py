@@ -48,6 +48,15 @@ LANGUAGE_NAMES = {
 class TextTranslator:
     """Translates text between languages using local seq2seq models."""
 
+    # Languages without a direct opus-mt-{src}-{tgt} model. Maps (source, target)
+    # to an alternative HuggingFace model identifier.
+    _MODEL_OVERRIDES: dict[tuple[str, str], str] = {
+        ("en", "pt"): "Helsinki-NLP/opus-mt-tc-big-en-pt",
+        ("en", "ko"): "Helsinki-NLP/opus-mt-tc-big-en-ko",
+        ("en", "ja"): "Helsinki-NLP/opus-mt-en-jap",
+        ("en", "pl"): "Helsinki-NLP/opus-mt-en-zlw",
+    }
+
     def __init__(self, model_name: str | None = None, device: str | None = None):
         self.model_name = model_name
         self.device = device
@@ -58,6 +67,9 @@ class TextTranslator:
     def _get_local_model_name(self, source_lang: str, target_lang: str) -> str:
         if self.model_name:
             return self.model_name
+        override = self._MODEL_OVERRIDES.get((source_lang, target_lang))
+        if override:
+            return override
         return f"Helsinki-NLP/opus-mt-{source_lang}-{target_lang}"
 
     def _init_local(self, source_lang: str, target_lang: str) -> None:

@@ -36,12 +36,15 @@ class VideoDubber:
         voice_clone: bool = True,
         enable_diarization: bool = False,
         progress_callback: Callable[[str, float], None] | None = None,
+        transcription: Any = None,
     ) -> DubbingResult:
         """Dub a video into a target language.
 
         Args:
             enable_diarization: Enable speaker diarization to clone each speaker's
                 voice separately. Requires additional VRAM for the diarization model.
+            transcription: Optional pre-computed Transcription object. When provided,
+                the internal Whisper transcription step is skipped.
         """
         if self._local_pipeline is None:
             self._init_local_pipeline()
@@ -54,6 +57,7 @@ class VideoDubber:
             voice_clone=voice_clone,
             enable_diarization=enable_diarization,
             progress_callback=progress_callback,
+            transcription=transcription,
         )
 
     def dub_and_replace(
@@ -65,8 +69,14 @@ class VideoDubber:
         voice_clone: bool = True,
         enable_diarization: bool = False,
         progress_callback: Callable[[str, float], None] | None = None,
+        transcription: Any = None,
     ) -> Video:
-        """Dub a video and return a new video with the dubbed audio."""
+        """Dub a video and return a new video with the dubbed audio.
+
+        Args:
+            transcription: Optional pre-computed Transcription object. When provided,
+                the internal Whisper transcription step is skipped.
+        """
         result = self.dub(
             video=video,
             target_lang=target_lang,
@@ -75,6 +85,7 @@ class VideoDubber:
             voice_clone=voice_clone,
             enable_diarization=enable_diarization,
             progress_callback=progress_callback,
+            transcription=transcription,
         )
         return video.add_audio(result.dubbed_audio, overlay=False)
 
