@@ -9,7 +9,7 @@ from videopython.ai.dubbing.models import DubbingResult, RevoiceResult, Separate
 from videopython.ai.dubbing.timing import TimingSynchronizer
 
 if TYPE_CHECKING:
-    from videopython.base.video import Video
+    from videopython.base.audio import Audio
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +102,6 @@ class LocalDubbingPipeline:
         max_duration: float = 10.0,
     ) -> dict[str, Any]:
         """Extract voice samples for each speaker from the audio."""
-        from videopython.base.audio import Audio
 
         voice_samples: dict[str, Audio] = {}
 
@@ -135,7 +134,7 @@ class LocalDubbingPipeline:
 
     def process(
         self,
-        video: Video,
+        source_audio: Audio,
         target_lang: str,
         source_lang: str | None = None,
         preserve_background: bool = True,
@@ -144,21 +143,21 @@ class LocalDubbingPipeline:
         progress_callback: Callable[[str, float], None] | None = None,
         transcription: Any | None = None,
     ) -> DubbingResult:
-        """Process a video through the local dubbing pipeline.
+        """Run the dubbing pipeline against the given source audio.
 
         Args:
+            source_audio: Source audio track to dub. Callers with a ``Video``
+                object should pass ``video.audio``; callers with only a file path
+                can use ``Audio.from_path(path)`` to avoid loading video frames.
             transcription: Optional pre-computed Transcription object. When provided,
                 the internal Whisper transcription step is skipped (saving time and VRAM).
                 Must be a ``videopython.base.text.transcription.Transcription`` instance
                 with populated ``segments``.
         """
-        from videopython.base.audio import Audio
 
         def report_progress(stage: str, progress: float) -> None:
             if progress_callback:
                 progress_callback(stage, progress)
-
-        source_audio = video.audio
 
         if transcription is not None:
             report_progress("Using provided transcription", 0.05)
@@ -275,19 +274,23 @@ class LocalDubbingPipeline:
 
     def revoice(
         self,
-        video: Video,
+        source_audio: Audio,
         text: str,
         preserve_background: bool = True,
         progress_callback: Callable[[str, float], None] | None = None,
     ) -> RevoiceResult:
-        """Replace speech in a video with new text using voice cloning."""
+        """Replace speech in audio with new text using voice cloning.
+
+        Args:
+            source_audio: Source audio track to revoice. Callers with a ``Video``
+                object should pass ``video.audio``.
+        """
         from videopython.base.audio import Audio
 
         def report_progress(stage: str, progress: float) -> None:
             if progress_callback:
                 progress_callback(stage, progress)
 
-        source_audio = video.audio
         original_duration = source_audio.metadata.duration_seconds
 
         report_progress("Analyzing audio", 0.05)

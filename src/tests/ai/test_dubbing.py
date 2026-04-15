@@ -592,3 +592,258 @@ class TestVideoDubberLowMemory:
 
         dubber._init_local_pipeline()
         assert dubber._local_pipeline.low_memory is True
+
+
+class TestReplaceAudioStream:
+    """Tests for the ffmpeg audio-stream replacement helper."""
+
+    def test_missing_video_raises(self, tmp_path):
+        from videopython.ai.dubbing.remux import replace_audio_stream
+
+        audio = tmp_path / "a.wav"
+        audio.write_bytes(b"")
+
+        with pytest.raises(FileNotFoundError, match="Video file not found"):
+            replace_audio_stream(tmp_path / "missing.mp4", audio, tmp_path / "out.mp4")
+
+    def test_missing_audio_raises(self, tmp_path):
+        from videopython.ai.dubbing.remux import replace_audio_stream
+
+        video = tmp_path / "v.mp4"
+        video.write_bytes(b"")
+
+        with pytest.raises(FileNotFoundError, match="Audio file not found"):
+            replace_audio_stream(video, tmp_path / "missing.wav", tmp_path / "out.mp4")
+
+    def test_ffmpeg_failure_raises_remux_error(self, tmp_path, monkeypatch):
+        """Non-zero ffmpeg exit code is wrapped in RemuxError with stderr."""
+        import subprocess as sp
+
+        import videopython.ai.dubbing.remux as remux_mod
+
+        video = tmp_path / "v.mp4"
+        video.write_bytes(b"not a real video")
+        audio = tmp_path / "a.wav"
+        audio.write_bytes(b"not a real wav")
+
+        class FakeResult:
+            returncode = 1
+            stderr = b"simulated ffmpeg error"
+
+        def fake_run(cmd, capture_output):
+            return FakeResult()
+
+        monkeypatch.setattr(sp, "run", fake_run)
+        monkeypatch.setattr(remux_mod.subprocess, "run", fake_run)
+
+        with pytest.raises(remux_mod.RemuxError, match="simulated ffmpeg error"):
+            remux_mod.replace_audio_stream(video, audio, tmp_path / "out.mp4")
+
+    def test_ffmpeg_command_structure(self, tmp_path, monkeypatch):
+        """ffmpeg is invoked with stream-copy video and mapped audio."""
+        import videopython.ai.dubbing.remux as remux_mod
+
+        video = tmp_path / "v.mp4"
+        video.write_bytes(b"fake")
+        audio = tmp_path / "a.wav"
+        audio.write_bytes(b"fake")
+        out = tmp_path / "out.mp4"
+
+        captured: dict = {}
+
+        class FakeResult:
+            returncode = 0
+            stderr = b""
+
+        def fake_run(cmd, capture_output):
+            captured["cmd"] = cmd
+            return FakeResult()
+
+        monkeypatch.setattr(remux_mod.subprocess, "run", fake_run)
+
+        remux_mod.replace_audio_stream(video, audio, out)
+
+        cmd = captured["cmd"]
+        assert cmd[0] == "ffmpeg"
+        assert "-c:v" in cmd and cmd[cmd.index("-c:v") + 1] == "copy"
+        assert "-map" in cmd
+        # Two -map args: video from input 0, audio from input 1
+        map_indices = [i for i, v in enumerate(cmd) if v == "-map"]
+        assert len(map_indices) == 2
+        assert cmd[map_indices[0] + 1] == "0:v:0"
+        assert cmd[map_indices[1] + 1] == "1:a:0"
+        assert "-shortest" in cmd
+        assert cmd[-1] == str(out)
+
+
+class TestVideoDubberDubFile:
+    """Tests for VideoDubber.dub_file path-based entry point."""
+
+    def test_missing_input_raises(self, tmp_path):
+        from videopython.ai.dubbing import VideoDubber
+
+        dubber = VideoDubber()
+
+        with pytest.raises(FileNotFoundError, match="Input video not found"):
+            dubber.dub_file(
+                input_path=tmp_path / "missing.mp4",
+                output_path=tmp_path / "out.mp4",
+                target_lang="es",
+            )
+
+    def test_dub_file_orchestration(self, tmp_path, sample_audio, sample_segment, monkeypatch):
+        """dub_file extracts audio, runs pipeline, saves dubbed audio, and remuxes.
+
+        Mocks Audio.from_path (to avoid ffmpeg), the pipeline (to avoid models),
+        Audio.save (to avoid encoding), and replace_audio_stream (to avoid ffmpeg).
+        Verifies the call sequence and argument wiring.
+        """
+        from pathlib import Path
+
+        import videopython.ai.dubbing.dubber as dubber_mod
+        import videopython.ai.dubbing.remux as remux_mod
+        from videopython.ai.dubbing import VideoDubber
+        from videopython.ai.dubbing.models import DubbingResult, TranslatedSegment
+        from videopython.base.audio import audio as audio_mod
+        from videopython.base.text.transcription import Transcription
+
+        input_path = tmp_path / "in.mp4"
+        input_path.write_bytes(b"fake mp4 bytes")
+        output_path = tmp_path / "out.mp4"
+
+        calls: list[tuple[str, dict]] = []
+
+        def fake_from_path(cls, file_path):
+            calls.append(("from_path", {"file_path": str(file_path)}))
+            return sample_audio
+
+        monkeypatch.setattr(audio_mod.Audio, "from_path", classmethod(fake_from_path))
+
+        translated = TranslatedSegment(
+            original_segment=sample_segment,
+            translated_text="Hola",
+            source_lang="en",
+            target_lang="es",
+        )
+        fake_result = DubbingResult(
+            dubbed_audio=sample_audio,
+            translated_segments=[translated],
+            source_transcription=Transcription(segments=[sample_segment]),
+            source_lang="en",
+            target_lang="es",
+        )
+
+        class FakePipeline:
+            low_memory = False
+
+            def process(self, **kwargs):
+                calls.append(("process", kwargs))
+                return fake_result
+
+        def fake_init(self):
+            self._local_pipeline = FakePipeline()
+
+        monkeypatch.setattr(VideoDubber, "_init_local_pipeline", fake_init)
+
+        def fake_save(self, file_path, format=None):
+            calls.append(("save", {"file_path": str(file_path)}))
+            Path(file_path).write_bytes(b"fake wav")
+
+        monkeypatch.setattr(audio_mod.Audio, "save", fake_save)
+
+        def fake_replace(video_path, audio_path, output_path, **kwargs):
+            calls.append(
+                (
+                    "replace",
+                    {
+                        "video_path": str(video_path),
+                        "audio_path": str(audio_path),
+                        "output_path": str(output_path),
+                    },
+                )
+            )
+
+        monkeypatch.setattr(remux_mod, "replace_audio_stream", fake_replace)
+        monkeypatch.setattr(dubber_mod, "tempfile", __import__("tempfile"))
+
+        dubber = VideoDubber()
+        result = dubber.dub_file(
+            input_path=input_path,
+            output_path=output_path,
+            target_lang="es",
+        )
+
+        names = [c[0] for c in calls]
+        assert names == ["from_path", "process", "save", "replace"]
+        assert calls[0][1]["file_path"] == str(input_path)
+        assert calls[1][1]["source_audio"] is sample_audio
+        assert calls[1][1]["target_lang"] == "es"
+        assert calls[3][1]["video_path"] == str(input_path)
+        assert calls[3][1]["output_path"] == str(output_path)
+        assert calls[2][1]["file_path"] == calls[3][1]["audio_path"]
+        assert result is fake_result
+
+    def test_dub_file_cleans_up_temp_audio_on_failure(self, tmp_path, sample_audio, sample_segment, monkeypatch):
+        """Temp wav is deleted even if replace_audio_stream raises."""
+        from pathlib import Path as _Path
+
+        import videopython.ai.dubbing.remux as remux_mod
+        from videopython.ai.dubbing import VideoDubber
+        from videopython.ai.dubbing.models import DubbingResult, TranslatedSegment
+        from videopython.base.audio import audio as audio_mod
+        from videopython.base.text.transcription import Transcription
+
+        input_path = tmp_path / "in.mp4"
+        input_path.write_bytes(b"fake")
+
+        temp_paths: list[_Path] = []
+
+        monkeypatch.setattr(audio_mod.Audio, "from_path", classmethod(lambda cls, p: sample_audio))
+
+        translated = TranslatedSegment(
+            original_segment=sample_segment,
+            translated_text="Hola",
+            source_lang="en",
+            target_lang="es",
+        )
+        fake_result = DubbingResult(
+            dubbed_audio=sample_audio,
+            translated_segments=[translated],
+            source_transcription=Transcription(segments=[sample_segment]),
+            source_lang="en",
+            target_lang="es",
+        )
+
+        class FakePipeline:
+            low_memory = False
+
+            def process(self, **kwargs):
+                return fake_result
+
+        def fake_init(self):
+            self._local_pipeline = FakePipeline()
+
+        monkeypatch.setattr(VideoDubber, "_init_local_pipeline", fake_init)
+
+        def fake_save(self, file_path, format=None):
+            p = _Path(file_path)
+            temp_paths.append(p)
+            p.write_bytes(b"fake wav")
+
+        monkeypatch.setattr(audio_mod.Audio, "save", fake_save)
+
+        def failing_replace(**kwargs):
+            raise remux_mod.RemuxError("boom")
+
+        monkeypatch.setattr(remux_mod, "replace_audio_stream", failing_replace)
+
+        dubber = VideoDubber()
+        with pytest.raises(remux_mod.RemuxError, match="boom"):
+            dubber.dub_file(
+                input_path=input_path,
+                output_path=tmp_path / "out.mp4",
+                target_lang="es",
+            )
+
+        assert len(temp_paths) == 1
+        assert not temp_paths[0].exists()

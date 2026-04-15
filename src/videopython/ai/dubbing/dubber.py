@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import tempfile
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 from videopython.ai.dubbing.models import DubbingResult, RevoiceResult
@@ -60,7 +62,7 @@ class VideoDubber:
             self._init_local_pipeline()
 
         return self._local_pipeline.process(
-            video=video,
+            source_audio=video.audio,
             target_lang=target_lang,
             source_lang=source_lang,
             preserve_background=preserve_background,
@@ -99,6 +101,84 @@ class VideoDubber:
         )
         return video.add_audio(result.dubbed_audio, overlay=False)
 
+    def dub_file(
+        self,
+        input_path: str | Path,
+        output_path: str | Path,
+        target_lang: str,
+        source_lang: str | None = None,
+        preserve_background: bool = True,
+        voice_clone: bool = True,
+        enable_diarization: bool = False,
+        progress_callback: Callable[[str, float], None] | None = None,
+        transcription: Any = None,
+    ) -> DubbingResult:
+        """Dub a video file in place on disk without loading video frames into memory.
+
+        Extracts the audio track via ffmpeg, runs the dubbing pipeline on the
+        audio only, then muxes the dubbed audio back into the source video
+        using ffmpeg stream-copy (no video re-encode). Peak memory is bounded
+        by model weights and the audio track — independent of video length and
+        resolution.
+
+        Use this instead of ``dub_and_replace`` when the source video is long
+        or high-resolution and you don't need frame-level access in Python.
+
+        Args:
+            input_path: Path to the source video file.
+            output_path: Path to write the dubbed video. Overwritten if it exists.
+            target_lang: Target language code (e.g. ``"es"``, ``"fr"``).
+            source_lang: Source language code, or ``None`` to auto-detect.
+            preserve_background: Preserve background music/effects via source separation.
+            voice_clone: Clone the source speaker's voice for the dubbed track.
+            enable_diarization: Enable speaker diarization for per-speaker voice cloning.
+            progress_callback: Optional callback ``(stage: str, progress: float) -> None``.
+            transcription: Optional pre-computed ``Transcription`` to skip the Whisper step.
+
+        Returns:
+            ``DubbingResult`` with the dubbed audio, translated segments, and
+            source transcription. The output video is written to ``output_path``.
+        """
+        from videopython.ai.dubbing.remux import replace_audio_stream
+        from videopython.base.audio import Audio
+
+        input_path = Path(input_path)
+        output_path = Path(output_path)
+
+        if not input_path.exists():
+            raise FileNotFoundError(f"Input video not found: {input_path}")
+
+        logger.info("dub_file: loading audio from %s", input_path)
+        source_audio = Audio.from_path(input_path)
+
+        if self._local_pipeline is None:
+            self._init_local_pipeline()
+
+        result = self._local_pipeline.process(
+            source_audio=source_audio,
+            target_lang=target_lang,
+            source_lang=source_lang,
+            preserve_background=preserve_background,
+            voice_clone=voice_clone,
+            enable_diarization=enable_diarization,
+            progress_callback=progress_callback,
+            transcription=transcription,
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            dubbed_audio_path = Path(tmp.name)
+        try:
+            result.dubbed_audio.save(dubbed_audio_path)
+            replace_audio_stream(
+                video_path=input_path,
+                audio_path=dubbed_audio_path,
+                output_path=output_path,
+            )
+        finally:
+            dubbed_audio_path.unlink(missing_ok=True)
+
+        return result
+
     def revoice(
         self,
         video: Video,
@@ -111,7 +191,7 @@ class VideoDubber:
             self._init_local_pipeline()
 
         return self._local_pipeline.revoice(
-            video=video,
+            source_audio=video.audio,
             text=text,
             preserve_background=preserve_background,
             progress_callback=progress_callback,
