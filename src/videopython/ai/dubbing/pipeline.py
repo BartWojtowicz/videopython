@@ -15,12 +15,23 @@ logger = logging.getLogger(__name__)
 
 
 class LocalDubbingPipeline:
-    """Local pipeline for video dubbing."""
+    """Local pipeline for video dubbing.
 
-    def __init__(self, device: str | None = None):
+    When ``low_memory=True``, each stage's model is unloaded after it runs, so
+    only one model is resident at a time. This trades per-run latency (models
+    re-load from disk between stages) for peak memory. Recommended for GPUs
+    with <=12GB VRAM or hosts with <32GB RAM.
+    """
+
+    def __init__(self, device: str | None = None, low_memory: bool = False):
         self.device = device
+        self.low_memory = low_memory
         requested = device.lower() if isinstance(device, str) else "auto"
-        logger.info("LocalDubbingPipeline initialized with device=%s", requested)
+        logger.info(
+            "LocalDubbingPipeline initialized with device=%s low_memory=%s",
+            requested,
+            low_memory,
+        )
 
         self._transcriber: Any = None
         self._transcriber_diarization: bool | None = None
@@ -30,6 +41,23 @@ class LocalDubbingPipeline:
         self._tts_language: str | None = None
         self._separator: Any = None
         self._synchronizer: TimingSynchronizer | None = None
+
+    def _maybe_unload(self, component_name: str) -> None:
+        """Unload a stage's model when low_memory mode is enabled.
+
+        No-op when low_memory=False or the component was never initialized
+        (e.g. caller supplied a pre-computed transcription so the transcriber
+        was skipped).
+        """
+        if not self.low_memory:
+            return
+        component = getattr(self, component_name, None)
+        if component is None:
+            return
+        unload = getattr(component, "unload", None)
+        if callable(unload):
+            logger.info("low_memory: unloading %s", component_name.lstrip("_"))
+            unload()
 
     def _init_transcriber(self, enable_diarization: bool = False) -> None:
         """Initialize the transcription model."""
@@ -141,6 +169,7 @@ class LocalDubbingPipeline:
                 self._transcriber_diarization = enable_diarization
 
             transcription = self._transcriber.transcribe(source_audio)
+            self._maybe_unload("_transcriber")
 
         if not transcription.segments:
             return DubbingResult(
@@ -162,6 +191,7 @@ class LocalDubbingPipeline:
                 self._init_separator()
 
             separated_audio = self._separator.separate(source_audio)
+            self._maybe_unload("_separator")
             vocal_audio = separated_audio.vocals
 
         voice_samples: dict[str, Audio] = {}
@@ -178,6 +208,7 @@ class LocalDubbingPipeline:
             target_lang=target_lang,
             source_lang=detected_lang,
         )
+        self._maybe_unload("_translator")
 
         report_progress("Generating dubbed speech", 0.50)
         if self._tts is None or self._tts_voice_clone != voice_clone or self._tts_language != target_lang:
@@ -207,6 +238,8 @@ class LocalDubbingPipeline:
             dubbed_segments.append(dubbed_audio)
             target_durations.append(segment.duration)
             start_times.append(segment.start)
+
+        self._maybe_unload("_tts")
 
         report_progress("Synchronizing timing", 0.85)
         if self._synchronizer is None:
@@ -263,6 +296,7 @@ class LocalDubbingPipeline:
             self._transcriber_diarization = False
 
         transcription = self._transcriber.transcribe(source_audio)
+        self._maybe_unload("_transcriber")
 
         separated_audio: SeparatedAudio | None = None
         vocal_audio = source_audio
@@ -273,6 +307,7 @@ class LocalDubbingPipeline:
                 self._init_separator()
 
             separated_audio = self._separator.separate(source_audio)
+            self._maybe_unload("_separator")
             vocal_audio = separated_audio.vocals
 
         report_progress("Extracting voice sample", 0.40)
@@ -295,6 +330,7 @@ class LocalDubbingPipeline:
 
         generated_speech = self._tts.generate_audio(text, voice_sample=voice_sample)
         speech_duration = generated_speech.metadata.duration_seconds
+        self._maybe_unload("_tts")
 
         report_progress("Assembling audio", 0.85)
 

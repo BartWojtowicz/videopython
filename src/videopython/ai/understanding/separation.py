@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from videopython.ai._device import log_device_initialization, select_device
+from videopython.ai._device import log_device_initialization, release_device_memory, select_device
 from videopython.ai.dubbing.models import SeparatedAudio
 from videopython.base.audio import Audio, AudioMetadata
 
@@ -134,3 +134,11 @@ class AudioSeparator:
     def extract_background(self, audio: Audio) -> Audio:
         """Convenience method to extract only background from audio."""
         return self.separate(audio).background
+
+    def unload(self) -> None:
+        """Release the Demucs model so the next separate() re-initializes.
+
+        Used by low-memory dubbing to free VRAM between pipeline stages.
+        """
+        self._model = None
+        release_device_memory(self.device)

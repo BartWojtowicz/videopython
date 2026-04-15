@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from videopython.ai._device import log_device_initialization, select_device
+from videopython.ai._device import log_device_initialization, release_device_memory, select_device
 from videopython.base.audio import Audio
 from videopython.base.description import AudioClassification, AudioEvent
 from videopython.base.text.transcription import Transcription, TranscriptionSegment, TranscriptionWord
@@ -50,6 +50,15 @@ class AudioToText:
 
         self._diarization_pipeline = Pipeline.from_pretrained(self.PYANNOTE_DIARIZATION_MODEL)
         self._diarization_pipeline.to(torch.device(self.device))
+
+    def unload(self) -> None:
+        """Release the Whisper and diarization models so the next call re-initializes.
+
+        Used by low-memory dubbing to free VRAM between pipeline stages.
+        """
+        self._model = None
+        self._diarization_pipeline = None
+        release_device_memory(self.device)
 
     def _process_transcription_result(self, transcription_result: dict) -> Transcription:
         """Process raw transcription result into a Transcription object."""

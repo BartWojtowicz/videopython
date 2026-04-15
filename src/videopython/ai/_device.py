@@ -25,6 +25,33 @@ def log_device_initialization(
     )
 
 
+def release_device_memory(device: str | None) -> None:
+    """Release cached allocator memory for the given device.
+
+    Safe to call when torch is not importable or the device is CPU/None.
+    """
+    try:
+        import torch
+    except ImportError:
+        return
+
+    import gc
+
+    gc.collect()
+
+    if device == "cuda" and torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        return
+
+    if device == "mps":
+        mps_backend = getattr(torch.backends, "mps", None)
+        if mps_backend is not None and mps_backend.is_available():
+            mps_mod = getattr(torch, "mps", None)
+            empty_cache = getattr(mps_mod, "empty_cache", None) if mps_mod is not None else None
+            if callable(empty_cache):
+                empty_cache()
+
+
 def select_device(
     device: str | None,
     *,

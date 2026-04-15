@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from videopython.ai._device import log_device_initialization, select_device
+from videopython.ai._device import log_device_initialization, release_device_memory, select_device
 from videopython.ai.dubbing.models import TranslatedSegment
 from videopython.base.text.transcription import TranscriptionSegment
 
@@ -179,6 +179,16 @@ class TextTranslator:
             )
 
         return translated_segments
+
+    def unload(self) -> None:
+        """Release the translation model so the next translate() re-initializes.
+
+        Used by low-memory dubbing to free VRAM between pipeline stages.
+        """
+        self._model = None
+        self._tokenizer = None
+        self._current_lang_pair = None
+        release_device_memory(self.device)
 
     @staticmethod
     def get_supported_languages() -> dict[str, str]:
