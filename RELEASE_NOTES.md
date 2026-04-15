@@ -1,5 +1,16 @@
 # Release Notes
 
+## 0.26.3
+
+### Added
+
+- `VideoDubber.dub_file(input_path, output_path, target_lang, ...)` dubs a video file on disk without loading any video frames into Python memory. Extracts audio via ffmpeg, runs the dubbing pipeline on the audio only, then muxes the dubbed audio back into the source video using ffmpeg stream-copy (no video re-encode). Peak memory is bounded by model weights and the audio track, independent of video length and resolution. Use instead of `dub_and_replace` for long or high-resolution sources.
+- `videopython.ai.dubbing.remux.replace_audio_stream(video_path, audio_path, output_path)` helper that stream-copies a video track while replacing its audio.
+
+### Changed
+
+- `LocalDubbingPipeline.process()` and `LocalDubbingPipeline.revoice()` now take a `source_audio: Audio` argument instead of `video: Video`. `VideoDubber.dub()`/`revoice()` public signatures are unchanged — they pass `video.audio` at the boundary.
+
 ## 0.26.2
 
 ### Added
