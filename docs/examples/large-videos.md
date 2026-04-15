@@ -153,6 +153,39 @@ with FrameIterator("movie.mp4", start_second=3600, end_second=4200) as frames:
         process_frame(frame)
 ```
 
+## Dubbing Large Videos
+
+`VideoDubber.dub_and_replace()` loads every frame into RAM via `Video.from_path()`,
+which is impractical for long sources. `dub_file()` operates on paths instead:
+it extracts audio via ffmpeg, runs the dubbing pipeline on the audio only, and
+muxes the dubbed audio back into the source video using ffmpeg stream-copy
+(no video re-encode). Peak memory is bounded by model weights and the audio
+track — independent of video length and resolution.
+
+Combine with `low_memory=True` so each pipeline stage's model (Whisper, Demucs,
+MarianMT, Chatterbox) is unloaded between stages:
+
+```python
+from videopython.ai.dubbing import VideoDubber
+
+dubber = VideoDubber(low_memory=True)
+result = dubber.dub_file(
+    input_path="2_hour_movie.mp4",
+    output_path="dubbed.mp4",
+    target_lang="es",
+    voice_clone=True,
+    preserve_background=True,
+)
+# Peak memory: model weights + audio track (~hundreds of MB for a 2-hour stereo
+# source), no matter the video resolution. The video stream is copied
+# unchanged into the output.
+
+print(f"Translated {result.num_segments} segments")
+```
+
+See [AI Dubbing](../api/ai/dubbing.md#memory-efficient-dubbing) for more on the
+`low_memory` flag and `dub_file()`.
+
 ## Method Comparison
 
 | Approach | Memory | Speed | Use Case |
@@ -162,6 +195,7 @@ with FrameIterator("movie.mp4", start_second=3600, end_second=4200) as frames:
 | `FrameIterator` | O(1) | Sequential | Long videos, single pass analysis |
 | `SceneDetector.detect_streaming()` | O(1) | Slower | Memory-constrained |
 | `SceneDetector.detect_parallel()` | O(workers) | Fastest | Multi-core systems |
+| `VideoDubber.dub_file()` | O(audio + model weights) | Same as `dub_and_replace` | Dubbing long/high-res videos without loading frames |
 
 ## Tips
 

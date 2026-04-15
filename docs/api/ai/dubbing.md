@@ -81,6 +81,42 @@ result = dubber.dub(
 )
 ```
 
+### Memory-Efficient Dubbing
+
+The default pipeline keeps all four models (Whisper, Demucs, MarianMT, Chatterbox)
+resident in memory and operates on `Video` objects that hold every frame in RAM.
+For long or high-resolution sources — or memory-constrained hardware — two flags
+trade a modest amount of latency for a much lower memory ceiling.
+
+**Unload models between stages with `low_memory=True`:**
+
+```python
+# Each stage's model is released after it runs, so only one is resident at a time.
+# Recommended for GPUs with <=12GB VRAM or hosts with <32GB RAM.
+dubber = VideoDubber(low_memory=True)
+dubbed_video = dubber.dub_and_replace(video, target_lang="es")
+```
+
+**Skip frame loading with `dub_file()`:**
+
+```python
+# Operates on file paths; extracts audio via ffmpeg, runs the pipeline on the
+# audio only, and muxes the dubbed audio back into the source video using
+# ffmpeg stream-copy (no video re-encode). Peak memory is bounded by model
+# weights and the audio track, independent of video length and resolution.
+dubber = VideoDubber(low_memory=True)
+result = dubber.dub_file(
+    input_path="long_video.mp4",
+    output_path="dubbed.mp4",
+    target_lang="es",
+)
+```
+
+Use `dub_file()` when you don't need frame-level access in Python. Combine with
+`low_memory=True` for the smallest memory footprint. See
+[Processing Large Videos](../../examples/large-videos.md#dubbing-large-videos)
+for a worked example.
+
 ::: videopython.ai.dubbing.VideoDubber
 
 ## DubbingResult
