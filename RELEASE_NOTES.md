@@ -1,5 +1,11 @@
 # Release Notes
 
+## 0.26.2
+
+### Added
+
+- `VideoDubber(low_memory=True)` unloads each pipeline stage's model (Whisper, Demucs, MarianMT, Chatterbox) after it runs, so only one model is resident at a time. Trades per-run latency for a lower memory ceiling. Recommended for GPUs with <=12GB VRAM or hosts with <32GB RAM. Each model class (`AudioToText`, `AudioSeparator`, `TextTranslator`, `TextToSpeech`) now exposes an `unload()` method that clears cached weights and releases CUDA/MPS allocator cache.
+
 ## 0.26.1
 
 ### Added

@@ -14,18 +14,28 @@ logger = logging.getLogger(__name__)
 
 
 class VideoDubber:
-    """Dubs videos into different languages using the local pipeline."""
+    """Dubs videos into different languages using the local pipeline.
 
-    def __init__(self, device: str | None = None):
+    Args:
+        device: Execution device (``cpu``, ``cuda``, ``mps``, or ``None`` for auto).
+        low_memory: When True, each pipeline stage (Whisper, Demucs, MarianMT,
+            Chatterbox TTS) is unloaded from memory after it runs, so only one
+            model is resident at a time. Trades per-run latency (~10-30s of
+            extra model loads) for a much lower memory ceiling. Recommended for
+            GPUs with <=12GB VRAM or hosts with <32GB RAM. Default False.
+    """
+
+    def __init__(self, device: str | None = None, low_memory: bool = False):
         self.device = device
+        self.low_memory = low_memory
         self._local_pipeline: Any = None
         requested = device.lower() if isinstance(device, str) else "auto"
-        logger.info("VideoDubber initialized with device=%s", requested)
+        logger.info("VideoDubber initialized with device=%s low_memory=%s", requested, low_memory)
 
     def _init_local_pipeline(self) -> None:
         from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
 
-        self._local_pipeline = LocalDubbingPipeline(device=self.device)
+        self._local_pipeline = LocalDubbingPipeline(device=self.device, low_memory=self.low_memory)
 
     def dub(
         self,

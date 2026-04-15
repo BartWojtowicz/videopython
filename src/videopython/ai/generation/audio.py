@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from videopython.ai._device import log_device_initialization, select_device
+from videopython.ai._device import log_device_initialization, release_device_memory, select_device
 from videopython.base.audio import Audio, AudioMetadata
 
 
@@ -150,6 +150,16 @@ class TextToSpeech:
             return self._generate_chatterbox(text, voice_sample)
 
         return self._generate_local(text, effective_voice)
+
+    def unload(self) -> None:
+        """Release the TTS model(s) so the next generate_audio() re-initializes.
+
+        Used by low-memory dubbing to free VRAM between pipeline stages.
+        """
+        self._model = None
+        self._processor = None
+        self._chatterbox_model = None
+        release_device_memory(self.device)
 
 
 class TextToMusic:

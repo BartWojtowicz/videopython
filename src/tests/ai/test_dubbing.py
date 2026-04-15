@@ -452,3 +452,143 @@ class TestAudioSeparator:
 
         with pytest.raises(ValueError, match="not supported"):
             AudioSeparator(model_name="invalid_model")
+
+
+class TestUnloadMethods:
+    """Tests for unload() on each model class used in dubbing.
+
+    Each class must clear its cached model attributes so that the next call
+    re-initializes lazily. Used by low-memory dubbing to free VRAM between
+    pipeline stages.
+    """
+
+    def test_audio_separator_unload(self):
+        from videopython.ai.understanding.separation import AudioSeparator
+
+        separator = AudioSeparator()
+        separator._model = object()  # stand-in for a loaded model
+        separator.unload()
+        assert separator._model is None
+
+    def test_audio_separator_unload_is_idempotent(self):
+        from videopython.ai.understanding.separation import AudioSeparator
+
+        separator = AudioSeparator()
+        separator.unload()
+        separator.unload()
+        assert separator._model is None
+
+    def test_text_translator_unload(self):
+        from videopython.ai.generation.translation import TextTranslator
+
+        translator = TextTranslator()
+        translator._model = object()
+        translator._tokenizer = object()
+        translator._current_lang_pair = ("en", "es")
+        translator.unload()
+        assert translator._model is None
+        assert translator._tokenizer is None
+        assert translator._current_lang_pair is None
+
+    def test_text_to_speech_unload(self):
+        from videopython.ai.generation.audio import TextToSpeech
+
+        tts = TextToSpeech()
+        tts._model = object()
+        tts._processor = object()
+        tts._chatterbox_model = object()
+        tts.unload()
+        assert tts._model is None
+        assert tts._processor is None
+        assert tts._chatterbox_model is None
+
+    def test_audio_to_text_unload(self, monkeypatch):
+        import videopython.ai.understanding.audio as audio_mod
+
+        monkeypatch.setattr(audio_mod, "select_device", lambda _requested, mps_allowed=False: "cpu")
+
+        transcriber = audio_mod.AudioToText()
+        transcriber._model = object()
+        transcriber._diarization_pipeline = object()
+        transcriber.unload()
+        assert transcriber._model is None
+        assert transcriber._diarization_pipeline is None
+
+
+class TestLocalDubbingPipelineLowMemory:
+    """Tests for low_memory mode plumbing in LocalDubbingPipeline."""
+
+    def test_default_is_not_low_memory(self):
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+
+        pipeline = LocalDubbingPipeline()
+        assert pipeline.low_memory is False
+
+    def test_low_memory_flag_stored(self):
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+
+        pipeline = LocalDubbingPipeline(low_memory=True)
+        assert pipeline.low_memory is True
+
+    def test_maybe_unload_noop_when_low_memory_disabled(self):
+        """With low_memory=False, _maybe_unload must not call unload()."""
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+
+        pipeline = LocalDubbingPipeline(low_memory=False)
+
+        class FakeModel:
+            def __init__(self):
+                self.unload_calls = 0
+
+            def unload(self):
+                self.unload_calls += 1
+
+        fake = FakeModel()
+        pipeline._transcriber = fake
+        pipeline._maybe_unload("_transcriber")
+        assert fake.unload_calls == 0
+
+    def test_maybe_unload_calls_unload_when_enabled(self):
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+
+        pipeline = LocalDubbingPipeline(low_memory=True)
+
+        class FakeModel:
+            def __init__(self):
+                self.unload_calls = 0
+
+            def unload(self):
+                self.unload_calls += 1
+
+        fake = FakeModel()
+        pipeline._translator = fake
+        pipeline._maybe_unload("_translator")
+        assert fake.unload_calls == 1
+
+    def test_maybe_unload_noop_when_component_is_none(self):
+        """If a stage was never initialized (e.g. caller provided transcription),
+        _maybe_unload must not raise."""
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+
+        pipeline = LocalDubbingPipeline(low_memory=True)
+        assert pipeline._transcriber is None
+        pipeline._maybe_unload("_transcriber")  # should not raise
+
+
+class TestVideoDubberLowMemory:
+    """Tests for low_memory plumbing from VideoDubber to LocalDubbingPipeline."""
+
+    def test_default_low_memory_false(self):
+        from videopython.ai.dubbing import VideoDubber
+
+        dubber = VideoDubber()
+        assert dubber.low_memory is False
+
+    def test_low_memory_propagated_to_pipeline(self):
+        from videopython.ai.dubbing import VideoDubber
+
+        dubber = VideoDubber(low_memory=True)
+        assert dubber.low_memory is True
+
+        dubber._init_local_pipeline()
+        assert dubber._local_pipeline.low_memory is True
