@@ -42,7 +42,15 @@ class AudioSeparator:
         )
 
     def _separate_local(self, audio: Audio) -> SeparatedAudio:
-        """Separate audio using local Demucs model."""
+        """Separate audio using local Demucs model.
+
+        Keeps the input tensor on CPU and passes ``device=self.device`` to
+        ``apply_model`` so per-chunk compute runs on GPU while the full
+        ``(stems, channels, samples)`` output is stored in CPU RAM. For long
+        sources this is the difference between OOM-on-GPU and running cleanly:
+        a 2h stereo @ 44.1kHz output is ~10 GB — too big for an 8 GB card but
+        comfortable on a 32 GB host.
+        """
         import numpy as np
         import torch
         from demucs.apply import apply_model
@@ -65,61 +73,40 @@ class AudioSeparator:
             audio_data = audio_data.T
 
         wav = torch.tensor(audio_data, dtype=torch.float32).unsqueeze(0)
-        wav = wav.to(self.device)
 
         with torch.no_grad():
             sources = apply_model(self._model, wav, device=self.device)
 
         sources_np = sources[0].cpu().numpy()
+        del sources
 
         stem_names = self.STEM_NAMES_6S if self.model_name == "htdemucs_6s" else self.STEM_NAMES
+        vocals_idx = stem_names.index("vocals")
+        non_vocal_indices = [i for i in range(len(stem_names)) if i != vocals_idx]
 
-        stems: dict[str, Audio] = {}
-        for i, name in enumerate(stem_names):
-            stem_data = sources_np[i].T
-
-            metadata = AudioMetadata(
-                sample_rate=target_sr,
-                channels=2,
-                sample_width=2,
-                duration_seconds=stem_data.shape[0] / target_sr,
-                frame_count=stem_data.shape[0],
-            )
-            stems[name] = Audio(stem_data.astype(np.float32), metadata)
-
-        vocals = stems["vocals"]
-
-        non_vocal_stems = [stems[name] for name in stem_names if name != "vocals"]
-        background_data = np.zeros_like(vocals.data)
-        for stem in non_vocal_stems:
-            background_data += stem.data
+        vocals_data = sources_np[vocals_idx].T
+        background_data = sources_np[non_vocal_indices].sum(axis=0).T
+        del sources_np
 
         max_val = np.max(np.abs(background_data))
         if max_val > 1.0:
-            background_data = background_data / max_val
+            background_data /= max_val
 
-        background = Audio(background_data.astype(np.float32), vocals.metadata)
-
-        music_stems = ["drums", "bass", "other"]
-        if self.model_name == "htdemucs_6s":
-            music_stems.extend(["guitar", "piano"])
-
-        music_data = np.zeros_like(vocals.data)
-        for name in music_stems:
-            if name in stems:
-                music_data += stems[name].data
-
-        max_val = np.max(np.abs(music_data))
-        if max_val > 1.0:
-            music_data = music_data / max_val
-
-        music = Audio(music_data.astype(np.float32), vocals.metadata)
+        metadata = AudioMetadata(
+            sample_rate=target_sr,
+            channels=2,
+            sample_width=2,
+            duration_seconds=vocals_data.shape[0] / target_sr,
+            frame_count=vocals_data.shape[0],
+        )
+        vocals = Audio(np.ascontiguousarray(vocals_data, dtype=np.float32), metadata)
+        background = Audio(np.ascontiguousarray(background_data, dtype=np.float32), metadata)
 
         return SeparatedAudio(
             vocals=vocals,
             background=background,
             original=audio,
-            music=music,
+            music=None,
             effects=None,
         )
 

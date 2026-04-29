@@ -94,6 +94,7 @@ class LocalDubbingPipeline:
         max_duration: float = 10.0,
     ) -> dict[str, Any]:
         """Extract voice samples for each speaker from the audio."""
+        from videopython.base.audio import Audio
 
         voice_samples: dict[str, Audio] = {}
 
@@ -120,7 +121,11 @@ class LocalDubbingPipeline:
             if best_segment is not None:
                 start = best_segment.start
                 end = min(best_segment.end, start + max_duration)
-                voice_samples[speaker] = audio.slice(start, end)
+                sliced = audio.slice(start, end)
+                # Audio.slice returns a numpy view into the source. Copy so the
+                # short voice sample doesn't keep the full vocals array (~1.3 GB
+                # for 2h sources) alive across translate + TTS.
+                voice_samples[speaker] = Audio(sliced.data.copy(), sliced.metadata)
 
         return voice_samples
 
@@ -175,6 +180,7 @@ class LocalDubbingPipeline:
 
         separated_audio: SeparatedAudio | None = None
         vocal_audio = source_audio
+        background_audio: Audio | None = None
 
         if preserve_background:
             report_progress("Separating audio", 0.15)
@@ -184,11 +190,23 @@ class LocalDubbingPipeline:
             separated_audio = self._separator.separate(source_audio)
             self._maybe_unload("_separator")
             vocal_audio = separated_audio.vocals
+            background_audio = separated_audio.background
+            # In low_memory mode, drop the SeparatedAudio container so vocals
+            # and background can be released as soon as their last local
+            # reference goes (after voice-sample extraction and final overlay
+            # respectively). The result will report separated_audio=None.
+            if self.low_memory:
+                separated_audio = None
 
         voice_samples: dict[str, Audio] = {}
         if voice_clone:
             report_progress("Extracting voice samples", 0.25)
             voice_samples = self._extract_voice_samples(vocal_audio, transcription)
+
+        # vocals is no longer needed; voice_samples are independent copies.
+        # In low_memory mode this is the only ref keeping the buffer alive
+        # (separated_audio was dropped above), so dropping the local frees it.
+        del vocal_audio
 
         report_progress("Translating text", 0.35)
         if self._translator is None:
@@ -237,17 +255,23 @@ class LocalDubbingPipeline:
         assert self._synchronizer is not None
 
         synchronized_segments, _ = self._synchronizer.synchronize_segments(dubbed_segments, target_durations)
+        del dubbed_segments
 
         report_progress("Assembling final audio", 0.90)
         total_duration = source_audio.metadata.duration_seconds
         dubbed_speech = self._synchronizer.assemble_with_timing(synchronized_segments, start_times, total_duration)
+        del synchronized_segments
 
-        if separated_audio is not None:
-            background_sr = separated_audio.background.metadata.sample_rate
+        if background_audio is not None:
+            background_sr = background_audio.metadata.sample_rate
             if dubbed_speech.metadata.sample_rate != background_sr:
                 dubbed_speech = dubbed_speech.resample(background_sr)
 
-            final_audio = separated_audio.background.overlay(dubbed_speech, position=0.0)
+            final_audio = background_audio.overlay(dubbed_speech, position=0.0)
+            # Drop the local; in low_memory this releases the background
+            # buffer (~1.3 GB for 2h sources). In non-low_memory the same
+            # array is still held by separated_audio.background.
+            del background_audio
         else:
             final_audio = dubbed_speech
 
@@ -294,6 +318,7 @@ class LocalDubbingPipeline:
 
         separated_audio: SeparatedAudio | None = None
         vocal_audio = source_audio
+        background_audio: Audio | None = None
 
         if preserve_background:
             report_progress("Separating audio", 0.20)
@@ -303,6 +328,9 @@ class LocalDubbingPipeline:
             separated_audio = self._separator.separate(source_audio)
             self._maybe_unload("_separator")
             vocal_audio = separated_audio.vocals
+            background_audio = separated_audio.background
+            if self.low_memory:
+                separated_audio = None
 
         report_progress("Extracting voice sample", 0.40)
         voice_sample: Audio | None = None
@@ -314,7 +342,11 @@ class LocalDubbingPipeline:
 
         if voice_sample is None:
             sample_duration = min(6.0, original_duration)
-            voice_sample = vocal_audio.slice(0, sample_duration)
+            sliced = vocal_audio.slice(0, sample_duration)
+            # Copy so the short sample doesn't pin the full vocals array.
+            voice_sample = Audio(sliced.data.copy(), sliced.metadata)
+
+        del vocal_audio
 
         report_progress("Generating speech", 0.60)
         if self._tts is None or self._tts_language != "en":
@@ -327,24 +359,24 @@ class LocalDubbingPipeline:
 
         report_progress("Assembling audio", 0.85)
 
-        if separated_audio is not None:
-            background_sr = separated_audio.background.metadata.sample_rate
+        if background_audio is not None:
+            background_sr = background_audio.metadata.sample_rate
             if generated_speech.metadata.sample_rate != background_sr:
                 generated_speech = generated_speech.resample(background_sr)
 
-            background = separated_audio.background
-            if background.metadata.duration_seconds > speech_duration:
-                background = background.slice(0, speech_duration)
-            elif background.metadata.duration_seconds < speech_duration:
-                silence_duration = speech_duration - background.metadata.duration_seconds
+            if background_audio.metadata.duration_seconds > speech_duration:
+                background_audio = background_audio.slice(0, speech_duration)
+            elif background_audio.metadata.duration_seconds < speech_duration:
+                silence_duration = speech_duration - background_audio.metadata.duration_seconds
                 silence = Audio.silence(
                     duration=silence_duration,
                     sample_rate=background_sr,
-                    channels=background.metadata.channels,
+                    channels=background_audio.metadata.channels,
                 )
-                background = background.concat(silence)
+                background_audio = background_audio.concat(silence)
 
-            final_audio = background.overlay(generated_speech, position=0.0)
+            final_audio = background_audio.overlay(generated_speech, position=0.0)
+            del background_audio
         else:
             final_audio = generated_speech
 
