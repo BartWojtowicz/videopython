@@ -86,7 +86,7 @@ video = video_gen.generate_video(image=image, fps=24)
 ### 3. Generate Speech
 
 ```python
-speech_gen = TextToSpeech()  # Uses local Bark/XTTS stack
+speech_gen = TextToSpeech()  # Uses local Chatterbox Multilingual TTS
 audio = speech_gen.generate_audio("Your narration text here")
 ```
 

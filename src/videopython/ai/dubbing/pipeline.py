@@ -37,7 +37,6 @@ class LocalDubbingPipeline:
         self._transcriber_diarization: bool | None = None
         self._translator: Any = None
         self._tts: Any = None
-        self._tts_voice_clone: bool | None = None
         self._tts_language: str | None = None
         self._separator: Any = None
         self._synchronizer: TimingSynchronizer | None = None
@@ -71,18 +70,11 @@ class LocalDubbingPipeline:
 
         self._translator = TextTranslator(device=self.device)
 
-    def _init_tts(self, voice_clone: bool = False, language: str = "en") -> None:
+    def _init_tts(self, language: str = "en") -> None:
         """Initialize the text-to-speech model."""
         from videopython.ai.generation.audio import TextToSpeech
 
-        if voice_clone:
-            self._tts = TextToSpeech(
-                model_size="chatterbox",
-                device=self.device,
-                language=language,
-            )
-        else:
-            self._tts = TextToSpeech(device=self.device, language=language)
+        self._tts = TextToSpeech(device=self.device, language=language)
 
     def _init_separator(self) -> None:
         """Initialize the audio separator."""
@@ -210,9 +202,8 @@ class LocalDubbingPipeline:
         self._maybe_unload("_translator")
 
         report_progress("Generating dubbed speech", 0.50)
-        if self._tts is None or self._tts_voice_clone != voice_clone or self._tts_language != target_lang:
-            self._init_tts(voice_clone=voice_clone, language=target_lang)
-            self._tts_voice_clone = voice_clone
+        if self._tts is None or self._tts_language != target_lang:
+            self._init_tts(language=target_lang)
             self._tts_language = target_lang
 
         dubbed_segments: list[Audio] = []
@@ -326,9 +317,8 @@ class LocalDubbingPipeline:
             voice_sample = vocal_audio.slice(0, sample_duration)
 
         report_progress("Generating speech", 0.60)
-        if self._tts is None or self._tts_voice_clone is not True or self._tts_language != "en":
-            self._init_tts(voice_clone=True, language="en")
-            self._tts_voice_clone = True
+        if self._tts is None or self._tts_language != "en":
+            self._init_tts(language="en")
             self._tts_language = "en"
 
         generated_speech = self._tts.generate_audio(text, voice_sample=voice_sample)

@@ -1,7 +1,6 @@
 from .models import (
     ASTFeatureExtractor,
     ASTForAudioClassification,
-    AutoModel,
     AutoProcessor,
     AutoTokenizer,
     BlipForConditionalGeneration,
@@ -13,7 +12,6 @@ from .models import (
 __all__ = [
     "ASTFeatureExtractor",
     "ASTForAudioClassification",
-    "AutoModel",
     "AutoProcessor",
     "AutoTokenizer",
     "BlipForConditionalGeneration",

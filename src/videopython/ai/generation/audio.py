@@ -9,59 +9,33 @@ from videopython.base.audio import Audio, AudioMetadata
 
 
 class TextToSpeech:
-    """Generates speech audio from text using local models.
+    """Generates speech audio from text using Chatterbox Multilingual.
 
-    Supports Bark (`base`, `small`) for general TTS and Chatterbox Multilingual
-    (`chatterbox`) for multilingual voice cloning.
+    Backed by Chatterbox Multilingual (Resemble AI). When ``voice_sample`` is
+    provided to ``generate_audio``, the model clones that voice; otherwise it
+    falls back to Chatterbox's built-in default speaker.
     """
 
-    SUPPORTED_LOCAL_MODELS: list[str] = ["base", "small", "chatterbox"]
-
-    CHATTERBOX_SAMPLE_RATE: int = 24000
+    SAMPLE_RATE: int = 24000
 
     def __init__(
         self,
-        model_size: str = "base",
-        voice: str | None = None,
+        voice: Audio | None = None,
         device: str | None = None,
         language: str = "en",
     ):
-        if model_size not in self.SUPPORTED_LOCAL_MODELS:
-            raise ValueError(f"model_size must be one of {self.SUPPORTED_LOCAL_MODELS}, got '{model_size}'")
-
-        self.model_size = model_size
         self.voice = voice
         self.device = device
         self.language = language
         self._model: Any = None
-        self._processor: Any = None
-        self._chatterbox_model: Any = None
 
-    def _init_local(self) -> None:
-        """Initialize local Bark model."""
-        from transformers import AutoModel, AutoProcessor
-
-        requested_device = self.device
-        device = select_device(self.device, mps_allowed=False)
-
-        model_name = "suno/bark" if self.model_size == "base" else "suno/bark-small"
-        self._processor = AutoProcessor.from_pretrained(model_name)
-        self._model = AutoModel.from_pretrained(model_name).to(device)
-        self.device = device
-        log_device_initialization(
-            "TextToSpeech",
-            requested_device=requested_device,
-            resolved_device=device,
-        )
-
-    def _init_chatterbox(self) -> None:
-        """Initialize Chatterbox Multilingual model for voice cloning."""
+    def _init_model(self) -> None:
         from chatterbox.mtl_tts import ChatterboxMultilingualTTS  # type: ignore[import-untyped]
 
         requested_device = self.device
         device = select_device(self.device, mps_allowed=False)
 
-        self._chatterbox_model = ChatterboxMultilingualTTS.from_pretrained(device=device)
+        self._model = ChatterboxMultilingualTTS.from_pretrained(device=device)
         self.device = device
         log_device_initialization(
             "TextToSpeech",
@@ -69,96 +43,63 @@ class TextToSpeech:
             resolved_device=device,
         )
 
-    def _generate_local(self, text: str, voice_preset: str | None) -> Audio:
-        """Generate speech using Bark."""
-        import torch
+    def generate_audio(
+        self,
+        text: str,
+        voice_sample: Audio | None = None,
+    ) -> Audio:
+        """Generate speech audio from text.
 
-        if self._model is None:
-            self._init_local()
-
-        inputs = self._processor(text=[text], return_tensors="pt", voice_preset=voice_preset)
-        inputs = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
-
-        with torch.no_grad():
-            speech_values = self._model.generate(**inputs, do_sample=True)
-
-        audio_data = speech_values.cpu().float().numpy().squeeze()
-        sample_rate = self._model.generation_config.sample_rate
-
-        metadata = AudioMetadata(
-            sample_rate=sample_rate,
-            channels=1,
-            sample_width=2,
-            duration_seconds=len(audio_data) / sample_rate,
-            frame_count=len(audio_data),
-        )
-        return Audio(audio_data, metadata)
-
-    def _generate_chatterbox(self, text: str, voice_sample: Audio) -> Audio:
-        """Generate speech using Chatterbox Multilingual with voice cloning."""
+        Args:
+            text: Text to synthesize.
+            voice_sample: Optional voice sample to clone. Falls back to the
+                instance's ``voice`` and then to Chatterbox's default speaker.
+        """
         import tempfile
         from pathlib import Path
 
         import numpy as np
 
-        if self._chatterbox_model is None:
-            self._init_chatterbox()
+        if self._model is None:
+            self._init_model()
 
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            voice_sample.save(f.name)
-            speaker_wav_path = Path(f.name)
+        effective_sample = voice_sample or self.voice
+        speaker_wav_path: Path | None = None
+
+        if effective_sample is not None:
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                effective_sample.save(f.name)
+                speaker_wav_path = Path(f.name)
 
         try:
-            wav = self._chatterbox_model.generate(
+            wav = self._model.generate(
                 text=text,
                 language_id=self.language,
-                audio_prompt_path=str(speaker_wav_path),
+                audio_prompt_path=str(speaker_wav_path) if speaker_wav_path else None,
             )
 
             audio_data = wav.cpu().float().numpy().squeeze()
             if audio_data.ndim == 0:
                 audio_data = np.array([audio_data], dtype=np.float32)
 
-            sample_rate = self.CHATTERBOX_SAMPLE_RATE
-
             metadata = AudioMetadata(
-                sample_rate=sample_rate,
+                sample_rate=self.SAMPLE_RATE,
                 channels=1,
                 sample_width=2,
-                duration_seconds=len(audio_data) / sample_rate,
+                duration_seconds=len(audio_data) / self.SAMPLE_RATE,
                 frame_count=len(audio_data),
             )
             return Audio(audio_data, metadata)
         finally:
-            speaker_wav_path.unlink()
-
-    def generate_audio(
-        self,
-        text: str,
-        voice_preset: str | None = None,
-        voice_sample: Audio | None = None,
-    ) -> Audio:
-        """Generate speech audio from text."""
-        effective_voice = voice_preset or self.voice
-
-        if self.model_size == "chatterbox" or voice_sample is not None:
-            if voice_sample is None:
-                raise ValueError(
-                    "voice_sample is required for Chatterbox voice cloning. "
-                    "Provide an Audio sample of the voice to clone."
-                )
-            return self._generate_chatterbox(text, voice_sample)
-
-        return self._generate_local(text, effective_voice)
+            if speaker_wav_path is not None:
+                speaker_wav_path.unlink()
 
     def unload(self) -> None:
-        """Release the TTS model(s) so the next generate_audio() re-initializes.
+        """Release the TTS model so the next generate_audio() re-initializes.
 
         Used by low-memory dubbing to free VRAM between pipeline stages.
         """
         self._model = None
-        self._processor = None
-        self._chatterbox_model = None
         release_device_memory(self.device)
 
 

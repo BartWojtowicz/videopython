@@ -495,12 +495,8 @@ class TestUnloadMethods:
 
         tts = TextToSpeech()
         tts._model = object()
-        tts._processor = object()
-        tts._chatterbox_model = object()
         tts.unload()
         assert tts._model is None
-        assert tts._processor is None
-        assert tts._chatterbox_model is None
 
     def test_audio_to_text_unload(self, monkeypatch):
         import videopython.ai.understanding.audio as audio_mod
