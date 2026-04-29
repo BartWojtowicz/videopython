@@ -8,7 +8,7 @@ Generate videos, images, audio, and music from text prompts.
 |-------|--------------------|
 | TextToVideo | CogVideoX1.5-5B |
 | ImageToVideo | CogVideoX1.5-5B-I2V |
-| TextToSpeech | Bark / XTTS pipeline |
+| TextToSpeech | Chatterbox Multilingual |
 | TextToMusic | MusicGen |
 | TextToImage | SDXL |
 

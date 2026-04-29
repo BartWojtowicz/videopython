@@ -1,5 +1,11 @@
 # Release Notes
 
+## 0.26.4
+
+### Changed
+
+- `TextToSpeech` is now Chatterbox Multilingual only. Bark (`suno/bark`, `suno/bark-small`) is removed — it was unmaintained, slower, and lower quality than Chatterbox, and the dubbing pipeline already routed all real traffic through Chatterbox. The `model_size` and `voice_preset` arguments are gone; `voice` now takes an optional `Audio` reference clip instead of a Bark preset string. `voice_sample` on `generate_audio()` remains optional — without one, Chatterbox uses its built-in default speaker. Existing `TextToSpeech().generate_audio("text")` calls continue to work.
+
 ## 0.26.3
 
 ### Added

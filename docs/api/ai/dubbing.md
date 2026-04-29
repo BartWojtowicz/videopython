@@ -4,7 +4,7 @@ Dub videos into different languages or replace speech with custom text using voi
 
 ## Local Pipeline
 
-Video dubbing runs with a local pipeline combining Whisper, translation models, XTTS, and Demucs.
+Video dubbing runs with a local pipeline combining Whisper, MarianMT translation, Chatterbox Multilingual TTS, and Demucs.
 
 ## VideoDubber
 
