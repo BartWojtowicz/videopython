@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -170,7 +169,7 @@ class VideoDubber:
             ``DubbingResult`` with the dubbed audio, translated segments, and
             source transcription. The output video is written to ``output_path``.
         """
-        from videopython.ai.dubbing.remux import replace_audio_stream
+        from videopython.ai.dubbing.remux import replace_audio_stream_from_audio
         from videopython.base.audio import Audio
 
         input_path = Path(input_path)
@@ -196,17 +195,14 @@ class VideoDubber:
             transcription=transcription,
         )
 
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-            dubbed_audio_path = Path(tmp.name)
-        try:
-            result.dubbed_audio.save(dubbed_audio_path)
-            replace_audio_stream(
-                video_path=input_path,
-                audio_path=dubbed_audio_path,
-                output_path=output_path,
-            )
-        finally:
-            dubbed_audio_path.unlink(missing_ok=True)
+        # Stream the dubbed Audio directly into ffmpeg via stdin instead of
+        # going through a temp WAV on disk. For a 2h dub the temp file would
+        # be ~10 GB written-then-read; the streaming path drops both copies.
+        replace_audio_stream_from_audio(
+            video_path=input_path,
+            audio=result.dubbed_audio,
+            output_path=output_path,
+        )
 
         return result
 

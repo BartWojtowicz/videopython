@@ -248,6 +248,40 @@ class TestTimingSynchronizer:
         with pytest.raises(ValueError, match="Invalid start time"):
             sync.assemble_with_timing(segments, start_times, 5.0)
 
+    def test_assemble_with_timing_extends_past_total_duration(self, sample_audio):
+        """Segments running past total_duration extend the output buffer.
+
+        Mirrors the previous Audio.overlay behavior so dubbed speech that
+        slightly overruns the source duration is preserved instead of
+        silently truncated.
+        """
+        sync = TimingSynchronizer()
+        # sample_audio is 2.0s; place it starting at 4.5s with total 5.0s
+        result = sync.assemble_with_timing([sample_audio], [4.5], total_duration=5.0)
+
+        assert result.metadata.duration_seconds >= 6.5 - 0.01
+        # Energy should be in the placed region, not at the start
+        sr = sample_audio.metadata.sample_rate
+        head_rms = float(np.sqrt(np.mean(result.data[: sr // 2] ** 2)))
+        tail_rms = float(np.sqrt(np.mean(result.data[int(4.5 * sr) : int(5.0 * sr)] ** 2)))
+        assert tail_rms > head_rms
+
+    def test_assemble_with_timing_no_unnecessary_normalization(self, sample_audio):
+        """Non-overlapping segments below 1.0 amplitude are not rescaled.
+
+        Single-pass assembler peak-guards once at the end. For typical dubs
+        with non-overlapping segments this should be a no-op; the segment
+        amplitude must come through unchanged.
+        """
+        sync = TimingSynchronizer()
+        segments = [sample_audio.slice(0, 0.5), sample_audio.slice(0, 0.5)]
+        start_times = [0.0, 1.0]
+        result = sync.assemble_with_timing(segments, start_times, total_duration=2.0)
+
+        peak = float(np.max(np.abs(result.data)))
+        # sample_audio peaks at 0.5; with no overlap, output peak should match
+        assert abs(peak - 0.5) < 0.01
+
     def test_check_overlaps_no_overlaps(self):
         """Test check_overlaps with non-overlapping segments."""
         sync = TimingSynchronizer()
@@ -772,7 +806,7 @@ class TestPipelineSuppliedTranscriptionDiarization:
 
         def fake_init_tts(self, language="en"):
             class FakeTTS:
-                def generate_audio(self, text, voice_sample=None):
+                def generate_audio(self, text, voice_sample=None, voice_sample_path=None):
                     sample_rate = 24000
                     duration = 0.2
                     frame_count = int(sample_rate * duration)
@@ -914,6 +948,234 @@ class TestPipelineSuppliedTranscriptionDiarization:
         assert not result.source_transcription.speakers
 
 
+class TestVoiceSampleCache:
+    """Pipeline encodes each speaker's voice sample to a temp WAV exactly once."""
+
+    def _make_two_speaker_transcription(self):
+        from videopython.base.text.transcription import Transcription, TranscriptionSegment, TranscriptionWord
+
+        segs = [
+            TranscriptionSegment(
+                start=0.0,
+                end=1.0,
+                text="hello there",
+                words=[
+                    TranscriptionWord(start=0.0, end=0.5, word="hello", speaker="A"),
+                    TranscriptionWord(start=0.5, end=1.0, word="there", speaker="A"),
+                ],
+                speaker="A",
+            ),
+            TranscriptionSegment(
+                start=1.0,
+                end=2.0,
+                text="hi back",
+                words=[
+                    TranscriptionWord(start=1.0, end=1.5, word="hi", speaker="A"),
+                    TranscriptionWord(start=1.5, end=2.0, word="back", speaker="A"),
+                ],
+                speaker="A",
+            ),
+            TranscriptionSegment(
+                start=2.0,
+                end=3.5,
+                text="and another",
+                words=[
+                    TranscriptionWord(start=2.0, end=2.5, word="and", speaker="B"),
+                    TranscriptionWord(start=2.5, end=3.5, word="another", speaker="B"),
+                ],
+                speaker="B",
+            ),
+        ]
+        return Transcription(segments=segs, language="en")
+
+    def test_voice_samples_encoded_once_per_speaker(self, sample_audio, monkeypatch):
+        """Three segments across two speakers => exactly two Audio.save calls."""
+        from videopython.ai.dubbing.models import TranslatedSegment
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+        from videopython.base.audio import audio as audio_mod
+
+        save_count = {"n": 0}
+        tts_calls: list[dict] = []
+
+        original_save = audio_mod.Audio.save
+
+        def counting_save(self, file_path, format=None):
+            save_count["n"] += 1
+            from pathlib import Path as _Path
+
+            _Path(file_path).write_bytes(b"fake wav")
+
+        monkeypatch.setattr(audio_mod.Audio, "save", counting_save)
+
+        # Make voice-sample extraction return one sample per speaker so the
+        # cache has something to encode. _extract_voice_samples relies on
+        # segment durations >= min_duration=3s, which our short fixture lacks;
+        # short-circuit to a deterministic per-speaker map.
+        def fake_extract(self, audio, transcription, min_duration=3.0, max_duration=10.0):
+            return {"A": sample_audio, "B": sample_audio}
+
+        monkeypatch.setattr(LocalDubbingPipeline, "_extract_voice_samples", fake_extract)
+
+        def fake_init_translator(self):
+            class FakeTranslator:
+                def translate_segments(self, segments, target_lang, source_lang):
+                    return [
+                        TranslatedSegment(
+                            original_segment=s,
+                            translated_text=s.text,
+                            source_lang=source_lang,
+                            target_lang=target_lang,
+                        )
+                        for s in segments
+                    ]
+
+            self._translator = FakeTranslator()
+
+        def fake_init_tts(self, language="en"):
+            class FakeTTS:
+                def generate_audio(self, text, voice_sample=None, voice_sample_path=None):
+                    tts_calls.append({"voice_sample_path": voice_sample_path, "voice_sample": voice_sample})
+                    sample_rate = 24000
+                    duration = 0.2
+                    frame_count = int(sample_rate * duration)
+                    data = np.zeros(frame_count, dtype=np.float32)
+                    metadata = AudioMetadata(
+                        sample_rate=sample_rate,
+                        channels=1,
+                        sample_width=2,
+                        duration_seconds=duration,
+                        frame_count=frame_count,
+                    )
+                    return Audio(data, metadata)
+
+            self._tts = FakeTTS()
+
+        monkeypatch.setattr(LocalDubbingPipeline, "_init_translator", fake_init_translator)
+        monkeypatch.setattr(LocalDubbingPipeline, "_init_tts", fake_init_tts)
+
+        # Skip the timing synchronizer — it would call real ffmpeg via
+        # time_stretch on the fake-saved WAVs and fail. We're only checking
+        # encode counts and TTS argument plumbing here.
+        class FakeSynchronizer:
+            def synchronize_segments(self, segments, durations):
+                return segments, []
+
+            def assemble_with_timing(self, segments, start_times, total_duration):
+                return segments[0] if segments else sample_audio
+
+        monkeypatch.setattr(
+            LocalDubbingPipeline,
+            "_init_synchronizer",
+            lambda self: setattr(self, "_synchronizer", FakeSynchronizer()),
+        )
+
+        pipeline = LocalDubbingPipeline()
+        pipeline.process(
+            source_audio=sample_audio,
+            target_lang="es",
+            preserve_background=False,
+            voice_clone=True,
+            enable_diarization=False,
+            transcription=self._make_two_speaker_transcription(),
+        )
+
+        # Restore so cleanup paths don't accidentally use the fake.
+        monkeypatch.setattr(audio_mod.Audio, "save", original_save)
+
+        # Two speakers => two encodes, regardless of segment count.
+        assert save_count["n"] == 2
+
+        # Every TTS call should receive a path, not an Audio object.
+        assert len(tts_calls) == 3
+        for call in tts_calls:
+            assert call["voice_sample_path"] is not None
+            assert call["voice_sample"] is None
+
+        # Speaker A reuses the same path across both segments.
+        a_paths = {str(tts_calls[0]["voice_sample_path"]), str(tts_calls[1]["voice_sample_path"])}
+        assert len(a_paths) == 1
+        # Speaker B uses a different path.
+        assert str(tts_calls[2]["voice_sample_path"]) != next(iter(a_paths))
+
+    def test_voice_clone_disabled_skips_cache(self, sample_audio, monkeypatch):
+        """voice_clone=False => no voice-sample encodes, TTS gets no path."""
+        from videopython.ai.dubbing.models import TranslatedSegment
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+        from videopython.base.audio import audio as audio_mod
+
+        save_count = {"n": 0}
+        tts_calls: list[dict] = []
+
+        def counting_save(self, file_path, format=None):
+            save_count["n"] += 1
+
+        monkeypatch.setattr(audio_mod.Audio, "save", counting_save)
+
+        def fake_init_translator(self):
+            class FakeTranslator:
+                def translate_segments(self, segments, target_lang, source_lang):
+                    return [
+                        TranslatedSegment(
+                            original_segment=s,
+                            translated_text=s.text,
+                            source_lang=source_lang,
+                            target_lang=target_lang,
+                        )
+                        for s in segments
+                    ]
+
+            self._translator = FakeTranslator()
+
+        def fake_init_tts(self, language="en"):
+            class FakeTTS:
+                def generate_audio(self, text, voice_sample=None, voice_sample_path=None):
+                    tts_calls.append({"voice_sample_path": voice_sample_path})
+                    sample_rate = 24000
+                    duration = 0.2
+                    frame_count = int(sample_rate * duration)
+                    data = np.zeros(frame_count, dtype=np.float32)
+                    metadata = AudioMetadata(
+                        sample_rate=sample_rate,
+                        channels=1,
+                        sample_width=2,
+                        duration_seconds=duration,
+                        frame_count=frame_count,
+                    )
+                    return Audio(data, metadata)
+
+            self._tts = FakeTTS()
+
+        monkeypatch.setattr(LocalDubbingPipeline, "_init_translator", fake_init_translator)
+        monkeypatch.setattr(LocalDubbingPipeline, "_init_tts", fake_init_tts)
+
+        class FakeSynchronizer:
+            def synchronize_segments(self, segments, durations):
+                return segments, []
+
+            def assemble_with_timing(self, segments, start_times, total_duration):
+                return segments[0] if segments else sample_audio
+
+        monkeypatch.setattr(
+            LocalDubbingPipeline,
+            "_init_synchronizer",
+            lambda self: setattr(self, "_synchronizer", FakeSynchronizer()),
+        )
+
+        pipeline = LocalDubbingPipeline()
+        pipeline.process(
+            source_audio=sample_audio,
+            target_lang="es",
+            preserve_background=False,
+            voice_clone=False,
+            enable_diarization=False,
+            transcription=self._make_two_speaker_transcription(),
+        )
+
+        assert save_count["n"] == 0
+        for call in tts_calls:
+            assert call["voice_sample_path"] is None
+
+
 class TestReplaceAudioStream:
     """Tests for the ffmpeg audio-stream replacement helper."""
 
@@ -996,6 +1258,84 @@ class TestReplaceAudioStream:
         assert cmd[-1] == str(out)
 
 
+class TestReplaceAudioStreamFromAudio:
+    """Tests for the streaming-audio variant of replace_audio_stream."""
+
+    def test_missing_video_raises(self, tmp_path, sample_audio):
+        from videopython.ai.dubbing.remux import replace_audio_stream_from_audio
+
+        with pytest.raises(FileNotFoundError, match="Video file not found"):
+            replace_audio_stream_from_audio(tmp_path / "missing.mp4", sample_audio, tmp_path / "out.mp4")
+
+    def test_ffmpeg_failure_raises_remux_error(self, tmp_path, sample_audio, monkeypatch):
+        """Non-zero ffmpeg exit code is wrapped in RemuxError with stderr."""
+        import videopython.ai.dubbing.remux as remux_mod
+
+        video = tmp_path / "v.mp4"
+        video.write_bytes(b"fake")
+
+        class FakeProcess:
+            returncode = 1
+
+            def communicate(self, _stdin):
+                return b"", b"simulated ffmpeg error"
+
+        def fake_popen(cmd, stdin=None, stderr=None):
+            return FakeProcess()
+
+        monkeypatch.setattr(remux_mod.subprocess, "Popen", fake_popen)
+
+        with pytest.raises(remux_mod.RemuxError, match="simulated ffmpeg error"):
+            remux_mod.replace_audio_stream_from_audio(video, sample_audio, tmp_path / "out.mp4")
+
+    def test_ffmpeg_command_pipes_audio_via_stdin(self, tmp_path, sample_audio, monkeypatch):
+        """Video is read from disk; audio is piped as WAV via stdin."""
+        import videopython.ai.dubbing.remux as remux_mod
+
+        video = tmp_path / "v.mp4"
+        video.write_bytes(b"fake")
+        out = tmp_path / "out.mp4"
+
+        captured: dict = {}
+
+        class FakeProcess:
+            returncode = 0
+
+            def communicate(self, stdin_bytes):
+                captured["stdin_bytes"] = stdin_bytes
+                return b"", b""
+
+        def fake_popen(cmd, stdin=None, stderr=None):
+            captured["cmd"] = cmd
+            captured["stdin_kwarg"] = stdin
+            return FakeProcess()
+
+        monkeypatch.setattr(remux_mod.subprocess, "Popen", fake_popen)
+
+        remux_mod.replace_audio_stream_from_audio(video, sample_audio, out)
+
+        cmd = captured["cmd"]
+        assert cmd[0] == "ffmpeg"
+        # First input is the video file; second is "-" (stdin).
+        i_indices = [i for i, v in enumerate(cmd) if v == "-i"]
+        assert len(i_indices) == 2
+        assert cmd[i_indices[0] + 1] == str(video)
+        assert cmd[i_indices[1] + 1] == "-"
+        # Stdin is requested.
+        assert captured["stdin_kwarg"] is not None
+        # Map: video from input 0, audio from input 1.
+        map_indices = [i for i, v in enumerate(cmd) if v == "-map"]
+        assert len(map_indices) == 2
+        assert cmd[map_indices[0] + 1] == "0:v:0"
+        assert cmd[map_indices[1] + 1] == "1:a:0"
+        assert "-c:v" in cmd and cmd[cmd.index("-c:v") + 1] == "copy"
+        assert "-shortest" in cmd
+        assert cmd[-1] == str(out)
+        # WAV bytes were written: header "RIFF" then "WAVE".
+        assert captured["stdin_bytes"][:4] == b"RIFF"
+        assert captured["stdin_bytes"][8:12] == b"WAVE"
+
+
 class TestVideoDubberDubFile:
     """Tests for VideoDubber.dub_file path-based entry point."""
 
@@ -1012,15 +1352,13 @@ class TestVideoDubberDubFile:
             )
 
     def test_dub_file_orchestration(self, tmp_path, sample_audio, sample_segment, monkeypatch):
-        """dub_file extracts audio, runs pipeline, saves dubbed audio, and remuxes.
+        """dub_file extracts audio, runs pipeline, and streams dubbed audio to ffmpeg.
 
-        Mocks Audio.from_path (to avoid ffmpeg), the pipeline (to avoid models),
-        Audio.save (to avoid encoding), and replace_audio_stream (to avoid ffmpeg).
-        Verifies the call sequence and argument wiring.
+        The dubbed Audio is piped directly to ffmpeg via
+        ``replace_audio_stream_from_audio`` — there is no temp WAV on disk.
+        Verifies the call sequence and that the in-memory Audio object is
+        forwarded to the remux helper.
         """
-        from pathlib import Path
-
-        import videopython.ai.dubbing.dubber as dubber_mod
         import videopython.ai.dubbing.remux as remux_mod
         from videopython.ai.dubbing import VideoDubber
         from videopython.ai.dubbing.models import DubbingResult, TranslatedSegment
@@ -1065,26 +1403,19 @@ class TestVideoDubberDubFile:
 
         monkeypatch.setattr(VideoDubber, "_init_local_pipeline", fake_init)
 
-        def fake_save(self, file_path, format=None):
-            calls.append(("save", {"file_path": str(file_path)}))
-            Path(file_path).write_bytes(b"fake wav")
-
-        monkeypatch.setattr(audio_mod.Audio, "save", fake_save)
-
-        def fake_replace(video_path, audio_path, output_path, **kwargs):
+        def fake_replace(video_path, audio, output_path, **kwargs):
             calls.append(
                 (
                     "replace",
                     {
                         "video_path": str(video_path),
-                        "audio_path": str(audio_path),
+                        "audio": audio,
                         "output_path": str(output_path),
                     },
                 )
             )
 
-        monkeypatch.setattr(remux_mod, "replace_audio_stream", fake_replace)
-        monkeypatch.setattr(dubber_mod, "tempfile", __import__("tempfile"))
+        monkeypatch.setattr(remux_mod, "replace_audio_stream_from_audio", fake_replace)
 
         dubber = VideoDubber()
         result = dubber.dub_file(
@@ -1094,19 +1425,18 @@ class TestVideoDubberDubFile:
         )
 
         names = [c[0] for c in calls]
-        assert names == ["from_path", "process", "save", "replace"]
+        assert names == ["from_path", "process", "replace"]
         assert calls[0][1]["file_path"] == str(input_path)
         assert calls[1][1]["source_audio"] is sample_audio
         assert calls[1][1]["target_lang"] == "es"
-        assert calls[3][1]["video_path"] == str(input_path)
-        assert calls[3][1]["output_path"] == str(output_path)
-        assert calls[2][1]["file_path"] == calls[3][1]["audio_path"]
+        assert calls[2][1]["video_path"] == str(input_path)
+        assert calls[2][1]["output_path"] == str(output_path)
+        # Dubbed audio is forwarded by reference, not via a temp file.
+        assert calls[2][1]["audio"] is sample_audio
         assert result is fake_result
 
-    def test_dub_file_cleans_up_temp_audio_on_failure(self, tmp_path, sample_audio, sample_segment, monkeypatch):
-        """Temp wav is deleted even if replace_audio_stream raises."""
-        from pathlib import Path as _Path
-
+    def test_dub_file_propagates_remux_error(self, tmp_path, sample_audio, sample_segment, monkeypatch):
+        """RemuxError from the streaming helper propagates out of dub_file."""
         import videopython.ai.dubbing.remux as remux_mod
         from videopython.ai.dubbing import VideoDubber
         from videopython.ai.dubbing.models import DubbingResult, TranslatedSegment
@@ -1115,8 +1445,6 @@ class TestVideoDubberDubFile:
 
         input_path = tmp_path / "in.mp4"
         input_path.write_bytes(b"fake")
-
-        temp_paths: list[_Path] = []
 
         monkeypatch.setattr(audio_mod.Audio, "from_path", classmethod(lambda cls, p: sample_audio))
 
@@ -1145,17 +1473,10 @@ class TestVideoDubberDubFile:
 
         monkeypatch.setattr(VideoDubber, "_init_local_pipeline", fake_init)
 
-        def fake_save(self, file_path, format=None):
-            p = _Path(file_path)
-            temp_paths.append(p)
-            p.write_bytes(b"fake wav")
-
-        monkeypatch.setattr(audio_mod.Audio, "save", fake_save)
-
         def failing_replace(**kwargs):
             raise remux_mod.RemuxError("boom")
 
-        monkeypatch.setattr(remux_mod, "replace_audio_stream", failing_replace)
+        monkeypatch.setattr(remux_mod, "replace_audio_stream_from_audio", failing_replace)
 
         dubber = VideoDubber()
         with pytest.raises(remux_mod.RemuxError, match="boom"):
@@ -1164,6 +1485,3 @@ class TestVideoDubberDubFile:
                 output_path=tmp_path / "out.mp4",
                 target_lang="es",
             )
-
-        assert len(temp_paths) == 1
-        assert not temp_paths[0].exists()

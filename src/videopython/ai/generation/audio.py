@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from videopython.ai._device import log_device_initialization, release_device_memory, select_device
 from videopython.base.audio import Audio, AudioMetadata
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TextToSpeech:
@@ -47,6 +50,7 @@ class TextToSpeech:
         self,
         text: str,
         voice_sample: Audio | None = None,
+        voice_sample_path: str | Path | None = None,
     ) -> Audio:
         """Generate speech audio from text.
 
@@ -54,6 +58,12 @@ class TextToSpeech:
             text: Text to synthesize.
             voice_sample: Optional voice sample to clone. Falls back to the
                 instance's ``voice`` and then to Chatterbox's default speaker.
+            voice_sample_path: Optional pre-encoded WAV path to use directly as
+                the speaker prompt. Skips the per-call temp-WAV encode that
+                ``voice_sample`` would otherwise trigger. When set, takes
+                precedence over ``voice_sample`` and ``self.voice``. Used by
+                the dubbing pipeline to encode each speaker's sample once and
+                reuse it across all of that speaker's segments.
         """
         import tempfile
         from pathlib import Path
@@ -63,13 +73,18 @@ class TextToSpeech:
         if self._model is None:
             self._init_model()
 
-        effective_sample = voice_sample or self.voice
         speaker_wav_path: Path | None = None
+        cleanup_path = False
 
-        if effective_sample is not None:
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-                effective_sample.save(f.name)
-                speaker_wav_path = Path(f.name)
+        if voice_sample_path is not None:
+            speaker_wav_path = Path(voice_sample_path)
+        else:
+            effective_sample = voice_sample or self.voice
+            if effective_sample is not None:
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                    effective_sample.save(f.name)
+                    speaker_wav_path = Path(f.name)
+                    cleanup_path = True
 
         try:
             wav = self._model.generate(
@@ -91,8 +106,8 @@ class TextToSpeech:
             )
             return Audio(audio_data, metadata)
         finally:
-            if speaker_wav_path is not None:
-                speaker_wav_path.unlink()
+            if cleanup_path and speaker_wav_path is not None:
+                speaker_wav_path.unlink(missing_ok=True)
 
     def unload(self) -> None:
         """Release the TTS model so the next generate_audio() re-initializes.

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from videopython.base.audio import Audio
+import numpy as np
+
+from videopython.base.audio import Audio, AudioMetadata
 
 
 @dataclass
@@ -181,32 +183,58 @@ class TimingSynchronizer:
         if len(audio_segments) != len(start_times):
             raise ValueError(f"Length mismatch: {len(audio_segments)} segments vs {len(start_times)} start times")
 
-        if not audio_segments:
-            return Audio.create_silent(total_duration, stereo=False)
-
-        # Determine sample rate from first segment
-        sample_rate = audio_segments[0].metadata.sample_rate
-
-        # Create base silent track
-        output = Audio.create_silent(total_duration, stereo=False, sample_rate=sample_rate)
-
-        # Overlay each segment at its start time
-        for audio, start_time in zip(audio_segments, start_times):
+        for start_time in start_times:
             if start_time < 0:
                 raise ValueError(f"Invalid start time: {start_time}")
 
-            # Resample if needed
+        if not audio_segments:
+            return Audio.create_silent(total_duration, stereo=False)
+
+        # Single-pass assembler: allocate one mono float32 buffer and add each
+        # segment in place at its start sample. The previous implementation
+        # called Audio.overlay() per segment, which allocates np.zeros and
+        # copies the full track on every call — O(N * total_samples) memory
+        # traffic. For long dubs (thousands of segments) this loop dominated
+        # wall time and peak RAM.
+        sample_rate = audio_segments[0].metadata.sample_rate
+        base_samples = max(int(total_duration * sample_rate), 0)
+
+        # Pre-normalize each segment to (mono, target sample rate) and compute
+        # placement bounds so the output buffer is sized to fit any segment
+        # that runs past total_duration (mirrors Audio.overlay's extend-on-OOB
+        # behavior so we don't silently truncate speech).
+        normalized: list[tuple[int, np.ndarray]] = []
+        end_sample = base_samples
+        for audio, start_time in zip(audio_segments, start_times):
             if audio.metadata.sample_rate != sample_rate:
                 audio = audio.resample(sample_rate)
-
-            # Convert to mono if needed
             if audio.metadata.channels > 1:
                 audio = audio.to_mono()
+            start_sample = int(np.ceil(start_time * sample_rate))
+            seg_data = audio.data
+            normalized.append((start_sample, seg_data))
+            end_sample = max(end_sample, start_sample + len(seg_data))
 
-            # Overlay at position
-            output = output.overlay(audio, position=start_time)
+        output = np.zeros(end_sample, dtype=np.float32)
+        for start_sample, seg_data in normalized:
+            stop = start_sample + len(seg_data)
+            output[start_sample:stop] += seg_data
 
-        return output
+        # Single post-mix peak guard, equivalent to Audio.overlay's per-call
+        # rescale collapsed into one pass. For non-overlapping dub segments
+        # this is a no-op; only the rare overlap case touches it.
+        max_amplitude = float(np.max(np.abs(output))) if output.size else 0.0
+        if max_amplitude > 1.0:
+            output /= max_amplitude
+
+        metadata = AudioMetadata(
+            sample_rate=sample_rate,
+            channels=1,
+            sample_width=audio_segments[0].metadata.sample_width,
+            duration_seconds=end_sample / sample_rate,
+            frame_count=end_sample,
+        )
+        return Audio(output, metadata)
 
     def check_overlaps(
         self,

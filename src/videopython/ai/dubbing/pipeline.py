@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import tempfile
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from videopython.ai.dubbing.models import DubbingResult, RevoiceResult, SeparatedAudio
@@ -278,24 +280,40 @@ class LocalDubbingPipeline:
         target_durations: list[float] = []
         start_times: list[float] = []
 
-        for i, segment in enumerate(translated_segments):
-            if segment.duration < 0.1:
-                continue
+        # Encode each speaker's voice sample to a temp WAV exactly once and
+        # reuse the path across every segment for that speaker. Without this
+        # cache, TextToSpeech.generate_audio re-encodes the same voice sample
+        # on every call (one temp WAV write + delete per segment), which is
+        # pure overhead for long dubs with many segments per speaker.
+        speaker_wav_paths: dict[str, Path] = {}
+        try:
+            if voice_clone:
+                for speaker, sample in voice_samples.items():
+                    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                        sample.save(f.name)
+                        speaker_wav_paths[speaker] = Path(f.name)
 
-            progress = 0.50 + (0.30 * (i / len(translated_segments)))
-            report_progress(f"Generating speech ({i + 1}/{len(translated_segments)})", progress)
+            for i, segment in enumerate(translated_segments):
+                if segment.duration < 0.1:
+                    continue
 
-            speaker = segment.speaker or "speaker_0"
-            voice_sample = voice_samples.get(speaker)
+                progress = 0.50 + (0.30 * (i / len(translated_segments)))
+                report_progress(f"Generating speech ({i + 1}/{len(translated_segments)})", progress)
 
-            if voice_clone and voice_sample is not None:
-                dubbed_audio = self._tts.generate_audio(segment.translated_text, voice_sample=voice_sample)
-            else:
-                dubbed_audio = self._tts.generate_audio(segment.translated_text)
+                speaker = segment.speaker or "speaker_0"
+                cached_path = speaker_wav_paths.get(speaker) if voice_clone else None
 
-            dubbed_segments.append(dubbed_audio)
-            target_durations.append(segment.duration)
-            start_times.append(segment.start)
+                if cached_path is not None:
+                    dubbed_audio = self._tts.generate_audio(segment.translated_text, voice_sample_path=cached_path)
+                else:
+                    dubbed_audio = self._tts.generate_audio(segment.translated_text)
+
+                dubbed_segments.append(dubbed_audio)
+                target_durations.append(segment.duration)
+                start_times.append(segment.start)
+        finally:
+            for path in speaker_wav_paths.values():
+                path.unlink(missing_ok=True)
 
         self._maybe_unload("_tts")
 
