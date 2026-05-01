@@ -1,5 +1,17 @@
 # Release Notes
 
+## 0.26.8
+
+### Changed
+
+- `TextTranslator.translate_segments` now skips empty and punctuation-only segments (text with fewer than 2 alphanumeric characters) instead of sending them to MarianMT. Whisper routinely emits `" ."`, `"..."`, `"?"`, and single-token segments which the model could hallucinate full sentences from — those hallucinations were then TTS'd into the dubbed track. Skipped segments produce `TranslatedSegment(translated_text="")` so timing/speaker metadata stays parallel to the input list. The pipeline TTS loop also skips empty translated text.
+- `LocalDubbingPipeline` now gates Demucs to the speech-bearing portion of the audio. Speech regions are derived from the transcription, merged, and padded by 0.5s for context. Non-speech gaps pass through as background unchanged. On talk-heavy sources with silence/music gaps this roughly halves separation time. When speech covers ≥90% of the track, falls back to full-track separation (the slicing+stitching overhead would exceed the savings on near-continuous speech).
+- Final dubbed audio is now peak-matched against the source audio so the dub doesn't land quieter than the original. Demucs background normalization and the timing-assembler peak guard each clamp at 1.0 instead of restoring headroom; without this match the dubbed mix consistently came out perceptually thinner. Applied to both `process()` (full dub) and `revoice()`.
+
+### Added
+
+- `AudioSeparator.separate_regions(audio, regions, full_separation_threshold=0.9)` — separates only the given `(start, end)` regions and passes through the rest as background. Used internally by the dubbing pipeline; available for callers that want region-gated source separation directly.
+
 ## 0.26.7
 
 ### Changed

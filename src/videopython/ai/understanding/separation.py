@@ -2,11 +2,57 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from videopython.ai._device import log_device_initialization, release_device_memory, select_device
 from videopython.ai.dubbing.models import SeparatedAudio
 from videopython.base.audio import Audio, AudioMetadata
+
+logger = logging.getLogger(__name__)
+
+
+def _merge_regions(
+    regions: list[tuple[float, float]],
+    audio_duration: float,
+    pad: float = 0.5,
+    merge_gap: float = 1.0,
+) -> list[tuple[float, float]]:
+    """Merge overlapping/adjacent (start, end) ranges and pad each side.
+
+    Args:
+        regions: Speech regions in seconds. Order does not matter.
+        audio_duration: Total audio duration; output is clamped to ``[0, audio_duration]``.
+        pad: Seconds added to each side. Demucs needs context to separate
+            cleanly at boundaries; 0.5s avoids clipped onsets/decays.
+        merge_gap: Adjacent regions whose padded edges are within this
+            many seconds are merged. Avoids running Demucs on very short
+            slices (where its temporal context isn't there).
+
+    Returns:
+        Sorted list of non-overlapping (start, end) regions covering the
+        speech-bearing portion of the audio.
+    """
+    if not regions:
+        return []
+
+    sorted_regions = sorted(regions)
+
+    merged: list[tuple[float, float]] = []
+    for start, end in sorted_regions:
+        if end <= start:
+            continue
+        padded_start = max(0.0, start - pad)
+        padded_end = min(audio_duration, end + pad)
+        if padded_start >= audio_duration or padded_end <= 0.0:
+            continue
+
+        if merged and padded_start - merged[-1][1] <= merge_gap:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], padded_end))
+        else:
+            merged.append((padded_start, padded_end))
+
+    return merged
 
 
 class AudioSeparator:
@@ -113,6 +159,133 @@ class AudioSeparator:
     def separate(self, audio: Audio) -> SeparatedAudio:
         """Separate audio into vocals and background components."""
         return self._separate_local(audio)
+
+    def separate_regions(
+        self,
+        audio: Audio,
+        regions: list[tuple[float, float]],
+        full_separation_threshold: float = 0.9,
+    ) -> SeparatedAudio:
+        """Separate only the given (start, end) regions; pass the rest through.
+
+        Demucs is the slowest stage of the dubbing pipeline. On talk-heavy
+        sources (podcasts, interviews) most of the track is speech, but
+        long pauses, silence, or music-only stretches don't need vocal
+        isolation — there's nothing to isolate. We run Demucs only on the
+        speech-bearing regions and treat the rest as pure background.
+
+        Output is full-length: vocals are silent outside the given
+        regions; background is the original audio outside the given
+        regions and the Demucs-separated background inside.
+
+        Args:
+            audio: Source audio (typically the full track).
+            regions: List of ``(start, end)`` second pairs marking
+                speech-bearing portions. Caller is responsible for
+                merging/padding (use ``_merge_regions``).
+            full_separation_threshold: If the regions cover more than
+                this fraction of the audio, fall back to full-track
+                ``separate()`` since per-region slicing+stitching
+                overhead would exceed the savings. Default 0.9.
+
+        Returns:
+            ``SeparatedAudio`` with full-length vocals and background.
+        """
+        import numpy as np
+
+        if not regions:
+            logger.info("separate_regions: no regions, returning silent vocals over original audio")
+            return self._passthrough_separation(audio)
+
+        total_duration = audio.metadata.duration_seconds
+        speech_duration = sum(end - start for start, end in regions)
+        if total_duration > 0 and speech_duration / total_duration >= full_separation_threshold:
+            logger.info(
+                "separate_regions: speech covers %.0f%% of audio (>=%.0f%%), using full-track separation",
+                speech_duration / total_duration * 100,
+                full_separation_threshold * 100,
+            )
+            return self._separate_local(audio)
+
+        logger.info(
+            "separate_regions: separating %.1fs of speech across %d region(s) (full duration: %.1fs)",
+            speech_duration,
+            len(regions),
+            total_duration,
+        )
+
+        # Build full-length output buffers. Background defaults to the
+        # original audio (so non-speech gaps pass through unchanged); vocals
+        # default to silence (no speech to isolate outside the regions).
+        # Both are stereo to match the full-track separation contract.
+        sr = audio.metadata.sample_rate
+        stereo_audio = audio if audio.metadata.channels == 2 else audio._to_stereo()
+
+        total_samples = len(stereo_audio.data)
+        vocals_full = np.zeros((total_samples, 2), dtype=np.float32)
+        background_full = stereo_audio.data.astype(np.float32, copy=True)
+
+        for start, end in regions:
+            chunk = audio.slice(start, end)
+            separated_chunk = self._separate_local(chunk)
+            chunk_vocals = separated_chunk.vocals.data
+            chunk_background = separated_chunk.background.data
+
+            # Demucs operates at its model sample rate (typically 44.1 kHz)
+            # and returns stereo. The slice of `audio` we passed in may have
+            # been resampled inside _separate_local, so resample the chunk
+            # outputs back to the source sample rate before splicing.
+            chunk_sr = separated_chunk.vocals.metadata.sample_rate
+            if chunk_sr != sr:
+                chunk_vocals = separated_chunk.vocals.resample(sr).data
+                chunk_background = separated_chunk.background.resample(sr).data
+
+            start_sample = int(start * sr)
+            end_sample = min(start_sample + len(chunk_vocals), total_samples)
+            length = end_sample - start_sample
+            if length <= 0:
+                continue
+
+            vocals_full[start_sample:end_sample] = chunk_vocals[:length]
+            background_full[start_sample:end_sample] = chunk_background[:length]
+
+        metadata = AudioMetadata(
+            sample_rate=sr,
+            channels=2,
+            sample_width=audio.metadata.sample_width,
+            duration_seconds=total_samples / sr,
+            frame_count=total_samples,
+        )
+        vocals = Audio(np.ascontiguousarray(vocals_full, dtype=np.float32), metadata)
+        background = Audio(np.ascontiguousarray(background_full, dtype=np.float32), metadata)
+
+        return SeparatedAudio(
+            vocals=vocals,
+            background=background,
+            original=stereo_audio,
+            music=None,
+            effects=None,
+        )
+
+    def _passthrough_separation(self, audio: Audio) -> SeparatedAudio:
+        """Return the original audio as background with silent vocals.
+
+        Used when no speech regions are present — there's nothing to
+        separate, so the entire signal is background by definition.
+        """
+        import numpy as np
+
+        stereo_audio = audio if audio.metadata.channels == 2 else audio._to_stereo()
+        silent_vocals_data = np.zeros_like(stereo_audio.data, dtype=np.float32)
+        vocals = Audio(silent_vocals_data, stereo_audio.metadata)
+
+        return SeparatedAudio(
+            vocals=vocals,
+            background=stereo_audio,
+            original=stereo_audio,
+            music=None,
+            effects=None,
+        )
 
     def extract_vocals(self, audio: Audio) -> Audio:
         """Convenience method to extract only vocals from audio."""

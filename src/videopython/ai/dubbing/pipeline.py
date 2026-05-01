@@ -7,11 +7,40 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
+import numpy as np
+
 from videopython.ai.dubbing.models import DubbingResult, RevoiceResult, SeparatedAudio
 from videopython.ai.dubbing.timing import TimingSynchronizer
 
 if TYPE_CHECKING:
     from videopython.base.audio import Audio
+
+
+def _peak_match(target: Audio, reference: Audio) -> Audio:
+    """Scale ``target`` so its peak amplitude matches ``reference``.
+
+    Demucs background normalization and the timing-assembler peak guard
+    each clamp at 1.0 instead of restoring headroom, so a dubbed mix
+    typically lands quieter than the source — perceptually "thinner."
+    A single peak match recovers most of that drift without LUFS deps.
+
+    No-op when either side has zero peak (silent input or all-silent dub).
+    The new ``Audio`` shares no buffer with ``target``.
+    """
+    from videopython.base.audio import Audio as _Audio
+
+    target_peak = float(np.max(np.abs(target.data))) if target.data.size else 0.0
+    reference_peak = float(np.max(np.abs(reference.data))) if reference.data.size else 0.0
+
+    if target_peak <= 0.0 or reference_peak <= 0.0:
+        return target
+
+    scale = reference_peak / target_peak
+    if abs(scale - 1.0) < 1e-3:
+        return target
+
+    return _Audio(target.data * scale, target.metadata)
+
 
 WhisperModel = Literal["tiny", "base", "small", "medium", "large", "turbo"]
 
@@ -239,7 +268,19 @@ class LocalDubbingPipeline:
             if self._separator is None:
                 self._init_separator()
 
-            separated_audio = self._separator.separate(source_audio)
+            # Limit Demucs to the speech-bearing portion of the audio. The
+            # transcription has already located every speech region; running
+            # source separation outside those is pure overhead (no vocals to
+            # isolate). On talk-heavy sources with silence/music gaps this
+            # roughly halves separation time. When speech covers most of the
+            # track separate_regions falls back to a full-track separate().
+            from videopython.ai.understanding.separation import _merge_regions
+
+            speech_regions = _merge_regions(
+                [(s.start, s.end) for s in transcription.segments],
+                audio_duration=source_audio.metadata.duration_seconds,
+            )
+            separated_audio = self._separator.separate_regions(source_audio, speech_regions)
             self._maybe_unload("_separator")
             vocal_audio = separated_audio.vocals
             background_audio = separated_audio.background
@@ -296,6 +337,12 @@ class LocalDubbingPipeline:
             for i, segment in enumerate(translated_segments):
                 if segment.duration < 0.1:
                     continue
+                # Translation filter (translation.py:_is_translatable_text)
+                # leaves translated_text="" for punctuation-only or empty
+                # segments. Don't TTS those — saves a model call and avoids
+                # injecting hallucinated speech into the dubbed track.
+                if not segment.translated_text.strip():
+                    continue
 
                 progress = 0.50 + (0.30 * (i / len(translated_segments)))
                 report_progress(f"Generating speech ({i + 1}/{len(translated_segments)})", progress)
@@ -342,6 +389,11 @@ class LocalDubbingPipeline:
             del background_audio
         else:
             final_audio = dubbed_speech
+
+        # Peak-match against the source so the dub doesn't land quieter
+        # than the original. Done last so it captures both vocals+background
+        # mixes and speech-only outputs uniformly.
+        final_audio = _peak_match(final_audio, source_audio)
 
         report_progress("Complete", 1.0)
 
@@ -393,7 +445,13 @@ class LocalDubbingPipeline:
             if self._separator is None:
                 self._init_separator()
 
-            separated_audio = self._separator.separate(source_audio)
+            from videopython.ai.understanding.separation import _merge_regions
+
+            speech_regions = _merge_regions(
+                [(s.start, s.end) for s in transcription.segments],
+                audio_duration=source_audio.metadata.duration_seconds,
+            )
+            separated_audio = self._separator.separate_regions(source_audio, speech_regions)
             self._maybe_unload("_separator")
             vocal_audio = separated_audio.vocals
             background_audio = separated_audio.background
@@ -447,6 +505,8 @@ class LocalDubbingPipeline:
             del background_audio
         else:
             final_audio = generated_speech
+
+        final_audio = _peak_match(final_audio, source_audio)
 
         report_progress("Complete", 1.0)
 
