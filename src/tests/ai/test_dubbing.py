@@ -590,6 +590,55 @@ class TestVideoDubberLowMemory:
         assert dubber._local_pipeline.low_memory is True
 
 
+class TestWhisperModelSelection:
+    """Tests for whisper_model plumbing through VideoDubber and the pipeline."""
+
+    def test_pipeline_default_whisper_model(self):
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+
+        pipeline = LocalDubbingPipeline()
+        assert pipeline.whisper_model == "small"
+
+    def test_pipeline_whisper_model_stored(self):
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+
+        pipeline = LocalDubbingPipeline(whisper_model="turbo")
+        assert pipeline.whisper_model == "turbo"
+
+    def test_dubber_default_whisper_model(self):
+        from videopython.ai.dubbing import VideoDubber
+
+        dubber = VideoDubber()
+        assert dubber.whisper_model == "small"
+
+    def test_dubber_whisper_model_propagated_to_pipeline(self):
+        from videopython.ai.dubbing import VideoDubber
+
+        dubber = VideoDubber(whisper_model="large")
+        dubber._init_local_pipeline()
+        assert dubber._local_pipeline.whisper_model == "large"
+
+    def test_init_transcriber_uses_whisper_model(self, monkeypatch):
+        """_init_transcriber must pass whisper_model to AudioToText."""
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+        from videopython.ai.understanding import audio as audio_mod
+
+        captured: dict[str, object] = {}
+
+        class FakeAudioToText:
+            def __init__(self, model_name, device, enable_diarization):
+                captured["model_name"] = model_name
+                captured["device"] = device
+                captured["enable_diarization"] = enable_diarization
+
+        monkeypatch.setattr(audio_mod, "AudioToText", FakeAudioToText)
+
+        pipeline = LocalDubbingPipeline(whisper_model="medium")
+        pipeline._init_transcriber(enable_diarization=True)
+
+        assert captured == {"model_name": "medium", "device": None, "enable_diarization": True}
+
+
 class TestReplaceAudioStream:
     """Tests for the ffmpeg audio-stream replacement helper."""
 

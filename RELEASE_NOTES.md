@@ -1,5 +1,15 @@
 # Release Notes
 
+## 0.26.5
+
+### Added
+
+- `VideoDubber(whisper_model=...)` and `LocalDubbingPipeline(whisper_model=...)` expose the Whisper model size (`tiny`, `base`, `small`, `medium`, `large`, `turbo`) used for transcription. Default remains `small`.
+
+### Changed
+
+- Reduced peak memory for dubbing long sources. `AudioSeparator` now keeps the input tensor on CPU and passes `device=` to Demucs' `apply_model` so per-chunk compute runs on GPU while the full output stays in CPU RAM, avoiding GPU OOM on long sources. Voice samples extracted in `LocalDubbingPipeline` are now copied so they no longer keep the full vocals array (~1.3 GB for a 2h source) alive across translation and TTS. The unused `music` stem is no longer computed by the separator (`SeparatedAudio.music` is `None`). In `low_memory=True` mode, the returned `DubbingResult.separated_audio` is now `None` so vocals and background buffers can be released as soon as they're no longer needed.
+
 ## 0.26.4
 
 ### Changed

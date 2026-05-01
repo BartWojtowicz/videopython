@@ -117,6 +117,21 @@ Use `dub_file()` when you don't need frame-level access in Python. Combine with
 [Processing Large Videos](../../examples/large-videos.md#dubbing-large-videos)
 for a worked example.
 
+### Whisper Model Selection
+
+Pick the Whisper model size used for transcription. Larger models are more
+accurate but use more VRAM and run slower. Default is `small`.
+
+```python
+# Higher accuracy on noisy or accented audio
+dubber = VideoDubber(whisper_model="large")
+
+# Lower VRAM footprint for short clips
+dubber = VideoDubber(whisper_model="tiny")
+```
+
+Supported sizes: `tiny`, `base`, `small`, `medium`, `large`, `turbo`.
+
 ::: videopython.ai.dubbing.VideoDubber
 
 ## DubbingResult
