@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from videopython.ai.dubbing.models import DubbingResult, RevoiceResult, SeparatedAudio
 from videopython.ai.dubbing.timing import TimingSynchronizer
 
 if TYPE_CHECKING:
     from videopython.base.audio import Audio
+
+WhisperModel = Literal["tiny", "base", "small", "medium", "large", "turbo"]
 
 logger = logging.getLogger(__name__)
 
@@ -23,14 +25,21 @@ class LocalDubbingPipeline:
     with <=12GB VRAM or hosts with <32GB RAM.
     """
 
-    def __init__(self, device: str | None = None, low_memory: bool = False):
+    def __init__(
+        self,
+        device: str | None = None,
+        low_memory: bool = False,
+        whisper_model: WhisperModel = "small",
+    ):
         self.device = device
         self.low_memory = low_memory
+        self.whisper_model = whisper_model
         requested = device.lower() if isinstance(device, str) else "auto"
         logger.info(
-            "LocalDubbingPipeline initialized with device=%s low_memory=%s",
+            "LocalDubbingPipeline initialized with device=%s low_memory=%s whisper_model=%s",
             requested,
             low_memory,
+            whisper_model,
         )
 
         self._transcriber: Any = None
@@ -62,7 +71,11 @@ class LocalDubbingPipeline:
         """Initialize the transcription model."""
         from videopython.ai.understanding.audio import AudioToText
 
-        self._transcriber = AudioToText(device=self.device, enable_diarization=enable_diarization)
+        self._transcriber = AudioToText(
+            model_name=self.whisper_model,
+            device=self.device,
+            enable_diarization=enable_diarization,
+        )
 
     def _init_translator(self) -> None:
         """Initialize the translation model."""

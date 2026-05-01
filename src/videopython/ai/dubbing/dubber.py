@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 from videopython.ai.dubbing.models import DubbingResult, RevoiceResult
+from videopython.ai.dubbing.pipeline import WhisperModel
 
 if TYPE_CHECKING:
     from videopython.base.video import Video
@@ -25,19 +26,38 @@ class VideoDubber:
             model is resident at a time. Trades per-run latency (~10-30s of
             extra model loads) for a much lower memory ceiling. Recommended for
             GPUs with <=12GB VRAM or hosts with <32GB RAM. Default False.
+        whisper_model: Whisper model size used for transcription. Larger models
+            give better accuracy at the cost of VRAM and latency. One of
+            ``tiny``, ``base``, ``small``, ``medium``, ``large``, ``turbo``.
+            Default ``small``.
     """
 
-    def __init__(self, device: str | None = None, low_memory: bool = False):
+    def __init__(
+        self,
+        device: str | None = None,
+        low_memory: bool = False,
+        whisper_model: WhisperModel = "small",
+    ):
         self.device = device
         self.low_memory = low_memory
+        self.whisper_model = whisper_model
         self._local_pipeline: Any = None
         requested = device.lower() if isinstance(device, str) else "auto"
-        logger.info("VideoDubber initialized with device=%s low_memory=%s", requested, low_memory)
+        logger.info(
+            "VideoDubber initialized with device=%s low_memory=%s whisper_model=%s",
+            requested,
+            low_memory,
+            whisper_model,
+        )
 
     def _init_local_pipeline(self) -> None:
         from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
 
-        self._local_pipeline = LocalDubbingPipeline(device=self.device, low_memory=self.low_memory)
+        self._local_pipeline = LocalDubbingPipeline(
+            device=self.device,
+            low_memory=self.low_memory,
+            whisper_model=self.whisper_model,
+        )
 
     def dub(
         self,
