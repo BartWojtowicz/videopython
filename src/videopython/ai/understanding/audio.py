@@ -130,6 +130,48 @@ class AudioToText:
             )
         return result
 
+    def diarize_transcription(self, audio: Audio, transcription: Transcription) -> Transcription:
+        """Attach speaker labels to a pre-computed transcription using pyannote.
+
+        Useful when callers have a transcription (e.g. pre-computed and edited)
+        but no speakers, and want per-speaker voice cloning in dubbing without
+        re-running Whisper. Runs pyannote standalone on ``audio`` and overlays
+        speakers onto the supplied transcription's words.
+
+        Requires word-level timings: at least one segment must contain more
+        than one word. Transcriptions loaded from SRT (one synthetic word per
+        segment) will not produce useful speakers and are rejected.
+        """
+        import numpy as np
+        import torch
+
+        all_words: list[TranscriptionWord] = list(transcription.words)
+        if not all_words:
+            raise ValueError("Cannot diarize a transcription with no words.")
+
+        if not any(len(seg.words) > 1 for seg in transcription.segments):
+            raise ValueError(
+                "Cannot diarize a transcription without word-level timings. "
+                "Supplied transcription has at most one word per segment "
+                "(e.g. loaded from SRT). Provide a transcription with "
+                "word-level timings, or omit `transcription` to let the "
+                "pipeline transcribe and diarize from scratch."
+            )
+
+        if self._diarization_pipeline is None:
+            self._init_diarization()
+
+        import whisper
+
+        audio_mono = audio.to_mono().resample(whisper.audio.SAMPLE_RATE)
+        waveform = torch.from_numpy(audio_mono.data.astype(np.float32)).unsqueeze(0)
+        diarization_result = self._diarization_pipeline(
+            {"waveform": waveform, "sample_rate": audio_mono.metadata.sample_rate}
+        )
+
+        all_words = self._assign_speakers_to_words(all_words, diarization_result)
+        return Transcription(words=all_words, language=transcription.language)
+
     def _transcribe_with_diarization(self, audio_mono: Audio) -> Transcription:
         """Transcribe with word timestamps and assign speakers via pyannote."""
         import numpy as np

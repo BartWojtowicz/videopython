@@ -132,6 +132,56 @@ dubber = VideoDubber(whisper_model="tiny")
 
 Supported sizes: `tiny`, `base`, `small`, `medium`, `large`, `turbo`.
 
+### Supplying a Pre-Computed Transcription
+
+`dub()`, `dub_and_replace()`, and `dub_file()` accept an optional `transcription`
+argument. Pass a pre-computed `Transcription` to skip the internal Whisper step
+— useful when you've already transcribed (and possibly hand-edited) the source.
+
+**Per-speaker voice cloning is driven by speaker labels on the supplied
+transcription.** Three cases:
+
+| Supplied transcription | `enable_diarization` | Behavior |
+|---|---|---|
+| Has speaker labels | any | Use supplied speakers; `enable_diarization` ignored |
+| No speakers | `True` | Run pyannote on the audio, attach speakers to supplied words |
+| No speakers | `False` | Use as-is; all segments share a single voice clone |
+
+The diarize-on-supplied path requires word-level timings on the supplied
+transcription — transcriptions loaded from SRT (one synthetic word per block)
+are rejected.
+
+```python
+# Workflow: transcribe, edit, then dub with per-speaker cloning
+from videopython.ai.dubbing import VideoDubber
+from videopython.ai.understanding.audio import AudioToText
+from videopython.base import Video
+
+video = Video.from_path("video.mp4")
+
+# 1. Transcribe with diarization
+transcriber = AudioToText(enable_diarization=True)
+transcription = transcriber.transcribe(video)
+
+# 2. Edit segment text in-place (correct misrecognitions, etc.)
+for seg in transcription.segments:
+    if "incorrect word" in seg.text:
+        seg.text = seg.text.replace("incorrect word", "correct word")
+
+# 3. Dub using the edited transcription. Speaker labels from step 1 are
+#    preserved, so each speaker gets their own cloned voice.
+dubber = VideoDubber()
+dubbed_video = dubber.dub_and_replace(
+    video=video,
+    target_lang="es",
+    transcription=transcription,
+)
+```
+
+If you have a transcription without speakers and want per-speaker cloning, pass
+`enable_diarization=True` — pyannote will run standalone (skipping the Whisper
+re-transcription).
+
 ::: videopython.ai.dubbing.VideoDubber
 
 ## DubbingResult
