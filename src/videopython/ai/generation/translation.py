@@ -8,6 +8,17 @@ from videopython.ai._device import log_device_initialization, release_device_mem
 from videopython.ai.dubbing.models import TranslatedSegment
 from videopython.base.text.transcription import TranscriptionSegment
 
+
+def _is_translatable_text(text: str) -> bool:
+    """Return True if text has enough content to be worth translating.
+
+    Whisper routinely emits punctuation-only or single-character segments
+    (" .", "...", "?", "♪") that MarianMT can hallucinate full sentences
+    from. Require at least 2 alphanumeric characters to filter these out.
+    """
+    return sum(1 for c in text if c.isalnum()) >= 2
+
+
 LANGUAGE_NAMES = {
     "en": "English",
     "es": "Spanish",
@@ -159,17 +170,28 @@ class TextTranslator:
         target_lang: str,
         source_lang: str | None = None,
     ) -> list[TranslatedSegment]:
-        """Translate transcription segments while preserving timing/speaker info."""
+        """Translate transcription segments while preserving timing/speaker info.
+
+        Segments whose text is empty or contains fewer than 2 alphanumeric
+        characters are not sent to the model — they receive
+        ``translated_text=""`` instead. This avoids MarianMT hallucinating
+        full sentences from " .", "...", or single-token Whisper segments,
+        which would otherwise be TTS'd into the dubbed track.
+        """
         effective_source = source_lang or "en"
-        texts = [segment.text for segment in segments]
-        translated_texts = self.translate_batch(texts, target_lang, source_lang)
+
+        translatable_indices = [i for i, segment in enumerate(segments) if _is_translatable_text(segment.text)]
+        translatable_texts = [segments[i].text for i in translatable_indices]
+        translated_texts = self.translate_batch(translatable_texts, target_lang, source_lang)
+
+        translation_map: dict[int, str] = dict(zip(translatable_indices, translated_texts))
 
         translated_segments = []
-        for segment, translated_text in zip(segments, translated_texts):
+        for i, segment in enumerate(segments):
             translated_segments.append(
                 TranslatedSegment(
                     original_segment=segment,
-                    translated_text=translated_text,
+                    translated_text=translation_map.get(i, ""),
                     source_lang=effective_source,
                     target_lang=target_lang,
                     speaker=segment.speaker,

@@ -460,6 +460,64 @@ class TestTextTranslator:
         assert hasattr(translator, "translate_segments")
         assert callable(translator.translate_segments)
 
+    def test_is_translatable_text_filters_punctuation_and_short_text(self):
+        """Filter accepts real text and rejects empty/punctuation/single-char Whisper noise."""
+        from videopython.ai.generation.translation import _is_translatable_text
+
+        assert _is_translatable_text("Hello world") is True
+        assert _is_translatable_text("Hi") is True
+        assert _is_translatable_text("¡Sí!") is True
+
+        assert _is_translatable_text("") is False
+        assert _is_translatable_text(" ") is False
+        assert _is_translatable_text(" .") is False
+        assert _is_translatable_text("...") is False
+        assert _is_translatable_text("?") is False
+        assert _is_translatable_text("♪") is False
+        # Single-letter Whisper segment — too short to be reliable signal.
+        assert _is_translatable_text("a") is False
+        assert _is_translatable_text(" a ") is False
+
+    def test_translate_segments_skips_punctuation_segments(self, monkeypatch):
+        """Punctuation-only segments get translated_text="" without hitting the model."""
+        from videopython.ai.generation.translation import TextTranslator
+
+        translator = TextTranslator()
+
+        translate_calls: list[list[str]] = []
+
+        def fake_translate_batch(self, texts, target_lang, source_lang=None):
+            translate_calls.append(list(texts))
+            return [f"[{t}]" for t in texts]
+
+        monkeypatch.setattr(TextTranslator, "translate_batch", fake_translate_batch)
+
+        words_real = [TranscriptionWord(start=0.0, end=1.0, word="hello")]
+        words_dot = [TranscriptionWord(start=1.0, end=2.0, word=".")]
+        segments = [
+            TranscriptionSegment(start=0.0, end=1.0, text="hello there", words=words_real),
+            TranscriptionSegment(start=1.0, end=2.0, text=" .", words=words_dot),
+            TranscriptionSegment(start=2.0, end=3.0, text="...", words=words_dot),
+            TranscriptionSegment(start=3.0, end=4.0, text="how are you", words=words_real),
+        ]
+
+        result = translator.translate_segments(segments, target_lang="es", source_lang="en")
+
+        # Only the two real segments are sent to the model.
+        assert len(translate_calls) == 1
+        assert translate_calls[0] == ["hello there", "how are you"]
+
+        # Output preserves all four segments, with empty text for the filtered ones.
+        assert len(result) == 4
+        assert result[0].translated_text == "[hello there]"
+        assert result[1].translated_text == ""
+        assert result[2].translated_text == ""
+        assert result[3].translated_text == "[how are you]"
+
+        # Timing/speaker fields preserved on the skipped segments.
+        assert result[1].start == 1.0
+        assert result[1].end == 2.0
+
 
 class TestAudioSeparator:
     """Tests for AudioSeparator class."""
@@ -486,6 +544,227 @@ class TestAudioSeparator:
 
         with pytest.raises(ValueError, match="not supported"):
             AudioSeparator(model_name="invalid_model")
+
+
+class TestMergeRegions:
+    """Tests for the _merge_regions helper that prepares speech regions for Demucs."""
+
+    def test_empty_returns_empty(self):
+        from videopython.ai.understanding.separation import _merge_regions
+
+        assert _merge_regions([], audio_duration=10.0) == []
+
+    def test_single_region_is_padded_and_clamped(self):
+        from videopython.ai.understanding.separation import _merge_regions
+
+        out = _merge_regions([(2.0, 4.0)], audio_duration=10.0, pad=0.5)
+        assert out == [(1.5, 4.5)]
+
+    def test_pad_clamps_to_audio_bounds(self):
+        from videopython.ai.understanding.separation import _merge_regions
+
+        out = _merge_regions([(0.1, 9.8)], audio_duration=10.0, pad=0.5)
+        # left clamped to 0.0; right clamped to 10.0
+        assert out == [(0.0, 10.0)]
+
+    def test_overlapping_regions_merge(self):
+        from videopython.ai.understanding.separation import _merge_regions
+
+        out = _merge_regions([(0.0, 3.0), (2.0, 5.0)], audio_duration=10.0, pad=0.0)
+        assert out == [(0.0, 5.0)]
+
+    def test_close_regions_merge_within_gap(self):
+        from videopython.ai.understanding.separation import _merge_regions
+
+        # gaps of 0.8s after padding are merged (default merge_gap=1.0)
+        out = _merge_regions([(0.0, 2.0), (2.8, 5.0)], audio_duration=10.0, pad=0.0, merge_gap=1.0)
+        assert out == [(0.0, 5.0)]
+
+    def test_distant_regions_stay_separate(self):
+        from videopython.ai.understanding.separation import _merge_regions
+
+        out = _merge_regions([(0.0, 2.0), (8.0, 10.0)], audio_duration=10.0, pad=0.0)
+        assert out == [(0.0, 2.0), (8.0, 10.0)]
+
+    def test_unsorted_input_is_handled(self):
+        from videopython.ai.understanding.separation import _merge_regions
+
+        out = _merge_regions([(8.0, 9.0), (1.0, 2.0)], audio_duration=10.0, pad=0.0)
+        assert out == [(1.0, 2.0), (8.0, 9.0)]
+
+    def test_zero_length_regions_dropped(self):
+        from videopython.ai.understanding.separation import _merge_regions
+
+        out = _merge_regions([(2.0, 2.0), (3.0, 4.0)], audio_duration=10.0, pad=0.0)
+        assert out == [(3.0, 4.0)]
+
+
+class TestSeparateRegions:
+    """Tests for AudioSeparator.separate_regions."""
+
+    @pytest.fixture
+    def long_stereo_audio(self):
+        """A 10-second, 24 kHz stereo audio. Distinct values per second so we
+        can verify which regions were touched by the fake separator."""
+        sample_rate = 24000
+        duration = 10.0
+        frame_count = int(sample_rate * duration)
+        # Per-second tag in left channel, ramp in right.
+        left = np.repeat(np.arange(10, dtype=np.float32) * 0.05, sample_rate)[:frame_count]
+        right = np.linspace(-0.5, 0.5, frame_count, dtype=np.float32)
+        data = np.column_stack([left, right])
+        metadata = AudioMetadata(
+            sample_rate=sample_rate,
+            channels=2,
+            sample_width=2,
+            duration_seconds=duration,
+            frame_count=frame_count,
+        )
+        return Audio(data, metadata)
+
+    def test_no_regions_returns_passthrough(self, long_stereo_audio, monkeypatch):
+        """No speech regions => silent vocals, original as background. No Demucs call."""
+        from videopython.ai.dubbing.models import SeparatedAudio
+        from videopython.ai.understanding.separation import AudioSeparator
+
+        separator = AudioSeparator()
+
+        def fail_if_called(self, audio):
+            raise AssertionError("Demucs should not run when there are no regions")
+
+        monkeypatch.setattr(AudioSeparator, "_separate_local", fail_if_called)
+
+        result = separator.separate_regions(long_stereo_audio, regions=[])
+
+        assert isinstance(result, SeparatedAudio)
+        assert result.vocals.metadata.duration_seconds == long_stereo_audio.metadata.duration_seconds
+        assert np.allclose(result.vocals.data, 0.0)
+        # Background is the original audio, untouched.
+        assert np.array_equal(result.background.data, long_stereo_audio.data)
+
+    def test_full_coverage_falls_back_to_full_separation(self, long_stereo_audio, monkeypatch):
+        """When regions cover >= threshold of audio, full-track separate() is called."""
+        from videopython.ai.understanding.separation import AudioSeparator
+
+        separator = AudioSeparator()
+        sentinel_calls: list[float] = []
+
+        def fake_separate_local(self, audio):
+            sentinel_calls.append(audio.metadata.duration_seconds)
+            silent = np.zeros_like(audio.data, dtype=np.float32)
+            return SeparatedAudio(
+                vocals=Audio(silent, audio.metadata),
+                background=Audio(audio.data.astype(np.float32), audio.metadata),
+                original=audio,
+                music=None,
+                effects=None,
+            )
+
+        monkeypatch.setattr(AudioSeparator, "_separate_local", fake_separate_local)
+
+        # Regions cover 9.5/10s = 95%, above 0.9 threshold => one full-track call.
+        regions = [(0.0, 9.5)]
+        separator.separate_regions(long_stereo_audio, regions, full_separation_threshold=0.9)
+
+        assert len(sentinel_calls) == 1
+        assert sentinel_calls[0] == long_stereo_audio.metadata.duration_seconds
+
+    def test_partial_coverage_runs_per_region(self, long_stereo_audio, monkeypatch):
+        """Partial speech => Demucs runs once per region; non-speech gaps stay original."""
+        from videopython.ai.understanding.separation import AudioSeparator
+
+        separator = AudioSeparator()
+        chunk_durations: list[float] = []
+
+        def fake_separate_local(self, audio):
+            chunk_durations.append(audio.metadata.duration_seconds)
+            # "Separated" chunk: vocals = constant 0.7, background = -0.3
+            n = len(audio.data)
+            vocals = np.full((n, 2), 0.7, dtype=np.float32)
+            bg = np.full((n, 2), -0.3, dtype=np.float32)
+            return SeparatedAudio(
+                vocals=Audio(vocals, audio.metadata),
+                background=Audio(bg, audio.metadata),
+                original=audio,
+                music=None,
+                effects=None,
+            )
+
+        monkeypatch.setattr(AudioSeparator, "_separate_local", fake_separate_local)
+
+        # Two distant regions, padded inside _merge_regions before this call;
+        # we pass pre-merged regions directly.
+        regions = [(1.0, 2.0), (6.0, 7.0)]
+        result = separator.separate_regions(long_stereo_audio, regions, full_separation_threshold=0.9)
+
+        # Two Demucs calls, one per region.
+        assert len(chunk_durations) == 2
+        for d in chunk_durations:
+            assert abs(d - 1.0) < 0.01
+
+        sr = long_stereo_audio.metadata.sample_rate
+        # Vocals: zero outside regions, 0.7 inside.
+        assert np.allclose(result.vocals.data[: int(1.0 * sr)], 0.0)
+        assert np.allclose(result.vocals.data[int(1.0 * sr) : int(2.0 * sr)], 0.7)
+        assert np.allclose(result.vocals.data[int(2.0 * sr) : int(6.0 * sr)], 0.0)
+        assert np.allclose(result.vocals.data[int(6.0 * sr) : int(7.0 * sr)], 0.7)
+        assert np.allclose(result.vocals.data[int(7.0 * sr) :], 0.0)
+
+        # Background: original audio in gaps, -0.3 inside the regions.
+        assert np.array_equal(
+            result.background.data[: int(1.0 * sr)],
+            long_stereo_audio.data[: int(1.0 * sr)],
+        )
+        assert np.allclose(result.background.data[int(1.0 * sr) : int(2.0 * sr)], -0.3)
+        assert np.array_equal(
+            result.background.data[int(2.0 * sr) : int(6.0 * sr)],
+            long_stereo_audio.data[int(2.0 * sr) : int(6.0 * sr)],
+        )
+        assert np.allclose(result.background.data[int(6.0 * sr) : int(7.0 * sr)], -0.3)
+
+    def test_mono_input_produces_stereo_output(self, monkeypatch):
+        """Mono input is upmixed; output matches full-track contract (always stereo)."""
+        from videopython.ai.understanding.separation import AudioSeparator
+
+        sample_rate = 24000
+        duration = 4.0
+        frame_count = int(sample_rate * duration)
+        data = np.full(frame_count, 0.2, dtype=np.float32)
+        metadata = AudioMetadata(
+            sample_rate=sample_rate,
+            channels=1,
+            sample_width=2,
+            duration_seconds=duration,
+            frame_count=frame_count,
+        )
+        mono = Audio(data, metadata)
+
+        def fake_separate_local(self, audio):
+            # Real _separate_local always returns stereo regardless of input.
+            n = audio.metadata.frame_count
+            zeros = np.zeros((n, 2), dtype=np.float32)
+            stereo_meta = AudioMetadata(
+                sample_rate=audio.metadata.sample_rate,
+                channels=2,
+                sample_width=audio.metadata.sample_width,
+                duration_seconds=audio.metadata.duration_seconds,
+                frame_count=n,
+            )
+            return SeparatedAudio(
+                vocals=Audio(zeros, stereo_meta),
+                background=Audio(zeros.copy(), stereo_meta),
+                original=audio,
+                music=None,
+                effects=None,
+            )
+
+        monkeypatch.setattr(AudioSeparator, "_separate_local", fake_separate_local)
+
+        separator = AudioSeparator()
+        result = separator.separate_regions(mono, regions=[(1.0, 2.0)], full_separation_threshold=0.9)
+
+        assert result.vocals.metadata.channels == 2
+        assert result.background.metadata.channels == 2
 
 
 class TestUnloadMethods:
@@ -1485,3 +1764,249 @@ class TestVideoDubberDubFile:
                 output_path=tmp_path / "out.mp4",
                 target_lang="es",
             )
+
+
+class TestPeakMatch:
+    """Tests for the _peak_match helper used to align dubbed loudness to source."""
+
+    def _make_audio(self, peak: float, duration: float = 1.0, sample_rate: int = 24000) -> Audio:
+        frame_count = int(duration * sample_rate)
+        data = np.full(frame_count, peak, dtype=np.float32)
+        metadata = AudioMetadata(
+            sample_rate=sample_rate,
+            channels=1,
+            sample_width=2,
+            duration_seconds=duration,
+            frame_count=frame_count,
+        )
+        return Audio(data, metadata)
+
+    def test_scales_to_match_reference_peak(self):
+        from videopython.ai.dubbing.pipeline import _peak_match
+
+        target = self._make_audio(0.3)
+        reference = self._make_audio(0.9)
+
+        out = _peak_match(target, reference)
+
+        assert abs(float(np.max(np.abs(out.data))) - 0.9) < 1e-5
+        # Original target buffer must not be mutated.
+        assert abs(float(np.max(np.abs(target.data))) - 0.3) < 1e-5
+
+    def test_silent_target_is_returned_as_is(self):
+        from videopython.ai.dubbing.pipeline import _peak_match
+
+        target = self._make_audio(0.0)
+        reference = self._make_audio(0.5)
+
+        out = _peak_match(target, reference)
+        assert out is target
+
+    def test_silent_reference_is_no_op(self):
+        from videopython.ai.dubbing.pipeline import _peak_match
+
+        target = self._make_audio(0.4)
+        reference = self._make_audio(0.0)
+
+        out = _peak_match(target, reference)
+        assert out is target
+
+    def test_near_unit_scale_is_no_op(self):
+        """Tiny scale factors skip allocation — keeps the common 'already matched' path cheap."""
+        from videopython.ai.dubbing.pipeline import _peak_match
+
+        target = self._make_audio(0.5001)
+        reference = self._make_audio(0.5)
+
+        out = _peak_match(target, reference)
+        assert out is target
+
+
+class TestPipelineSpeechRegionGating:
+    """Pipeline calls separate_regions with merged transcription regions, not separate()."""
+
+    def test_separate_regions_called_with_transcription_segments(self, sample_audio, monkeypatch):
+        """Pipeline derives speech regions from transcription and forwards to separate_regions."""
+        from videopython.ai.dubbing.models import SeparatedAudio
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+        from videopython.ai.understanding.separation import AudioSeparator
+        from videopython.base.text.transcription import Transcription, TranscriptionSegment, TranscriptionWord
+
+        captured: dict = {}
+
+        def fake_separate_regions(self, audio, regions, **kwargs):
+            captured["regions"] = list(regions)
+            silent = np.zeros_like(audio.data, dtype=np.float32)
+            stereo_meta = AudioMetadata(
+                sample_rate=audio.metadata.sample_rate,
+                channels=audio.metadata.channels,
+                sample_width=audio.metadata.sample_width,
+                duration_seconds=audio.metadata.duration_seconds,
+                frame_count=audio.metadata.frame_count,
+            )
+            return SeparatedAudio(
+                vocals=Audio(silent, stereo_meta),
+                background=Audio(audio.data.astype(np.float32), stereo_meta),
+                original=audio,
+                music=None,
+                effects=None,
+            )
+
+        def fail_separate(self, audio):
+            raise AssertionError("separate() should not be called when transcription is available")
+
+        monkeypatch.setattr(AudioSeparator, "separate_regions", fake_separate_regions)
+        monkeypatch.setattr(AudioSeparator, "separate", fail_separate)
+        monkeypatch.setattr(
+            LocalDubbingPipeline,
+            "_init_separator",
+            lambda self: setattr(self, "_separator", AudioSeparator()),
+        )
+
+        # Translator and TTS as fakes so we don't touch real models.
+        def fake_init_translator(self):
+            class FakeTranslator:
+                def translate_segments(self, segments, target_lang, source_lang):
+                    return [
+                        TranslatedSegment(
+                            original_segment=s,
+                            translated_text=s.text,
+                            source_lang=source_lang,
+                            target_lang=target_lang,
+                        )
+                        for s in segments
+                    ]
+
+            self._translator = FakeTranslator()
+
+        def fake_init_tts(self, language="en"):
+            class FakeTTS:
+                def generate_audio(self, text, voice_sample=None, voice_sample_path=None):
+                    sr = 24000
+                    n = int(sr * 0.2)
+                    data = np.zeros(n, dtype=np.float32)
+                    return Audio(
+                        data,
+                        AudioMetadata(
+                            sample_rate=sr,
+                            channels=1,
+                            sample_width=2,
+                            duration_seconds=0.2,
+                            frame_count=n,
+                        ),
+                    )
+
+            self._tts = FakeTTS()
+
+        monkeypatch.setattr(LocalDubbingPipeline, "_init_translator", fake_init_translator)
+        monkeypatch.setattr(LocalDubbingPipeline, "_init_tts", fake_init_tts)
+
+        # Two distant speech segments inside a 10s source.
+        words = [TranscriptionWord(start=1.0, end=2.0, word="hello there")]
+        words2 = [TranscriptionWord(start=7.0, end=8.0, word="goodbye now")]
+        segs = [
+            TranscriptionSegment(start=1.0, end=2.0, text="hello there", words=words),
+            TranscriptionSegment(start=7.0, end=8.0, text="goodbye now", words=words2),
+        ]
+        transcription = Transcription(segments=segs, language="en")
+
+        # Build a 10-second source audio so segment timings fall inside it.
+        sr = 24000
+        long_data = np.zeros(int(10 * sr), dtype=np.float32)
+        long_audio = Audio(
+            long_data,
+            AudioMetadata(
+                sample_rate=sr,
+                channels=1,
+                sample_width=2,
+                duration_seconds=10.0,
+                frame_count=len(long_data),
+            ),
+        )
+
+        pipeline = LocalDubbingPipeline()
+        pipeline.process(
+            source_audio=long_audio,
+            target_lang="es",
+            preserve_background=True,
+            voice_clone=False,
+            enable_diarization=False,
+            transcription=transcription,
+        )
+
+        # Default _merge_regions: pad=0.5, merge_gap=1.0. The two regions are
+        # 5s apart so they don't merge; each is padded by 0.5 on each side.
+        assert captured["regions"] == [(0.5, 2.5), (6.5, 8.5)]
+
+
+class TestPipelineEmptyTranslationSkipped:
+    """Pipeline skips TTS for empty/punctuation-translated segments."""
+
+    def test_empty_translated_text_is_not_tts_called(self, sample_audio, monkeypatch):
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+        from videopython.base.text.transcription import Transcription, TranscriptionSegment, TranscriptionWord
+
+        tts_calls: list[str] = []
+
+        def fake_init_translator(self):
+            class FakeTranslator:
+                def translate_segments(self, segments, target_lang, source_lang):
+                    # Mimic the real filter: punctuation-only -> "".
+                    out = []
+                    for s in segments:
+                        text = s.text
+                        translated = "[X]" if any(c.isalnum() for c in text) and len(text.strip()) >= 2 else ""
+                        out.append(
+                            TranslatedSegment(
+                                original_segment=s,
+                                translated_text=translated,
+                                source_lang=source_lang,
+                                target_lang=target_lang,
+                            )
+                        )
+                    return out
+
+            self._translator = FakeTranslator()
+
+        def fake_init_tts(self, language="en"):
+            class FakeTTS:
+                def generate_audio(self, text, voice_sample=None, voice_sample_path=None):
+                    tts_calls.append(text)
+                    sr = 24000
+                    n = int(sr * 0.2)
+                    return Audio(
+                        np.zeros(n, dtype=np.float32),
+                        AudioMetadata(
+                            sample_rate=sr,
+                            channels=1,
+                            sample_width=2,
+                            duration_seconds=0.2,
+                            frame_count=n,
+                        ),
+                    )
+
+            self._tts = FakeTTS()
+
+        monkeypatch.setattr(LocalDubbingPipeline, "_init_translator", fake_init_translator)
+        monkeypatch.setattr(LocalDubbingPipeline, "_init_tts", fake_init_tts)
+
+        words = [TranscriptionWord(start=0.0, end=1.0, word="hello")]
+        segs = [
+            TranscriptionSegment(start=0.0, end=1.0, text="hello there", words=words),
+            TranscriptionSegment(start=1.0, end=2.0, text=" .", words=words),
+            TranscriptionSegment(start=2.0, end=3.0, text="how are you", words=words),
+        ]
+        transcription = Transcription(segments=segs, language="en")
+
+        pipeline = LocalDubbingPipeline()
+        pipeline.process(
+            source_audio=sample_audio,
+            target_lang="es",
+            preserve_background=False,
+            voice_clone=False,
+            enable_diarization=False,
+            transcription=transcription,
+        )
+
+        # Only two TTS calls; the punctuation-only segment was skipped.
+        assert tts_calls == ["[X]", "[X]"]
