@@ -639,6 +639,281 @@ class TestWhisperModelSelection:
         assert captured == {"model_name": "medium", "device": None, "enable_diarization": True}
 
 
+class TestDiarizeTranscription:
+    """Tests for AudioToText.diarize_transcription standalone diarization helper."""
+
+    def _make_transcription_with_words(self):
+        from videopython.base.text.transcription import Transcription, TranscriptionSegment, TranscriptionWord
+
+        # Two segments, each with multiple words — passes the word-level-timing check.
+        seg1_words = [
+            TranscriptionWord(start=0.0, end=0.5, word="Hello"),
+            TranscriptionWord(start=0.5, end=1.0, word="world"),
+        ]
+        seg2_words = [
+            TranscriptionWord(start=2.0, end=2.5, word="Goodbye"),
+            TranscriptionWord(start=2.5, end=3.0, word="now"),
+        ]
+        segments = [
+            TranscriptionSegment(start=0.0, end=1.0, text="Hello world", words=seg1_words),
+            TranscriptionSegment(start=2.0, end=3.0, text="Goodbye now", words=seg2_words),
+        ]
+        return Transcription(segments=segments, language="en")
+
+    def test_rejects_transcription_without_word_level_timings(self, sample_audio):
+        """SRT-loaded transcriptions (one synthetic word per segment) must be rejected."""
+        from videopython.ai.understanding.audio import AudioToText
+        from videopython.base.text.transcription import Transcription
+
+        srt = "1\n00:00:00,000 --> 00:00:01,000\nHello world\n\n"
+        transcription = Transcription.from_srt(srt)
+
+        transcriber = AudioToText()
+        with pytest.raises(ValueError, match="word-level timings"):
+            transcriber.diarize_transcription(sample_audio, transcription)
+
+    def test_rejects_empty_transcription(self, sample_audio):
+        from videopython.ai.understanding.audio import AudioToText
+        from videopython.base.text.transcription import Transcription
+
+        transcriber = AudioToText()
+        with pytest.raises(ValueError, match="no words"):
+            transcriber.diarize_transcription(sample_audio, Transcription(segments=[]))
+
+    def test_runs_pyannote_and_attaches_speakers(self, sample_audio, monkeypatch):
+        """Diarize-only path must run pyannote, overlay speakers, and return a new Transcription."""
+        from videopython.ai.understanding.audio import AudioToText
+
+        transcription = self._make_transcription_with_words()
+        assert not transcription.speakers  # precondition
+
+        class FakePipeline:
+            def __init__(self):
+                self.calls = 0
+
+            def __call__(self, payload):
+                self.calls += 1
+                assert "waveform" in payload and "sample_rate" in payload
+                return "fake-diarization-result"
+
+        fake_pipeline = FakePipeline()
+
+        def fake_init_diarization(self):
+            self._diarization_pipeline = fake_pipeline
+
+        captured: dict = {}
+
+        @staticmethod
+        def fake_assign_speakers(words, diarization_result):
+            captured["diarization_result"] = diarization_result
+            captured["n_words"] = len(words)
+            # Alternate speakers across the supplied words to exercise rebuilding.
+            return [
+                TranscriptionWord(start=w.start, end=w.end, word=w.word, speaker=f"S{i % 2}")
+                for i, w in enumerate(words)
+            ]
+
+        monkeypatch.setattr(AudioToText, "_init_diarization", fake_init_diarization)
+        monkeypatch.setattr(AudioToText, "_assign_speakers_to_words", fake_assign_speakers)
+
+        transcriber = AudioToText()
+        result = transcriber.diarize_transcription(sample_audio, transcription)
+
+        assert fake_pipeline.calls == 1
+        assert captured["diarization_result"] == "fake-diarization-result"
+        assert captured["n_words"] == 4
+        assert result.speakers == {"S0", "S1"}
+        assert result.language == "en"
+
+
+class TestPipelineSuppliedTranscriptionDiarization:
+    """Tests for diarization-on-supplied-transcription plumbing in LocalDubbingPipeline."""
+
+    def _make_transcription(self, *, with_speakers: bool):
+        from videopython.base.text.transcription import Transcription, TranscriptionSegment, TranscriptionWord
+
+        words1 = [
+            TranscriptionWord(start=0.0, end=0.5, word="Hello"),
+            TranscriptionWord(start=0.5, end=1.0, word="world"),
+        ]
+        words2 = [
+            TranscriptionWord(start=2.0, end=2.5, word="Goodbye"),
+            TranscriptionWord(start=2.5, end=3.0, word="now"),
+        ]
+        speaker = "SPEAKER_00" if with_speakers else None
+        segments = [
+            TranscriptionSegment(start=0.0, end=1.0, text="Hello world", words=words1, speaker=speaker),
+            TranscriptionSegment(start=2.0, end=3.0, text="Goodbye now", words=words2, speaker=speaker),
+        ]
+        return Transcription(segments=segments, language="en")
+
+    def _install_fakes(self, pipeline, monkeypatch):
+        """Replace heavy stages with no-op fakes so process() can run end-to-end."""
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+
+        # Skip separation, translation, TTS, and synchronization; we only care
+        # about how the pipeline handles the supplied transcription.
+        def fake_init_translator(self):
+            class FakeTranslator:
+                def translate_segments(self, segments, target_lang, source_lang):
+                    from videopython.ai.dubbing.models import TranslatedSegment
+
+                    return [
+                        TranslatedSegment(
+                            original_segment=s,
+                            translated_text=s.text,
+                            source_lang=source_lang,
+                            target_lang=target_lang,
+                        )
+                        for s in segments
+                    ]
+
+            self._translator = FakeTranslator()
+
+        def fake_init_tts(self, language="en"):
+            class FakeTTS:
+                def generate_audio(self, text, voice_sample=None):
+                    sample_rate = 24000
+                    duration = 0.2
+                    frame_count = int(sample_rate * duration)
+                    data = np.zeros(frame_count, dtype=np.float32)
+                    metadata = AudioMetadata(
+                        sample_rate=sample_rate,
+                        channels=1,
+                        sample_width=2,
+                        duration_seconds=duration,
+                        frame_count=frame_count,
+                    )
+                    return Audio(data, metadata)
+
+            self._tts = FakeTTS()
+
+        monkeypatch.setattr(LocalDubbingPipeline, "_init_translator", fake_init_translator)
+        monkeypatch.setattr(LocalDubbingPipeline, "_init_tts", fake_init_tts)
+
+    def test_supplied_with_speakers_skips_diarization(self, sample_audio, monkeypatch):
+        """A pre-diarized transcription must be passed through unchanged."""
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+
+        pipeline = LocalDubbingPipeline()
+        self._install_fakes(pipeline, monkeypatch)
+
+        transcription = self._make_transcription(with_speakers=True)
+
+        # If diarize_transcription is called, fail loudly.
+        def must_not_be_called(*args, **kwargs):
+            raise AssertionError("diarize_transcription should not run for pre-diarized input")
+
+        # Stash a sentinel transcriber so _maybe_unload doesn't NPE.
+        class FakeTranscriber:
+            diarize_transcription = staticmethod(must_not_be_called)
+
+            def unload(self):
+                pass
+
+        # _init_transcriber would replace this with a real model — patch it out.
+        monkeypatch.setattr(
+            LocalDubbingPipeline,
+            "_init_transcriber",
+            lambda self, enable_diarization=False: setattr(self, "_transcriber", FakeTranscriber()),
+        )
+
+        result = pipeline.process(
+            source_audio=sample_audio,
+            target_lang="es",
+            preserve_background=False,
+            voice_clone=False,
+            enable_diarization=True,  # must be ignored
+            transcription=transcription,
+        )
+
+        assert result.source_transcription.speakers == {"SPEAKER_00"}
+
+    def test_supplied_no_speakers_with_diarization_runs_diarize(self, sample_audio, monkeypatch):
+        """No-speaker transcription + enable_diarization=True must trigger diarize_transcription."""
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+        from videopython.base.text.transcription import Transcription, TranscriptionSegment, TranscriptionWord
+
+        pipeline = LocalDubbingPipeline()
+        self._install_fakes(pipeline, monkeypatch)
+
+        captured: dict = {}
+
+        class FakeTranscriber:
+            def diarize_transcription(self, audio, transcription):
+                captured["called"] = True
+                # Return a fresh transcription with speakers attached.
+                new_words = [
+                    TranscriptionWord(start=0.0, end=0.5, word="Hello", speaker="A"),
+                    TranscriptionWord(start=0.5, end=1.0, word="world", speaker="A"),
+                    TranscriptionWord(start=2.0, end=2.5, word="Goodbye", speaker="B"),
+                    TranscriptionWord(start=2.5, end=3.0, word="now", speaker="B"),
+                ]
+                segs = [
+                    TranscriptionSegment(start=0.0, end=1.0, text="Hello world", words=new_words[:2], speaker="A"),
+                    TranscriptionSegment(start=2.0, end=3.0, text="Goodbye now", words=new_words[2:], speaker="B"),
+                ]
+                return Transcription(segments=segs, language=transcription.language)
+
+            def unload(self):
+                pass
+
+        monkeypatch.setattr(
+            LocalDubbingPipeline,
+            "_init_transcriber",
+            lambda self, enable_diarization=False: setattr(self, "_transcriber", FakeTranscriber()),
+        )
+
+        transcription = self._make_transcription(with_speakers=False)
+        assert not transcription.speakers
+
+        result = pipeline.process(
+            source_audio=sample_audio,
+            target_lang="es",
+            preserve_background=False,
+            voice_clone=False,
+            enable_diarization=True,
+            transcription=transcription,
+        )
+
+        assert captured.get("called") is True
+        assert result.source_transcription.speakers == {"A", "B"}
+
+    def test_supplied_no_speakers_without_diarization_uses_as_is(self, sample_audio, monkeypatch):
+        """No-speaker transcription + enable_diarization=False must NOT call diarize_transcription."""
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+
+        pipeline = LocalDubbingPipeline()
+        self._install_fakes(pipeline, monkeypatch)
+
+        def must_not_be_called(*args, **kwargs):
+            raise AssertionError("diarize_transcription should not run when enable_diarization=False")
+
+        class FakeTranscriber:
+            diarize_transcription = staticmethod(must_not_be_called)
+
+            def unload(self):
+                pass
+
+        monkeypatch.setattr(
+            LocalDubbingPipeline,
+            "_init_transcriber",
+            lambda self, enable_diarization=False: setattr(self, "_transcriber", FakeTranscriber()),
+        )
+
+        transcription = self._make_transcription(with_speakers=False)
+        result = pipeline.process(
+            source_audio=sample_audio,
+            target_lang="es",
+            preserve_background=False,
+            voice_clone=False,
+            enable_diarization=False,
+            transcription=transcription,
+        )
+
+        assert not result.source_transcription.speakers
+
+
 class TestReplaceAudioStream:
     """Tests for the ffmpeg audio-stream replacement helper."""
 

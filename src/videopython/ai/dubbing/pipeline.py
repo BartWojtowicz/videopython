@@ -162,7 +162,16 @@ class LocalDubbingPipeline:
             transcription: Optional pre-computed Transcription object. When provided,
                 the internal Whisper transcription step is skipped (saving time and VRAM).
                 Must be a ``videopython.base.text.transcription.Transcription`` instance
-                with populated ``segments``.
+                with populated ``segments``. Speaker labels on the supplied transcription
+                drive per-speaker voice cloning. If the supplied transcription has no
+                speakers and ``enable_diarization=True``, pyannote is run standalone on
+                ``source_audio`` and speakers are attached to the supplied words
+                (requires word-level timings).
+            enable_diarization: When True, run speaker diarization to enable per-speaker
+                voice cloning. With ``transcription=None``, runs alongside Whisper. With
+                a supplied ``transcription`` that has no speakers, runs pyannote
+                standalone and overlays speakers onto the supplied words. Ignored when
+                the supplied transcription already has speaker labels.
         """
 
         def report_progress(stage: str, progress: float) -> None:
@@ -171,6 +180,34 @@ class LocalDubbingPipeline:
 
         if transcription is not None:
             report_progress("Using provided transcription", 0.05)
+            if transcription.speakers:
+                logger.info(
+                    "Using provided transcription: %d segment(s), %d speaker(s)",
+                    len(transcription.segments),
+                    len(transcription.speakers),
+                )
+                if enable_diarization:
+                    logger.info("enable_diarization=True ignored: supplied transcription already has speaker labels.")
+            elif enable_diarization:
+                report_progress("Diarizing supplied transcription", 0.10)
+                if self._transcriber is None or self._transcriber_diarization is not True:
+                    self._init_transcriber(enable_diarization=True)
+                    self._transcriber_diarization = True
+                transcription = self._transcriber.diarize_transcription(source_audio, transcription)
+                self._maybe_unload("_transcriber")
+                logger.info(
+                    "Diarized supplied transcription: %d segment(s), %d speaker(s)",
+                    len(transcription.segments),
+                    len(transcription.speakers),
+                )
+            else:
+                logger.info(
+                    "Using provided transcription: %d segment(s), no speaker labels. "
+                    "All segments will share a single voice clone. Pass "
+                    "enable_diarization=True to add per-speaker labels, or "
+                    "voice_clone=False to use the default TTS voice.",
+                    len(transcription.segments),
+                )
         else:
             report_progress("Transcribing audio", 0.05)
             if self._transcriber is None or self._transcriber_diarization != enable_diarization:

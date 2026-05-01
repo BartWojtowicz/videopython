@@ -74,9 +74,14 @@ class VideoDubber:
 
         Args:
             enable_diarization: Enable speaker diarization to clone each speaker's
-                voice separately. Requires additional VRAM for the diarization model.
-            transcription: Optional pre-computed Transcription object. When provided,
-                the internal Whisper transcription step is skipped.
+                voice separately. With ``transcription=None``, runs alongside Whisper.
+                With a supplied ``transcription`` that has no speakers, runs pyannote
+                standalone and overlays speakers onto the supplied words. Ignored when
+                the supplied transcription already has speaker labels.
+            transcription: Optional pre-computed ``Transcription`` to skip the Whisper
+                step. Speaker labels on the supplied transcription drive per-speaker
+                voice cloning. If it has no speakers, pass ``enable_diarization=True``
+                to add them via pyannote (requires word-level timings).
         """
         if self._local_pipeline is None:
             self._init_local_pipeline()
@@ -106,8 +111,10 @@ class VideoDubber:
         """Dub a video and return a new video with the dubbed audio.
 
         Args:
-            transcription: Optional pre-computed Transcription object. When provided,
-                the internal Whisper transcription step is skipped.
+            transcription: Optional pre-computed ``Transcription`` to skip the Whisper
+                step. Speaker labels on the supplied transcription drive per-speaker
+                voice cloning. See ``dub()`` for the interaction with
+                ``enable_diarization``.
         """
         result = self.dub(
             video=video,
@@ -152,8 +159,12 @@ class VideoDubber:
             preserve_background: Preserve background music/effects via source separation.
             voice_clone: Clone the source speaker's voice for the dubbed track.
             enable_diarization: Enable speaker diarization for per-speaker voice cloning.
+                See ``dub()`` for the interaction with ``transcription``.
             progress_callback: Optional callback ``(stage: str, progress: float) -> None``.
-            transcription: Optional pre-computed ``Transcription`` to skip the Whisper step.
+            transcription: Optional pre-computed ``Transcription`` to skip the Whisper
+                step. Speaker labels on the supplied transcription drive per-speaker
+                voice cloning. If it has no speakers, pass ``enable_diarization=True``
+                to add them via pyannote (requires word-level timings).
 
         Returns:
             ``DubbingResult`` with the dubbed audio, translated segments, and

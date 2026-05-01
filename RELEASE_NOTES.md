@@ -1,5 +1,12 @@
 # Release Notes
 
+## 0.26.6
+
+### Added
+
+- `AudioToText.diarize_transcription(audio, transcription)` runs pyannote standalone on the supplied audio and overlays speaker labels onto a pre-computed transcription's words. Useful when callers have a transcription (e.g. pre-computed and edited) but no speakers, and want per-speaker voice cloning without re-running Whisper. Requires word-level timings; rejects SRT-loaded transcriptions.
+- Dubbing now diarizes a supplied transcription on demand. When `transcription` has no speakers and `enable_diarization=True`, `LocalDubbingPipeline.process()` runs pyannote standalone and attaches speakers to the supplied words. With `enable_diarization=False`, the supplied transcription is used as-is (single shared voice clone). Speaker labels already present on the supplied transcription always take precedence — `enable_diarization` is logged-and-ignored in that case.
+
 ## 0.26.5
 
 ### Added
