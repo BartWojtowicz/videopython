@@ -1,5 +1,17 @@
 # Release Notes
 
+## 0.26.7
+
+### Changed
+
+- `TimingSynchronizer.assemble_with_timing` now uses a single-pass assembler (one buffer + in-place add per segment) instead of repeatedly calling `Audio.overlay`. The old loop allocated a fresh `np.zeros(total_length)` and copied the entire base track on every segment; cumulative cost was O(N × total_samples) for N segments. For long dubs (thousands of segments at typical sample rates) the assembly stage now runs in roughly constant memory and a fraction of the wall time.
+- Dubbing pipeline encodes each speaker's voice sample to a temp WAV exactly once and reuses the path across all of that speaker's segments. Previously `TextToSpeech.generate_audio` re-encoded the same sample on every TTS call. Public TTS API stays compatible: `generate_audio` gains an optional `voice_sample_path` argument that takes precedence over `voice_sample` when set.
+- `VideoDubber.dub_file` now streams the dubbed audio directly to ffmpeg via stdin instead of writing it to a temp WAV first. Drops two full-track copies (~10 GB on a 2h dub) from the disk path.
+
+### Added
+
+- `videopython.ai.dubbing.remux.replace_audio_stream_from_audio(video_path, audio, output_path)` — variant of `replace_audio_stream` that accepts an in-memory `Audio` and pipes WAV bytes to ffmpeg's stdin. Used by `dub_file` to skip the disk round-trip.
+
 ## 0.26.6
 
 ### Added
