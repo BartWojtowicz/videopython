@@ -1,5 +1,11 @@
 # Release Notes
 
+## 0.26.9
+
+### Changed
+
+- `LocalDubbingPipeline` TTS loop now catches per-segment exceptions, logs the failing segment index/speaker/text at WARNING, and continues. Chatterbox occasionally crashes inside `alignment_stream_analyzer.step` on short translated text (an `IndexError` from a zero-column tensor reduction) — previously one bad segment aborted the entire run. Skipped segments leave a gap where source audio plays through.
+
 ## 0.26.8
 
 ### Changed

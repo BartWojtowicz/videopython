@@ -350,10 +350,25 @@ class LocalDubbingPipeline:
                 speaker = segment.speaker or "speaker_0"
                 cached_path = speaker_wav_paths.get(speaker) if voice_clone else None
 
-                if cached_path is not None:
-                    dubbed_audio = self._tts.generate_audio(segment.translated_text, voice_sample_path=cached_path)
-                else:
-                    dubbed_audio = self._tts.generate_audio(segment.translated_text)
+                try:
+                    if cached_path is not None:
+                        dubbed_audio = self._tts.generate_audio(segment.translated_text, voice_sample_path=cached_path)
+                    else:
+                        dubbed_audio = self._tts.generate_audio(segment.translated_text)
+                except Exception as e:
+                    # Chatterbox occasionally crashes on short translated text
+                    # (alignment_stream_analyzer indexing on tensors with <=5
+                    # speech tokens). One bad segment shouldn't lose a long
+                    # multi-hour run — log and skip so the rest proceeds.
+                    logger.warning(
+                        "TTS failed for segment %d/%d (speaker=%s, text=%r): %s — skipping",
+                        i + 1,
+                        len(translated_segments),
+                        speaker,
+                        segment.translated_text,
+                        e,
+                    )
+                    continue
 
                 dubbed_segments.append(dubbed_audio)
                 target_durations.append(segment.duration)
