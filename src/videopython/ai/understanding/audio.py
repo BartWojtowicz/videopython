@@ -26,7 +26,7 @@ class AudioToText:
 
     def __init__(
         self,
-        model_name: Literal["tiny", "base", "small", "medium", "large", "turbo"] = "small",
+        model_name: Literal["tiny", "base", "small", "medium", "large", "turbo"] = "turbo",
         enable_diarization: bool = False,
         enable_vad: bool = True,
         device: str | None = None,

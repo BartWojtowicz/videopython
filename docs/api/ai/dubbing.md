@@ -120,10 +120,12 @@ for a worked example.
 ### Whisper Model Selection
 
 Pick the Whisper model size used for transcription. Larger models are more
-accurate but use more VRAM and run slower. Default is `small`.
+accurate but use more VRAM and run slower. Default is `turbo` — large-v3
+quality at ~8x the speed of `large` (and ~2x faster than `small`), so the
+out-of-the-box dubbing path is now both more accurate and faster.
 
 ```python
-# Higher accuracy on noisy or accented audio
+# Even higher accuracy on very noisy or heavily accented audio
 dubber = VideoDubber(whisper_model="large")
 
 # Lower VRAM footprint for short clips
