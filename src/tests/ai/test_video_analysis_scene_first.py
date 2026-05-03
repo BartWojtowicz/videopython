@@ -165,3 +165,53 @@ def test_scene_vlm_produces_single_caption_with_scaled_frames(monkeypatch: pytes
     assert len(analysis.scenes.samples) == 1
     # 30s scene: ceil(3 * ln(30/5 + 1)) = 6 frames
     assert analysis.scenes.samples[0].caption == "scene_with_6_frames"
+
+
+def test_run_info_roundtrip_includes_stage_timings() -> None:
+    info = va.AnalysisRunInfo(
+        created_at="2026-05-03T00:00:00Z",
+        mode="path",
+        library_version="0.26.10",
+        stage_durations_seconds={"whisper": 1.5, "scene_detection": 0.3},
+        total_duration_seconds=2.7,
+    )
+    restored = va.AnalysisRunInfo.from_dict(info.to_dict())
+    assert restored == info
+
+
+def test_run_info_from_dict_tolerates_legacy_payload_without_timings() -> None:
+    legacy = {
+        "created_at": "2026-01-01T00:00:00Z",
+        "mode": "path",
+        "library_version": "0.26.8",
+    }
+    restored = va.AnalysisRunInfo.from_dict(legacy)
+    assert restored.stage_durations_seconds == {}
+    assert restored.total_duration_seconds is None
+
+
+def test_analyze_populates_stage_durations_for_parallel_branch(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_scene_first_analyzers(monkeypatch)
+    analysis = va.VideoAnalyzer(config=va.VideoAnalysisConfig()).analyze(_video_4s())
+
+    timings = analysis.run_info.stage_durations_seconds
+    assert "whisper_and_scene_detection_parallel" in timings
+    assert "whisper" in timings
+    assert "scene_detection" in timings
+    assert "scene_analysis" in timings
+    assert "scene_vlm" in timings
+    assert "audio_classification" in timings
+    assert all(v > 0.0 for v in timings.values())
+    assert analysis.run_info.total_duration_seconds is not None
+    assert analysis.run_info.total_duration_seconds > 0.0
+
+
+def test_analyze_records_sequential_stages_when_only_one_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_scene_first_analyzers(monkeypatch)
+    config = va.VideoAnalysisConfig(enabled_analyzers={va.SEMANTIC_SCENE_DETECTOR})
+    analysis = va.VideoAnalyzer(config=config).analyze(_video_4s())
+
+    timings = analysis.run_info.stage_durations_seconds
+    assert "scene_detection" in timings
+    assert "whisper" not in timings
+    assert "whisper_and_scene_detection_parallel" not in timings

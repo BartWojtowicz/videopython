@@ -1,5 +1,11 @@
 # Release Notes
 
+## 0.26.10
+
+### Added
+
+- `AnalysisRunInfo.stage_durations_seconds: dict[str, float]` and `AnalysisRunInfo.total_duration_seconds: float | None`. `VideoAnalyzer._analyze` now records per-stage wall-clock times (`whisper`, `scene_detection`, `whisper_and_scene_detection_parallel` when both run together, `scene_analysis`, `scene_vlm`, `audio_classification`) into the run info that ships with every `VideoAnalysis`. The existing `"<stage> completed in X.XXs"` log lines are preserved. Consumers can now persist or aggregate these timings (e.g. via `to_dict()`) to track pipeline performance over time without parsing logs. `from_dict` tolerates legacy payloads written by ≤0.26.9 — missing fields default to an empty dict and `None`.
+
 ## 0.26.9
 
 ### Changed
