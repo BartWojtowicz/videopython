@@ -60,7 +60,7 @@ class LocalDubbingPipeline:
         self,
         device: str | None = None,
         low_memory: bool = False,
-        whisper_model: WhisperModel = "small",
+        whisper_model: WhisperModel = "turbo",
     ):
         self.device = device
         self.low_memory = low_memory

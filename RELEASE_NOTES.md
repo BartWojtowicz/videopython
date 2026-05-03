@@ -1,5 +1,11 @@
 # Release Notes
 
+## 0.27.1
+
+### Changed
+
+- Default Whisper model bumped from `small` to `turbo` across `AudioToText`, `VideoDubber`, and `LocalDubbingPipeline`. `turbo` (a distilled large-v3) gives large-v3-class accuracy at roughly 8x the speed of `large` and ~2x the speed of `small`, with a comparable VRAM footprint to `small`. The transcription pass in the dubbing pipeline gets faster *and* more accurate out of the box. Pass `whisper_model="small"` (or `model_name="small"` on `AudioToText`) to restore the previous default.
+
 ## 0.27.0
 
 ### Changed

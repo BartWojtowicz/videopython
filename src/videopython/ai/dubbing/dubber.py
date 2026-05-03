@@ -28,14 +28,14 @@ class VideoDubber:
         whisper_model: Whisper model size used for transcription. Larger models
             give better accuracy at the cost of VRAM and latency. One of
             ``tiny``, ``base``, ``small``, ``medium``, ``large``, ``turbo``.
-            Default ``small``.
+            Default ``turbo``.
     """
 
     def __init__(
         self,
         device: str | None = None,
         low_memory: bool = False,
-        whisper_model: WhisperModel = "small",
+        whisper_model: WhisperModel = "turbo",
     ):
         self.device = device
         self.low_memory = low_memory

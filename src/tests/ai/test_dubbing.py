@@ -912,7 +912,7 @@ class TestWhisperModelSelection:
         from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
 
         pipeline = LocalDubbingPipeline()
-        assert pipeline.whisper_model == "small"
+        assert pipeline.whisper_model == "turbo"
 
     def test_pipeline_whisper_model_stored(self):
         from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
@@ -924,7 +924,7 @@ class TestWhisperModelSelection:
         from videopython.ai.dubbing import VideoDubber
 
         dubber = VideoDubber()
-        assert dubber.whisper_model == "small"
+        assert dubber.whisper_model == "turbo"
 
     def test_dubber_whisper_model_propagated_to_pipeline(self):
         from videopython.ai.dubbing import VideoDubber
