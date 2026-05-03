@@ -7,12 +7,14 @@ import math
 import re
 import subprocess
 import time
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from importlib import metadata as importlib_metadata
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import numpy as np
 from PIL import Image
@@ -144,17 +146,28 @@ class VideoAnalysisSource:
 
 @dataclass
 class AnalysisRunInfo:
-    """Runtime/provenance metadata for a full analysis run."""
+    """Runtime/provenance metadata for a full analysis run.
+
+    ``stage_durations_seconds`` is populated by the analyzer with per-stage
+    wall-clock times (whisper, scene_detection, scene_analysis, scene_vlm,
+    audio_classification, and -- when both run together --
+    whisper_and_scene_detection_parallel). Consumers can persist or aggregate
+    these to track pipeline performance over time.
+    """
 
     created_at: str
     mode: str
     library_version: str | None = None
+    stage_durations_seconds: dict[str, float] = field(default_factory=dict)
+    total_duration_seconds: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "created_at": self.created_at,
             "mode": self.mode,
             "library_version": self.library_version,
+            "stage_durations_seconds": dict(self.stage_durations_seconds),
+            "total_duration_seconds": self.total_duration_seconds,
         }
 
     @classmethod
@@ -163,6 +176,8 @@ class AnalysisRunInfo:
             created_at=data["created_at"],
             mode=data["mode"],
             library_version=data.get("library_version"),
+            stage_durations_seconds={str(k): float(v) for k, v in data["stage_durations_seconds"].items()},
+            total_duration_seconds=data["total_duration_seconds"],
         )
 
 
@@ -413,17 +428,17 @@ class VideoAnalyzer:
         # which corrupts Whisper's model weights if they're initialized at the
         # same time.
         if run_whisper and run_scene_det:
-            transcription, detected = self._run_whisper_and_scene_detection(source_path=source_path, video=video)
+            transcription, detected = self._run_whisper_and_scene_detection(
+                source_path=source_path, video=video, run_info=run_info
+            )
         else:
             if run_whisper:
-                t0 = time.perf_counter()
-                transcription = self._run_whisper(source_path=source_path, video=video)
-                logger.info("Whisper transcription completed in %.2fs", time.perf_counter() - t0)
+                with _record_stage(run_info, "whisper"):
+                    transcription = self._run_whisper(source_path=source_path, video=video)
 
             if run_scene_det:
-                t0 = time.perf_counter()
-                detected = self._run_scene_detection(source_path=source_path, video=video)
-                logger.info("Scene detection completed in %.2fs", time.perf_counter() - t0)
+                with _record_stage(run_info, "scene_detection"):
+                    detected = self._run_scene_detection(source_path=source_path, video=video)
 
         if run_scene_det:
             self._reset_transnetv2_torch_state()
@@ -442,19 +457,20 @@ class VideoAnalyzer:
         if not scenes:
             scenes = self._default_scene_boundaries(metadata)
 
-        t0 = time.perf_counter()
-        scene_section = self._analyze_scenes(
-            source_path=source_path,
-            video=video,
-            metadata=metadata,
-            scenes=scenes,
-            preloaded_scene_vlm=None,
-        )
-        logger.info("Scene analysis completed in %.2fs", time.perf_counter() - t0)
+        with _record_stage(run_info, "scene_analysis"):
+            scene_section = self._analyze_scenes(
+                source_path=source_path,
+                video=video,
+                metadata=metadata,
+                scenes=scenes,
+                preloaded_scene_vlm=None,
+                run_info=run_info,
+            )
 
         audio_section = AudioAnalysisSection(transcription=transcription) if transcription is not None else None
 
-        logger.info("Total analysis completed in %.2fs", time.perf_counter() - t_analysis_start)
+        run_info.total_duration_seconds = time.perf_counter() - t_analysis_start
+        logger.info("Total analysis completed in %.2fs", run_info.total_duration_seconds)
         return VideoAnalysis(
             source=source,
             config=self.config,
@@ -485,17 +501,23 @@ class VideoAnalyzer:
             return None
 
     def _run_whisper_and_scene_detection(
-        self, *, source_path: Path | None, video: Video | None
+        self, *, source_path: Path | None, video: Video | None, run_info: AnalysisRunInfo
     ) -> tuple[Transcription | None, list[SceneBoundary] | None]:
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            t0 = time.perf_counter()
-            whisper_future = pool.submit(self._run_whisper, source_path=source_path, video=video)
-            scene_future = pool.submit(self._run_scene_detection, source_path=source_path, video=video)
-
-            transcription = whisper_future.result()
-            detected = scene_future.result()
-            elapsed = time.perf_counter() - t0
-            logger.info("Whisper + scene detection (parallel) completed in %.2fs", elapsed)
+        with _record_stage(run_info, "whisper_and_scene_detection_parallel"):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                whisper_future = pool.submit(
+                    _run_with_stage, run_info, "whisper", self._run_whisper, source_path=source_path, video=video
+                )
+                scene_future = pool.submit(
+                    _run_with_stage,
+                    run_info,
+                    "scene_detection",
+                    self._run_scene_detection,
+                    source_path=source_path,
+                    video=video,
+                )
+                transcription = whisper_future.result()
+                detected = scene_future.result()
 
         return transcription, detected
 
@@ -536,6 +558,7 @@ class VideoAnalyzer:
         video: Video | None,
         metadata: VideoMetadata,
         scenes: list[SceneBoundary],
+        run_info: AnalysisRunInfo,
         preloaded_scene_vlm: SceneVLM | None = None,
     ) -> SceneAnalysisSection:
         enabled = self.config.enabled_analyzers
@@ -571,60 +594,61 @@ class VideoAnalyzer:
         # -- Batched SceneVLM: collect all timestamps, extract frames once, run one forward pass --
         captions: list[str | None] = [None] * len(scenes)
         if scene_vlm is not None:
-            try:
-                captions = self._run_scene_vlm_batched(
-                    scene_vlm=scene_vlm,
-                    source_path=source_path,
-                    video=video,
-                    metadata=metadata,
-                    scenes=scenes,
-                )
-            except Exception:
-                logger.warning("Batched SceneVLM failed, skipping visual understanding", exc_info=True)
-
-        samples: list[SceneAnalysisSample] = []
-        t_audio_total = 0.0
-        for index, scene in enumerate(scenes):
-            sample = SceneAnalysisSample(
-                scene_index=index,
-                start_second=float(scene.start),
-                end_second=float(scene.end),
-                start_frame=int(scene.start_frame),
-                end_frame=int(scene.end_frame),
-                caption=captions[index],
-            )
-
-            if audio_classifier is not None:
-                t0 = time.perf_counter()
+            with _record_stage(run_info, "scene_vlm"):
                 try:
-                    scene_clip: Video | None = None
-                    if path_audio is None:
-                        try:
-                            scene_clip = self._load_scene_video_clip(
-                                source_path=source_path,
-                                video=video,
-                                start_second=scene.start,
-                                end_second=scene.end,
-                            )
-                        except Exception:
-                            scene_clip = None
-                    sample.audio_classification = self._run_scene_audio_classification(
-                        audio_classifier=audio_classifier,
-                        path_audio=path_audio,
-                        scene_clip=scene_clip,
-                        scene_start=scene.start,
-                        scene_end=scene.end,
+                    captions = self._run_scene_vlm_batched(
+                        scene_vlm=scene_vlm,
+                        source_path=source_path,
+                        video=video,
+                        metadata=metadata,
+                        scenes=scenes,
                     )
                 except Exception:
-                    logger.warning(
-                        "AudioClassifier failed for scene %d (%.1f-%.1fs)", index, scene.start, scene.end, exc_info=True
-                    )
-                t_audio_total += time.perf_counter() - t0
+                    logger.warning("Batched SceneVLM failed, skipping visual understanding", exc_info=True)
 
-            samples.append(sample)
+        samples: list[SceneAnalysisSample] = []
+        audio_ctx = _record_stage(run_info, "audio_classification") if audio_classifier is not None else nullcontext()
+        with audio_ctx:
+            for index, scene in enumerate(scenes):
+                sample = SceneAnalysisSample(
+                    scene_index=index,
+                    start_second=float(scene.start),
+                    end_second=float(scene.end),
+                    start_frame=int(scene.start_frame),
+                    end_frame=int(scene.end_frame),
+                    caption=captions[index],
+                )
 
-        if audio_classifier is not None:
-            logger.info("AudioClassifier inference total: %.2fs across %d scenes", t_audio_total, len(scenes))
+                if audio_classifier is not None:
+                    try:
+                        scene_clip: Video | None = None
+                        if path_audio is None:
+                            try:
+                                scene_clip = self._load_scene_video_clip(
+                                    source_path=source_path,
+                                    video=video,
+                                    start_second=scene.start,
+                                    end_second=scene.end,
+                                )
+                            except Exception:
+                                scene_clip = None
+                        sample.audio_classification = self._run_scene_audio_classification(
+                            audio_classifier=audio_classifier,
+                            path_audio=path_audio,
+                            scene_clip=scene_clip,
+                            scene_start=scene.start,
+                            scene_end=scene.end,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "AudioClassifier failed for scene %d (%.1f-%.1fs)",
+                            index,
+                            scene.start,
+                            scene.end,
+                            exc_info=True,
+                        )
+
+                samples.append(sample)
 
         return SceneAnalysisSection(samples=samples)
 
@@ -891,6 +915,27 @@ class VideoAnalyzer:
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+@contextmanager
+def _record_stage(run_info: AnalysisRunInfo, stage: str) -> Iterator[None]:
+    """Time a block, write the elapsed seconds into ``run_info``, and log it."""
+    t0 = time.perf_counter()
+    try:
+        yield
+    finally:
+        elapsed = time.perf_counter() - t0
+        run_info.stage_durations_seconds[stage] = elapsed
+        logger.info("%s completed in %.2fs", stage, elapsed)
+
+
+_T = TypeVar("_T")
+
+
+def _run_with_stage(run_info: AnalysisRunInfo, stage: str, fn: Callable[..., _T], /, **kwargs: Any) -> _T:
+    """Call ``fn(**kwargs)`` inside ``_record_stage``. Use with ``ThreadPoolExecutor.submit``."""
+    with _record_stage(run_info, stage):
+        return fn(**kwargs)
 
 
 def _library_version() -> str | None:
