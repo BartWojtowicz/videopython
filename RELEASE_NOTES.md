@@ -1,5 +1,15 @@
 # Release Notes
 
+## 0.27.0
+
+### Changed
+
+- `AudioToText` now runs Silero VAD before Whisper to gate language detection. Whisper's auto-detect only inspects the first 30s of input; on movies/podcasts/vlogs that open with silence, music, or non-vocal credits, detection used to lock onto the wrong language (typically English) and the rest of the file was decoded as that wrong language. VAD locates voiced regions, builds a 30s mel from concatenated voiced audio, and the detected language is passed into `whisper.transcribe(language=...)` for both the diarization and plain branches. If VAD finds no speech, an empty `Transcription` is returned without invoking Whisper — tighter than the existing energy-based `is_silent` guard which lets through music/noise. Default-on; opt out with `AudioToText(enable_vad=False)`. The `Transcription.language` field now carries the correctly-detected language even on hard inputs (Japanese movies opening with credits etc.). `VideoDubber` benefits transparently — no API changes there.
+
+### Added
+
+- `AudioToText(enable_vad: bool = True)` constructor flag. Mirrors the existing `enable_diarization` precedent. New dependency: `silero-vad>=5.1` (MIT, ~2 MB JIT model, CPU-fast).
+
 ## 0.26.10
 
 ### Added

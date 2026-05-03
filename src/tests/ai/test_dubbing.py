@@ -819,9 +819,11 @@ class TestUnloadMethods:
         transcriber = audio_mod.AudioToText()
         transcriber._model = object()
         transcriber._diarization_pipeline = object()
+        transcriber._vad_model = object()
         transcriber.unload()
         assert transcriber._model is None
         assert transcriber._diarization_pipeline is None
+        assert transcriber._vad_model is None
 
 
 class TestLocalDubbingPipelineLowMemory:
