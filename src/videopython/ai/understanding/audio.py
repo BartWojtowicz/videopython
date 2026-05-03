@@ -24,10 +24,12 @@ class AudioToText:
         self,
         model_name: Literal["tiny", "base", "small", "medium", "large", "turbo"] = "small",
         enable_diarization: bool = False,
+        enable_vad: bool = True,
         device: str | None = None,
     ):
         self.model_name = model_name
         self.enable_diarization = enable_diarization
+        self.enable_vad = enable_vad
         self.device = select_device(device, mps_allowed=False)
         log_device_initialization(
             "AudioToText",
@@ -36,6 +38,7 @@ class AudioToText:
         )
         self._model: Any = None
         self._diarization_pipeline: Any = None
+        self._vad_model: Any = None
 
     def _init_local(self) -> None:
         """Initialize local Whisper model."""
@@ -51,13 +54,25 @@ class AudioToText:
         self._diarization_pipeline = Pipeline.from_pretrained(self.PYANNOTE_DIARIZATION_MODEL)
         self._diarization_pipeline.to(torch.device(self.device))
 
+    def _init_vad(self) -> None:
+        """Initialize Silero VAD model.
+
+        The model is ~2 MB and CPU-fast (~5-15s for a 90 min movie); we keep
+        it on CPU regardless of ``self.device`` since dispatch overhead would
+        outweigh inference cost.
+        """
+        from silero_vad import load_silero_vad
+
+        self._vad_model = load_silero_vad()
+
     def unload(self) -> None:
-        """Release the Whisper and diarization models so the next call re-initializes.
+        """Release the Whisper, diarization, and VAD models so the next call re-initializes.
 
         Used by low-memory dubbing to free VRAM between pipeline stages.
         """
         self._model = None
         self._diarization_pipeline = None
+        self._vad_model = None
         release_device_memory(self.device)
 
     def _process_transcription_result(self, transcription_result: dict) -> Transcription:
@@ -172,7 +187,68 @@ class AudioToText:
         all_words = self._assign_speakers_to_words(all_words, diarization_result)
         return Transcription(words=all_words, language=transcription.language)
 
-    def _transcribe_with_diarization(self, audio_mono: Audio) -> Transcription:
+    def _run_vad(self, audio_mono: Audio) -> list[tuple[float, float]]:
+        """Return voiced spans in seconds using Silero VAD.
+
+        Audio must already be mono at ``whisper.audio.SAMPLE_RATE`` (16 kHz),
+        which is one of Silero's two supported rates.
+        """
+        import numpy as np
+        import torch
+
+        if self._vad_model is None:
+            self._init_vad()
+
+        from silero_vad import get_speech_timestamps
+
+        waveform = torch.from_numpy(audio_mono.data.astype(np.float32))
+        timestamps = get_speech_timestamps(
+            waveform,
+            self._vad_model,
+            sampling_rate=audio_mono.metadata.sample_rate,
+            return_seconds=True,
+        )
+        return [(float(ts["start"]), float(ts["end"])) for ts in timestamps]
+
+    def _detect_language(self, audio_mono: Audio, voiced_spans: list[tuple[float, float]]) -> str:
+        """Run Whisper language detection on a 30s window of voiced audio.
+
+        Whisper's auto-detection only inspects the first 30s of input. When
+        the file opens with silence/music/credits, that window contains no
+        speech and detection picks the closest-looking thing (typically
+        English). Concatenating voiced spans up to 30s and running
+        ``model.detect_language()`` on the resulting mel fixes this.
+        """
+        import numpy as np
+        import torch
+        import whisper
+
+        sample_rate = audio_mono.metadata.sample_rate
+        max_samples = whisper.audio.N_SAMPLES  # 30s at 16 kHz
+
+        chunks: list[np.ndarray] = []
+        collected = 0
+        for start, end in voiced_spans:
+            start_sample = int(start * sample_rate)
+            end_sample = int(end * sample_rate)
+            chunk = audio_mono.data[start_sample:end_sample]
+            if collected + len(chunk) > max_samples:
+                chunk = chunk[: max_samples - collected]
+            chunks.append(chunk)
+            collected += len(chunk)
+            if collected >= max_samples:
+                break
+
+        voiced_audio = np.concatenate(chunks).astype(np.float32) if chunks else np.zeros(0, dtype=np.float32)
+        padded = whisper.audio.pad_or_trim(torch.from_numpy(voiced_audio))
+        mel = whisper.audio.log_mel_spectrogram(padded, n_mels=self._model.dims.n_mels).to(self._model.device)
+
+        _, probs = self._model.detect_language(mel)
+        if isinstance(probs, list):
+            probs = probs[0]
+        return max(probs, key=probs.get)
+
+    def _transcribe_with_diarization(self, audio_mono: Audio, language: str | None) -> Transcription:
         """Transcribe with word timestamps and assign speakers via pyannote."""
         import numpy as np
         import torch
@@ -181,7 +257,10 @@ class AudioToText:
             self._init_diarization()
 
         audio_data = audio_mono.data
-        transcription_result = self._model.transcribe(audio=audio_data, word_timestamps=True)
+        transcribe_kwargs: dict[str, Any] = {"audio": audio_data, "word_timestamps": True}
+        if language is not None:
+            transcribe_kwargs["language"] = language
+        transcription_result = self._model.transcribe(**transcribe_kwargs)
 
         waveform = torch.from_numpy(audio_data.astype(np.float32)).unsqueeze(0)
         diarization_result = self._diarization_pipeline(
@@ -200,7 +279,17 @@ class AudioToText:
         return Transcription(words=all_words, language=transcription.language)
 
     def _transcribe_local(self, audio: Audio) -> Transcription:
-        """Transcribe using local Whisper model."""
+        """Transcribe using local Whisper model.
+
+        When ``enable_vad`` is True (default), Silero VAD locates voiced
+        regions and a 30s voiced window is used for Whisper language
+        detection -- avoiding the well-known failure where Whisper locks
+        onto the wrong language because the first 30s of input is silence
+        or music. The detected language is then passed into
+        ``transcribe()`` so chunked decoding stays consistent. If VAD
+        finds no speech, an empty Transcription is returned without
+        invoking Whisper.
+        """
         import whisper
 
         if self._model is None:
@@ -208,10 +297,20 @@ class AudioToText:
 
         audio_mono = audio.to_mono().resample(whisper.audio.SAMPLE_RATE)
 
-        if self.enable_diarization:
-            return self._transcribe_with_diarization(audio_mono)
+        language: str | None = None
+        if self.enable_vad:
+            voiced_spans = self._run_vad(audio_mono)
+            if not voiced_spans:
+                return Transcription(segments=[])
+            language = self._detect_language(audio_mono, voiced_spans)
 
-        transcription_result = self._model.transcribe(audio=audio_mono.data, word_timestamps=True)
+        if self.enable_diarization:
+            return self._transcribe_with_diarization(audio_mono, language)
+
+        transcribe_kwargs: dict[str, Any] = {"audio": audio_mono.data, "word_timestamps": True}
+        if language is not None:
+            transcribe_kwargs["language"] = language
+        transcription_result = self._model.transcribe(**transcribe_kwargs)
         return self._process_transcription_result(transcription_result)
 
     def transcribe(self, media: Audio | Video) -> Transcription:
