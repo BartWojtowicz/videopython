@@ -224,28 +224,20 @@ class AudioToText:
         import whisper
 
         sample_rate = audio_mono.metadata.sample_rate
-        max_samples = whisper.audio.N_SAMPLES  # 30s at 16 kHz
-
         chunks: list[np.ndarray] = []
-        collected = 0
+        remaining = whisper.audio.N_SAMPLES
         for start, end in voiced_spans:
-            start_sample = int(start * sample_rate)
-            end_sample = int(end * sample_rate)
-            chunk = audio_mono.data[start_sample:end_sample]
-            if collected + len(chunk) > max_samples:
-                chunk = chunk[: max_samples - collected]
-            chunks.append(chunk)
-            collected += len(chunk)
-            if collected >= max_samples:
+            if remaining <= 0:
                 break
+            chunk = audio_mono.data[int(start * sample_rate) : int(end * sample_rate)][:remaining]
+            chunks.append(chunk)
+            remaining -= len(chunk)
 
         voiced_audio = np.concatenate(chunks).astype(np.float32) if chunks else np.zeros(0, dtype=np.float32)
         padded = whisper.audio.pad_or_trim(torch.from_numpy(voiced_audio))
         mel = whisper.audio.log_mel_spectrogram(padded, n_mels=self._model.dims.n_mels).to(self._model.device)
 
         _, probs = self._model.detect_language(mel)
-        if isinstance(probs, list):
-            probs = probs[0]
         return max(probs, key=probs.get)
 
     def _transcribe_with_diarization(self, audio_mono: Audio, language: str | None) -> Transcription:
@@ -257,10 +249,7 @@ class AudioToText:
             self._init_diarization()
 
         audio_data = audio_mono.data
-        transcribe_kwargs: dict[str, Any] = {"audio": audio_data, "word_timestamps": True}
-        if language is not None:
-            transcribe_kwargs["language"] = language
-        transcription_result = self._model.transcribe(**transcribe_kwargs)
+        transcription_result = self._model.transcribe(audio=audio_data, word_timestamps=True, language=language)
 
         waveform = torch.from_numpy(audio_data.astype(np.float32)).unsqueeze(0)
         diarization_result = self._diarization_pipeline(
@@ -307,10 +296,7 @@ class AudioToText:
         if self.enable_diarization:
             return self._transcribe_with_diarization(audio_mono, language)
 
-        transcribe_kwargs: dict[str, Any] = {"audio": audio_mono.data, "word_timestamps": True}
-        if language is not None:
-            transcribe_kwargs["language"] = language
-        transcription_result = self._model.transcribe(**transcribe_kwargs)
+        transcription_result = self._model.transcribe(audio=audio_mono.data, word_timestamps=True, language=language)
         return self._process_transcription_result(transcription_result)
 
     def transcribe(self, media: Audio | Video) -> Transcription:

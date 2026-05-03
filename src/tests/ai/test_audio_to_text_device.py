@@ -52,6 +52,19 @@ def cpu_transcriber(monkeypatch: pytest.MonkeyPatch) -> audio_mod.AudioToText:
     return audio_mod.AudioToText(model_name="small", device=None)
 
 
+@pytest.fixture
+def fake_whisper(monkeypatch: pytest.MonkeyPatch) -> _FakeWhisperModel:
+    """Patch ``_init_local`` so it installs a stub Whisper model. Returns the
+    stub so tests can inspect ``transcribe_calls`` / ``detect_language_calls``."""
+    fake_model = _FakeWhisperModel()
+
+    def fake_init_local(self: Any) -> None:
+        self._model = fake_model
+
+    monkeypatch.setattr(audio_mod.AudioToText, "_init_local", fake_init_local)
+    return fake_model
+
+
 def _short_audio(duration_s: float = 1.0, sample_rate: int = 16000) -> Audio:
     """Low-amplitude noise so ``Audio.is_silent`` is False and the call reaches
     ``_transcribe_local``. Content doesn't matter — VAD/Whisper are stubbed."""
@@ -72,61 +85,43 @@ class TestVadShortCircuit:
     """When VAD finds no speech, return empty Transcription without calling Whisper."""
 
     def test_empty_voiced_spans_skips_whisper(
-        self, cpu_transcriber: audio_mod.AudioToText, monkeypatch: pytest.MonkeyPatch
+        self,
+        cpu_transcriber: audio_mod.AudioToText,
+        fake_whisper: _FakeWhisperModel,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        fake_model = _FakeWhisperModel()
-
-        def fake_init_local(self: Any) -> None:
-            self._model = fake_model
-
-        def fake_run_vad(self: Any, _audio: Audio) -> list[tuple[float, float]]:
-            return []
-
-        monkeypatch.setattr(audio_mod.AudioToText, "_init_local", fake_init_local)
-        monkeypatch.setattr(audio_mod.AudioToText, "_run_vad", fake_run_vad)
+        monkeypatch.setattr(audio_mod.AudioToText, "_run_vad", lambda self, _a: [])
 
         result = cpu_transcriber.transcribe(_short_audio())
 
         assert result.segments == []
-        assert fake_model.transcribe_calls == []
-        assert fake_model.detect_language_calls == []
+        assert fake_whisper.transcribe_calls == []
+        assert fake_whisper.detect_language_calls == []
 
 
 class TestLanguageDetectionThreading:
     """Detected language must be passed into Whisper's transcribe() call."""
 
     def test_plain_branch_passes_language(
-        self, cpu_transcriber: audio_mod.AudioToText, monkeypatch: pytest.MonkeyPatch
+        self,
+        cpu_transcriber: audio_mod.AudioToText,
+        fake_whisper: _FakeWhisperModel,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        fake_model = _FakeWhisperModel()
-
-        def fake_init_local(self: Any) -> None:
-            self._model = fake_model
-
-        def fake_run_vad(self: Any, _audio: Audio) -> list[tuple[float, float]]:
-            return [(0.0, 1.0)]
-
-        def fake_detect_language(self: Any, _audio: Audio, _spans: list[tuple[float, float]]) -> str:
-            return "ja"
-
-        monkeypatch.setattr(audio_mod.AudioToText, "_init_local", fake_init_local)
-        monkeypatch.setattr(audio_mod.AudioToText, "_run_vad", fake_run_vad)
-        monkeypatch.setattr(audio_mod.AudioToText, "_detect_language", fake_detect_language)
+        monkeypatch.setattr(audio_mod.AudioToText, "_run_vad", lambda self, _a: [(0.0, 1.0)])
+        monkeypatch.setattr(audio_mod.AudioToText, "_detect_language", lambda self, _a, _s: "ja")
 
         cpu_transcriber.transcribe(_short_audio())
 
-        assert len(fake_model.transcribe_calls) == 1
-        assert fake_model.transcribe_calls[0]["language"] == "ja"
-        assert fake_model.transcribe_calls[0]["word_timestamps"] is True
+        assert len(fake_whisper.transcribe_calls) == 1
+        assert fake_whisper.transcribe_calls[0]["language"] == "ja"
+        assert fake_whisper.transcribe_calls[0]["word_timestamps"] is True
 
-    def test_diarization_branch_passes_language(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_diarization_branch_passes_language(
+        self, fake_whisper: _FakeWhisperModel, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setattr(audio_mod, "select_device", lambda _r, mps_allowed=False: "cpu")
         transcriber = audio_mod.AudioToText(enable_diarization=True, device=None)
-
-        fake_model = _FakeWhisperModel()
-
-        def fake_init_local(self: Any) -> None:
-            self._model = fake_model
 
         def fake_init_diarization(self: Any) -> None:
             # Stand-in pipeline: returns an object with empty exclusive_speaker_diarization.
@@ -139,53 +134,37 @@ class TestLanguageDetectionThreading:
 
             self._diarization_pipeline = lambda _payload: _DiarOutput()
 
-        def fake_run_vad(self: Any, _audio: Audio) -> list[tuple[float, float]]:
-            return [(0.0, 1.0)]
-
-        def fake_detect_language(self: Any, _audio: Audio, _spans: list[tuple[float, float]]) -> str:
-            return "ja"
-
-        monkeypatch.setattr(audio_mod.AudioToText, "_init_local", fake_init_local)
         monkeypatch.setattr(audio_mod.AudioToText, "_init_diarization", fake_init_diarization)
-        monkeypatch.setattr(audio_mod.AudioToText, "_run_vad", fake_run_vad)
-        monkeypatch.setattr(audio_mod.AudioToText, "_detect_language", fake_detect_language)
+        monkeypatch.setattr(audio_mod.AudioToText, "_run_vad", lambda self, _a: [(0.0, 1.0)])
+        monkeypatch.setattr(audio_mod.AudioToText, "_detect_language", lambda self, _a, _s: "ja")
 
         transcriber.transcribe(_short_audio())
 
-        assert len(fake_model.transcribe_calls) == 1
-        assert fake_model.transcribe_calls[0]["language"] == "ja"
+        assert len(fake_whisper.transcribe_calls) == 1
+        assert fake_whisper.transcribe_calls[0]["language"] == "ja"
 
 
 class TestVadDisabled:
-    """enable_vad=False must reproduce pre-change behaviour exactly: no VAD run,
-    no language= kwarg, no empty-audio short-circuit."""
+    """enable_vad=False must reproduce pre-change behaviour: no VAD run, and
+    Whisper is invoked with language=None (its auto-detect default)."""
 
-    def test_no_vad_init_and_no_language_kwarg(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_no_vad_init_and_language_is_none(
+        self, fake_whisper: _FakeWhisperModel, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setattr(audio_mod, "select_device", lambda _r, mps_allowed=False: "cpu")
         transcriber = audio_mod.AudioToText(enable_vad=False, device=None)
-
-        fake_model = _FakeWhisperModel()
-        vad_init_calls = {"count": 0}
-
-        def fake_init_local(self: Any) -> None:
-            self._model = fake_model
-
-        def fake_init_vad(self: Any) -> None:
-            vad_init_calls["count"] += 1
 
         def fail_if_called(*_args: Any, **_kwargs: Any) -> Any:
             raise AssertionError("VAD helpers must not run when enable_vad=False")
 
-        monkeypatch.setattr(audio_mod.AudioToText, "_init_local", fake_init_local)
-        monkeypatch.setattr(audio_mod.AudioToText, "_init_vad", fake_init_vad)
+        monkeypatch.setattr(audio_mod.AudioToText, "_init_vad", fail_if_called)
         monkeypatch.setattr(audio_mod.AudioToText, "_run_vad", fail_if_called)
         monkeypatch.setattr(audio_mod.AudioToText, "_detect_language", fail_if_called)
 
         transcriber.transcribe(_short_audio())
 
-        assert vad_init_calls["count"] == 0
-        assert len(fake_model.transcribe_calls) == 1
-        assert "language" not in fake_model.transcribe_calls[0]
+        assert len(fake_whisper.transcribe_calls) == 1
+        assert fake_whisper.transcribe_calls[0]["language"] is None
 
 
 class TestDetectLanguageWindow:
