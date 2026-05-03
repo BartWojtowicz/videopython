@@ -15,7 +15,11 @@ class AudioToText:
     """Transcription service for audio and video using local Whisper models.
 
     Uses openai-whisper for transcription (with word-level timestamps) and
-    pyannote-audio for optional speaker diarization.
+    pyannote-audio for optional speaker diarization. By default, Silero VAD
+    runs before Whisper to gate language detection on a 30s window built from
+    voiced regions only — fixes Whisper's tendency to lock onto the wrong
+    language when the file opens with silence, music, or non-vocal credits.
+    Disable with ``enable_vad=False`` to reproduce pre-0.27 behaviour.
     """
 
     PYANNOTE_DIARIZATION_MODEL = "pyannote/speaker-diarization-community-1"

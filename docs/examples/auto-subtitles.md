@@ -62,6 +62,7 @@ Model options:
 
 - `tiny`, `base`, `small`, `medium`, `large`, `turbo`
 - Enable diarization with `AudioToText(enable_diarization=True)` when needed.
+- VAD-gated language detection runs by default (`enable_vad=True`); pass `enable_vad=False` to skip it.
 
 ### 2. Configure Subtitle Style
 
