@@ -920,11 +920,7 @@ def _utc_now_iso() -> str:
 
 @contextmanager
 def _record_stage(run_info: AnalysisRunInfo, stage: str) -> Iterator[None]:
-    """Time a block and write the elapsed seconds into ``run_info``.
-
-    Also emits the existing ``"<stage> completed in X.XXs"`` log line so
-    stdout-grep workflows keep working.
-    """
+    """Time a block, write the elapsed seconds into ``run_info``, and log it."""
     t0 = time.perf_counter()
     try:
         yield
