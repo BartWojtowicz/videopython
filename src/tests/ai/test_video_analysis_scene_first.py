@@ -179,17 +179,6 @@ def test_run_info_roundtrip_includes_stage_timings() -> None:
     assert restored == info
 
 
-def test_run_info_from_dict_tolerates_legacy_payload_without_timings() -> None:
-    legacy = {
-        "created_at": "2026-01-01T00:00:00Z",
-        "mode": "path",
-        "library_version": "0.26.8",
-    }
-    restored = va.AnalysisRunInfo.from_dict(legacy)
-    assert restored.stage_durations_seconds == {}
-    assert restored.total_duration_seconds is None
-
-
 def test_analyze_populates_stage_durations_for_parallel_branch(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_scene_first_analyzers(monkeypatch)
     analysis = va.VideoAnalyzer(config=va.VideoAnalysisConfig()).analyze(_video_4s())

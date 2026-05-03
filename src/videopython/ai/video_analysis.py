@@ -172,13 +172,12 @@ class AnalysisRunInfo:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AnalysisRunInfo":
-        raw_stages = data.get("stage_durations_seconds") or {}
         return cls(
             created_at=data["created_at"],
             mode=data["mode"],
             library_version=data.get("library_version"),
-            stage_durations_seconds={str(k): float(v) for k, v in raw_stages.items()},
-            total_duration_seconds=data.get("total_duration_seconds"),
+            stage_durations_seconds={str(k): float(v) for k, v in data["stage_durations_seconds"].items()},
+            total_duration_seconds=data["total_duration_seconds"],
         )
 
 
