@@ -40,6 +40,9 @@ class TranscriptionSegment:
     text: str
     words: list[TranscriptionWord]
     speaker: str | None = None
+    avg_logprob: float | None = None
+    no_speech_prob: float | None = None
+    compression_ratio: float | None = None
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -49,6 +52,9 @@ class TranscriptionSegment:
             "text": self.text,
             "words": [w.to_dict() for w in self.words],
             "speaker": self.speaker,
+            "avg_logprob": self.avg_logprob,
+            "no_speech_prob": self.no_speech_prob,
+            "compression_ratio": self.compression_ratio,
         }
 
     @classmethod
@@ -60,6 +66,9 @@ class TranscriptionSegment:
             text=data["text"],
             words=[TranscriptionWord.from_dict(w) for w in data["words"]],
             speaker=data.get("speaker"),
+            avg_logprob=data.get("avg_logprob"),
+            no_speech_prob=data.get("no_speech_prob"),
+            compression_ratio=data.get("compression_ratio"),
         )
 
 

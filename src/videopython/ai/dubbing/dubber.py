@@ -37,6 +37,13 @@ class VideoDubber:
             gate; raise to drop more low-confidence windows.
         logprob_threshold: Forwarded to ``AudioToText``. Whisper's average
             log-probability gate.
+        strict_quality: When True, the pipeline raises
+            :class:`GarbageTranscriptError` before Demucs/translation/TTS run
+            if the transcript-quality heuristic returns ``"reject"``. When
+            False (default), low-quality transcripts are logged at WARNING
+            but processing continues. Either way the
+            :class:`TranscriptQuality` is exposed on ``DubbingResult`` for
+            inspection.
     """
 
     def __init__(
@@ -47,6 +54,7 @@ class VideoDubber:
         condition_on_previous_text: bool = False,
         no_speech_threshold: float = 0.6,
         logprob_threshold: float | None = -1.0,
+        strict_quality: bool = False,
     ):
         self.device = device
         self.low_memory = low_memory
@@ -54,6 +62,7 @@ class VideoDubber:
         self.condition_on_previous_text = condition_on_previous_text
         self.no_speech_threshold = no_speech_threshold
         self.logprob_threshold = logprob_threshold
+        self.strict_quality = strict_quality
         self._local_pipeline: Any = None
         requested = device.lower() if isinstance(device, str) else "auto"
         logger.info(
@@ -73,6 +82,7 @@ class VideoDubber:
             condition_on_previous_text=self.condition_on_previous_text,
             no_speech_threshold=self.no_speech_threshold,
             logprob_threshold=self.logprob_threshold,
+            strict_quality=self.strict_quality,
         )
 
     def dub(

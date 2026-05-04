@@ -1,5 +1,20 @@
 # Release Notes
 
+## 0.28.0
+
+### Added
+
+- `transcript_quality` field on `DubbingResult`. A cheap heuristic over the Whisper transcription, exposed as `TranscriptQuality(recommendation, dominant_phrase, dominant_phrase_fraction, median_avg_logprob, speech_fraction, flags)`. Three checks fire flags: a single phrase covers ≥70% of segment chars (the YouTube-outro `「ご視聴ありがとうございました」` cascade); median per-segment `avg_logprob` falls below `-1.5`; speech-region duration is <5% of the clip's wall-clock duration on inputs >30s. The recommendation is `"reject"` when the dominance flag fires together with at least one other flag, `"warn"` when any single flag fires, `"ok"` otherwise — single repetition alone (chants, song lyrics) only warns.
+- `strict_quality: bool = False` constructor kwarg on `VideoDubber` and `LocalDubbingPipeline`. With `strict_quality=True`, a `"reject"` raises `GarbageTranscriptError` *before* Demucs/translation/TTS run, attaching the triggering `TranscriptQuality` as `error.quality` for caller introspection. Default `False` matches existing behaviour; reject-graded transcripts log a WARNING and processing continues. Either way the assessment is exposed on `DubbingResult` for inspection.
+- `timing_summary: TimingSummary | None` field on `DubbingResult`. Aggregates the per-segment `TimingAdjustment` list that `synchronize_segments` was already producing but the pipeline previously discarded: `total_segments`, `clean_count` (speed factor in [0.99, 1.01]), `stretched_count`, `truncated_count`, `mean_speed_factor`, `max_truncation_seconds`. Truncation/clamp counts are quality red flags — high values mean translation produced text too long for the source duration.
+- Optional confidence fields on `TranscriptionSegment`: `avg_logprob`, `no_speech_prob`, `compression_ratio` (all `float | None`, default `None`). Populated from raw Whisper segment dicts in `AudioToText._process_transcription_result`. Existing constructions (positional or kwargs) keep working since the fields all have defaults; `to_dict`/`from_dict` round-trip them and accept old persisted JSON without the keys.
+- Optional `progress_callback: Callable[[float], None]` on `TextTranslator.translate_batch` and `translate_segments`. Fires once per batch with a fraction in `[0, 1]` representing translation-stage progress. `LocalDubbingPipeline.process` uses it to map progress onto its `[0.35, 0.50]` overall window and emits `"Translating text (N%)"` instead of sitting silently on `0.35` for minutes during MarianMT runs on long sources.
+
+### Changed
+
+- `LocalDubbingPipeline._extract_voice_samples` now scores candidate segments and rejects clipped slices (peak ≥ 0.99) and slices where Demucs left the background louder than the vocals (`vocal_rms / bg_rms < 1.5`). Segments are scored by `vocal_rms - 0.05 × |duration − 6s|`, and the highest score wins. When every candidate fails, falls back to the longest segment overall and logs a WARNING — previously a speaker with no qualifying segment got silently dropped from `voice_samples` and the dubbing loop fell back to Chatterbox's default voice without any indication. The signature gains a `background_audio: Audio | None` parameter; the dubbing path passes the separated background, the `revoice()` path passes `None` (which silently degrades to "no RMS check"). Existing dubs may pick a different sample for the same input.
+- `LocalDubbingPipeline.process` reports finer-grained translation progress (`"Translating text (37%)"` etc.) instead of a single `"Translating text"` event at `0.35`. Downstream consumers that pattern-match on the exact stage string will need updating.
+
 ## 0.27.2
 
 ### Changed

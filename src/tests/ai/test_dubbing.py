@@ -377,6 +377,372 @@ class TestDubbingResult:
         assert len(by_speaker["speaker_1"]) == 1
 
 
+class TestTimingSummary:
+    """Tests for TimingSummary aggregation over TimingAdjustments."""
+
+    def test_empty_adjustments(self):
+        """Empty list yields a zeroed summary with mean speed 1.0."""
+        from videopython.ai.dubbing.models import TimingSummary
+
+        summary = TimingSummary.from_adjustments([])
+
+        assert summary.total_segments == 0
+        assert summary.clean_count == 0
+        assert summary.stretched_count == 0
+        assert summary.truncated_count == 0
+        assert summary.mean_speed_factor == 1.0
+        assert summary.max_truncation_seconds == 0.0
+
+    def test_classifies_clean_stretched_truncated(self):
+        """Mixed adjustments are bucketed into clean / stretched / truncated."""
+        from videopython.ai.dubbing.models import TimingSummary
+        from videopython.ai.dubbing.timing import TimingAdjustment
+
+        adjustments = [
+            # Clean: speed factor within tolerance, not truncated.
+            TimingAdjustment(
+                segment_index=0,
+                original_duration=2.0,
+                target_duration=2.0,
+                actual_duration=2.0,
+                speed_factor=1.0,
+                was_truncated=False,
+            ),
+            # Stretched up.
+            TimingAdjustment(
+                segment_index=1,
+                original_duration=2.0,
+                target_duration=2.0,
+                actual_duration=1.9,
+                speed_factor=1.05,
+                was_truncated=False,
+            ),
+            # Stretched down.
+            TimingAdjustment(
+                segment_index=2,
+                original_duration=2.0,
+                target_duration=2.5,
+                actual_duration=2.5,
+                speed_factor=0.85,
+                was_truncated=False,
+            ),
+            # Stretched at max speed but not truncated.
+            TimingAdjustment(
+                segment_index=3,
+                original_duration=2.6,
+                target_duration=2.0,
+                actual_duration=2.0,
+                speed_factor=1.3,
+                was_truncated=False,
+            ),
+            # Truncated: clamped at max speed but still too long.
+            TimingAdjustment(
+                segment_index=4,
+                original_duration=4.0,
+                target_duration=2.0,
+                actual_duration=2.0,
+                speed_factor=1.3,
+                was_truncated=True,
+            ),
+        ]
+
+        summary = TimingSummary.from_adjustments(adjustments)
+
+        assert summary.total_segments == 5
+        assert summary.clean_count == 1
+        assert summary.stretched_count == 3
+        assert summary.truncated_count == 1
+        # Mean of 1.0, 1.05, 0.85, 1.3, 1.3 = 1.10.
+        assert summary.mean_speed_factor == pytest.approx(1.10)
+        # Worst-case truncation: 4.0 - 2.0 = 2.0s.
+        assert summary.max_truncation_seconds == pytest.approx(2.0)
+
+    def test_max_truncation_picks_worst_case(self):
+        """max_truncation_seconds is the largest (original - actual) across truncated segments."""
+        from videopython.ai.dubbing.models import TimingSummary
+        from videopython.ai.dubbing.timing import TimingAdjustment
+
+        adjustments = [
+            TimingAdjustment(
+                segment_index=0,
+                original_duration=3.0,
+                target_duration=2.0,
+                actual_duration=2.0,
+                speed_factor=1.3,
+                was_truncated=True,
+            ),
+            TimingAdjustment(
+                segment_index=1,
+                original_duration=10.0,
+                target_duration=5.0,
+                actual_duration=5.0,
+                speed_factor=1.3,
+                was_truncated=True,
+            ),
+        ]
+
+        summary = TimingSummary.from_adjustments(adjustments)
+
+        assert summary.truncated_count == 2
+        assert summary.max_truncation_seconds == pytest.approx(5.0)
+
+    def test_round_trip_to_dict(self):
+        """from_dict(to_dict(s)) must equal the original summary."""
+        from videopython.ai.dubbing.models import TimingSummary
+
+        summary = TimingSummary(
+            total_segments=10,
+            clean_count=5,
+            stretched_count=3,
+            truncated_count=2,
+            mean_speed_factor=1.12,
+            max_truncation_seconds=0.7,
+        )
+
+        restored = TimingSummary.from_dict(summary.to_dict())
+        assert restored == summary
+
+    def test_dubbing_result_carries_summary(self, sample_audio, sample_segment):
+        """DubbingResult accepts and exposes a TimingSummary."""
+        from videopython.ai.dubbing.models import TimingSummary
+        from videopython.base.text.transcription import Transcription
+
+        translated = TranslatedSegment(
+            original_segment=sample_segment,
+            translated_text="Hola mundo",
+            source_lang="en",
+            target_lang="es",
+        )
+        summary = TimingSummary(
+            total_segments=1,
+            clean_count=1,
+            stretched_count=0,
+            truncated_count=0,
+            mean_speed_factor=1.0,
+            max_truncation_seconds=0.0,
+        )
+
+        result = DubbingResult(
+            dubbed_audio=sample_audio,
+            translated_segments=[translated],
+            source_transcription=Transcription(segments=[sample_segment]),
+            source_lang="en",
+            target_lang="es",
+            timing_summary=summary,
+        )
+
+        assert result.timing_summary is summary
+        assert result.timing_summary.total_segments == 1
+
+    def test_dubbing_result_default_timing_summary_none(self, sample_audio, sample_segment):
+        """DubbingResult constructed without a TimingSummary keeps the field as None (back-compat)."""
+        from videopython.base.text.transcription import Transcription
+
+        translated = TranslatedSegment(
+            original_segment=sample_segment,
+            translated_text="Hola mundo",
+            source_lang="en",
+            target_lang="es",
+        )
+
+        result = DubbingResult(
+            dubbed_audio=sample_audio,
+            translated_segments=[translated],
+            source_transcription=Transcription(segments=[sample_segment]),
+            source_lang="en",
+            target_lang="es",
+        )
+
+        assert result.timing_summary is None
+
+
+class TestVoiceSampleQualityGating:
+    """Quality gating in LocalDubbingPipeline._extract_voice_samples.
+
+    Synthetic audio fixtures only — no models loaded. Each test builds a
+    full-track Audio whose samples encode a per-segment peak/RMS profile,
+    so slicing inside the gating logic recovers the intended quality.
+    """
+
+    SAMPLE_RATE = 16000
+
+    @staticmethod
+    def _segment(start: float, end: float, speaker: str = "speaker_0"):
+        words = [TranscriptionWord(start=start, end=end, word="x")]
+        return TranscriptionSegment(start=start, end=end, text="x", words=words, speaker=speaker)
+
+    @classmethod
+    def _audio_from_sections(cls, sections: list[tuple[float, float, np.ndarray]]):
+        """Build a single Audio whose [start, end) ranges hold the supplied
+        per-section sample arrays (zero-filled elsewhere).
+
+        ``sections`` is a list of ``(start_seconds, end_seconds, data)``.
+        """
+        total_end = max(end for _, end, _ in sections)
+        total_samples = int(total_end * cls.SAMPLE_RATE)
+        buf = np.zeros(total_samples, dtype=np.float32)
+        for start, end, data in sections:
+            start_idx = int(start * cls.SAMPLE_RATE)
+            end_idx = int(end * cls.SAMPLE_RATE)
+            n = min(end_idx - start_idx, len(data))
+            buf[start_idx : start_idx + n] = data[:n]
+        metadata = AudioMetadata(
+            sample_rate=cls.SAMPLE_RATE,
+            channels=1,
+            sample_width=2,
+            duration_seconds=total_end,
+            frame_count=total_samples,
+        )
+        return Audio(buf, metadata)
+
+    @classmethod
+    def _section(cls, duration: float, peak: float, rms_target: float | None = None) -> np.ndarray:
+        """Produce ``duration`` seconds of audio with the given peak.
+
+        When ``rms_target`` is None, fill the segment with constant ``peak``
+        (peak == RMS == peak). When set, scale random noise so the segment
+        has the requested peak amplitude (RMS ~= peak / sqrt(3) for uniform
+        noise; close enough for a synthetic gating test).
+        """
+        n = int(duration * cls.SAMPLE_RATE)
+        if rms_target is None:
+            data = np.full(n, peak, dtype=np.float32)
+        else:
+            rng = np.random.default_rng(0)
+            data = rng.uniform(-1.0, 1.0, size=n).astype(np.float32)
+            data *= peak / max(float(np.max(np.abs(data))), 1e-9)
+        return data
+
+    @pytest.fixture
+    def pipeline(self):
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+
+        return LocalDubbingPipeline(device="cpu")
+
+    @staticmethod
+    def _fake_transcription(segments: list):
+        from videopython.base.text.transcription import Transcription
+
+        return Transcription(segments=segments)
+
+    def test_rejects_clipped_sample(self, pipeline, caplog):
+        """A clipped segment is rejected; the clean one wins even if it's farther from 6s."""
+        clipped = self._segment(0.0, 3.0)  # 3s clipped
+        clean = self._segment(3.0, 7.0)  # 4s clean
+
+        # Clipped at peak ~1.0 (above 0.99 threshold).
+        clipped_audio = self._section(3.0, peak=0.999)
+        # Clean at peak 0.5.
+        clean_audio = self._section(4.0, peak=0.5)
+        vocal = self._audio_from_sections([(0.0, 3.0, clipped_audio), (3.0, 7.0, clean_audio)])
+
+        transcription = self._fake_transcription([clipped, clean])
+
+        samples = pipeline._extract_voice_samples(vocal, None, transcription)
+
+        assert "speaker_0" in samples
+        # The clean sample is in [3, 7). Its data starts at section value 0.5.
+        assert samples["speaker_0"].data[0] == pytest.approx(0.5)
+
+    def test_rejects_background_dominated_sample(self, pipeline):
+        """When a segment's bg RMS exceeds vocal RMS / 1.5, the cleaner one is preferred."""
+        seg_a = self._segment(0.0, 4.0)  # bg-dominated
+        seg_b = self._segment(4.0, 8.0)  # cleaner ratio
+
+        # Constant fills: vocal_rms == bg_rms, ratio = 1.0 (< 1.5) → reject.
+        vocal_a = self._section(4.0, peak=0.3)
+        bg_a = self._section(4.0, peak=0.3)
+        # Ratio = 3.0 → accept.
+        vocal_b = self._section(4.0, peak=0.3)
+        bg_b = self._section(4.0, peak=0.1)
+
+        vocal = self._audio_from_sections([(0.0, 4.0, vocal_a), (4.0, 8.0, vocal_b)])
+        background = self._audio_from_sections([(0.0, 4.0, bg_a), (4.0, 8.0, bg_b)])
+
+        transcription = self._fake_transcription([seg_a, seg_b])
+
+        samples = pipeline._extract_voice_samples(vocal, background, transcription)
+
+        assert "speaker_0" in samples
+        # Picked seg_b: its slice starts at vocal_b's value.
+        chosen = samples["speaker_0"]
+        # All samples in the chosen slice should equal 0.3 (constant fill).
+        assert np.allclose(chosen.data, 0.3)
+
+    def test_falls_back_to_longest_when_all_fail(self, pipeline, caplog):
+        """All clipped: fall back to the longest segment and log a WARNING."""
+        import logging
+
+        a = self._segment(0.0, 3.0)
+        b = self._segment(3.0, 8.0)  # longest at 5s
+        c = self._segment(8.0, 12.0)
+
+        vocal = self._audio_from_sections(
+            [
+                (0.0, 3.0, self._section(3.0, peak=0.999)),
+                (3.0, 8.0, self._section(5.0, peak=0.999)),
+                (8.0, 12.0, self._section(4.0, peak=0.999)),
+            ]
+        )
+
+        transcription = self._fake_transcription([a, b, c])
+
+        with caplog.at_level(logging.WARNING, logger="videopython.ai.dubbing.pipeline"):
+            samples = pipeline._extract_voice_samples(vocal, None, transcription)
+
+        assert "speaker_0" in samples
+        # Longest is b: starts at 3.0s. Sample length should be the full
+        # 5s of b (capped at max_duration=10s, so 5s wins).
+        assert samples["speaker_0"].metadata.duration_seconds == pytest.approx(5.0, abs=0.01)
+        assert any("fallback" in r.message.lower() for r in caplog.records)
+        assert any("clipped" in r.message.lower() for r in caplog.records)
+
+    def test_no_background_audio_skips_rms_check(self, pipeline):
+        """With background_audio=None, RMS check is skipped; clipping still rejected."""
+        clipped = self._segment(0.0, 3.0)
+        clean = self._segment(3.0, 7.0)
+
+        vocal = self._audio_from_sections(
+            [
+                (0.0, 3.0, self._section(3.0, peak=0.999)),
+                # Clean but quiet — no bg comparison, so it should still pass.
+                (3.0, 7.0, self._section(4.0, peak=0.05)),
+            ]
+        )
+
+        transcription = self._fake_transcription([clipped, clean])
+
+        samples = pipeline._extract_voice_samples(vocal, None, transcription)
+
+        assert "speaker_0" in samples
+        # Clean (peak 0.05) wins over clipped despite being quiet — bg check skipped.
+        assert float(np.max(np.abs(samples["speaker_0"].data))) < 0.1
+
+    def test_unchanged_when_all_clean(self, pipeline):
+        """All clean: closest-to-6s segment wins (preserves prior tie-break intent)."""
+        # Three healthy segments; the 6s one should win on duration_penalty.
+        a = self._segment(0.0, 4.0)
+        b = self._segment(4.0, 10.0)  # exactly 6s
+        c = self._segment(10.0, 18.0)  # 8s
+
+        vocal = self._audio_from_sections(
+            [
+                (0.0, 4.0, self._section(4.0, peak=0.4)),
+                # Mark b with a distinct constant so we can identify it.
+                (4.0, 10.0, self._section(6.0, peak=0.5)),
+                (10.0, 18.0, self._section(8.0, peak=0.4)),
+            ]
+        )
+
+        transcription = self._fake_transcription([a, b, c])
+
+        samples = pipeline._extract_voice_samples(vocal, None, transcription)
+
+        chosen = samples["speaker_0"]
+        # Chosen segment is b: peak 0.5.
+        assert float(np.max(np.abs(chosen.data))) == pytest.approx(0.5, abs=1e-3)
+
+
 class TestVideoDubber:
     """Tests for VideoDubber class."""
 
@@ -486,7 +852,7 @@ class TestTextTranslator:
 
         translate_calls: list[list[str]] = []
 
-        def fake_translate_batch(self, texts, target_lang, source_lang=None):
+        def fake_translate_batch(self, texts, target_lang, source_lang=None, progress_callback=None):
             translate_calls.append(list(texts))
             return [f"[{t}]" for t in texts]
 
@@ -517,6 +883,191 @@ class TestTextTranslator:
         # Timing/speaker fields preserved on the skipped segments.
         assert result[1].start == 1.0
         assert result[1].end == 2.0
+
+
+class TestTranslationProgressCallback:
+    """Translation-stage progress hooks for callers (M1.4)."""
+
+    @staticmethod
+    def _patch_marian(monkeypatch):
+        """Replace TextTranslator._init_local with a stub model + tokenizer.
+
+        The model just echoes "[i]" tokens for each input row; the tokenizer
+        decodes them as predictable strings. This is enough for the progress
+        callback to fire without loading real Marian weights.
+        """
+        from videopython.ai.generation import translation as translation_mod
+
+        class _FakeTokenizer:
+            def __call__(self, batch, return_tensors=None, padding=None, truncation=None, max_length=None):
+                # Return one "input_ids" tensor per row; .to(device) is a no-op.
+                class _Tensor:
+                    def __init__(self, n: int) -> None:
+                        self._n = n
+
+                    def to(self, _device):
+                        return self
+
+                    def __len__(self):
+                        return self._n
+
+                return {"input_ids": _Tensor(len(batch))}
+
+            def decode(self, output, skip_special_tokens=True):
+                return f"out-{int(output)}"
+
+        class _FakeModel:
+            def generate(self, **kwargs):
+                # One output id per row in the batch.
+                n = len(kwargs["input_ids"])
+                return list(range(n))
+
+        def fake_init_local(self, source_lang, target_lang):
+            self._model = _FakeModel()
+            self._tokenizer = _FakeTokenizer()
+            self._current_lang_pair = (source_lang, target_lang)
+            self.device = "cpu"
+
+        monkeypatch.setattr(translation_mod.TextTranslator, "_init_local", fake_init_local)
+
+    def test_translate_batch_progress_callback_called(self, monkeypatch):
+        """Multiple batches → multiple monotonic ticks ending at 1.0."""
+        from videopython.ai.generation.translation import TextTranslator
+
+        self._patch_marian(monkeypatch)
+        # Avoid touching torch.no_grad in the patched model path.
+        import torch
+
+        monkeypatch.setattr(torch, "no_grad", lambda: __import__("contextlib").nullcontext())
+
+        translator = TextTranslator()
+        # Batch size is 8; 20 texts → 3 batches (8, 8, 4).
+        texts = [f"text-{i}" for i in range(20)]
+
+        ticks: list[float] = []
+        translator.translate_batch(texts, target_lang="es", source_lang="en", progress_callback=ticks.append)
+
+        assert len(ticks) == 3
+        assert ticks == sorted(ticks)
+        assert ticks[-1] == pytest.approx(1.0)
+        # Intermediate ticks land at 8/20 and 16/20.
+        assert ticks[0] == pytest.approx(0.4)
+        assert ticks[1] == pytest.approx(0.8)
+
+    def test_translate_batch_zero_work_skips_callback(self):
+        """Empty-input and same-language shortcuts do no work and emit no tick."""
+        from videopython.ai.generation.translation import TextTranslator
+
+        translator = TextTranslator()
+
+        ticks: list[float] = []
+        assert translator.translate_batch([], target_lang="es", progress_callback=ticks.append) == []
+        assert translator.translate_batch(
+            ["hello"], target_lang="en", source_lang="en", progress_callback=ticks.append
+        ) == ["hello"]
+        assert ticks == []
+
+    def test_translate_segments_forwards_callback(self, monkeypatch):
+        """translate_segments forwards the callback through to translate_batch."""
+        from videopython.ai.generation import translation as translation_mod
+        from videopython.ai.generation.translation import TextTranslator
+
+        forwarded: dict = {}
+
+        def fake_translate_batch(self, texts, target_lang, source_lang=None, progress_callback=None):
+            forwarded["progress_callback"] = progress_callback
+            return [f"[{t}]" for t in texts]
+
+        monkeypatch.setattr(translation_mod.TextTranslator, "translate_batch", fake_translate_batch)
+
+        translator = TextTranslator()
+
+        def sentinel(_fraction: float) -> None:
+            pass
+
+        words = [TranscriptionWord(start=0.0, end=1.0, word="hi")]
+        segments = [TranscriptionSegment(start=0.0, end=1.0, text="hi there", words=words)]
+
+        translator.translate_segments(segments, target_lang="es", source_lang="en", progress_callback=sentinel)
+
+        assert forwarded["progress_callback"] is sentinel
+
+    def test_pipeline_emits_translation_progress(self, sample_audio, monkeypatch):
+        """LocalDubbingPipeline.process() maps translation fraction onto [0.35, 0.50]."""
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+        from videopython.base.text.transcription import (
+            Transcription,
+            TranscriptionSegment,
+            TranscriptionWord,
+        )
+
+        class _FakeTranslator:
+            def translate_segments(self, segments, target_lang, source_lang, progress_callback=None):
+                # Simulate three batch ticks like a 3-batch translation run.
+                if progress_callback is not None:
+                    for fraction in (0.4, 0.8, 1.0):
+                        progress_callback(fraction)
+
+                return [
+                    TranslatedSegment(
+                        original_segment=s,
+                        translated_text=s.text,
+                        source_lang=source_lang,
+                        target_lang=target_lang,
+                    )
+                    for s in segments
+                ]
+
+        def fake_init_translator(self):
+            self._translator = _FakeTranslator()
+
+        def fake_init_tts(self, language="en"):
+            class _FakeTTS:
+                def generate_audio(self, text, voice_sample=None, voice_sample_path=None):
+                    sr = 24000
+                    n = int(sr * 0.2)
+                    return Audio(
+                        np.zeros(n, dtype=np.float32),
+                        AudioMetadata(
+                            sample_rate=sr,
+                            channels=1,
+                            sample_width=2,
+                            duration_seconds=0.2,
+                            frame_count=n,
+                        ),
+                    )
+
+            self._tts = _FakeTTS()
+
+        monkeypatch.setattr(LocalDubbingPipeline, "_init_translator", fake_init_translator)
+        monkeypatch.setattr(LocalDubbingPipeline, "_init_tts", fake_init_tts)
+
+        words = [TranscriptionWord(start=0.0, end=1.0, word="hello")]
+        segs = [TranscriptionSegment(start=0.0, end=1.0, text="hello there", words=words)]
+        transcription = Transcription(segments=segs, language="en")
+
+        captured: list[tuple[str, float]] = []
+        pipeline = LocalDubbingPipeline()
+        pipeline.process(
+            source_audio=sample_audio,
+            target_lang="es",
+            preserve_background=False,
+            voice_clone=False,
+            enable_diarization=False,
+            transcription=transcription,
+            progress_callback=lambda stage, progress: captured.append((stage, progress)),
+        )
+
+        translation_events = [(s, p) for s, p in captured if s.startswith("Translating text")]
+        # Three batch ticks should produce three "Translating text (N%)" events
+        # in the [0.35, 0.50] range — plus the initial "Translating text" event.
+        ticked = [(s, p) for s, p in translation_events if "%" in s]
+        assert len(ticked) == 3
+        assert all(0.35 <= p <= 0.50 + 1e-9 for _, p in ticked)
+        assert ticked[0][1] == pytest.approx(0.35 + 0.15 * 0.4)
+        assert ticked[-1][1] == pytest.approx(0.50)
+        assert any("40%" in s for s, _ in ticked)
+        assert any("100%" in s for s, _ in ticked)
 
 
 class TestAudioSeparator:
@@ -1133,7 +1684,7 @@ class TestPipelineSuppliedTranscriptionDiarization:
         # about how the pipeline handles the supplied transcription.
         def fake_init_translator(self):
             class FakeTranslator:
-                def translate_segments(self, segments, target_lang, source_lang):
+                def translate_segments(self, segments, target_lang, source_lang, progress_callback=None):
                     from videopython.ai.dubbing.models import TranslatedSegment
 
                     return [
@@ -1355,14 +1906,14 @@ class TestVoiceSampleCache:
         # cache has something to encode. _extract_voice_samples relies on
         # segment durations >= min_duration=3s, which our short fixture lacks;
         # short-circuit to a deterministic per-speaker map.
-        def fake_extract(self, audio, transcription, min_duration=3.0, max_duration=10.0):
+        def fake_extract(self, vocal_audio, background_audio, transcription, min_duration=3.0, max_duration=10.0):
             return {"A": sample_audio, "B": sample_audio}
 
         monkeypatch.setattr(LocalDubbingPipeline, "_extract_voice_samples", fake_extract)
 
         def fake_init_translator(self):
             class FakeTranslator:
-                def translate_segments(self, segments, target_lang, source_lang):
+                def translate_segments(self, segments, target_lang, source_lang, progress_callback=None):
                     return [
                         TranslatedSegment(
                             original_segment=s,
@@ -1457,7 +2008,7 @@ class TestVoiceSampleCache:
 
         def fake_init_translator(self):
             class FakeTranslator:
-                def translate_segments(self, segments, target_lang, source_lang):
+                def translate_segments(self, segments, target_lang, source_lang, progress_callback=None):
                     return [
                         TranslatedSegment(
                             original_segment=s,
@@ -1931,7 +2482,7 @@ class TestPipelineSpeechRegionGating:
         # Translator and TTS as fakes so we don't touch real models.
         def fake_init_translator(self):
             class FakeTranslator:
-                def translate_segments(self, segments, target_lang, source_lang):
+                def translate_segments(self, segments, target_lang, source_lang, progress_callback=None):
                     return [
                         TranslatedSegment(
                             original_segment=s,
@@ -2015,7 +2566,7 @@ class TestPipelineEmptyTranslationSkipped:
 
         def fake_init_translator(self):
             class FakeTranslator:
-                def translate_segments(self, segments, target_lang, source_lang):
+                def translate_segments(self, segments, target_lang, source_lang, progress_callback=None):
                     # Mimic the real filter: punctuation-only -> "".
                     out = []
                     for s in segments:
@@ -2075,3 +2626,257 @@ class TestPipelineEmptyTranslationSkipped:
 
         # Only two TTS calls; the punctuation-only segment was skipped.
         assert tts_calls == ["[X]", "[X]"]
+
+
+class TestTranscriptQuality:
+    """Heuristic checks in assess_transcript()."""
+
+    @staticmethod
+    def _seg(start: float, end: float, text: str, *, avg_logprob: float | None = None):
+        words = [TranscriptionWord(start=start, end=end, word=text)]
+        return TranscriptionSegment(
+            start=start,
+            end=end,
+            text=text,
+            words=words,
+            avg_logprob=avg_logprob,
+        )
+
+    @classmethod
+    def _transcription(cls, segments):
+        from videopython.base.text.transcription import Transcription
+
+        return Transcription(segments=segments, language="en")
+
+    def test_clean_transcript_recommends_ok(self):
+        from videopython.ai.dubbing.quality import assess_transcript
+
+        # 80% speech in a 60s clip; varied text; healthy logprob.
+        segs = [
+            self._seg(0.0, 12.0, "this is a regular sentence", avg_logprob=-0.5),
+            self._seg(12.0, 24.0, "another segment with different words", avg_logprob=-0.4),
+            self._seg(24.0, 36.0, "still more dialogue with variety", avg_logprob=-0.6),
+            self._seg(36.0, 48.0, "the speakers keep covering new ground", avg_logprob=-0.5),
+        ]
+        quality = assess_transcript(self._transcription(segs), audio_duration_seconds=60.0)
+
+        assert quality.recommendation == "ok"
+        assert quality.flags == []
+        assert quality.dominant_phrase is None
+
+    def test_dominant_phrase_alone_warns(self):
+        """One repeated phrase but healthy logprob and speech fraction → warn, not reject."""
+        from videopython.ai.dubbing.quality import assess_transcript
+
+        text = "thank you for watching"
+        segs = [self._seg(i * 5.0, i * 5.0 + 5.0, text, avg_logprob=-0.3) for i in range(11)]
+        # 11 segments * 5s = 55s; clip is 110s → speech fraction 50% (healthy).
+        quality = assess_transcript(self._transcription(segs), audio_duration_seconds=110.0)
+
+        assert quality.recommendation == "warn"
+        assert quality.dominant_phrase == "thank you for watching"
+        assert quality.dominant_phrase_fraction >= 0.7
+        assert any("dominant phrase" in flag for flag in quality.flags)
+
+    def test_dominance_plus_low_logprob_rejects(self):
+        from videopython.ai.dubbing.quality import assess_transcript
+
+        text = "ご視聴ありがとうございました"
+        segs = [self._seg(i * 5.0, i * 5.0 + 5.0, text, avg_logprob=-2.0) for i in range(8)]
+        quality = assess_transcript(self._transcription(segs), audio_duration_seconds=200.0)
+
+        assert quality.recommendation == "reject"
+        assert quality.dominant_phrase is not None
+        # Both flags appear in the human-readable list.
+        assert any("dominant phrase" in flag for flag in quality.flags)
+        assert any("avg_logprob" in flag for flag in quality.flags)
+
+    def test_dominance_plus_low_speech_fraction_rejects(self):
+        from videopython.ai.dubbing.quality import assess_transcript
+
+        text = "thanks for watching"
+        # 5 segments of 0.5s each = 2.5s of speech in a 5min clip → 0.83% speech fraction.
+        segs = [self._seg(i * 60.0, i * 60.0 + 0.5, text, avg_logprob=-0.3) for i in range(5)]
+        quality = assess_transcript(self._transcription(segs), audio_duration_seconds=300.0)
+
+        assert quality.recommendation == "reject"
+        assert any("dominant phrase" in flag for flag in quality.flags)
+        assert any("speech fraction" in flag for flag in quality.flags)
+
+    def test_short_clip_skips_speech_fraction_flag(self):
+        """Speech-fraction is unstable below 30s; on a 10s clip the flag is suppressed."""
+        from videopython.ai.dubbing.quality import assess_transcript
+
+        text = "thanks for watching"
+        segs = [self._seg(0.0, 0.1, text, avg_logprob=-0.3)]
+        quality = assess_transcript(self._transcription(segs), audio_duration_seconds=10.0)
+
+        # Dominance still trips; speech fraction does not.
+        assert not any("speech fraction" in flag for flag in quality.flags)
+        # Single-segment "dominance" plus no other flags must not be a reject.
+        assert quality.recommendation in ("ok", "warn")
+
+    def test_no_logprob_falls_back_gracefully(self):
+        """All None avg_logprob (e.g. SRT-loaded) → logprob check doesn't fire."""
+        from videopython.ai.dubbing.quality import assess_transcript
+
+        segs = [
+            self._seg(0.0, 10.0, "varied dialogue", avg_logprob=None),
+            self._seg(10.0, 20.0, "completely different content", avg_logprob=None),
+            self._seg(20.0, 30.0, "and even more variety", avg_logprob=None),
+        ]
+        quality = assess_transcript(self._transcription(segs), audio_duration_seconds=60.0)
+
+        assert quality.median_avg_logprob is None
+        # No flag mentions logprob.
+        assert not any("avg_logprob" in flag for flag in quality.flags)
+
+    def test_quality_dict_round_trip(self):
+        from videopython.ai.dubbing.quality import TranscriptQuality
+
+        original = TranscriptQuality(
+            recommendation="warn",
+            dominant_phrase="thanks",
+            dominant_phrase_fraction=0.8,
+            median_avg_logprob=-0.7,
+            speech_fraction=0.5,
+            flags=["dominant phrase 80%: 'thanks'"],
+        )
+
+        restored = TranscriptQuality.from_dict(original.to_dict())
+        assert restored == original
+
+    def test_garbage_error_attaches_quality(self):
+        from videopython.ai.dubbing.quality import GarbageTranscriptError, TranscriptQuality
+
+        quality = TranscriptQuality(
+            recommendation="reject",
+            dominant_phrase="x",
+            dominant_phrase_fraction=0.9,
+            median_avg_logprob=-2.5,
+            speech_fraction=0.01,
+            flags=["dominant phrase 90%: 'x'"],
+        )
+        err = GarbageTranscriptError("bad", quality)
+        assert err.quality is quality
+        assert isinstance(err, RuntimeError)
+
+
+class TestStrictQualityIntegration:
+    """End-to-end strict_quality behavior in LocalDubbingPipeline.process."""
+
+    @staticmethod
+    def _garbage_transcription():
+        from videopython.base.text.transcription import Transcription
+
+        words = [TranscriptionWord(start=0.0, end=0.3, word="thanks")]
+        # 12 dominant-phrase segments + low logprob → reject.
+        segs = [
+            TranscriptionSegment(
+                start=i * 5.0,
+                end=i * 5.0 + 0.3,
+                text="thank you for watching",
+                words=words,
+                avg_logprob=-2.0,
+            )
+            for i in range(12)
+        ]
+        return Transcription(segments=segs, language="en")
+
+    def test_strict_quality_raises_before_demucs(self, sample_audio, monkeypatch):
+        """strict_quality=True: raise GarbageTranscriptError without ever calling the separator."""
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+        from videopython.ai.dubbing.quality import GarbageTranscriptError
+
+        separator_called = {"n": 0}
+
+        def fail_init_separator(self):
+            separator_called["n"] += 1
+            raise AssertionError("separator must not initialize when strict_quality rejects")
+
+        monkeypatch.setattr(LocalDubbingPipeline, "_init_separator", fail_init_separator)
+
+        pipeline = LocalDubbingPipeline(strict_quality=True)
+        with pytest.raises(GarbageTranscriptError) as exc_info:
+            pipeline.process(
+                source_audio=sample_audio,
+                target_lang="es",
+                preserve_background=True,
+                voice_clone=False,
+                enable_diarization=False,
+                transcription=self._garbage_transcription(),
+            )
+
+        assert exc_info.value.quality.recommendation == "reject"
+        assert separator_called["n"] == 0
+
+    def test_non_strict_quality_continues_with_warning(self, sample_audio, monkeypatch, caplog):
+        """strict_quality=False: pipeline runs, transcript_quality attached, WARNING logged."""
+        import logging
+
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+
+        def fake_init_translator(self):
+            class FakeTranslator:
+                def translate_segments(self, segments, target_lang, source_lang, progress_callback=None):
+                    return [
+                        TranslatedSegment(
+                            original_segment=s,
+                            translated_text=s.text,
+                            source_lang=source_lang,
+                            target_lang=target_lang,
+                        )
+                        for s in segments
+                    ]
+
+            self._translator = FakeTranslator()
+
+        def fake_init_tts(self, language="en"):
+            class FakeTTS:
+                def generate_audio(self, text, voice_sample=None, voice_sample_path=None):
+                    sr = 24000
+                    n = int(sr * 0.2)
+                    return Audio(
+                        np.zeros(n, dtype=np.float32),
+                        AudioMetadata(
+                            sample_rate=sr,
+                            channels=1,
+                            sample_width=2,
+                            duration_seconds=0.2,
+                            frame_count=n,
+                        ),
+                    )
+
+            self._tts = FakeTTS()
+
+        monkeypatch.setattr(LocalDubbingPipeline, "_init_translator", fake_init_translator)
+        monkeypatch.setattr(LocalDubbingPipeline, "_init_tts", fake_init_tts)
+
+        pipeline = LocalDubbingPipeline(strict_quality=False)
+        with caplog.at_level(logging.WARNING, logger="videopython.ai.dubbing.pipeline"):
+            result = pipeline.process(
+                source_audio=sample_audio,
+                target_lang="es",
+                preserve_background=False,
+                voice_clone=False,
+                enable_diarization=False,
+                transcription=self._garbage_transcription(),
+            )
+
+        assert result.transcript_quality is not None
+        assert result.transcript_quality.recommendation == "reject"
+        assert any("Transcript quality flags" in r.message for r in caplog.records)
+
+    def test_dubber_propagates_strict_quality_to_pipeline(self):
+        from videopython.ai.dubbing import VideoDubber
+
+        dubber = VideoDubber(strict_quality=True)
+        dubber._init_local_pipeline()
+
+        assert dubber._local_pipeline.strict_quality is True
+
+    def test_dubber_default_strict_quality_is_false(self):
+        from videopython.ai.dubbing import VideoDubber
+
+        dubber = VideoDubber()
+        assert dubber.strict_quality is False

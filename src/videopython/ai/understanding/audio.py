@@ -122,6 +122,9 @@ class AudioToText:
                 end=segment["end"],
                 text=segment["text"],
                 words=transcription_words,
+                avg_logprob=segment.get("avg_logprob"),
+                no_speech_prob=segment.get("no_speech_prob"),
+                compression_ratio=segment.get("compression_ratio"),
             )
             transcription_segments.append(transcription_segment)
 

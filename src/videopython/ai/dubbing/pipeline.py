@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING, Any, Callable, Literal
 
 import numpy as np
 
-from videopython.ai.dubbing.models import DubbingResult, RevoiceResult, SeparatedAudio
+from videopython.ai.dubbing.models import DubbingResult, RevoiceResult, SeparatedAudio, TimingSummary
+from videopython.ai.dubbing.quality import GarbageTranscriptError, assess_transcript
 from videopython.ai.dubbing.timing import TimingSynchronizer
 
 if TYPE_CHECKING:
@@ -46,6 +47,14 @@ WhisperModel = Literal["tiny", "base", "small", "medium", "large", "turbo"]
 
 logger = logging.getLogger(__name__)
 
+# Voice-sample quality gating thresholds. Tuned conservatively to favor
+# accepting real-world dialogue over rejecting it; failures fall back to
+# the longest segment with a WARNING log so we can re-tune from production
+# data instead of guessing.
+PEAK_CLIP_THRESHOLD = 0.99
+MIN_VOCAL_BG_RMS_RATIO = 1.5
+VOICE_SAMPLE_TARGET_DURATION = 6.0
+
 
 class LocalDubbingPipeline:
     """Local pipeline for video dubbing.
@@ -64,6 +73,7 @@ class LocalDubbingPipeline:
         condition_on_previous_text: bool = False,
         no_speech_threshold: float = 0.6,
         logprob_threshold: float | None = -1.0,
+        strict_quality: bool = False,
     ):
         self.device = device
         self.low_memory = low_memory
@@ -71,6 +81,7 @@ class LocalDubbingPipeline:
         self.condition_on_previous_text = condition_on_previous_text
         self.no_speech_threshold = no_speech_threshold
         self.logprob_threshold = logprob_threshold
+        self.strict_quality = strict_quality
         requested = device.lower() if isinstance(device, str) else "auto"
         logger.info(
             "LocalDubbingPipeline initialized with device=%s low_memory=%s whisper_model=%s",
@@ -141,12 +152,25 @@ class LocalDubbingPipeline:
 
     def _extract_voice_samples(
         self,
-        audio: Any,
+        vocal_audio: Any,
+        background_audio: Any | None,
         transcription: Any,
         min_duration: float = 3.0,
         max_duration: float = 10.0,
     ) -> dict[str, Any]:
-        """Extract voice samples for each speaker from the audio."""
+        """Extract a per-speaker voice sample with quality gating.
+
+        Picks the highest-scored segment per speaker after rejecting clipped
+        slices (peak >= ``PEAK_CLIP_THRESHOLD``) and slices where Demucs left
+        the background louder than the vocals
+        (``vocal_rms / bg_rms < MIN_VOCAL_BG_RMS_RATIO``). When the
+        background track isn't available (e.g. ``revoice`` after
+        ``low_memory`` dropped it), the RMS check is skipped silently.
+
+        Falls back to the longest available segment with a WARNING log when
+        every candidate is rejected, so the dub continues with the best
+        sample we have rather than silently dropping the speaker.
+        """
         from videopython.base.audio import Audio
 
         voice_samples: dict[str, Audio] = {}
@@ -159,28 +183,105 @@ class LocalDubbingPipeline:
             segments_by_speaker[speaker].append(segment)
 
         for speaker, segments in segments_by_speaker.items():
-            target_duration = 6.0
-            best_segment = None
-            best_diff = float("inf")
+            chosen, fallback_reason = self._pick_voice_segment(
+                speaker, segments, vocal_audio, background_audio, min_duration
+            )
 
-            for segment in segments:
-                duration = segment.end - segment.start
-                if duration >= min_duration:
-                    diff = abs(duration - target_duration)
-                    if diff < best_diff:
-                        best_diff = diff
-                        best_segment = segment
+            if chosen is None:
+                logger.warning("No usable voice-sample segment for speaker %r (no candidates)", speaker)
+                continue
 
-            if best_segment is not None:
-                start = best_segment.start
-                end = min(best_segment.end, start + max_duration)
-                sliced = audio.slice(start, end)
-                # Audio.slice returns a numpy view into the source. Copy so the
-                # short voice sample doesn't keep the full vocals array (~1.3 GB
-                # for 2h sources) alive across translate + TTS.
-                voice_samples[speaker] = Audio(sliced.data.copy(), sliced.metadata)
+            if fallback_reason is not None:
+                logger.warning(
+                    "Voice-sample quality fallback for speaker %r (%d candidates): %s — using longest segment",
+                    speaker,
+                    len(segments),
+                    fallback_reason,
+                )
+
+            start = chosen.start
+            end = min(chosen.end, start + max_duration)
+            sliced = vocal_audio.slice(start, end)
+            # Audio.slice returns a numpy view into the source. Copy so the
+            # short voice sample doesn't keep the full vocals array (~1.3 GB
+            # for 2h sources) alive across translate + TTS.
+            voice_samples[speaker] = Audio(sliced.data.copy(), sliced.metadata)
 
         return voice_samples
+
+    def _pick_voice_segment(
+        self,
+        speaker: str,
+        segments: list[Any],
+        vocal_audio: Any,
+        background_audio: Any | None,
+        min_duration: float,
+    ) -> tuple[Any | None, str | None]:
+        """Score eligible segments and pick the best one for ``speaker``.
+
+        Returns ``(segment, fallback_reason)``. ``fallback_reason`` is None
+        when scoring picked a segment cleanly; non-None when every candidate
+        was rejected and the longest segment was used instead.
+        """
+        if not segments:
+            return None, None
+
+        eligible = [s for s in segments if (s.end - s.start) >= min_duration]
+
+        rejection_reasons: list[str] = []
+        scored: list[tuple[float, Any]] = []
+        for segment in eligible:
+            score, reason = self._score_voice_segment(segment, vocal_audio, background_audio)
+            if score is None:
+                rejection_reasons.append(reason or "rejected")
+            else:
+                scored.append((score, segment))
+
+        if scored:
+            scored.sort(key=lambda item: item[0], reverse=True)
+            return scored[0][1], None
+
+        # All eligible segments rejected (or none met the min duration).
+        # Fall back to the longest segment overall so the speaker still
+        # gets a clone reference.
+        longest = max(segments, key=lambda s: s.end - s.start)
+        if eligible:
+            reason = ", ".join(sorted(set(rejection_reasons)))
+        else:
+            reason = f"no segment >= {min_duration:.1f}s"
+        return longest, reason
+
+    def _score_voice_segment(
+        self,
+        segment: Any,
+        vocal_audio: Any,
+        background_audio: Any | None,
+    ) -> tuple[float | None, str | None]:
+        """Return ``(score, reason)`` for a candidate segment.
+
+        ``score`` is ``None`` when the segment is rejected; ``reason`` carries
+        the rejection cause so the fallback logger can summarize.
+        """
+        vocal_slice = vocal_audio.slice(segment.start, segment.end)
+        if vocal_slice.data.size == 0:
+            return None, "empty slice"
+
+        peak = float(np.max(np.abs(vocal_slice.data)))
+        if peak >= PEAK_CLIP_THRESHOLD:
+            return None, "clipped"
+
+        vocal_rms = float(np.sqrt(np.mean(vocal_slice.data**2)))
+
+        if background_audio is not None:
+            bg_slice = background_audio.slice(segment.start, segment.end)
+            if bg_slice.data.size > 0:
+                bg_rms = float(np.sqrt(np.mean(bg_slice.data**2)))
+                if bg_rms > 0 and (vocal_rms / bg_rms) < MIN_VOCAL_BG_RMS_RATIO:
+                    return None, "background-dominated"
+
+        duration = segment.end - segment.start
+        duration_penalty = abs(duration - VOICE_SAMPLE_TARGET_DURATION)
+        return vocal_rms - 0.05 * duration_penalty, None
 
     def process(
         self,
@@ -266,6 +367,23 @@ class LocalDubbingPipeline:
                 target_lang=target_lang,
             )
 
+        # Cheap heuristic gate before the expensive Demucs/translation/TTS
+        # stages. Lets strict_quality callers refuse-and-refund without
+        # running the rest of the pipeline; non-strict runs continue but
+        # surface the assessment on DubbingResult.
+        transcript_quality = assess_transcript(transcription, source_audio.metadata.duration_seconds)
+        if transcript_quality.recommendation == "reject" and self.strict_quality:
+            raise GarbageTranscriptError(
+                f"Refusing to dub: {', '.join(transcript_quality.flags)}",
+                transcript_quality,
+            )
+        if transcript_quality.recommendation in ("warn", "reject"):
+            logger.warning(
+                "Transcript quality flags raised: %s (recommendation=%s)",
+                ", ".join(transcript_quality.flags),
+                transcript_quality.recommendation,
+            )
+
         detected_lang = source_lang or transcription.language or "en"
 
         separated_audio: SeparatedAudio | None = None
@@ -303,7 +421,7 @@ class LocalDubbingPipeline:
         voice_samples: dict[str, Audio] = {}
         if voice_clone:
             report_progress("Extracting voice samples", 0.25)
-            voice_samples = self._extract_voice_samples(vocal_audio, transcription)
+            voice_samples = self._extract_voice_samples(vocal_audio, background_audio, transcription)
 
         # vocals is no longer needed; voice_samples are independent copies.
         # In low_memory mode this is the only ref keeping the buffer alive
@@ -314,10 +432,19 @@ class LocalDubbingPipeline:
         if self._translator is None:
             self._init_translator()
 
+        # Translation stage spans 0.35 → 0.50 of overall pipeline progress.
+        # MarianMT runs sequentially over 8-segment batches; on a 15-min
+        # source that's minutes of silent dwell on 0.35 without per-batch
+        # ticks. Map the [0,1] translation fraction onto that 15% window.
+        def _on_translation_progress(fraction: float) -> None:
+            clamped = max(0.0, min(1.0, fraction))
+            report_progress(f"Translating text ({int(clamped * 100)}%)", 0.35 + 0.15 * clamped)
+
         translated_segments = self._translator.translate_segments(
             segments=transcription.segments,
             target_lang=target_lang,
             source_lang=detected_lang,
+            progress_callback=_on_translation_progress,
         )
         self._maybe_unload("_translator")
 
@@ -393,7 +520,8 @@ class LocalDubbingPipeline:
             self._init_synchronizer()
         assert self._synchronizer is not None
 
-        synchronized_segments, _ = self._synchronizer.synchronize_segments(dubbed_segments, target_durations)
+        synchronized_segments, adjustments = self._synchronizer.synchronize_segments(dubbed_segments, target_durations)
+        timing_summary = TimingSummary.from_adjustments(adjustments)
         del dubbed_segments
 
         report_progress("Assembling final audio", 0.90)
@@ -429,6 +557,8 @@ class LocalDubbingPipeline:
             target_lang=target_lang,
             separated_audio=separated_audio,
             voice_samples=voice_samples,
+            timing_summary=timing_summary,
+            transcript_quality=transcript_quality,
         )
 
     def revoice(
@@ -486,7 +616,10 @@ class LocalDubbingPipeline:
         voice_sample: Audio | None = None
 
         if transcription.segments:
-            voice_samples = self._extract_voice_samples(vocal_audio, transcription)
+            # revoice doesn't track the background after the low_memory drop,
+            # so quality gating degrades to "no RMS check" here. Clipping is
+            # still rejected.
+            voice_samples = self._extract_voice_samples(vocal_audio, None, transcription)
             if voice_samples:
                 voice_sample = next(iter(voice_samples.values()))
 

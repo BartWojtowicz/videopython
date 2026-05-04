@@ -805,6 +805,61 @@ class TestTranscriptionSerialization:
         restored = Transcription.from_dict(data)
         assert restored.language is None
 
+    def test_segment_confidence_fields_roundtrip(self):
+        """avg_logprob/no_speech_prob/compression_ratio survive to_dict/from_dict."""
+        words = [TranscriptionWord(start=0.0, end=1.0, word="hi")]
+        segment = TranscriptionSegment(
+            start=0.0,
+            end=1.0,
+            text="hi",
+            words=words,
+            speaker="SPEAKER_00",
+            avg_logprob=-0.7,
+            no_speech_prob=0.05,
+            compression_ratio=1.8,
+        )
+
+        data = segment.to_dict()
+        assert data["avg_logprob"] == -0.7
+        assert data["no_speech_prob"] == 0.05
+        assert data["compression_ratio"] == 1.8
+
+        restored = TranscriptionSegment.from_dict(data)
+        assert restored.avg_logprob == -0.7
+        assert restored.no_speech_prob == 0.05
+        assert restored.compression_ratio == 1.8
+
+    def test_segment_confidence_fields_default_none(self):
+        """Segments built without confidence fields serialize None and round-trip."""
+        words = [TranscriptionWord(start=0.0, end=1.0, word="hi")]
+        segment = TranscriptionSegment(start=0.0, end=1.0, text="hi", words=words)
+
+        data = segment.to_dict()
+        assert data["avg_logprob"] is None
+        assert data["no_speech_prob"] is None
+        assert data["compression_ratio"] is None
+
+        restored = TranscriptionSegment.from_dict(data)
+        assert restored.avg_logprob is None
+        assert restored.no_speech_prob is None
+        assert restored.compression_ratio is None
+
+    def test_segment_from_dict_back_compat_without_confidence_keys(self):
+        """Old persisted JSON without the new keys must still load (back-compat)."""
+        data = {
+            "start": 0.0,
+            "end": 1.0,
+            "text": "hi",
+            "words": [{"start": 0.0, "end": 1.0, "word": "hi", "speaker": None}],
+            "speaker": None,
+        }
+
+        restored = TranscriptionSegment.from_dict(data)
+        assert restored.text == "hi"
+        assert restored.avg_logprob is None
+        assert restored.no_speech_prob is None
+        assert restored.compression_ratio is None
+
 
 class TestTranscriptionSrt:
     """Tests for SRT export and import methods."""
