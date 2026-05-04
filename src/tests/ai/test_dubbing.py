@@ -377,6 +377,185 @@ class TestDubbingResult:
         assert len(by_speaker["speaker_1"]) == 1
 
 
+class TestTimingSummary:
+    """Tests for TimingSummary aggregation over TimingAdjustments."""
+
+    def test_empty_adjustments(self):
+        """Empty list yields a zeroed summary with mean speed 1.0."""
+        from videopython.ai.dubbing.models import TimingSummary
+
+        summary = TimingSummary.from_adjustments([])
+
+        assert summary.total_segments == 0
+        assert summary.clean_count == 0
+        assert summary.stretched_count == 0
+        assert summary.truncated_count == 0
+        assert summary.mean_speed_factor == 1.0
+        assert summary.max_truncation_seconds == 0.0
+
+    def test_classifies_clean_stretched_truncated(self):
+        """Mixed adjustments are bucketed into clean / stretched / truncated."""
+        from videopython.ai.dubbing.models import TimingSummary
+        from videopython.ai.dubbing.timing import TimingAdjustment
+
+        adjustments = [
+            # Clean: speed factor within tolerance, not truncated.
+            TimingAdjustment(
+                segment_index=0,
+                original_duration=2.0,
+                target_duration=2.0,
+                actual_duration=2.0,
+                speed_factor=1.0,
+                was_truncated=False,
+            ),
+            # Stretched up.
+            TimingAdjustment(
+                segment_index=1,
+                original_duration=2.0,
+                target_duration=2.0,
+                actual_duration=1.9,
+                speed_factor=1.05,
+                was_truncated=False,
+            ),
+            # Stretched down.
+            TimingAdjustment(
+                segment_index=2,
+                original_duration=2.0,
+                target_duration=2.5,
+                actual_duration=2.5,
+                speed_factor=0.85,
+                was_truncated=False,
+            ),
+            # Stretched at max speed but not truncated.
+            TimingAdjustment(
+                segment_index=3,
+                original_duration=2.6,
+                target_duration=2.0,
+                actual_duration=2.0,
+                speed_factor=1.3,
+                was_truncated=False,
+            ),
+            # Truncated: clamped at max speed but still too long.
+            TimingAdjustment(
+                segment_index=4,
+                original_duration=4.0,
+                target_duration=2.0,
+                actual_duration=2.0,
+                speed_factor=1.3,
+                was_truncated=True,
+            ),
+        ]
+
+        summary = TimingSummary.from_adjustments(adjustments)
+
+        assert summary.total_segments == 5
+        assert summary.clean_count == 1
+        assert summary.stretched_count == 3
+        assert summary.truncated_count == 1
+        # Mean of 1.0, 1.05, 0.85, 1.3, 1.3 = 1.10.
+        assert summary.mean_speed_factor == pytest.approx(1.10)
+        # Worst-case truncation: 4.0 - 2.0 = 2.0s.
+        assert summary.max_truncation_seconds == pytest.approx(2.0)
+
+    def test_max_truncation_picks_worst_case(self):
+        """max_truncation_seconds is the largest (original - actual) across truncated segments."""
+        from videopython.ai.dubbing.models import TimingSummary
+        from videopython.ai.dubbing.timing import TimingAdjustment
+
+        adjustments = [
+            TimingAdjustment(
+                segment_index=0,
+                original_duration=3.0,
+                target_duration=2.0,
+                actual_duration=2.0,
+                speed_factor=1.3,
+                was_truncated=True,
+            ),
+            TimingAdjustment(
+                segment_index=1,
+                original_duration=10.0,
+                target_duration=5.0,
+                actual_duration=5.0,
+                speed_factor=1.3,
+                was_truncated=True,
+            ),
+        ]
+
+        summary = TimingSummary.from_adjustments(adjustments)
+
+        assert summary.truncated_count == 2
+        assert summary.max_truncation_seconds == pytest.approx(5.0)
+
+    def test_round_trip_to_dict(self):
+        """from_dict(to_dict(s)) must equal the original summary."""
+        from videopython.ai.dubbing.models import TimingSummary
+
+        summary = TimingSummary(
+            total_segments=10,
+            clean_count=5,
+            stretched_count=3,
+            truncated_count=2,
+            mean_speed_factor=1.12,
+            max_truncation_seconds=0.7,
+        )
+
+        restored = TimingSummary.from_dict(summary.to_dict())
+        assert restored == summary
+
+    def test_dubbing_result_carries_summary(self, sample_audio, sample_segment):
+        """DubbingResult accepts and exposes a TimingSummary."""
+        from videopython.ai.dubbing.models import TimingSummary
+        from videopython.base.text.transcription import Transcription
+
+        translated = TranslatedSegment(
+            original_segment=sample_segment,
+            translated_text="Hola mundo",
+            source_lang="en",
+            target_lang="es",
+        )
+        summary = TimingSummary(
+            total_segments=1,
+            clean_count=1,
+            stretched_count=0,
+            truncated_count=0,
+            mean_speed_factor=1.0,
+            max_truncation_seconds=0.0,
+        )
+
+        result = DubbingResult(
+            dubbed_audio=sample_audio,
+            translated_segments=[translated],
+            source_transcription=Transcription(segments=[sample_segment]),
+            source_lang="en",
+            target_lang="es",
+            timing_summary=summary,
+        )
+
+        assert result.timing_summary is summary
+        assert result.timing_summary.total_segments == 1
+
+    def test_dubbing_result_default_timing_summary_none(self, sample_audio, sample_segment):
+        """DubbingResult constructed without a TimingSummary keeps the field as None (back-compat)."""
+        from videopython.base.text.transcription import Transcription
+
+        translated = TranslatedSegment(
+            original_segment=sample_segment,
+            translated_text="Hola mundo",
+            source_lang="en",
+            target_lang="es",
+        )
+
+        result = DubbingResult(
+            dubbed_audio=sample_audio,
+            translated_segments=[translated],
+            source_transcription=Transcription(segments=[sample_segment]),
+            source_lang="en",
+            target_lang="es",
+        )
+
+        assert result.timing_summary is None
+
+
 class TestVideoDubber:
     """Tests for VideoDubber class."""
 

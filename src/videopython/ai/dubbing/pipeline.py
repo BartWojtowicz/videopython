@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Callable, Literal
 
 import numpy as np
 
-from videopython.ai.dubbing.models import DubbingResult, RevoiceResult, SeparatedAudio
+from videopython.ai.dubbing.models import DubbingResult, RevoiceResult, SeparatedAudio, TimingSummary
 from videopython.ai.dubbing.timing import TimingSynchronizer
 
 if TYPE_CHECKING:
@@ -393,7 +393,8 @@ class LocalDubbingPipeline:
             self._init_synchronizer()
         assert self._synchronizer is not None
 
-        synchronized_segments, _ = self._synchronizer.synchronize_segments(dubbed_segments, target_durations)
+        synchronized_segments, adjustments = self._synchronizer.synchronize_segments(dubbed_segments, target_durations)
+        timing_summary = TimingSummary.from_adjustments(adjustments)
         del dubbed_segments
 
         report_progress("Assembling final audio", 0.90)
@@ -429,6 +430,7 @@ class LocalDubbingPipeline:
             target_lang=target_lang,
             separated_audio=separated_audio,
             voice_samples=voice_samples,
+            timing_summary=timing_summary,
         )
 
     def revoice(

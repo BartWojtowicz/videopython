@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
 from videopython.base.audio import Audio
 from videopython.base.text.transcription import Transcription, TranscriptionSegment
+
+if TYPE_CHECKING:
+    from videopython.ai.dubbing.timing import TimingAdjustment
 
 
 @dataclass
@@ -74,6 +78,90 @@ class SeparatedAudio:
 
 
 @dataclass
+class TimingSummary:
+    """Aggregate stats over per-segment timing adjustments.
+
+    Surfaces how aggressively the timing synchronizer had to compress or
+    truncate dubbed segments to fit the source's spoken regions. High
+    truncation rates indicate translation produced text too long for the
+    source duration.
+    """
+
+    total_segments: int
+    clean_count: int
+    stretched_count: int
+    truncated_count: int
+    mean_speed_factor: float
+    max_truncation_seconds: float
+
+    # Speed factors within this band of 1.0 are considered clean.
+    _CLEAN_SPEED_TOLERANCE = 0.01
+
+    @classmethod
+    def from_adjustments(cls, adjustments: list[TimingAdjustment]) -> TimingSummary:
+        """Aggregate a list of TimingAdjustments into a TimingSummary."""
+        total = len(adjustments)
+        if total == 0:
+            return cls(
+                total_segments=0,
+                clean_count=0,
+                stretched_count=0,
+                truncated_count=0,
+                mean_speed_factor=1.0,
+                max_truncation_seconds=0.0,
+            )
+
+        clean = 0
+        stretched = 0
+        truncated = 0
+        speed_sum = 0.0
+        max_truncation = 0.0
+        for adj in adjustments:
+            speed_sum += adj.speed_factor
+            if adj.was_truncated:
+                truncated += 1
+                truncation = adj.original_duration - adj.actual_duration
+                if truncation > max_truncation:
+                    max_truncation = truncation
+            elif abs(adj.speed_factor - 1.0) <= cls._CLEAN_SPEED_TOLERANCE:
+                clean += 1
+            else:
+                stretched += 1
+
+        return cls(
+            total_segments=total,
+            clean_count=clean,
+            stretched_count=stretched,
+            truncated_count=truncated,
+            mean_speed_factor=speed_sum / total,
+            max_truncation_seconds=max_truncation,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "total_segments": self.total_segments,
+            "clean_count": self.clean_count,
+            "stretched_count": self.stretched_count,
+            "truncated_count": self.truncated_count,
+            "mean_speed_factor": self.mean_speed_factor,
+            "max_truncation_seconds": self.max_truncation_seconds,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> TimingSummary:
+        """Create TimingSummary from dictionary."""
+        return cls(
+            total_segments=data["total_segments"],
+            clean_count=data["clean_count"],
+            stretched_count=data["stretched_count"],
+            truncated_count=data["truncated_count"],
+            mean_speed_factor=data["mean_speed_factor"],
+            max_truncation_seconds=data["max_truncation_seconds"],
+        )
+
+
+@dataclass
 class DubbingResult:
     """Result of a video dubbing operation.
 
@@ -85,6 +173,7 @@ class DubbingResult:
         target_lang: Target language for dubbing.
         separated_audio: Separated audio components (if preserve_background=True).
         voice_samples: Dictionary mapping speaker IDs to voice sample Audio.
+        timing_summary: Aggregate stats over per-segment timing adjustments.
     """
 
     dubbed_audio: Audio
@@ -94,6 +183,7 @@ class DubbingResult:
     target_lang: str
     separated_audio: SeparatedAudio | None = None
     voice_samples: dict[str, Audio] = field(default_factory=dict)
+    timing_summary: TimingSummary | None = None
 
     @property
     def num_segments(self) -> int:
