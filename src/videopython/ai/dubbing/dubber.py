@@ -29,6 +29,14 @@ class VideoDubber:
             give better accuracy at the cost of VRAM and latency. One of
             ``tiny``, ``base``, ``small``, ``medium``, ``large``, ``turbo``.
             Default ``turbo``.
+        condition_on_previous_text: Forwarded to ``AudioToText``. Defaults to
+            ``False`` (Whisper's own default is ``True``). With conditioning on,
+            a single hallucinated filler phrase cascades through the rest of
+            the file. See ``AudioToText`` for the full rationale.
+        no_speech_threshold: Forwarded to ``AudioToText``. Whisper's no-speech
+            gate; raise to drop more low-confidence windows.
+        logprob_threshold: Forwarded to ``AudioToText``. Whisper's average
+            log-probability gate.
     """
 
     def __init__(
@@ -36,10 +44,16 @@ class VideoDubber:
         device: str | None = None,
         low_memory: bool = False,
         whisper_model: WhisperModel = "turbo",
+        condition_on_previous_text: bool = False,
+        no_speech_threshold: float = 0.6,
+        logprob_threshold: float | None = -1.0,
     ):
         self.device = device
         self.low_memory = low_memory
         self.whisper_model = whisper_model
+        self.condition_on_previous_text = condition_on_previous_text
+        self.no_speech_threshold = no_speech_threshold
+        self.logprob_threshold = logprob_threshold
         self._local_pipeline: Any = None
         requested = device.lower() if isinstance(device, str) else "auto"
         logger.info(
@@ -56,6 +70,9 @@ class VideoDubber:
             device=self.device,
             low_memory=self.low_memory,
             whisper_model=self.whisper_model,
+            condition_on_previous_text=self.condition_on_previous_text,
+            no_speech_threshold=self.no_speech_threshold,
+            logprob_threshold=self.logprob_threshold,
         )
 
     def dub(

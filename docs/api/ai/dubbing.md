@@ -134,6 +134,23 @@ dubber = VideoDubber(whisper_model="tiny")
 
 Supported sizes: `tiny`, `base`, `small`, `medium`, `large`, `turbo`.
 
+### Anti-Hallucination Knobs
+
+`VideoDubber` forwards three Whisper decoder kwargs to `AudioToText` so dubbing
+inherits the same defaults — most importantly `condition_on_previous_text=False`,
+which prevents a single hallucinated filler from cascading through the whole
+dubbed track on noisy or sparse-speech inputs.
+
+```python
+# Defaults already protect against the cascading-hallucination failure mode.
+dubber = VideoDubber()
+
+# Tighter no-speech gate for a film with heavy ambient music.
+dubber = VideoDubber(no_speech_threshold=0.85)
+```
+
+See [`AudioToText`](understanding.md#audiototext) for the full rationale.
+
 ### Supplying a Pre-Computed Transcription
 
 `dub()`, `dub_and_replace()`, and `dub_file()` accept an optional `transcription`

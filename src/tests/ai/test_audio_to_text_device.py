@@ -167,6 +167,104 @@ class TestVadDisabled:
         assert fake_whisper.transcribe_calls[0]["language"] is None
 
 
+class TestAntiHallucinationKwargs:
+    """The three Whisper anti-hallucination kwargs must reach both transcribe()
+    call sites (plain and diarization branches), with new-default values when
+    the caller doesn't override and with overridden values when they do."""
+
+    EXPECTED_DEFAULTS = {
+        "condition_on_previous_text": False,
+        "no_speech_threshold": 0.6,
+        "logprob_threshold": -1.0,
+    }
+
+    def test_defaults_forwarded_plain_branch(
+        self,
+        cpu_transcriber: audio_mod.AudioToText,
+        fake_whisper: _FakeWhisperModel,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(audio_mod.AudioToText, "_run_vad", lambda self, _a: [(0.0, 1.0)])
+        monkeypatch.setattr(audio_mod.AudioToText, "_detect_language", lambda self, _a, _s: "ja")
+
+        cpu_transcriber.transcribe(_short_audio())
+
+        call = fake_whisper.transcribe_calls[0]
+        for key, expected in self.EXPECTED_DEFAULTS.items():
+            assert call[key] == expected, f"{key}: expected {expected!r}, got {call[key]!r}"
+
+    def test_defaults_forwarded_diarization_branch(
+        self, fake_whisper: _FakeWhisperModel, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(audio_mod, "select_device", lambda _r, mps_allowed=False: "cpu")
+        transcriber = audio_mod.AudioToText(enable_diarization=True, device=None)
+
+        def fake_init_diarization(self: Any) -> None:
+            class _EmptyAnnotation:
+                def itertracks(self, yield_label: bool = True):
+                    return iter([])
+
+            class _DiarOutput:
+                exclusive_speaker_diarization = _EmptyAnnotation()
+
+            self._diarization_pipeline = lambda _payload: _DiarOutput()
+
+        monkeypatch.setattr(audio_mod.AudioToText, "_init_diarization", fake_init_diarization)
+        monkeypatch.setattr(audio_mod.AudioToText, "_run_vad", lambda self, _a: [(0.0, 1.0)])
+        monkeypatch.setattr(audio_mod.AudioToText, "_detect_language", lambda self, _a, _s: "ja")
+
+        transcriber.transcribe(_short_audio())
+
+        call = fake_whisper.transcribe_calls[0]
+        for key, expected in self.EXPECTED_DEFAULTS.items():
+            assert call[key] == expected
+
+    def test_overrides_forwarded(self, fake_whisper: _FakeWhisperModel, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(audio_mod, "select_device", lambda _r, mps_allowed=False: "cpu")
+        transcriber = audio_mod.AudioToText(
+            condition_on_previous_text=True,
+            no_speech_threshold=0.85,
+            logprob_threshold=-0.5,
+            device=None,
+        )
+        monkeypatch.setattr(audio_mod.AudioToText, "_run_vad", lambda self, _a: [(0.0, 1.0)])
+        monkeypatch.setattr(audio_mod.AudioToText, "_detect_language", lambda self, _a, _s: "ja")
+
+        transcriber.transcribe(_short_audio())
+
+        call = fake_whisper.transcribe_calls[0]
+        assert call["condition_on_previous_text"] is True
+        assert call["no_speech_threshold"] == 0.85
+        assert call["logprob_threshold"] == -0.5
+
+    def test_logprob_threshold_none_is_forwarded(
+        self, fake_whisper: _FakeWhisperModel, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Whisper accepts None to disable the gate; the helper must not drop it.
+        monkeypatch.setattr(audio_mod, "select_device", lambda _r, mps_allowed=False: "cpu")
+        transcriber = audio_mod.AudioToText(logprob_threshold=None, device=None)
+        monkeypatch.setattr(audio_mod.AudioToText, "_run_vad", lambda self, _a: [(0.0, 1.0)])
+        monkeypatch.setattr(audio_mod.AudioToText, "_detect_language", lambda self, _a, _s: "ja")
+
+        transcriber.transcribe(_short_audio())
+
+        call = fake_whisper.transcribe_calls[0]
+        assert "logprob_threshold" in call
+        assert call["logprob_threshold"] is None
+
+    def test_kwargs_forwarded_with_vad_disabled(
+        self, fake_whisper: _FakeWhisperModel, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(audio_mod, "select_device", lambda _r, mps_allowed=False: "cpu")
+        transcriber = audio_mod.AudioToText(enable_vad=False, device=None)
+
+        transcriber.transcribe(_short_audio())
+
+        call = fake_whisper.transcribe_calls[0]
+        for key, expected in self.EXPECTED_DEFAULTS.items():
+            assert call[key] == expected
+
+
 class TestDetectLanguageWindow:
     """_detect_language must build the mel from at most 30s of voiced audio."""
 

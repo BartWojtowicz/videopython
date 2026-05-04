@@ -941,17 +941,80 @@ class TestWhisperModelSelection:
         captured: dict[str, object] = {}
 
         class FakeAudioToText:
-            def __init__(self, model_name, device, enable_diarization):
-                captured["model_name"] = model_name
-                captured["device"] = device
-                captured["enable_diarization"] = enable_diarization
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
 
         monkeypatch.setattr(audio_mod, "AudioToText", FakeAudioToText)
 
         pipeline = LocalDubbingPipeline(whisper_model="medium")
         pipeline._init_transcriber(enable_diarization=True)
 
-        assert captured == {"model_name": "medium", "device": None, "enable_diarization": True}
+        assert captured["model_name"] == "medium"
+        assert captured["device"] is None
+        assert captured["enable_diarization"] is True
+
+
+class TestAntiHallucinationKwargPlumbing:
+    """The three Whisper anti-hallucination kwargs must flow VideoDubber ->
+    LocalDubbingPipeline -> AudioToText with the documented defaults and
+    overrides."""
+
+    EXPECTED_DEFAULTS = {
+        "condition_on_previous_text": False,
+        "no_speech_threshold": 0.6,
+        "logprob_threshold": -1.0,
+    }
+
+    def test_pipeline_defaults(self):
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+
+        pipeline = LocalDubbingPipeline()
+        for key, expected in self.EXPECTED_DEFAULTS.items():
+            assert getattr(pipeline, key) == expected
+
+    def test_dubber_defaults(self):
+        from videopython.ai.dubbing import VideoDubber
+
+        dubber = VideoDubber()
+        for key, expected in self.EXPECTED_DEFAULTS.items():
+            assert getattr(dubber, key) == expected
+
+    def test_dubber_propagates_to_pipeline(self):
+        from videopython.ai.dubbing import VideoDubber
+
+        dubber = VideoDubber(
+            condition_on_previous_text=True,
+            no_speech_threshold=0.85,
+            logprob_threshold=-0.5,
+        )
+        dubber._init_local_pipeline()
+
+        assert dubber._local_pipeline.condition_on_previous_text is True
+        assert dubber._local_pipeline.no_speech_threshold == 0.85
+        assert dubber._local_pipeline.logprob_threshold == -0.5
+
+    def test_pipeline_propagates_to_transcriber(self, monkeypatch):
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+        from videopython.ai.understanding import audio as audio_mod
+
+        captured: dict[str, object] = {}
+
+        class FakeAudioToText:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        monkeypatch.setattr(audio_mod, "AudioToText", FakeAudioToText)
+
+        pipeline = LocalDubbingPipeline(
+            condition_on_previous_text=True,
+            no_speech_threshold=0.85,
+            logprob_threshold=None,
+        )
+        pipeline._init_transcriber()
+
+        assert captured["condition_on_previous_text"] is True
+        assert captured["no_speech_threshold"] == 0.85
+        assert captured["logprob_threshold"] is None
 
 
 class TestDiarizeTranscription:
