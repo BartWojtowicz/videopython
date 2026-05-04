@@ -15,6 +15,27 @@ For a single aggregate, serializable analysis object across multiple analyzers, 
 
 ## AudioToText
 
+### Anti-hallucination knobs
+
+Three Whisper decoder kwargs are surfaced for tuning on noisy or sparse-speech
+audio:
+
+```python
+from videopython.ai import AudioToText
+
+# Defaults: condition_on_previous_text=False (the cascading-hallucination fix),
+# no_speech_threshold=0.6, logprob_threshold=-1.0.
+transcriber = AudioToText()
+
+# Tighter no-speech gate to drop more low-confidence windows on a film with
+# heavy ambient music.
+transcriber = AudioToText(no_speech_threshold=0.85)
+
+# Restore Whisper's upstream default conditioning (e.g. for clean podcasts
+# where cross-window context helps disambiguate homophones).
+transcriber = AudioToText(condition_on_previous_text=True)
+```
+
 ::: videopython.ai.AudioToText
 
 ## AudioClassifier

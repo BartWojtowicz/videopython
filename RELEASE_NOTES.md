@@ -1,5 +1,16 @@
 # Release Notes
 
+## 0.27.2
+
+### Changed
+
+- `AudioToText` now defaults to `condition_on_previous_text=False` (Whisper's own default is `True`). With conditioning on, a single hallucinated filler phrase cascades through the rest of the file because each window's decoder is primed by the previous window's decoded text — the textbook Whisper-on-noisy-Japanese failure where the YouTube outro `「ご視聴ありがとうございました」` ("Thank you for watching") repeats across every window. The cost on clean audio is small (slightly less context for ambiguous homophones across sentence boundaries); the benefit on degenerate audio is large. Pass `condition_on_previous_text=True` to restore the previous default.
+
+### Added
+
+- `AudioToText` now exposes three Whisper decoder kwargs: `condition_on_previous_text`, `no_speech_threshold` (default `0.6`, matching Whisper), and `logprob_threshold` (default `-1.0`, matching Whisper). The latter two are surfaced for per-job tuning without behaviour change. All three are forwarded to both the plain and the diarization transcribe paths.
+- `VideoDubber` and `LocalDubbingPipeline` accept the same three kwargs and forward them through to `AudioToText`, so dubbing benefits without a separate code path.
+
 ## 0.27.1
 
 ### Changed

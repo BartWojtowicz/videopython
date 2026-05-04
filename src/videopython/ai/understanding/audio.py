@@ -20,6 +20,20 @@ class AudioToText:
     voiced regions only — fixes Whisper's tendency to lock onto the wrong
     language when the file opens with silence, music, or non-vocal credits.
     Disable with ``enable_vad=False`` to reproduce pre-0.27 behaviour.
+
+    Three Whisper decoder kwargs are surfaced for anti-hallucination tuning:
+
+    - ``condition_on_previous_text`` defaults to ``False`` (Whisper's own
+      default is ``True``). With conditioning on, a single hallucinated filler
+      phrase cascades through the rest of the file because each window's
+      decoder is primed by the previous window's decoded text. Turning it off
+      is the most commonly recommended fix for that failure mode; the cost on
+      clean audio is small (slightly less context for ambiguous homophones
+      across sentence boundaries).
+    - ``no_speech_threshold`` and ``logprob_threshold`` are forwarded with
+      Whisper's documented defaults (``0.6`` and ``-1.0``); raising
+      ``no_speech_threshold`` biases toward dropping low-confidence windows
+      instead of emitting filler.
     """
 
     PYANNOTE_DIARIZATION_MODEL = "pyannote/speaker-diarization-community-1"
@@ -29,11 +43,17 @@ class AudioToText:
         model_name: Literal["tiny", "base", "small", "medium", "large", "turbo"] = "turbo",
         enable_diarization: bool = False,
         enable_vad: bool = True,
+        condition_on_previous_text: bool = False,
+        no_speech_threshold: float = 0.6,
+        logprob_threshold: float | None = -1.0,
         device: str | None = None,
     ):
         self.model_name = model_name
         self.enable_diarization = enable_diarization
         self.enable_vad = enable_vad
+        self.condition_on_previous_text = condition_on_previous_text
+        self.no_speech_threshold = no_speech_threshold
+        self.logprob_threshold = logprob_threshold
         self.device = select_device(device, mps_allowed=False)
         log_device_initialization(
             "AudioToText",
@@ -43,6 +63,16 @@ class AudioToText:
         self._model: Any = None
         self._diarization_pipeline: Any = None
         self._vad_model: Any = None
+
+    def _transcribe_kwargs(self, language: str | None) -> dict[str, Any]:
+        """Kwargs threaded into ``whisper.Whisper.transcribe`` from both call sites."""
+        return {
+            "word_timestamps": True,
+            "language": language,
+            "condition_on_previous_text": self.condition_on_previous_text,
+            "no_speech_threshold": self.no_speech_threshold,
+            "logprob_threshold": self.logprob_threshold,
+        }
 
     def _init_local(self) -> None:
         """Initialize local Whisper model."""
@@ -253,7 +283,7 @@ class AudioToText:
             self._init_diarization()
 
         audio_data = audio_mono.data
-        transcription_result = self._model.transcribe(audio=audio_data, word_timestamps=True, language=language)
+        transcription_result = self._model.transcribe(audio=audio_data, **self._transcribe_kwargs(language))
 
         waveform = torch.from_numpy(audio_data.astype(np.float32)).unsqueeze(0)
         diarization_result = self._diarization_pipeline(
@@ -300,7 +330,7 @@ class AudioToText:
         if self.enable_diarization:
             return self._transcribe_with_diarization(audio_mono, language)
 
-        transcription_result = self._model.transcribe(audio=audio_mono.data, word_timestamps=True, language=language)
+        transcription_result = self._model.transcribe(audio=audio_mono.data, **self._transcribe_kwargs(language))
         return self._process_transcription_result(transcription_result)
 
     def transcribe(self, media: Audio | Video) -> Transcription:

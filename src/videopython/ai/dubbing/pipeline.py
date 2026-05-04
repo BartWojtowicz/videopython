@@ -61,10 +61,16 @@ class LocalDubbingPipeline:
         device: str | None = None,
         low_memory: bool = False,
         whisper_model: WhisperModel = "turbo",
+        condition_on_previous_text: bool = False,
+        no_speech_threshold: float = 0.6,
+        logprob_threshold: float | None = -1.0,
     ):
         self.device = device
         self.low_memory = low_memory
         self.whisper_model = whisper_model
+        self.condition_on_previous_text = condition_on_previous_text
+        self.no_speech_threshold = no_speech_threshold
+        self.logprob_threshold = logprob_threshold
         requested = device.lower() if isinstance(device, str) else "auto"
         logger.info(
             "LocalDubbingPipeline initialized with device=%s low_memory=%s whisper_model=%s",
@@ -106,6 +112,9 @@ class LocalDubbingPipeline:
             model_name=self.whisper_model,
             device=self.device,
             enable_diarization=enable_diarization,
+            condition_on_previous_text=self.condition_on_previous_text,
+            no_speech_threshold=self.no_speech_threshold,
+            logprob_threshold=self.logprob_threshold,
         )
 
     def _init_translator(self) -> None:
