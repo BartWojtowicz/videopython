@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 from videopython.ai._device import log_device_initialization, release_device_memory, select_device
 from videopython.ai.dubbing.models import TranslatedSegment
@@ -135,23 +135,35 @@ class TextTranslator:
         texts: list[str],
         target_lang: str,
         source_lang: str | None = None,
+        progress_callback: Callable[[float], None] | None = None,
     ) -> list[str]:
-        """Translate multiple texts to target language."""
+        """Translate multiple texts to target language.
+
+        ``progress_callback`` is called once per batch with a fraction in
+        ``[0, 1]`` representing translation-stage progress. It always ends
+        at exactly 1.0 even when the final batch is partial. Callers map
+        this fraction onto whatever overall budget makes sense.
+        """
         import torch
 
         if not texts:
+            if progress_callback is not None:
+                progress_callback(1.0)
             return []
 
         effective_source = source_lang or "en"
         if effective_source == target_lang:
+            if progress_callback is not None:
+                progress_callback(1.0)
             return list(texts)
         if self._model is None or self._current_lang_pair != (effective_source, target_lang):
             self._init_local(effective_source, target_lang)
 
         translated: list[str] = []
         batch_size = 8
+        total = len(texts)
 
-        for i in range(0, len(texts), batch_size):
+        for i in range(0, total, batch_size):
             batch = texts[i : i + batch_size]
             inputs = self._tokenizer(batch, return_tensors="pt", padding=True, truncation=True, max_length=512)
             inputs = {k: v.to(self.device) for k, v in inputs.items()}
@@ -162,6 +174,9 @@ class TextTranslator:
             for output in outputs:
                 translated.append(self._tokenizer.decode(output, skip_special_tokens=True))
 
+            if progress_callback is not None:
+                progress_callback(min(1.0, (i + len(batch)) / total))
+
         return translated
 
     def translate_segments(
@@ -169,6 +184,7 @@ class TextTranslator:
         segments: list[TranscriptionSegment],
         target_lang: str,
         source_lang: str | None = None,
+        progress_callback: Callable[[float], None] | None = None,
     ) -> list[TranslatedSegment]:
         """Translate transcription segments while preserving timing/speaker info.
 
@@ -177,12 +193,18 @@ class TextTranslator:
         ``translated_text=""`` instead. This avoids MarianMT hallucinating
         full sentences from " .", "...", or single-token Whisper segments,
         which would otherwise be TTS'd into the dubbed track.
+
+        ``progress_callback`` is forwarded to :meth:`translate_batch` so
+        callers can render translation-stage progress without knowing the
+        batch size.
         """
         effective_source = source_lang or "en"
 
         translatable_indices = [i for i, segment in enumerate(segments) if _is_translatable_text(segment.text)]
         translatable_texts = [segments[i].text for i in translatable_indices]
-        translated_texts = self.translate_batch(translatable_texts, target_lang, source_lang)
+        translated_texts = self.translate_batch(
+            translatable_texts, target_lang, source_lang, progress_callback=progress_callback
+        )
 
         translation_map: dict[int, str] = dict(zip(translatable_indices, translated_texts))
 

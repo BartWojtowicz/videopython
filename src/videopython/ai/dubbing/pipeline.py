@@ -412,10 +412,19 @@ class LocalDubbingPipeline:
         if self._translator is None:
             self._init_translator()
 
+        # Translation stage spans 0.35 → 0.50 of overall pipeline progress.
+        # MarianMT runs sequentially over 8-segment batches; on a 15-min
+        # source that's minutes of silent dwell on 0.35 without per-batch
+        # ticks. Map the [0,1] translation fraction onto that 15% window.
+        def _on_translation_progress(fraction: float) -> None:
+            clamped = max(0.0, min(1.0, fraction))
+            report_progress(f"Translating text ({int(clamped * 100)}%)", 0.35 + 0.15 * clamped)
+
         translated_segments = self._translator.translate_segments(
             segments=transcription.segments,
             target_lang=target_lang,
             source_lang=detected_lang,
+            progress_callback=_on_translation_progress,
         )
         self._maybe_unload("_translator")
 

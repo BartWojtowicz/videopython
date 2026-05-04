@@ -852,7 +852,7 @@ class TestTextTranslator:
 
         translate_calls: list[list[str]] = []
 
-        def fake_translate_batch(self, texts, target_lang, source_lang=None):
+        def fake_translate_batch(self, texts, target_lang, source_lang=None, progress_callback=None):
             translate_calls.append(list(texts))
             return [f"[{t}]" for t in texts]
 
@@ -883,6 +883,203 @@ class TestTextTranslator:
         # Timing/speaker fields preserved on the skipped segments.
         assert result[1].start == 1.0
         assert result[1].end == 2.0
+
+
+class TestTranslationProgressCallback:
+    """Translation-stage progress hooks for callers (M1.4)."""
+
+    @staticmethod
+    def _patch_marian(monkeypatch):
+        """Replace TextTranslator._init_local with a stub model + tokenizer.
+
+        The model just echoes "[i]" tokens for each input row; the tokenizer
+        decodes them as predictable strings. This is enough for the progress
+        callback to fire without loading real Marian weights.
+        """
+        from videopython.ai.generation import translation as translation_mod
+
+        class _FakeTokenizer:
+            def __call__(self, batch, return_tensors=None, padding=None, truncation=None, max_length=None):
+                # Return one "input_ids" tensor per row; .to(device) is a no-op.
+                class _Tensor:
+                    def __init__(self, n: int) -> None:
+                        self._n = n
+
+                    def to(self, _device):
+                        return self
+
+                    def __len__(self):
+                        return self._n
+
+                return {"input_ids": _Tensor(len(batch))}
+
+            def decode(self, output, skip_special_tokens=True):
+                return f"out-{int(output)}"
+
+        class _FakeModel:
+            def generate(self, **kwargs):
+                # One output id per row in the batch.
+                n = len(kwargs["input_ids"])
+                return list(range(n))
+
+        def fake_init_local(self, source_lang, target_lang):
+            self._model = _FakeModel()
+            self._tokenizer = _FakeTokenizer()
+            self._current_lang_pair = (source_lang, target_lang)
+            self.device = "cpu"
+
+        monkeypatch.setattr(translation_mod.TextTranslator, "_init_local", fake_init_local)
+
+    def test_translate_batch_progress_callback_called(self, monkeypatch):
+        """Multiple batches → multiple monotonic ticks ending at 1.0."""
+        from videopython.ai.generation.translation import TextTranslator
+
+        self._patch_marian(monkeypatch)
+        # Avoid touching torch.no_grad in the patched model path.
+        import torch
+
+        monkeypatch.setattr(torch, "no_grad", lambda: __import__("contextlib").nullcontext())
+
+        translator = TextTranslator()
+        # Batch size is 8; 20 texts → 3 batches (8, 8, 4).
+        texts = [f"text-{i}" for i in range(20)]
+
+        ticks: list[float] = []
+        translator.translate_batch(texts, target_lang="es", source_lang="en", progress_callback=ticks.append)
+
+        assert len(ticks) == 3
+        assert ticks == sorted(ticks)
+        assert ticks[-1] == pytest.approx(1.0)
+        # Intermediate ticks land at 8/20 and 16/20.
+        assert ticks[0] == pytest.approx(0.4)
+        assert ticks[1] == pytest.approx(0.8)
+
+    def test_translate_batch_empty_texts_calls_callback_once(self, monkeypatch):
+        """Empty input still emits a single tick at 1.0 so callers don't stall."""
+        from videopython.ai.generation.translation import TextTranslator
+
+        translator = TextTranslator()
+
+        ticks: list[float] = []
+        translator.translate_batch([], target_lang="es", source_lang="en", progress_callback=ticks.append)
+
+        assert ticks == [1.0]
+
+    def test_translate_batch_same_language_calls_callback_once(self):
+        """source==target shortcut still emits a single tick at 1.0."""
+        from videopython.ai.generation.translation import TextTranslator
+
+        translator = TextTranslator()
+
+        ticks: list[float] = []
+        result = translator.translate_batch(
+            ["hello", "world"], target_lang="en", source_lang="en", progress_callback=ticks.append
+        )
+
+        assert result == ["hello", "world"]
+        assert ticks == [1.0]
+
+    def test_translate_segments_forwards_callback(self, monkeypatch):
+        """translate_segments forwards the callback through to translate_batch."""
+        from videopython.ai.generation import translation as translation_mod
+        from videopython.ai.generation.translation import TextTranslator
+
+        forwarded: dict = {}
+
+        def fake_translate_batch(self, texts, target_lang, source_lang=None, progress_callback=None):
+            forwarded["progress_callback"] = progress_callback
+            return [f"[{t}]" for t in texts]
+
+        monkeypatch.setattr(translation_mod.TextTranslator, "translate_batch", fake_translate_batch)
+
+        translator = TextTranslator()
+
+        def sentinel(_fraction: float) -> None:
+            pass
+
+        words = [TranscriptionWord(start=0.0, end=1.0, word="hi")]
+        segments = [TranscriptionSegment(start=0.0, end=1.0, text="hi there", words=words)]
+
+        translator.translate_segments(segments, target_lang="es", source_lang="en", progress_callback=sentinel)
+
+        assert forwarded["progress_callback"] is sentinel
+
+    def test_pipeline_emits_translation_progress(self, sample_audio, monkeypatch):
+        """LocalDubbingPipeline.process() maps translation fraction onto [0.35, 0.50]."""
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+        from videopython.base.text.transcription import (
+            Transcription,
+            TranscriptionSegment,
+            TranscriptionWord,
+        )
+
+        class _FakeTranslator:
+            def translate_segments(self, segments, target_lang, source_lang, progress_callback=None):
+                # Simulate three batch ticks like a 3-batch translation run.
+                if progress_callback is not None:
+                    for fraction in (0.4, 0.8, 1.0):
+                        progress_callback(fraction)
+
+                return [
+                    TranslatedSegment(
+                        original_segment=s,
+                        translated_text=s.text,
+                        source_lang=source_lang,
+                        target_lang=target_lang,
+                    )
+                    for s in segments
+                ]
+
+        def fake_init_translator(self):
+            self._translator = _FakeTranslator()
+
+        def fake_init_tts(self, language="en"):
+            class _FakeTTS:
+                def generate_audio(self, text, voice_sample=None, voice_sample_path=None):
+                    sr = 24000
+                    n = int(sr * 0.2)
+                    return Audio(
+                        np.zeros(n, dtype=np.float32),
+                        AudioMetadata(
+                            sample_rate=sr,
+                            channels=1,
+                            sample_width=2,
+                            duration_seconds=0.2,
+                            frame_count=n,
+                        ),
+                    )
+
+            self._tts = _FakeTTS()
+
+        monkeypatch.setattr(LocalDubbingPipeline, "_init_translator", fake_init_translator)
+        monkeypatch.setattr(LocalDubbingPipeline, "_init_tts", fake_init_tts)
+
+        words = [TranscriptionWord(start=0.0, end=1.0, word="hello")]
+        segs = [TranscriptionSegment(start=0.0, end=1.0, text="hello there", words=words)]
+        transcription = Transcription(segments=segs, language="en")
+
+        captured: list[tuple[str, float]] = []
+        pipeline = LocalDubbingPipeline()
+        pipeline.process(
+            source_audio=sample_audio,
+            target_lang="es",
+            preserve_background=False,
+            voice_clone=False,
+            enable_diarization=False,
+            transcription=transcription,
+            progress_callback=lambda stage, progress: captured.append((stage, progress)),
+        )
+
+        translation_events = [(s, p) for s, p in captured if s.startswith("Translating text")]
+        # Three batch ticks should produce three "Translating text (N%)" events
+        # in the [0.35, 0.50] range — plus the initial "Translating text" event.
+        ticked = [(s, p) for s, p in translation_events if "%" in s]
+        assert len(ticked) == 3
+        assert all(0.35 <= p <= 0.50 + 1e-9 for _, p in ticked)
+        assert ticked[0][1] == pytest.approx(0.35 + 0.15 * 0.4)
+        assert ticked[-1][1] == pytest.approx(0.50)
+        assert any("40%" in s for s, _ in ticked)
+        assert any("100%" in s for s, _ in ticked)
 
 
 class TestAudioSeparator:
@@ -1499,7 +1696,7 @@ class TestPipelineSuppliedTranscriptionDiarization:
         # about how the pipeline handles the supplied transcription.
         def fake_init_translator(self):
             class FakeTranslator:
-                def translate_segments(self, segments, target_lang, source_lang):
+                def translate_segments(self, segments, target_lang, source_lang, progress_callback=None):
                     from videopython.ai.dubbing.models import TranslatedSegment
 
                     return [
@@ -1728,7 +1925,7 @@ class TestVoiceSampleCache:
 
         def fake_init_translator(self):
             class FakeTranslator:
-                def translate_segments(self, segments, target_lang, source_lang):
+                def translate_segments(self, segments, target_lang, source_lang, progress_callback=None):
                     return [
                         TranslatedSegment(
                             original_segment=s,
@@ -1823,7 +2020,7 @@ class TestVoiceSampleCache:
 
         def fake_init_translator(self):
             class FakeTranslator:
-                def translate_segments(self, segments, target_lang, source_lang):
+                def translate_segments(self, segments, target_lang, source_lang, progress_callback=None):
                     return [
                         TranslatedSegment(
                             original_segment=s,
@@ -2297,7 +2494,7 @@ class TestPipelineSpeechRegionGating:
         # Translator and TTS as fakes so we don't touch real models.
         def fake_init_translator(self):
             class FakeTranslator:
-                def translate_segments(self, segments, target_lang, source_lang):
+                def translate_segments(self, segments, target_lang, source_lang, progress_callback=None):
                     return [
                         TranslatedSegment(
                             original_segment=s,
@@ -2381,7 +2578,7 @@ class TestPipelineEmptyTranslationSkipped:
 
         def fake_init_translator(self):
             class FakeTranslator:
-                def translate_segments(self, segments, target_lang, source_lang):
+                def translate_segments(self, segments, target_lang, source_lang, progress_callback=None):
                     # Mimic the real filter: punctuation-only -> "".
                     out = []
                     for s in segments:
