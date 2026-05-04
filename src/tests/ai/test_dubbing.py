@@ -556,6 +556,193 @@ class TestTimingSummary:
         assert result.timing_summary is None
 
 
+class TestVoiceSampleQualityGating:
+    """Quality gating in LocalDubbingPipeline._extract_voice_samples.
+
+    Synthetic audio fixtures only — no models loaded. Each test builds a
+    full-track Audio whose samples encode a per-segment peak/RMS profile,
+    so slicing inside the gating logic recovers the intended quality.
+    """
+
+    SAMPLE_RATE = 16000
+
+    @staticmethod
+    def _segment(start: float, end: float, speaker: str = "speaker_0"):
+        words = [TranscriptionWord(start=start, end=end, word="x")]
+        return TranscriptionSegment(start=start, end=end, text="x", words=words, speaker=speaker)
+
+    @classmethod
+    def _audio_from_sections(cls, sections: list[tuple[float, float, np.ndarray]]):
+        """Build a single Audio whose [start, end) ranges hold the supplied
+        per-section sample arrays (zero-filled elsewhere).
+
+        ``sections`` is a list of ``(start_seconds, end_seconds, data)``.
+        """
+        total_end = max(end for _, end, _ in sections)
+        total_samples = int(total_end * cls.SAMPLE_RATE)
+        buf = np.zeros(total_samples, dtype=np.float32)
+        for start, end, data in sections:
+            start_idx = int(start * cls.SAMPLE_RATE)
+            end_idx = int(end * cls.SAMPLE_RATE)
+            n = min(end_idx - start_idx, len(data))
+            buf[start_idx : start_idx + n] = data[:n]
+        metadata = AudioMetadata(
+            sample_rate=cls.SAMPLE_RATE,
+            channels=1,
+            sample_width=2,
+            duration_seconds=total_end,
+            frame_count=total_samples,
+        )
+        return Audio(buf, metadata)
+
+    @classmethod
+    def _section(cls, duration: float, peak: float, rms_target: float | None = None) -> np.ndarray:
+        """Produce ``duration`` seconds of audio with the given peak.
+
+        When ``rms_target`` is None, fill the segment with constant ``peak``
+        (peak == RMS == peak). When set, scale random noise so the segment
+        has the requested peak amplitude (RMS ~= peak / sqrt(3) for uniform
+        noise; close enough for a synthetic gating test).
+        """
+        n = int(duration * cls.SAMPLE_RATE)
+        if rms_target is None:
+            data = np.full(n, peak, dtype=np.float32)
+        else:
+            rng = np.random.default_rng(0)
+            data = rng.uniform(-1.0, 1.0, size=n).astype(np.float32)
+            data *= peak / max(float(np.max(np.abs(data))), 1e-9)
+        return data
+
+    @pytest.fixture
+    def pipeline(self):
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+
+        return LocalDubbingPipeline(device="cpu")
+
+    @staticmethod
+    def _fake_transcription(segments: list):
+        from videopython.base.text.transcription import Transcription
+
+        return Transcription(segments=segments)
+
+    def test_rejects_clipped_sample(self, pipeline, caplog):
+        """A clipped segment is rejected; the clean one wins even if it's farther from 6s."""
+        clipped = self._segment(0.0, 3.0)  # 3s clipped
+        clean = self._segment(3.0, 7.0)  # 4s clean
+
+        # Clipped at peak ~1.0 (above 0.99 threshold).
+        clipped_audio = self._section(3.0, peak=0.999)
+        # Clean at peak 0.5.
+        clean_audio = self._section(4.0, peak=0.5)
+        vocal = self._audio_from_sections([(0.0, 3.0, clipped_audio), (3.0, 7.0, clean_audio)])
+
+        transcription = self._fake_transcription([clipped, clean])
+
+        samples = pipeline._extract_voice_samples(vocal, None, transcription)
+
+        assert "speaker_0" in samples
+        # The clean sample is in [3, 7). Its data starts at section value 0.5.
+        assert samples["speaker_0"].data[0] == pytest.approx(0.5)
+
+    def test_rejects_background_dominated_sample(self, pipeline):
+        """When a segment's bg RMS exceeds vocal RMS / 1.5, the cleaner one is preferred."""
+        seg_a = self._segment(0.0, 4.0)  # bg-dominated
+        seg_b = self._segment(4.0, 8.0)  # cleaner ratio
+
+        # Constant fills: vocal_rms == bg_rms, ratio = 1.0 (< 1.5) → reject.
+        vocal_a = self._section(4.0, peak=0.3)
+        bg_a = self._section(4.0, peak=0.3)
+        # Ratio = 3.0 → accept.
+        vocal_b = self._section(4.0, peak=0.3)
+        bg_b = self._section(4.0, peak=0.1)
+
+        vocal = self._audio_from_sections([(0.0, 4.0, vocal_a), (4.0, 8.0, vocal_b)])
+        background = self._audio_from_sections([(0.0, 4.0, bg_a), (4.0, 8.0, bg_b)])
+
+        transcription = self._fake_transcription([seg_a, seg_b])
+
+        samples = pipeline._extract_voice_samples(vocal, background, transcription)
+
+        assert "speaker_0" in samples
+        # Picked seg_b: its slice starts at vocal_b's value.
+        chosen = samples["speaker_0"]
+        # All samples in the chosen slice should equal 0.3 (constant fill).
+        assert np.allclose(chosen.data, 0.3)
+
+    def test_falls_back_to_longest_when_all_fail(self, pipeline, caplog):
+        """All clipped: fall back to the longest segment and log a WARNING."""
+        import logging
+
+        a = self._segment(0.0, 3.0)
+        b = self._segment(3.0, 8.0)  # longest at 5s
+        c = self._segment(8.0, 12.0)
+
+        vocal = self._audio_from_sections(
+            [
+                (0.0, 3.0, self._section(3.0, peak=0.999)),
+                (3.0, 8.0, self._section(5.0, peak=0.999)),
+                (8.0, 12.0, self._section(4.0, peak=0.999)),
+            ]
+        )
+
+        transcription = self._fake_transcription([a, b, c])
+
+        with caplog.at_level(logging.WARNING, logger="videopython.ai.dubbing.pipeline"):
+            samples = pipeline._extract_voice_samples(vocal, None, transcription)
+
+        assert "speaker_0" in samples
+        # Longest is b: starts at 3.0s. Sample length should be the full
+        # 5s of b (capped at max_duration=10s, so 5s wins).
+        assert samples["speaker_0"].metadata.duration_seconds == pytest.approx(5.0, abs=0.01)
+        assert any("fallback" in r.message.lower() for r in caplog.records)
+        assert any("clipped" in r.message.lower() for r in caplog.records)
+
+    def test_no_background_audio_skips_rms_check(self, pipeline):
+        """With background_audio=None, RMS check is skipped; clipping still rejected."""
+        clipped = self._segment(0.0, 3.0)
+        clean = self._segment(3.0, 7.0)
+
+        vocal = self._audio_from_sections(
+            [
+                (0.0, 3.0, self._section(3.0, peak=0.999)),
+                # Clean but quiet — no bg comparison, so it should still pass.
+                (3.0, 7.0, self._section(4.0, peak=0.05)),
+            ]
+        )
+
+        transcription = self._fake_transcription([clipped, clean])
+
+        samples = pipeline._extract_voice_samples(vocal, None, transcription)
+
+        assert "speaker_0" in samples
+        # Clean (peak 0.05) wins over clipped despite being quiet — bg check skipped.
+        assert float(np.max(np.abs(samples["speaker_0"].data))) < 0.1
+
+    def test_unchanged_when_all_clean(self, pipeline):
+        """All clean: closest-to-6s segment wins (preserves prior tie-break intent)."""
+        # Three healthy segments; the 6s one should win on duration_penalty.
+        a = self._segment(0.0, 4.0)
+        b = self._segment(4.0, 10.0)  # exactly 6s
+        c = self._segment(10.0, 18.0)  # 8s
+
+        vocal = self._audio_from_sections(
+            [
+                (0.0, 4.0, self._section(4.0, peak=0.4)),
+                # Mark b with a distinct constant so we can identify it.
+                (4.0, 10.0, self._section(6.0, peak=0.5)),
+                (10.0, 18.0, self._section(8.0, peak=0.4)),
+            ]
+        )
+
+        transcription = self._fake_transcription([a, b, c])
+
+        samples = pipeline._extract_voice_samples(vocal, None, transcription)
+
+        chosen = samples["speaker_0"]
+        # Chosen segment is b: peak 0.5.
+        assert float(np.max(np.abs(chosen.data))) == pytest.approx(0.5, abs=1e-3)
+
+
 class TestVideoDubber:
     """Tests for VideoDubber class."""
 
@@ -1534,7 +1721,7 @@ class TestVoiceSampleCache:
         # cache has something to encode. _extract_voice_samples relies on
         # segment durations >= min_duration=3s, which our short fixture lacks;
         # short-circuit to a deterministic per-speaker map.
-        def fake_extract(self, audio, transcription, min_duration=3.0, max_duration=10.0):
+        def fake_extract(self, vocal_audio, background_audio, transcription, min_duration=3.0, max_duration=10.0):
             return {"A": sample_audio, "B": sample_audio}
 
         monkeypatch.setattr(LocalDubbingPipeline, "_extract_voice_samples", fake_extract)
