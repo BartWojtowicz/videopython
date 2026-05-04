@@ -140,21 +140,17 @@ class TextTranslator:
         """Translate multiple texts to target language.
 
         ``progress_callback`` is called once per batch with a fraction in
-        ``[0, 1]`` representing translation-stage progress. It always ends
-        at exactly 1.0 even when the final batch is partial. Callers map
-        this fraction onto whatever overall budget makes sense.
+        ``[0, 1]`` representing translation-stage progress. It does not fire
+        on the empty-input or same-language shortcuts (those are O(0) work
+        and the caller frames its own progress events around the call).
         """
         import torch
 
         if not texts:
-            if progress_callback is not None:
-                progress_callback(1.0)
             return []
 
         effective_source = source_lang or "en"
         if effective_source == target_lang:
-            if progress_callback is not None:
-                progress_callback(1.0)
             return list(texts)
         if self._model is None or self._current_lang_pair != (effective_source, target_lang):
             self._init_local(effective_source, target_lang)

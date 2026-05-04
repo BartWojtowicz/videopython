@@ -13,6 +13,12 @@ if TYPE_CHECKING:
     from videopython.ai.dubbing.timing import TimingAdjustment
 
 
+# Speed factors within this band of 1.0 are treated as a "clean" timing
+# adjustment (no perceptible compression/stretch). Heuristic threshold for
+# the TimingSummary classification only.
+CLEAN_SPEED_TOLERANCE = 0.01
+
+
 @dataclass
 class TranslatedSegment:
     """A segment of translated text with timing information.
@@ -95,9 +101,6 @@ class TimingSummary:
     mean_speed_factor: float
     max_truncation_seconds: float
 
-    # Speed factors within this band of 1.0 are considered clean.
-    _CLEAN_SPEED_TOLERANCE = 0.01
-
     @classmethod
     def from_adjustments(cls, adjustments: list[TimingAdjustment]) -> TimingSummary:
         """Aggregate a list of TimingAdjustments into a TimingSummary."""
@@ -124,7 +127,7 @@ class TimingSummary:
                 truncation = adj.original_duration - adj.actual_duration
                 if truncation > max_truncation:
                     max_truncation = truncation
-            elif abs(adj.speed_factor - 1.0) <= cls._CLEAN_SPEED_TOLERANCE:
+            elif abs(adj.speed_factor - 1.0) <= CLEAN_SPEED_TOLERANCE:
                 clean += 1
             else:
                 stretched += 1

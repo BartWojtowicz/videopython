@@ -954,30 +954,18 @@ class TestTranslationProgressCallback:
         assert ticks[0] == pytest.approx(0.4)
         assert ticks[1] == pytest.approx(0.8)
 
-    def test_translate_batch_empty_texts_calls_callback_once(self, monkeypatch):
-        """Empty input still emits a single tick at 1.0 so callers don't stall."""
+    def test_translate_batch_zero_work_skips_callback(self):
+        """Empty-input and same-language shortcuts do no work and emit no tick."""
         from videopython.ai.generation.translation import TextTranslator
 
         translator = TextTranslator()
 
         ticks: list[float] = []
-        translator.translate_batch([], target_lang="es", source_lang="en", progress_callback=ticks.append)
-
-        assert ticks == [1.0]
-
-    def test_translate_batch_same_language_calls_callback_once(self):
-        """source==target shortcut still emits a single tick at 1.0."""
-        from videopython.ai.generation.translation import TextTranslator
-
-        translator = TextTranslator()
-
-        ticks: list[float] = []
-        result = translator.translate_batch(
-            ["hello", "world"], target_lang="en", source_lang="en", progress_callback=ticks.append
-        )
-
-        assert result == ["hello", "world"]
-        assert ticks == [1.0]
+        assert translator.translate_batch([], target_lang="es", progress_callback=ticks.append) == []
+        assert translator.translate_batch(
+            ["hello"], target_lang="en", source_lang="en", progress_callback=ticks.append
+        ) == ["hello"]
+        assert ticks == []
 
     def test_translate_segments_forwards_callback(self, monkeypatch):
         """translate_segments forwards the callback through to translate_batch."""

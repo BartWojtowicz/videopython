@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Callable, Literal
 import numpy as np
 
 from videopython.ai.dubbing.models import DubbingResult, RevoiceResult, SeparatedAudio, TimingSummary
+from videopython.ai.dubbing.quality import GarbageTranscriptError, assess_transcript
 from videopython.ai.dubbing.timing import TimingSynchronizer
 
 if TYPE_CHECKING:
@@ -45,6 +46,14 @@ def _peak_match(target: Audio, reference: Audio) -> Audio:
 WhisperModel = Literal["tiny", "base", "small", "medium", "large", "turbo"]
 
 logger = logging.getLogger(__name__)
+
+# Voice-sample quality gating thresholds. Tuned conservatively to favor
+# accepting real-world dialogue over rejecting it; failures fall back to
+# the longest segment with a WARNING log so we can re-tune from production
+# data instead of guessing.
+PEAK_CLIP_THRESHOLD = 0.99
+MIN_VOCAL_BG_RMS_RATIO = 1.5
+VOICE_SAMPLE_TARGET_DURATION = 6.0
 
 
 class LocalDubbingPipeline:
@@ -141,14 +150,6 @@ class LocalDubbingPipeline:
         """Initialize the timing synchronizer."""
         self._synchronizer = TimingSynchronizer()
 
-    # Voice-sample quality gating thresholds. Tuned conservatively to favor
-    # accepting real-world dialogue over rejecting it; failures fall back to
-    # the longest segment with a WARNING log so we can re-tune from production
-    # data instead of guessing.
-    _PEAK_CLIP_THRESHOLD = 0.99
-    _MIN_VOCAL_BG_RMS_RATIO = 1.5
-    _VOICE_SAMPLE_TARGET_DURATION = 6.0
-
     def _extract_voice_samples(
         self,
         vocal_audio: Any,
@@ -160,9 +161,9 @@ class LocalDubbingPipeline:
         """Extract a per-speaker voice sample with quality gating.
 
         Picks the highest-scored segment per speaker after rejecting clipped
-        slices (peak >= ``_PEAK_CLIP_THRESHOLD``) and slices where Demucs left
+        slices (peak >= ``PEAK_CLIP_THRESHOLD``) and slices where Demucs left
         the background louder than the vocals
-        (``vocal_rms / bg_rms < _MIN_VOCAL_BG_RMS_RATIO``). When the
+        (``vocal_rms / bg_rms < MIN_VOCAL_BG_RMS_RATIO``). When the
         background track isn't available (e.g. ``revoice`` after
         ``low_memory`` dropped it), the RMS check is skipped silently.
 
@@ -266,7 +267,7 @@ class LocalDubbingPipeline:
             return None, "empty slice"
 
         peak = float(np.max(np.abs(vocal_slice.data)))
-        if peak >= self._PEAK_CLIP_THRESHOLD:
+        if peak >= PEAK_CLIP_THRESHOLD:
             return None, "clipped"
 
         vocal_rms = float(np.sqrt(np.mean(vocal_slice.data**2)))
@@ -275,11 +276,11 @@ class LocalDubbingPipeline:
             bg_slice = background_audio.slice(segment.start, segment.end)
             if bg_slice.data.size > 0:
                 bg_rms = float(np.sqrt(np.mean(bg_slice.data**2)))
-                if bg_rms > 0 and (vocal_rms / bg_rms) < self._MIN_VOCAL_BG_RMS_RATIO:
+                if bg_rms > 0 and (vocal_rms / bg_rms) < MIN_VOCAL_BG_RMS_RATIO:
                     return None, "background-dominated"
 
         duration = segment.end - segment.start
-        duration_penalty = abs(duration - self._VOICE_SAMPLE_TARGET_DURATION)
+        duration_penalty = abs(duration - VOICE_SAMPLE_TARGET_DURATION)
         return vocal_rms - 0.05 * duration_penalty, None
 
     def process(
@@ -370,8 +371,6 @@ class LocalDubbingPipeline:
         # stages. Lets strict_quality callers refuse-and-refund without
         # running the rest of the pipeline; non-strict runs continue but
         # surface the assessment on DubbingResult.
-        from videopython.ai.dubbing.quality import GarbageTranscriptError, assess_transcript
-
         transcript_quality = assess_transcript(transcription, source_audio.metadata.duration_seconds)
         if transcript_quality.recommendation == "reject" and self.strict_quality:
             raise GarbageTranscriptError(
