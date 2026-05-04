@@ -265,6 +265,56 @@ class TestAntiHallucinationKwargs:
             assert call[key] == expected
 
 
+class TestProcessTranscriptionConfidenceFields:
+    """Whisper's per-segment confidence signals (avg_logprob, no_speech_prob,
+    compression_ratio) must flow through _process_transcription_result onto
+    TranscriptionSegment so downstream quality heuristics can use them."""
+
+    def test_confidence_fields_populated_when_present(self, cpu_transcriber: audio_mod.AudioToText) -> None:
+        raw_result = {
+            "language": "en",
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": 1.0,
+                    "text": "hello",
+                    "words": [{"word": "hello", "start": 0.0, "end": 1.0}],
+                    "avg_logprob": -0.8,
+                    "no_speech_prob": 0.1,
+                    "compression_ratio": 2.1,
+                }
+            ],
+        }
+
+        transcription = cpu_transcriber._process_transcription_result(raw_result)
+
+        assert len(transcription.segments) == 1
+        seg = transcription.segments[0]
+        assert seg.avg_logprob == -0.8
+        assert seg.no_speech_prob == 0.1
+        assert seg.compression_ratio == 2.1
+
+    def test_confidence_fields_none_when_missing(self, cpu_transcriber: audio_mod.AudioToText) -> None:
+        raw_result = {
+            "language": "en",
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": 1.0,
+                    "text": "hello",
+                    "words": [],
+                }
+            ],
+        }
+
+        transcription = cpu_transcriber._process_transcription_result(raw_result)
+
+        seg = transcription.segments[0]
+        assert seg.avg_logprob is None
+        assert seg.no_speech_prob is None
+        assert seg.compression_ratio is None
+
+
 class TestDetectLanguageWindow:
     """_detect_language must build the mel from at most 30s of voiced audio."""
 
