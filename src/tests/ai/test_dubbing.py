@@ -2638,3 +2638,257 @@ class TestPipelineEmptyTranslationSkipped:
 
         # Only two TTS calls; the punctuation-only segment was skipped.
         assert tts_calls == ["[X]", "[X]"]
+
+
+class TestTranscriptQuality:
+    """Heuristic checks in assess_transcript()."""
+
+    @staticmethod
+    def _seg(start: float, end: float, text: str, *, avg_logprob: float | None = None):
+        words = [TranscriptionWord(start=start, end=end, word=text)]
+        return TranscriptionSegment(
+            start=start,
+            end=end,
+            text=text,
+            words=words,
+            avg_logprob=avg_logprob,
+        )
+
+    @classmethod
+    def _transcription(cls, segments):
+        from videopython.base.text.transcription import Transcription
+
+        return Transcription(segments=segments, language="en")
+
+    def test_clean_transcript_recommends_ok(self):
+        from videopython.ai.dubbing.quality import assess_transcript
+
+        # 80% speech in a 60s clip; varied text; healthy logprob.
+        segs = [
+            self._seg(0.0, 12.0, "this is a regular sentence", avg_logprob=-0.5),
+            self._seg(12.0, 24.0, "another segment with different words", avg_logprob=-0.4),
+            self._seg(24.0, 36.0, "still more dialogue with variety", avg_logprob=-0.6),
+            self._seg(36.0, 48.0, "the speakers keep covering new ground", avg_logprob=-0.5),
+        ]
+        quality = assess_transcript(self._transcription(segs), audio_duration_seconds=60.0)
+
+        assert quality.recommendation == "ok"
+        assert quality.flags == []
+        assert quality.dominant_phrase is None
+
+    def test_dominant_phrase_alone_warns(self):
+        """One repeated phrase but healthy logprob and speech fraction → warn, not reject."""
+        from videopython.ai.dubbing.quality import assess_transcript
+
+        text = "thank you for watching"
+        segs = [self._seg(i * 5.0, i * 5.0 + 5.0, text, avg_logprob=-0.3) for i in range(11)]
+        # 11 segments * 5s = 55s; clip is 110s → speech fraction 50% (healthy).
+        quality = assess_transcript(self._transcription(segs), audio_duration_seconds=110.0)
+
+        assert quality.recommendation == "warn"
+        assert quality.dominant_phrase == "thank you for watching"
+        assert quality.dominant_phrase_fraction >= 0.7
+        assert any("dominant phrase" in flag for flag in quality.flags)
+
+    def test_dominance_plus_low_logprob_rejects(self):
+        from videopython.ai.dubbing.quality import assess_transcript
+
+        text = "ご視聴ありがとうございました"
+        segs = [self._seg(i * 5.0, i * 5.0 + 5.0, text, avg_logprob=-2.0) for i in range(8)]
+        quality = assess_transcript(self._transcription(segs), audio_duration_seconds=200.0)
+
+        assert quality.recommendation == "reject"
+        assert quality.dominant_phrase is not None
+        # Both flags appear in the human-readable list.
+        assert any("dominant phrase" in flag for flag in quality.flags)
+        assert any("avg_logprob" in flag for flag in quality.flags)
+
+    def test_dominance_plus_low_speech_fraction_rejects(self):
+        from videopython.ai.dubbing.quality import assess_transcript
+
+        text = "thanks for watching"
+        # 5 segments of 0.5s each = 2.5s of speech in a 5min clip → 0.83% speech fraction.
+        segs = [self._seg(i * 60.0, i * 60.0 + 0.5, text, avg_logprob=-0.3) for i in range(5)]
+        quality = assess_transcript(self._transcription(segs), audio_duration_seconds=300.0)
+
+        assert quality.recommendation == "reject"
+        assert any("dominant phrase" in flag for flag in quality.flags)
+        assert any("speech fraction" in flag for flag in quality.flags)
+
+    def test_short_clip_skips_speech_fraction_flag(self):
+        """Speech-fraction is unstable below 30s; on a 10s clip the flag is suppressed."""
+        from videopython.ai.dubbing.quality import assess_transcript
+
+        text = "thanks for watching"
+        segs = [self._seg(0.0, 0.1, text, avg_logprob=-0.3)]
+        quality = assess_transcript(self._transcription(segs), audio_duration_seconds=10.0)
+
+        # Dominance still trips; speech fraction does not.
+        assert not any("speech fraction" in flag for flag in quality.flags)
+        # Single-segment "dominance" plus no other flags must not be a reject.
+        assert quality.recommendation in ("ok", "warn")
+
+    def test_no_logprob_falls_back_gracefully(self):
+        """All None avg_logprob (e.g. SRT-loaded) → logprob check doesn't fire."""
+        from videopython.ai.dubbing.quality import assess_transcript
+
+        segs = [
+            self._seg(0.0, 10.0, "varied dialogue", avg_logprob=None),
+            self._seg(10.0, 20.0, "completely different content", avg_logprob=None),
+            self._seg(20.0, 30.0, "and even more variety", avg_logprob=None),
+        ]
+        quality = assess_transcript(self._transcription(segs), audio_duration_seconds=60.0)
+
+        assert quality.median_avg_logprob is None
+        # No flag mentions logprob.
+        assert not any("avg_logprob" in flag for flag in quality.flags)
+
+    def test_quality_dict_round_trip(self):
+        from videopython.ai.dubbing.quality import TranscriptQuality
+
+        original = TranscriptQuality(
+            recommendation="warn",
+            dominant_phrase="thanks",
+            dominant_phrase_fraction=0.8,
+            median_avg_logprob=-0.7,
+            speech_fraction=0.5,
+            flags=["dominant phrase 80%: 'thanks'"],
+        )
+
+        restored = TranscriptQuality.from_dict(original.to_dict())
+        assert restored == original
+
+    def test_garbage_error_attaches_quality(self):
+        from videopython.ai.dubbing.quality import GarbageTranscriptError, TranscriptQuality
+
+        quality = TranscriptQuality(
+            recommendation="reject",
+            dominant_phrase="x",
+            dominant_phrase_fraction=0.9,
+            median_avg_logprob=-2.5,
+            speech_fraction=0.01,
+            flags=["dominant phrase 90%: 'x'"],
+        )
+        err = GarbageTranscriptError("bad", quality)
+        assert err.quality is quality
+        assert isinstance(err, RuntimeError)
+
+
+class TestStrictQualityIntegration:
+    """End-to-end strict_quality behavior in LocalDubbingPipeline.process."""
+
+    @staticmethod
+    def _garbage_transcription():
+        from videopython.base.text.transcription import Transcription
+
+        words = [TranscriptionWord(start=0.0, end=0.3, word="thanks")]
+        # 12 dominant-phrase segments + low logprob → reject.
+        segs = [
+            TranscriptionSegment(
+                start=i * 5.0,
+                end=i * 5.0 + 0.3,
+                text="thank you for watching",
+                words=words,
+                avg_logprob=-2.0,
+            )
+            for i in range(12)
+        ]
+        return Transcription(segments=segs, language="en")
+
+    def test_strict_quality_raises_before_demucs(self, sample_audio, monkeypatch):
+        """strict_quality=True: raise GarbageTranscriptError without ever calling the separator."""
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+        from videopython.ai.dubbing.quality import GarbageTranscriptError
+
+        separator_called = {"n": 0}
+
+        def fail_init_separator(self):
+            separator_called["n"] += 1
+            raise AssertionError("separator must not initialize when strict_quality rejects")
+
+        monkeypatch.setattr(LocalDubbingPipeline, "_init_separator", fail_init_separator)
+
+        pipeline = LocalDubbingPipeline(strict_quality=True)
+        with pytest.raises(GarbageTranscriptError) as exc_info:
+            pipeline.process(
+                source_audio=sample_audio,
+                target_lang="es",
+                preserve_background=True,
+                voice_clone=False,
+                enable_diarization=False,
+                transcription=self._garbage_transcription(),
+            )
+
+        assert exc_info.value.quality.recommendation == "reject"
+        assert separator_called["n"] == 0
+
+    def test_non_strict_quality_continues_with_warning(self, sample_audio, monkeypatch, caplog):
+        """strict_quality=False: pipeline runs, transcript_quality attached, WARNING logged."""
+        import logging
+
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+
+        def fake_init_translator(self):
+            class FakeTranslator:
+                def translate_segments(self, segments, target_lang, source_lang, progress_callback=None):
+                    return [
+                        TranslatedSegment(
+                            original_segment=s,
+                            translated_text=s.text,
+                            source_lang=source_lang,
+                            target_lang=target_lang,
+                        )
+                        for s in segments
+                    ]
+
+            self._translator = FakeTranslator()
+
+        def fake_init_tts(self, language="en"):
+            class FakeTTS:
+                def generate_audio(self, text, voice_sample=None, voice_sample_path=None):
+                    sr = 24000
+                    n = int(sr * 0.2)
+                    return Audio(
+                        np.zeros(n, dtype=np.float32),
+                        AudioMetadata(
+                            sample_rate=sr,
+                            channels=1,
+                            sample_width=2,
+                            duration_seconds=0.2,
+                            frame_count=n,
+                        ),
+                    )
+
+            self._tts = FakeTTS()
+
+        monkeypatch.setattr(LocalDubbingPipeline, "_init_translator", fake_init_translator)
+        monkeypatch.setattr(LocalDubbingPipeline, "_init_tts", fake_init_tts)
+
+        pipeline = LocalDubbingPipeline(strict_quality=False)
+        with caplog.at_level(logging.WARNING, logger="videopython.ai.dubbing.pipeline"):
+            result = pipeline.process(
+                source_audio=sample_audio,
+                target_lang="es",
+                preserve_background=False,
+                voice_clone=False,
+                enable_diarization=False,
+                transcription=self._garbage_transcription(),
+            )
+
+        assert result.transcript_quality is not None
+        assert result.transcript_quality.recommendation == "reject"
+        assert any("Transcript quality flags" in r.message for r in caplog.records)
+
+    def test_dubber_propagates_strict_quality_to_pipeline(self):
+        from videopython.ai.dubbing import VideoDubber
+
+        dubber = VideoDubber(strict_quality=True)
+        dubber._init_local_pipeline()
+
+        assert dubber._local_pipeline.strict_quality is True
+
+    def test_dubber_default_strict_quality_is_false(self):
+        from videopython.ai.dubbing import VideoDubber
+
+        dubber = VideoDubber()
+        assert dubber.strict_quality is False

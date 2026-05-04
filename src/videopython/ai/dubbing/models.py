@@ -9,6 +9,7 @@ from videopython.base.audio import Audio
 from videopython.base.text.transcription import Transcription, TranscriptionSegment
 
 if TYPE_CHECKING:
+    from videopython.ai.dubbing.quality import TranscriptQuality
     from videopython.ai.dubbing.timing import TimingAdjustment
 
 
@@ -174,6 +175,8 @@ class DubbingResult:
         separated_audio: Separated audio components (if preserve_background=True).
         voice_samples: Dictionary mapping speaker IDs to voice sample Audio.
         timing_summary: Aggregate stats over per-segment timing adjustments.
+        transcript_quality: Heuristic quality assessment of the transcription
+            (None when the pipeline returned early on an empty transcription).
     """
 
     dubbed_audio: Audio
@@ -184,6 +187,7 @@ class DubbingResult:
     separated_audio: SeparatedAudio | None = None
     voice_samples: dict[str, Audio] = field(default_factory=dict)
     timing_summary: TimingSummary | None = None
+    transcript_quality: TranscriptQuality | None = None
 
     @property
     def num_segments(self) -> int:

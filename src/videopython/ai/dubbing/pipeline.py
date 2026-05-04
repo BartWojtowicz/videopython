@@ -64,6 +64,7 @@ class LocalDubbingPipeline:
         condition_on_previous_text: bool = False,
         no_speech_threshold: float = 0.6,
         logprob_threshold: float | None = -1.0,
+        strict_quality: bool = False,
     ):
         self.device = device
         self.low_memory = low_memory
@@ -71,6 +72,7 @@ class LocalDubbingPipeline:
         self.condition_on_previous_text = condition_on_previous_text
         self.no_speech_threshold = no_speech_threshold
         self.logprob_threshold = logprob_threshold
+        self.strict_quality = strict_quality
         requested = device.lower() if isinstance(device, str) else "auto"
         logger.info(
             "LocalDubbingPipeline initialized with device=%s low_memory=%s whisper_model=%s",
@@ -364,6 +366,25 @@ class LocalDubbingPipeline:
                 target_lang=target_lang,
             )
 
+        # Cheap heuristic gate before the expensive Demucs/translation/TTS
+        # stages. Lets strict_quality callers refuse-and-refund without
+        # running the rest of the pipeline; non-strict runs continue but
+        # surface the assessment on DubbingResult.
+        from videopython.ai.dubbing.quality import GarbageTranscriptError, assess_transcript
+
+        transcript_quality = assess_transcript(transcription, source_audio.metadata.duration_seconds)
+        if transcript_quality.recommendation == "reject" and self.strict_quality:
+            raise GarbageTranscriptError(
+                f"Refusing to dub: {', '.join(transcript_quality.flags)}",
+                transcript_quality,
+            )
+        if transcript_quality.recommendation in ("warn", "reject"):
+            logger.warning(
+                "Transcript quality flags raised: %s (recommendation=%s)",
+                ", ".join(transcript_quality.flags),
+                transcript_quality.recommendation,
+            )
+
         detected_lang = source_lang or transcription.language or "en"
 
         separated_audio: SeparatedAudio | None = None
@@ -538,6 +559,7 @@ class LocalDubbingPipeline:
             separated_audio=separated_audio,
             voice_samples=voice_samples,
             timing_summary=timing_summary,
+            transcript_quality=transcript_quality,
         )
 
     def revoice(
