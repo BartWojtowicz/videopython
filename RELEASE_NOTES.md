@@ -1,5 +1,25 @@
 # Release Notes
 
+## 0.28.1
+
+### Added
+
+- `Qwen3Translator` translation backend (`videopython.ai.generation.qwen3.Qwen3Translator`). Uses Qwen3-4B-Instruct-2507 via `llama-cpp-python` (Q4_K_M GGUF, ~2.4 GB; downloaded on first use to the standard HuggingFace cache). Produces context-aware, length-budgeted translation: the prompt includes a per-segment `target_chars` budget derived from source duration × language-specific speech rate, and an optional `low_confidence` flag for segments whose `avg_logprob` is unhealthy. Output is JSON-line, with parse retry and optional per-segment Marian fallback when both Qwen attempts fail. Apache-2.0 model + MIT inference framework. Adds `llama-cpp-python>=0.3` to the `ai` extra.
+- `TranslationBackend` runtime-checkable Protocol (`videopython.ai.generation.translation.TranslationBackend`). Captures the three-method contract `translate_segments` / `unload` / `get_supported_languages`. Both `MarianTranslator` and `Qwen3Translator` satisfy it; the pipeline depends only on the protocol.
+- `translator: Literal["auto", "marian", "qwen3"] = "auto"` constructor kwarg on `VideoDubber` and `LocalDubbingPipeline`. The `"auto"` resolver picks based on language coverage **and** device: GPU + Qwen-supported pair → Qwen3 (best quality); Marian-supported pair → Marian (~10-15× faster on CPU); CPU + Qwen-only pair → Qwen3 with a loud WARNING. The integration spike on `cam1_1min.mp4` (Polish→Spanish) showed Qwen3-4B Q4_K_M on CPU runs ~2.8× the wall time of Marian end-to-end (and ~13× on the translation stage in isolation), so the auto resolver intentionally prefers Marian on CPU even when Qwen would also cover the pair.
+- `UnsupportedLanguageError(ValueError)` exposed from `videopython.ai.dubbing`. Carries `source_lang` and `target_lang` so callers can introspect the unsupported pair without parsing the message. Raised by the auto resolver when neither backend covers the pair.
+- `translation_failures: list[int]` field on `DubbingResult`. Populated by `Qwen3Translator` for segments where both the primary call and the per-segment Marian fallback failed — those segments land on the result with `translated_text=""`. Empty list under `MarianTranslator`.
+
+### Changed
+
+- `_transcribe_with_diarization` now re-attaches per-segment Whisper confidence (`avg_logprob`, `no_speech_prob`, `compression_ratio`) to the diarization-rebuilt segments by max-overlap match. Without this fix the segments-from-words rebuild dropped the metadata that 0.28.0 plumbed through, so on every diarized run the M1.3 confidence fields were `None`. M1.5's logprob-based reject rule and any prompt that branches on confidence now have signal on the diarized path too.
+- `TextTranslator` is renamed to `MarianTranslator`. The old name remains as a back-compat alias through 0.28.x; remove in 0.30.0. Existing imports continue to work unchanged.
+
+### Known limitations
+
+- Qwen3 on CPU is impractical for everyday use — wall time on a 60-second source ran ~25 minutes (vs ~9 minutes for Marian) in the integration spike. The auto resolver prevents accidental opt-in; explicit `translator="qwen3"` on CPU triggers a startup WARNING.
+- On the same spike, Qwen3 produced clearly better translations on idiomatic and question-vs-statement segments but **regressed slightly on truncation rate** (worst-case segment lost 2.18 s of content vs Marian's 0.86 s) and **mistranslated a single-word segment** (`narzekamy` → `mejoramos`, opposite meaning). The prompt's character-budget instruction isn't strict enough on long segments, and very short segments give the LLM too little anchor to disambiguate. Both will be revisited as follow-ups; for now, the auto resolver's CPU preference for Marian is the practical mitigation.
+
 ## 0.28.0
 
 ### Added

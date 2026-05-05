@@ -180,6 +180,11 @@ class DubbingResult:
         timing_summary: Aggregate stats over per-segment timing adjustments.
         transcript_quality: Heuristic quality assessment of the transcription
             (None when the pipeline returned early on an empty transcription).
+        translation_failures: Indices of segments where translation failed
+            entirely. Used by Qwen3Translator when both the primary call and
+            the per-segment Marian fallback fail; those segments are dubbed
+            with empty text. Empty list under MarianTranslator (Marian has
+            no failure mode that drops segments).
     """
 
     dubbed_audio: Audio
@@ -191,6 +196,7 @@ class DubbingResult:
     voice_samples: dict[str, Audio] = field(default_factory=dict)
     timing_summary: TimingSummary | None = None
     transcript_quality: TranscriptQuality | None = None
+    translation_failures: list[int] = field(default_factory=list)
 
     @property
     def num_segments(self) -> int:

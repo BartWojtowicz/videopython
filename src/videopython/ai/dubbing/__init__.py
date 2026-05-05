@@ -5,6 +5,7 @@ from videopython.ai.dubbing.models import DubbingResult, RevoiceResult, Separate
 from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
 from videopython.ai.dubbing.quality import GarbageTranscriptError, TranscriptQuality, assess_transcript
 from videopython.ai.dubbing.timing import TimingSynchronizer
+from videopython.ai.generation.translation import UnsupportedLanguageError
 
 __all__ = [
     "VideoDubber",
@@ -17,4 +18,5 @@ __all__ = [
     "GarbageTranscriptError",
     "TranscriptQuality",
     "assess_transcript",
+    "UnsupportedLanguageError",
 ]
