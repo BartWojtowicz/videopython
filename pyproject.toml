@@ -1,6 +1,6 @@
 [project]
 name = "videopython"
-version = "0.28.0"
+version = "0.28.1"
 description = "Minimal video generation and processing library."
 authors = [
     { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
@@ -80,6 +80,8 @@ ai = [
     "sentencepiece>=0.1.99",
     # Audio source separation
     "demucs>=4.0.0",
+    # Translation backend: Qwen3 GGUF inference (M2)
+    "llama-cpp-python>=0.3.0",
 ]
 
 # Required for pip install videopython[ai] - pip uses optional-dependencies, not dependency-groups
@@ -111,6 +113,8 @@ ai = [
     "sentencepiece>=0.1.99",
     # Audio source separation
     "demucs>=4.0.0",
+    # Translation backend: Qwen3 GGUF inference (M2)
+    "llama-cpp-python>=0.3.0",
 ]
 
 [project.urls]
@@ -136,6 +140,7 @@ module = [
     "pyannote", "pyannote.*",
     "silero_vad", "silero_vad.*",
     "cv2", "cv2.*",
+    "llama_cpp", "llama_cpp.*",
 ]
 ignore_missing_imports = true
 

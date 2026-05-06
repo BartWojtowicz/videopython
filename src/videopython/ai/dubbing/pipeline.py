@@ -9,12 +9,22 @@ from typing import TYPE_CHECKING, Any, Callable, Literal
 
 import numpy as np
 
+from videopython.ai._device import select_device
 from videopython.ai.dubbing.models import DubbingResult, RevoiceResult, SeparatedAudio, TimingSummary
 from videopython.ai.dubbing.quality import GarbageTranscriptError, assess_transcript
 from videopython.ai.dubbing.timing import TimingSynchronizer
+from videopython.ai.generation.qwen3 import Qwen3Translator
+from videopython.ai.generation.translation import (
+    MarianTranslator,
+    TranslationBackend,
+    UnsupportedLanguageError,
+)
 
 if TYPE_CHECKING:
     from videopython.base.audio import Audio
+
+
+TranslatorChoice = Literal["auto", "marian", "qwen3"]
 
 
 def _peak_match(target: Audio, reference: Audio) -> Audio:
@@ -74,6 +84,7 @@ class LocalDubbingPipeline:
         no_speech_threshold: float = 0.6,
         logprob_threshold: float | None = -1.0,
         strict_quality: bool = False,
+        translator: TranslatorChoice = "auto",
     ):
         self.device = device
         self.low_memory = low_memory
@@ -82,12 +93,14 @@ class LocalDubbingPipeline:
         self.no_speech_threshold = no_speech_threshold
         self.logprob_threshold = logprob_threshold
         self.strict_quality = strict_quality
+        self.translator = translator
         requested = device.lower() if isinstance(device, str) else "auto"
         logger.info(
-            "LocalDubbingPipeline initialized with device=%s low_memory=%s whisper_model=%s",
+            "LocalDubbingPipeline initialized with device=%s low_memory=%s whisper_model=%s translator=%s",
             requested,
             low_memory,
             whisper_model,
+            translator,
         )
 
         self._transcriber: Any = None
@@ -128,11 +141,64 @@ class LocalDubbingPipeline:
             logprob_threshold=self.logprob_threshold,
         )
 
-    def _init_translator(self) -> None:
-        """Initialize the translation model."""
-        from videopython.ai.generation.translation import TextTranslator
+    def _init_translator(self, source_lang: str, target_lang: str) -> None:
+        """Initialize the translation backend.
 
-        self._translator = TextTranslator(device=self.device)
+        Resolves the configured ``self.translator`` choice into a concrete
+        backend. ``"auto"`` uses :meth:`_resolve_translator_auto`; explicit
+        choices instantiate the named backend directly. Re-initialization
+        is a no-op when ``self._translator`` is already a matching instance
+        for the same language pair (handled at call sites via the existing
+        ``self._translator is None`` gate).
+        """
+        if self.translator == "marian":
+            self._translator = MarianTranslator(device=self.device)
+        elif self.translator == "qwen3":
+            self._translator = Qwen3Translator(device=self.device)
+        else:  # "auto"
+            self._translator = self._resolve_translator_auto(source_lang, target_lang)
+
+    def _resolve_translator_auto(self, source_lang: str, target_lang: str) -> TranslationBackend:
+        """Pick a backend based on language coverage AND device.
+
+        Qwen3-4B Q4_K_M on CPU is roughly 10-15x slower than MarianMT (M2.1
+        spike on dreams_15min.mp4). The resolver picks Marian on CPU
+        whenever it covers the language pair and only escalates to Qwen
+        when a GPU is available or Marian doesn't cover the pair.
+        """
+        device = select_device(self.device, mps_allowed=True)
+        has_gpu = device in ("cuda", "mps")
+
+        # 1. GPU + Qwen covers the pair → Qwen wins (best quality).
+        if has_gpu and Qwen3Translator.supports(source_lang, target_lang):
+            logger.info(
+                "translator: auto-selected qwen3 (device=%s, supports %s->%s)",
+                device,
+                source_lang,
+                target_lang,
+            )
+            return Qwen3Translator(device=self.device)
+
+        # 2. Marian covers the pair → Marian (fast).
+        if MarianTranslator.has_model_for(source_lang, target_lang):
+            if has_gpu:
+                reason = f"Qwen does not cover {source_lang}->{target_lang}"
+            else:
+                reason = f"device={device} (Qwen would be ~10-15x slower; pass translator='qwen3' to override)"
+            logger.info("translator: auto-selected marian (%s)", reason)
+            return MarianTranslator(device=self.device)
+
+        # 3. CPU + only Qwen covers it: warn loudly and use Qwen anyway.
+        if Qwen3Translator.supports(source_lang, target_lang):
+            logger.warning(
+                "translator: auto-selected qwen3 on CPU (%s->%s not in Marian); "
+                "translation will be slow (~10-15x MarianMT). Consider GPU.",
+                source_lang,
+                target_lang,
+            )
+            return Qwen3Translator(device=self.device)
+
+        raise UnsupportedLanguageError(source_lang, target_lang)
 
     def _init_tts(self, language: str = "en") -> None:
         """Initialize the text-to-speech model."""
@@ -430,7 +496,7 @@ class LocalDubbingPipeline:
 
         report_progress("Translating text", 0.35)
         if self._translator is None:
-            self._init_translator()
+            self._init_translator(source_lang=detected_lang, target_lang=target_lang)
 
         # Translation stage spans 0.35 → 0.50 of overall pipeline progress.
         # MarianMT runs sequentially over 8-segment batches; on a 15-min
@@ -446,6 +512,9 @@ class LocalDubbingPipeline:
             source_lang=detected_lang,
             progress_callback=_on_translation_progress,
         )
+        # Capture per-segment failures (always empty for Marian) before
+        # _maybe_unload nukes the backend in low_memory mode.
+        translation_failures = list(self._translator.translation_failures)
         self._maybe_unload("_translator")
 
         report_progress("Generating dubbed speech", 0.50)
@@ -559,6 +628,7 @@ class LocalDubbingPipeline:
             voice_samples=voice_samples,
             timing_summary=timing_summary,
             transcript_quality=transcript_quality,
+            translation_failures=translation_failures,
         )
 
     def revoice(

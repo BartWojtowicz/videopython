@@ -1,12 +1,49 @@
-"""Text translation using local Helsinki-NLP models."""
+"""Text translation backends.
+
+Two backends share the :class:`TranslationBackend` protocol:
+
+- :class:`MarianTranslator` (HuggingFace Helsinki-NLP MarianMT) — fast,
+  segment-isolated, available for ~30 language pairs. Default on CPU.
+- :class:`Qwen3Translator` (Qwen3-4B/8B/14B-Instruct via llama-cpp-python) —
+  slower but produces context-aware, length-budgeted translations. Default
+  on GPU.
+
+The pipeline picks via :class:`videopython.ai.dubbing.pipeline` based on a
+``translator`` kwarg (``"auto"`` resolves at runtime).
+"""
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
 
 from videopython.ai._device import log_device_initialization, release_device_memory, select_device
-from videopython.ai.dubbing.models import TranslatedSegment
 from videopython.base.text.transcription import TranscriptionSegment
+
+# Imported under TYPE_CHECKING to avoid a circular dep through
+# videopython.ai.dubbing (the dubbing pipeline imports both
+# MarianTranslator and Qwen3Translator, which both import
+# TranslatedSegment from dubbing.models). Runtime users do a lazy
+# local import inside translate_segments.
+if TYPE_CHECKING:
+    from videopython.ai.dubbing.models import TranslatedSegment
+
+
+class UnsupportedLanguageError(ValueError):
+    """Raised when no available translation backend supports a given
+    ``(source, target)`` language pair.
+
+    Carries the requested pair so callers can introspect:
+
+        try:
+            dubber.dub(video, target_lang="xh")
+        except UnsupportedLanguageError as e:
+            print(f"No backend covers {e.source_lang}->{e.target_lang}")
+    """
+
+    def __init__(self, source_lang: str, target_lang: str, message: str | None = None):
+        self.source_lang = source_lang
+        self.target_lang = target_lang
+        super().__init__(message or f"No translation backend supports {source_lang}->{target_lang}")
 
 
 def _is_translatable_text(text: str) -> bool:
@@ -17,6 +54,36 @@ def _is_translatable_text(text: str) -> bool:
     from. Require at least 2 alphanumeric characters to filter these out.
     """
     return sum(1 for c in text if c.isalnum()) >= 2
+
+
+@runtime_checkable
+class TranslationBackend(Protocol):
+    """Pipeline-facing translation interface.
+
+    Both :class:`MarianTranslator` and :class:`Qwen3Translator` satisfy
+    this. The pipeline only depends on these methods.
+    """
+
+    def translate_segments(
+        self,
+        segments: list[TranscriptionSegment],
+        target_lang: str,
+        source_lang: str | None = None,
+        progress_callback: Callable[[float], None] | None = None,
+    ) -> list[TranslatedSegment]: ...
+
+    def unload(self) -> None: ...
+
+    @property
+    def translation_failures(self) -> list[int]:
+        """Indices into the most recent ``segments`` input where the backend
+        could not produce a translation. Empty for backends that never fail
+        per-segment (e.g. MarianTranslator). The dubbing pipeline copies
+        this onto :class:`DubbingResult.translation_failures`."""
+        ...
+
+    @staticmethod
+    def get_supported_languages() -> dict[str, str]: ...
 
 
 LANGUAGE_NAMES = {
@@ -56,8 +123,8 @@ LANGUAGE_NAMES = {
 }
 
 
-class TextTranslator:
-    """Translates text between languages using local seq2seq models."""
+class MarianTranslator:
+    """Translates text between languages using local Helsinki-NLP MarianMT models."""
 
     # Languages without a direct opus-mt-{src}-{tgt} model. Maps (source, target)
     # to an alternative HuggingFace model identifier.
@@ -67,6 +134,25 @@ class TextTranslator:
         ("en", "ja"): "Helsinki-NLP/opus-mt-en-jap",
         ("en", "pl"): "Helsinki-NLP/opus-mt-en-zlw",
     }
+
+    @classmethod
+    def has_model_for(cls, source_lang: str, target_lang: str) -> bool:
+        """Return True if Marian has (or is likely to have) a model for ``(source, target)``.
+
+        Same-language pairs return True (translation is the identity).
+        Otherwise: True if either an entry in ``_MODEL_OVERRIDES`` exists or
+        both languages are in :data:`LANGUAGE_NAMES`. The latter is a
+        permissive proxy — Marian publishes ``opus-mt-{src}-{tgt}`` for
+        most ISO-639-1 pairs we expose, but not all (e.g. some Asian-to-
+        Asian pairs route through English). Used by the M2.3 ``auto``
+        resolver as a *coverage hint*; the actual existence check happens
+        at first-use download time.
+        """
+        if source_lang == target_lang:
+            return True
+        if (source_lang, target_lang) in cls._MODEL_OVERRIDES:
+            return True
+        return source_lang in LANGUAGE_NAMES and target_lang in LANGUAGE_NAMES
 
     def __init__(self, model_name: str | None = None, device: str | None = None):
         self.model_name = model_name
@@ -194,6 +280,10 @@ class TextTranslator:
         callers can render translation-stage progress without knowing the
         batch size.
         """
+        # Lazy import to avoid a circular dep through videopython.ai.dubbing
+        # (see TYPE_CHECKING import at the top of the module).
+        from videopython.ai.dubbing.models import TranslatedSegment
+
         effective_source = source_lang or "en"
 
         translatable_indices = [i for i, segment in enumerate(segments) if _is_translatable_text(segment.text)]
@@ -230,6 +320,20 @@ class TextTranslator:
         self._current_lang_pair = None
         release_device_memory(self.device)
 
+    @property
+    def translation_failures(self) -> list[int]:
+        """Marian never fails per-segment (worst case it produces poor
+        output, not no output). Always empty; satisfies the
+        :class:`TranslationBackend` protocol."""
+        return []
+
     @staticmethod
     def get_supported_languages() -> dict[str, str]:
         return LANGUAGE_NAMES.copy()
+
+
+# Back-compat alias. ``TextTranslator`` was the class name through 0.28.x;
+# 0.29.0 renames to ``MarianTranslator`` to make room for ``Qwen3Translator``
+# behind a shared :class:`TranslationBackend` protocol. The alias will be
+# removed in 0.30.0.
+TextTranslator = MarianTranslator

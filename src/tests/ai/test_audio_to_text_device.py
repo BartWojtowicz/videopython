@@ -315,6 +315,142 @@ class TestProcessTranscriptionConfidenceFields:
         assert seg.compression_ratio is None
 
 
+class TestAttachConfidenceByOverlap:
+    """_attach_confidence_by_overlap re-attaches Whisper's per-segment
+    confidence onto a diarization-rebuilt segment list by max-overlap match."""
+
+    @staticmethod
+    def _seg(start: float, end: float, *, avg_logprob=None, no_speech_prob=None, compression_ratio=None):
+        from videopython.base.text.transcription import TranscriptionSegment
+
+        return TranscriptionSegment(
+            start=start,
+            end=end,
+            text="x",
+            words=[],
+            avg_logprob=avg_logprob,
+            no_speech_prob=no_speech_prob,
+            compression_ratio=compression_ratio,
+        )
+
+    def test_target_inside_one_source_inherits_its_confidence(self) -> None:
+        sources = [self._seg(0.0, 10.0, avg_logprob=-0.5, no_speech_prob=0.1, compression_ratio=1.8)]
+        targets = [self._seg(2.0, 7.0)]
+
+        audio_mod._attach_confidence_by_overlap(targets, sources)
+
+        assert targets[0].avg_logprob == -0.5
+        assert targets[0].no_speech_prob == 0.1
+        assert targets[0].compression_ratio == 1.8
+
+    def test_target_spanning_two_sources_picks_max_overlap(self) -> None:
+        # source A covers [0, 4), source B covers [4, 10). Target is [3, 8) —
+        # 1s overlap with A, 4s overlap with B → B wins.
+        sources = [
+            self._seg(0.0, 4.0, avg_logprob=-0.3),
+            self._seg(4.0, 10.0, avg_logprob=-1.5),
+        ]
+        targets = [self._seg(3.0, 8.0)]
+
+        audio_mod._attach_confidence_by_overlap(targets, sources)
+
+        assert targets[0].avg_logprob == -1.5
+
+    def test_target_with_no_overlap_left_untouched(self) -> None:
+        sources = [self._seg(0.0, 5.0, avg_logprob=-0.5)]
+        targets = [self._seg(10.0, 15.0)]
+
+        audio_mod._attach_confidence_by_overlap(targets, sources)
+
+        assert targets[0].avg_logprob is None
+        assert targets[0].no_speech_prob is None
+        assert targets[0].compression_ratio is None
+
+    def test_diarization_split_each_half_inherits_parent(self) -> None:
+        """Realistic case: one Whisper segment, diarization splits it across two
+        speakers. Both halves should inherit the parent's confidence."""
+        sources = [self._seg(0.0, 10.0, avg_logprob=-0.7, no_speech_prob=0.05)]
+        targets = [self._seg(0.0, 4.5), self._seg(4.5, 10.0)]
+
+        audio_mod._attach_confidence_by_overlap(targets, sources)
+
+        for tgt in targets:
+            assert tgt.avg_logprob == -0.7
+            assert tgt.no_speech_prob == 0.05
+
+
+class TestDiarizationCarriesConfidence:
+    """End-to-end check: _transcribe_with_diarization must surface
+    per-segment confidence on the rebuilt segments. Without M2.0 these
+    fields are None on every diarized run."""
+
+    def test_diarized_segments_inherit_whisper_confidence(
+        self, fake_whisper: _FakeWhisperModel, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(audio_mod, "select_device", lambda _r, mps_allowed=False: "cpu")
+        transcriber = audio_mod.AudioToText(enable_diarization=True, device=None)
+
+        # Whisper produces one 10s segment with healthy confidence and
+        # word-level timings.
+        def fake_transcribe(**kwargs: Any) -> dict[str, Any]:
+            fake_whisper.transcribe_calls.append(kwargs)
+            return {
+                "language": "ja",
+                "segments": [
+                    {
+                        "start": 0.0,
+                        "end": 10.0,
+                        "text": "alpha beta",
+                        "words": [
+                            {"word": "alpha", "start": 0.0, "end": 4.0},
+                            {"word": "beta", "start": 4.0, "end": 10.0},
+                        ],
+                        "avg_logprob": -0.6,
+                        "no_speech_prob": 0.08,
+                        "compression_ratio": 1.9,
+                    }
+                ],
+            }
+
+        fake_whisper.transcribe = fake_transcribe  # type: ignore[method-assign]
+
+        # Diarization splits the segment into two speakers at t=4.0.
+        def fake_init_diarization(self: Any) -> None:
+            class _Annotation:
+                def itertracks(self, yield_label: bool = True):
+                    Turn = type("Turn", (), {})
+                    a = Turn()
+                    a.start, a.end = 0.0, 4.0
+                    b = Turn()
+                    b.start, b.end = 4.0, 10.0
+                    return iter([(a, None, "SPEAKER_00"), (b, None, "SPEAKER_01")])
+
+            class _DiarOutput:
+                exclusive_speaker_diarization = _Annotation()
+
+            self._diarization_pipeline = lambda _payload: _DiarOutput()
+
+        monkeypatch.setattr(audio_mod.AudioToText, "_init_diarization", fake_init_diarization)
+        monkeypatch.setattr(audio_mod.AudioToText, "_run_vad", lambda self, _a: [(0.0, 10.0)])
+        monkeypatch.setattr(audio_mod.AudioToText, "_detect_language", lambda self, _a, _s: "ja")
+
+        # Use a 10s audio so VAD/Whisper see real timing; content is irrelevant.
+        result = transcriber.transcribe(_short_audio(duration_s=10.0))
+
+        # Diarization should have produced two segments (one per speaker).
+        assert len(result.segments) == 2
+        speakers = {s.speaker for s in result.segments}
+        assert speakers == {"SPEAKER_00", "SPEAKER_01"}
+
+        # Both halves overlap the single Whisper segment, so both inherit its
+        # confidence — proves M2's confidence-aware prompting has signal on
+        # the diarized path.
+        for seg in result.segments:
+            assert seg.avg_logprob == -0.6
+            assert seg.no_speech_prob == 0.08
+            assert seg.compression_ratio == 1.9
+
+
 class TestDetectLanguageWindow:
     """_detect_language must build the mel from at most 30s of voiced audio."""
 

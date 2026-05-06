@@ -11,6 +11,36 @@ from videopython.base.text.transcription import Transcription, TranscriptionSegm
 from videopython.base.video import Video
 
 
+def _attach_confidence_by_overlap(
+    target_segments: list[TranscriptionSegment],
+    source_segments: list[TranscriptionSegment],
+) -> None:
+    """Stamp Whisper confidence (avg_logprob, no_speech_prob, compression_ratio)
+    onto ``target_segments`` from the ``source_segments`` they overlap most with.
+
+    Used to re-attach per-segment confidence after diarization rebuilds segments
+    from words and drops the original Whisper-segment metadata. Whisper's
+    confidence is window-level, not phoneme-level, so overlap-by-time is the
+    right granularity — re-deriving per-word and re-aggregating wouldn't be
+    more accurate.
+
+    Mutates ``target_segments`` in place. Segments with no overlap to any
+    source segment are left untouched (their confidence stays None).
+    """
+    for tgt in target_segments:
+        best_overlap = 0.0
+        best_src: TranscriptionSegment | None = None
+        for src in source_segments:
+            overlap = max(0.0, min(tgt.end, src.end) - max(tgt.start, src.start))
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_src = src
+        if best_src is not None:
+            tgt.avg_logprob = best_src.avg_logprob
+            tgt.no_speech_prob = best_src.no_speech_prob
+            tgt.compression_ratio = best_src.compression_ratio
+
+
 class AudioToText:
     """Transcription service for audio and video using local Whisper models.
 
@@ -295,6 +325,13 @@ class AudioToText:
 
         transcription = self._process_transcription_result(transcription_result)
 
+        # Capture original Whisper segments before flattening to words. The
+        # diarization rebuild via Transcription(words=...) regroups by speaker,
+        # which loses the per-segment confidence M1.3 plumbed through. We
+        # re-attach by max-overlap match below so M2's confidence-aware
+        # translation prompts have signal on the diarized path too.
+        whisper_segments = transcription.segments
+
         all_words: list[TranscriptionWord] = []
         for seg in transcription.segments:
             all_words.extend(seg.words)
@@ -302,7 +339,9 @@ class AudioToText:
         if all_words:
             all_words = self._assign_speakers_to_words(all_words, diarization_result)
 
-        return Transcription(words=all_words, language=transcription.language)
+        rebuilt = Transcription(words=all_words, language=transcription.language)
+        _attach_confidence_by_overlap(rebuilt.segments, whisper_segments)
+        return rebuilt
 
     def _transcribe_local(self, audio: Audio) -> Transcription:
         """Transcribe using local Whisper model.

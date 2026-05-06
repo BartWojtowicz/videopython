@@ -1002,6 +1002,8 @@ class TestTranslationProgressCallback:
         )
 
         class _FakeTranslator:
+            translation_failures: list[int] = []
+
             def translate_segments(self, segments, target_lang, source_lang, progress_callback=None):
                 # Simulate three batch ticks like a 3-batch translation run.
                 if progress_callback is not None:
@@ -1018,7 +1020,7 @@ class TestTranslationProgressCallback:
                     for s in segments
                 ]
 
-        def fake_init_translator(self):
+        def fake_init_translator(self, source_lang, target_lang):
             self._translator = _FakeTranslator()
 
         def fake_init_tts(self, language="en"):
@@ -1682,8 +1684,10 @@ class TestPipelineSuppliedTranscriptionDiarization:
 
         # Skip separation, translation, TTS, and synchronization; we only care
         # about how the pipeline handles the supplied transcription.
-        def fake_init_translator(self):
+        def fake_init_translator(self, source_lang, target_lang):
             class FakeTranslator:
+                translation_failures: list[int] = []
+
                 def translate_segments(self, segments, target_lang, source_lang, progress_callback=None):
                     from videopython.ai.dubbing.models import TranslatedSegment
 
@@ -1911,8 +1915,10 @@ class TestVoiceSampleCache:
 
         monkeypatch.setattr(LocalDubbingPipeline, "_extract_voice_samples", fake_extract)
 
-        def fake_init_translator(self):
+        def fake_init_translator(self, source_lang, target_lang):
             class FakeTranslator:
+                translation_failures: list[int] = []
+
                 def translate_segments(self, segments, target_lang, source_lang, progress_callback=None):
                     return [
                         TranslatedSegment(
@@ -2006,8 +2012,10 @@ class TestVoiceSampleCache:
 
         monkeypatch.setattr(audio_mod.Audio, "save", counting_save)
 
-        def fake_init_translator(self):
+        def fake_init_translator(self, source_lang, target_lang):
             class FakeTranslator:
+                translation_failures: list[int] = []
+
                 def translate_segments(self, segments, target_lang, source_lang, progress_callback=None):
                     return [
                         TranslatedSegment(
@@ -2480,8 +2488,10 @@ class TestPipelineSpeechRegionGating:
         )
 
         # Translator and TTS as fakes so we don't touch real models.
-        def fake_init_translator(self):
+        def fake_init_translator(self, source_lang, target_lang):
             class FakeTranslator:
+                translation_failures: list[int] = []
+
                 def translate_segments(self, segments, target_lang, source_lang, progress_callback=None):
                     return [
                         TranslatedSegment(
@@ -2564,8 +2574,10 @@ class TestPipelineEmptyTranslationSkipped:
 
         tts_calls: list[str] = []
 
-        def fake_init_translator(self):
+        def fake_init_translator(self, source_lang, target_lang):
             class FakeTranslator:
+                translation_failures: list[int] = []
+
                 def translate_segments(self, segments, target_lang, source_lang, progress_callback=None):
                     # Mimic the real filter: punctuation-only -> "".
                     out = []
@@ -2816,8 +2828,10 @@ class TestStrictQualityIntegration:
 
         from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
 
-        def fake_init_translator(self):
+        def fake_init_translator(self, source_lang, target_lang):
             class FakeTranslator:
+                translation_failures: list[int] = []
+
                 def translate_segments(self, segments, target_lang, source_lang, progress_callback=None):
                     return [
                         TranslatedSegment(
@@ -2880,3 +2894,271 @@ class TestStrictQualityIntegration:
 
         dubber = VideoDubber()
         assert dubber.strict_quality is False
+
+
+class TestTranslatorResolver:
+    """Tests for the M2.3 translator resolver in LocalDubbingPipeline."""
+
+    @staticmethod
+    def _patch_qwen_supports(monkeypatch, supports_fn):
+        from videopython.ai.generation.qwen3 import Qwen3Translator
+
+        monkeypatch.setattr(Qwen3Translator, "supports", staticmethod(supports_fn))
+
+    @staticmethod
+    def _patch_marian_has_model(monkeypatch, has_fn):
+        from videopython.ai.generation.translation import MarianTranslator
+
+        monkeypatch.setattr(MarianTranslator, "has_model_for", classmethod(has_fn))
+
+    @staticmethod
+    def _stub_qwen_init(monkeypatch):
+        """Replace Qwen3Translator.__init__ to set just the attributes the
+        resolver path inspects, without paying the cost of the real init.
+        Resolution tests don't actually call translate_segments — they only
+        verify which backend type the resolver returned."""
+        from videopython.ai.generation.qwen3 import Qwen3Translator
+
+        def stub_init(self, *args, **kwargs):
+            self.device = kwargs.get("device")
+            self.marian_fallback = kwargs.get("marian_fallback", True)
+            self._llm = None
+            self._marian = None
+            self._failures_last_call = []
+
+        monkeypatch.setattr(Qwen3Translator, "__init__", stub_init)
+
+    def test_auto_picks_qwen_on_gpu(self, monkeypatch):
+        """device resolves to cuda + Qwen covers the pair → Qwen wins."""
+        from videopython.ai.dubbing import pipeline as pipeline_mod
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+        from videopython.ai.generation.qwen3 import Qwen3Translator
+
+        monkeypatch.setattr(pipeline_mod, "select_device", lambda _d, mps_allowed=True: "cuda")
+        self._stub_qwen_init(monkeypatch)
+
+        p = LocalDubbingPipeline(translator="auto")
+        backend = p._resolve_translator_auto("en", "es")
+
+        assert isinstance(backend, Qwen3Translator)
+
+    def test_auto_falls_back_to_marian_on_cpu(self, monkeypatch):
+        """device=cpu + Marian covers the pair → Marian wins (avoid 13× slowdown)."""
+        from videopython.ai.dubbing import pipeline as pipeline_mod
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+        from videopython.ai.generation.translation import MarianTranslator
+
+        monkeypatch.setattr(pipeline_mod, "select_device", lambda _d, mps_allowed=True: "cpu")
+
+        p = LocalDubbingPipeline(translator="auto")
+        backend = p._resolve_translator_auto("en", "es")
+
+        assert isinstance(backend, MarianTranslator)
+
+    def test_auto_uses_qwen_on_cpu_when_marian_lacks_pair(self, monkeypatch, caplog):
+        """device=cpu + Marian doesn't have the pair + Qwen does → Qwen wins
+        with a loud warning about latency."""
+        import logging
+
+        from videopython.ai.dubbing import pipeline as pipeline_mod
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+        from videopython.ai.generation.qwen3 import Qwen3Translator
+
+        monkeypatch.setattr(pipeline_mod, "select_device", lambda _d, mps_allowed=True: "cpu")
+        self._patch_marian_has_model(monkeypatch, lambda cls, src, tgt: False)
+        self._patch_qwen_supports(monkeypatch, lambda src, tgt: True)
+        self._stub_qwen_init(monkeypatch)
+
+        p = LocalDubbingPipeline(translator="auto")
+        with caplog.at_level(logging.WARNING, logger="videopython.ai.dubbing.pipeline"):
+            backend = p._resolve_translator_auto("xh", "yo")
+
+        assert isinstance(backend, Qwen3Translator)
+        assert any("CPU" in r.message and "slow" in r.message.lower() for r in caplog.records)
+
+    def test_auto_raises_unsupported_when_neither_covers(self, monkeypatch):
+        """No backend covers the pair → UnsupportedLanguageError."""
+        from videopython.ai.dubbing import pipeline as pipeline_mod
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+        from videopython.ai.generation.translation import UnsupportedLanguageError
+
+        monkeypatch.setattr(pipeline_mod, "select_device", lambda _d, mps_allowed=True: "cpu")
+        self._patch_marian_has_model(monkeypatch, lambda cls, src, tgt: False)
+        self._patch_qwen_supports(monkeypatch, lambda src, tgt: False)
+
+        p = LocalDubbingPipeline(translator="auto")
+        with pytest.raises(UnsupportedLanguageError) as exc:
+            p._resolve_translator_auto("xx", "yy")
+
+        assert exc.value.source_lang == "xx"
+        assert exc.value.target_lang == "yy"
+
+    def test_explicit_marian_overrides_auto_resolution(self, monkeypatch):
+        """translator='marian' bypasses the resolver — even on GPU."""
+        from videopython.ai.dubbing import pipeline as pipeline_mod
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+        from videopython.ai.generation.translation import MarianTranslator
+
+        monkeypatch.setattr(pipeline_mod, "select_device", lambda _d, mps_allowed=True: "cuda")
+
+        p = LocalDubbingPipeline(translator="marian")
+        p._init_translator(source_lang="en", target_lang="es")
+
+        assert isinstance(p._translator, MarianTranslator)
+
+    def test_explicit_qwen3_overrides_auto_resolution(self, monkeypatch):
+        """translator='qwen3' bypasses the resolver — even on CPU."""
+        from videopython.ai.dubbing import pipeline as pipeline_mod
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+        from videopython.ai.generation.qwen3 import Qwen3Translator
+
+        monkeypatch.setattr(pipeline_mod, "select_device", lambda _d, mps_allowed=True: "cpu")
+        self._stub_qwen_init(monkeypatch)
+
+        p = LocalDubbingPipeline(translator="qwen3")
+        p._init_translator(source_lang="en", target_lang="es")
+
+        assert isinstance(p._translator, Qwen3Translator)
+
+    def test_dubber_propagates_translator_kwarg(self):
+        """VideoDubber.translator forwards into LocalDubbingPipeline.translator."""
+        from videopython.ai.dubbing import VideoDubber
+
+        dubber = VideoDubber(translator="qwen3")
+        dubber._init_local_pipeline()
+
+        assert dubber._local_pipeline.translator == "qwen3"
+
+    def test_dubber_default_translator_is_auto(self):
+        from videopython.ai.dubbing import VideoDubber
+
+        assert VideoDubber().translator == "auto"
+
+
+class TestTranslationFailuresOnResult:
+    """Qwen3Translator.translation_failures must surface onto DubbingResult."""
+
+    def test_translation_failures_propagated(self, sample_audio, monkeypatch):
+        """When Qwen marks an index as failed, the pipeline copies it to
+        DubbingResult.translation_failures."""
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+        from videopython.base.text.transcription import Transcription, TranscriptionSegment, TranscriptionWord
+
+        # Fake translator that marks segment 1 as a hard failure.
+        class FakeTranslator:
+            translation_failures = [1]
+
+            def translate_segments(self, segments, target_lang, source_lang, progress_callback=None):
+                return [
+                    TranslatedSegment(
+                        original_segment=s,
+                        translated_text=s.text if i != 1 else "",
+                        source_lang=source_lang,
+                        target_lang=target_lang,
+                    )
+                    for i, s in enumerate(segments)
+                ]
+
+        def fake_init_translator(self, source_lang, target_lang):
+            self._translator = FakeTranslator()
+
+        def fake_init_tts(self, language="en"):
+            class FakeTTS:
+                def generate_audio(self, text, voice_sample=None, voice_sample_path=None):
+                    sr = 24000
+                    n = int(sr * 0.2)
+                    return Audio(
+                        np.zeros(n, dtype=np.float32),
+                        AudioMetadata(
+                            sample_rate=sr,
+                            channels=1,
+                            sample_width=2,
+                            duration_seconds=0.2,
+                            frame_count=n,
+                        ),
+                    )
+
+            self._tts = FakeTTS()
+
+        monkeypatch.setattr(LocalDubbingPipeline, "_init_translator", fake_init_translator)
+        monkeypatch.setattr(LocalDubbingPipeline, "_init_tts", fake_init_tts)
+
+        words = [TranscriptionWord(start=0.0, end=1.0, word="hi")]
+        segs = [
+            TranscriptionSegment(start=0.0, end=1.0, text="hello", words=words),
+            TranscriptionSegment(start=1.0, end=2.0, text="bad", words=words),
+            TranscriptionSegment(start=2.0, end=3.0, text="bye", words=words),
+        ]
+        transcription = Transcription(segments=segs, language="en")
+
+        pipeline = LocalDubbingPipeline()
+        result = pipeline.process(
+            source_audio=sample_audio,
+            target_lang="es",
+            preserve_background=False,
+            voice_clone=False,
+            enable_diarization=False,
+            transcription=transcription,
+        )
+
+        assert result.translation_failures == [1]
+
+    def test_translation_failures_default_empty_for_marian(self, sample_audio, monkeypatch):
+        """A backend that returns no translation_failures (e.g. Marian)
+        leaves DubbingResult.translation_failures as an empty list."""
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+        from videopython.base.text.transcription import Transcription, TranscriptionSegment, TranscriptionWord
+
+        class FakeMarianlikeTranslator:
+            translation_failures: list[int] = []
+
+            def translate_segments(self, segments, target_lang, source_lang, progress_callback=None):
+                return [
+                    TranslatedSegment(
+                        original_segment=s,
+                        translated_text=s.text,
+                        source_lang=source_lang,
+                        target_lang=target_lang,
+                    )
+                    for s in segments
+                ]
+
+        def fake_init_translator(self, source_lang, target_lang):
+            self._translator = FakeMarianlikeTranslator()
+
+        def fake_init_tts(self, language="en"):
+            class FakeTTS:
+                def generate_audio(self, text, voice_sample=None, voice_sample_path=None):
+                    sr = 24000
+                    n = int(sr * 0.2)
+                    return Audio(
+                        np.zeros(n, dtype=np.float32),
+                        AudioMetadata(
+                            sample_rate=sr,
+                            channels=1,
+                            sample_width=2,
+                            duration_seconds=0.2,
+                            frame_count=n,
+                        ),
+                    )
+
+            self._tts = FakeTTS()
+
+        monkeypatch.setattr(LocalDubbingPipeline, "_init_translator", fake_init_translator)
+        monkeypatch.setattr(LocalDubbingPipeline, "_init_tts", fake_init_tts)
+
+        words = [TranscriptionWord(start=0.0, end=1.0, word="hi")]
+        segs = [TranscriptionSegment(start=0.0, end=1.0, text="hello", words=words)]
+        transcription = Transcription(segments=segs, language="en")
+
+        pipeline = LocalDubbingPipeline()
+        result = pipeline.process(
+            source_audio=sample_audio,
+            target_lang="es",
+            preserve_background=False,
+            voice_clone=False,
+            enable_diarization=False,
+            transcription=transcription,
+        )
+
+        assert result.translation_failures == []

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 from videopython.ai.dubbing.models import DubbingResult, RevoiceResult
-from videopython.ai.dubbing.pipeline import WhisperModel
+from videopython.ai.dubbing.pipeline import TranslatorChoice, WhisperModel
 
 if TYPE_CHECKING:
     from videopython.base.video import Video
@@ -44,6 +44,12 @@ class VideoDubber:
             but processing continues. Either way the
             :class:`TranscriptQuality` is exposed on ``DubbingResult`` for
             inspection.
+        translator: Translation backend to use. ``"auto"`` (default)
+            picks Qwen3 on GPU, MarianMT on CPU; ``"marian"`` and
+            ``"qwen3"`` force the named backend regardless of device.
+            See :class:`videopython.ai.generation.qwen3.Qwen3Translator`
+            for tradeoffs (Qwen3 is slower on CPU but produces
+            context-aware, length-budgeted output).
     """
 
     def __init__(
@@ -55,6 +61,7 @@ class VideoDubber:
         no_speech_threshold: float = 0.6,
         logprob_threshold: float | None = -1.0,
         strict_quality: bool = False,
+        translator: TranslatorChoice = "auto",
     ):
         self.device = device
         self.low_memory = low_memory
@@ -63,13 +70,15 @@ class VideoDubber:
         self.no_speech_threshold = no_speech_threshold
         self.logprob_threshold = logprob_threshold
         self.strict_quality = strict_quality
+        self.translator = translator
         self._local_pipeline: Any = None
         requested = device.lower() if isinstance(device, str) else "auto"
         logger.info(
-            "VideoDubber initialized with device=%s low_memory=%s whisper_model=%s",
+            "VideoDubber initialized with device=%s low_memory=%s whisper_model=%s translator=%s",
             requested,
             low_memory,
             whisper_model,
+            translator,
         )
 
     def _init_local_pipeline(self) -> None:
@@ -83,6 +92,7 @@ class VideoDubber:
             no_speech_threshold=self.no_speech_threshold,
             logprob_threshold=self.logprob_threshold,
             strict_quality=self.strict_quality,
+            translator=self.translator,
         )
 
     def dub(
