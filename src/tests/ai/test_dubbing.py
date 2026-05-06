@@ -2152,13 +2152,44 @@ class TestReplaceAudioStream:
         assert cmd[0] == "ffmpeg"
         assert "-c:v" in cmd and cmd[cmd.index("-c:v") + 1] == "copy"
         assert "-map" in cmd
-        # Two -map args: video from input 0, audio from input 1
+        # Three -map args: video, dubbed audio, subtitles (?-tolerant)
         map_indices = [i for i, v in enumerate(cmd) if v == "-map"]
-        assert len(map_indices) == 2
+        assert len(map_indices) == 3
         assert cmd[map_indices[0] + 1] == "0:v:0"
         assert cmd[map_indices[1] + 1] == "1:a:0"
+        assert cmd[map_indices[2] + 1] == "0:s?"
+        assert "-c:s" in cmd and cmd[cmd.index("-c:s") + 1] == "copy"
         assert "-shortest" in cmd
         assert cmd[-1] == str(out)
+
+    def test_keep_original_audio_adds_extra_map(self, tmp_path, monkeypatch):
+        """``keep_original_audio=True`` adds ``-map 0:a?`` between dub and subs."""
+        import videopython.ai.dubbing.remux as remux_mod
+
+        video = tmp_path / "v.mp4"
+        video.write_bytes(b"fake")
+        audio = tmp_path / "a.wav"
+        audio.write_bytes(b"fake")
+        out = tmp_path / "out.mp4"
+
+        captured: dict = {}
+
+        class FakeResult:
+            returncode = 0
+            stderr = b""
+
+        def fake_run(cmd, capture_output):
+            captured["cmd"] = cmd
+            return FakeResult()
+
+        monkeypatch.setattr(remux_mod.subprocess, "run", fake_run)
+
+        remux_mod.replace_audio_stream(video, audio, out, keep_original_audio=True)
+
+        cmd = captured["cmd"]
+        map_args = [cmd[i + 1] for i, v in enumerate(cmd) if v == "-map"]
+        # Dubbed audio first (default track), then original, then subs.
+        assert map_args == ["0:v:0", "1:a:0", "0:a?", "0:s?"]
 
 
 class TestReplaceAudioStreamFromAudio:
@@ -2226,17 +2257,47 @@ class TestReplaceAudioStreamFromAudio:
         assert cmd[i_indices[1] + 1] == "-"
         # Stdin is requested.
         assert captured["stdin_kwarg"] is not None
-        # Map: video from input 0, audio from input 1.
+        # Map: video, dubbed audio (input 1), subtitles from input 0.
         map_indices = [i for i, v in enumerate(cmd) if v == "-map"]
-        assert len(map_indices) == 2
+        assert len(map_indices) == 3
         assert cmd[map_indices[0] + 1] == "0:v:0"
         assert cmd[map_indices[1] + 1] == "1:a:0"
+        assert cmd[map_indices[2] + 1] == "0:s?"
         assert "-c:v" in cmd and cmd[cmd.index("-c:v") + 1] == "copy"
+        assert "-c:s" in cmd and cmd[cmd.index("-c:s") + 1] == "copy"
         assert "-shortest" in cmd
         assert cmd[-1] == str(out)
         # WAV bytes were written: header "RIFF" then "WAVE".
         assert captured["stdin_bytes"][:4] == b"RIFF"
         assert captured["stdin_bytes"][8:12] == b"WAVE"
+
+    def test_keep_original_audio_adds_extra_map(self, tmp_path, sample_audio, monkeypatch):
+        """Streaming variant also threads ``keep_original_audio`` into ``-map`` order."""
+        import videopython.ai.dubbing.remux as remux_mod
+
+        video = tmp_path / "v.mp4"
+        video.write_bytes(b"fake")
+        out = tmp_path / "out.mp4"
+
+        captured: dict = {}
+
+        class FakeProcess:
+            returncode = 0
+
+            def communicate(self, _stdin):
+                return b"", b""
+
+        def fake_popen(cmd, stdin=None, stderr=None):
+            captured["cmd"] = cmd
+            return FakeProcess()
+
+        monkeypatch.setattr(remux_mod.subprocess, "Popen", fake_popen)
+
+        remux_mod.replace_audio_stream_from_audio(video, sample_audio, out, keep_original_audio=True)
+
+        cmd = captured["cmd"]
+        map_args = [cmd[i + 1] for i, v in enumerate(cmd) if v == "-map"]
+        assert map_args == ["0:v:0", "1:a:0", "0:a?", "0:s?"]
 
 
 class TestVideoDubberDubFile:
@@ -2337,6 +2398,60 @@ class TestVideoDubberDubFile:
         # Dubbed audio is forwarded by reference, not via a temp file.
         assert calls[2][1]["audio"] is sample_audio
         assert result is fake_result
+
+    def test_dub_file_propagates_keep_original_audio(self, tmp_path, sample_audio, sample_segment, monkeypatch):
+        """``keep_original_audio`` reaches replace_audio_stream_from_audio."""
+        import videopython.ai.dubbing.remux as remux_mod
+        from videopython.ai.dubbing import VideoDubber
+        from videopython.ai.dubbing.models import DubbingResult, TranslatedSegment
+        from videopython.base.audio import audio as audio_mod
+        from videopython.base.text.transcription import Transcription
+
+        input_path = tmp_path / "in.mp4"
+        input_path.write_bytes(b"fake")
+
+        monkeypatch.setattr(audio_mod.Audio, "from_path", classmethod(lambda cls, p: sample_audio))
+
+        fake_result = DubbingResult(
+            dubbed_audio=sample_audio,
+            translated_segments=[
+                TranslatedSegment(
+                    original_segment=sample_segment,
+                    translated_text="Hola",
+                    source_lang="en",
+                    target_lang="es",
+                )
+            ],
+            source_transcription=Transcription(segments=[sample_segment]),
+            source_lang="en",
+            target_lang="es",
+        )
+
+        class FakePipeline:
+            low_memory = False
+
+            def process(self, **_kwargs):
+                return fake_result
+
+        monkeypatch.setattr(
+            VideoDubber, "_init_local_pipeline", lambda self: setattr(self, "_local_pipeline", FakePipeline())
+        )
+
+        captured: dict = {}
+
+        def fake_replace(video_path, audio, output_path, **kwargs):
+            captured.update(kwargs)
+
+        monkeypatch.setattr(remux_mod, "replace_audio_stream_from_audio", fake_replace)
+
+        VideoDubber().dub_file(
+            input_path=input_path,
+            output_path=tmp_path / "out.mp4",
+            target_lang="es",
+            keep_original_audio=True,
+        )
+
+        assert captured.get("keep_original_audio") is True
 
     def test_dub_file_propagates_remux_error(self, tmp_path, sample_audio, sample_segment, monkeypatch):
         """RemuxError from the streaming helper propagates out of dub_file."""

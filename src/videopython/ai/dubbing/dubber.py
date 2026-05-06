@@ -175,6 +175,7 @@ class VideoDubber:
         enable_diarization: bool = False,
         progress_callback: Callable[[str, float], None] | None = None,
         transcription: Any = None,
+        keep_original_audio: bool = False,
     ) -> DubbingResult:
         """Dub a video file in place on disk without loading video frames into memory.
 
@@ -201,6 +202,8 @@ class VideoDubber:
                 step. Speaker labels on the supplied transcription drive per-speaker
                 voice cloning. If it has no speakers, pass ``enable_diarization=True``
                 to add them via pyannote (requires word-level timings).
+            keep_original_audio: If True, retain the source audio in the output
+                as a secondary track behind the dubbed one (editorial A/B).
 
         Returns:
             ``DubbingResult`` with the dubbed audio, translated segments, and
@@ -239,6 +242,7 @@ class VideoDubber:
             video_path=input_path,
             audio=result.dubbed_audio,
             output_path=output_path,
+            keep_original_audio=keep_original_audio,
         )
 
         return result
