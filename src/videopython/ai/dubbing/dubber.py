@@ -50,6 +50,13 @@ class VideoDubber:
             See :class:`videopython.ai.generation.qwen3.Qwen3Translator`
             for tradeoffs (Qwen3 is slower on CPU but produces
             context-aware, length-budgeted output).
+        cache_dir: When set, persist transcription, translated segments,
+            and per-segment TTS WAVs under this directory and skip stages
+            whose inputs already match a cache entry. Use to resume crashed
+            long runs or to iterate on dub configuration without paying
+            transcription cost each time. ``None`` (default) disables
+            caching. Cache grows unbounded; clear via
+            :func:`videopython.ai.dubbing.cache.dub_cache_clear`.
     """
 
     def __init__(
@@ -62,6 +69,7 @@ class VideoDubber:
         logprob_threshold: float | None = -1.0,
         strict_quality: bool = False,
         translator: TranslatorChoice = "auto",
+        cache_dir: str | Path | None = None,
     ):
         self.device = device
         self.low_memory = low_memory
@@ -71,14 +79,16 @@ class VideoDubber:
         self.logprob_threshold = logprob_threshold
         self.strict_quality = strict_quality
         self.translator = translator
+        self.cache_dir = cache_dir
         self._local_pipeline: Any = None
         requested = device.lower() if isinstance(device, str) else "auto"
         logger.info(
-            "VideoDubber initialized with device=%s low_memory=%s whisper_model=%s translator=%s",
+            "VideoDubber initialized with device=%s low_memory=%s whisper_model=%s translator=%s cache_dir=%s",
             requested,
             low_memory,
             whisper_model,
             translator,
+            cache_dir,
         )
 
     def _init_local_pipeline(self) -> None:
@@ -93,6 +103,7 @@ class VideoDubber:
             logprob_threshold=self.logprob_threshold,
             strict_quality=self.strict_quality,
             translator=self.translator,
+            cache_dir=self.cache_dir,
         )
 
     def dub(

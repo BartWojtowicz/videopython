@@ -59,6 +59,31 @@ class TranslatedSegment:
         """Duration of the segment in seconds."""
         return self.end - self.start
 
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization (used by the dub cache)."""
+        return {
+            "original_segment": self.original_segment.to_dict(),
+            "translated_text": self.translated_text,
+            "source_lang": self.source_lang,
+            "target_lang": self.target_lang,
+            "speaker": self.speaker,
+            "start": self.start,
+            "end": self.end,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> TranslatedSegment:
+        """Reconstruct from a dict produced by :meth:`to_dict`."""
+        return cls(
+            original_segment=TranscriptionSegment.from_dict(data["original_segment"]),
+            translated_text=data["translated_text"],
+            source_lang=data["source_lang"],
+            target_lang=data["target_lang"],
+            speaker=data.get("speaker"),
+            start=data.get("start", 0.0),
+            end=data.get("end", 0.0),
+        )
+
 
 @dataclass
 class SeparatedAudio:
