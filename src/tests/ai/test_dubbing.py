@@ -2152,13 +2152,44 @@ class TestReplaceAudioStream:
         assert cmd[0] == "ffmpeg"
         assert "-c:v" in cmd and cmd[cmd.index("-c:v") + 1] == "copy"
         assert "-map" in cmd
-        # Two -map args: video from input 0, audio from input 1
+        # Three -map args: video, dubbed audio, subtitles (?-tolerant)
         map_indices = [i for i, v in enumerate(cmd) if v == "-map"]
-        assert len(map_indices) == 2
+        assert len(map_indices) == 3
         assert cmd[map_indices[0] + 1] == "0:v:0"
         assert cmd[map_indices[1] + 1] == "1:a:0"
+        assert cmd[map_indices[2] + 1] == "0:s?"
+        assert "-c:s" in cmd and cmd[cmd.index("-c:s") + 1] == "copy"
         assert "-shortest" in cmd
         assert cmd[-1] == str(out)
+
+    def test_keep_original_audio_adds_extra_map(self, tmp_path, monkeypatch):
+        """``keep_original_audio=True`` adds ``-map 0:a?`` between dub and subs."""
+        import videopython.ai.dubbing.remux as remux_mod
+
+        video = tmp_path / "v.mp4"
+        video.write_bytes(b"fake")
+        audio = tmp_path / "a.wav"
+        audio.write_bytes(b"fake")
+        out = tmp_path / "out.mp4"
+
+        captured: dict = {}
+
+        class FakeResult:
+            returncode = 0
+            stderr = b""
+
+        def fake_run(cmd, capture_output):
+            captured["cmd"] = cmd
+            return FakeResult()
+
+        monkeypatch.setattr(remux_mod.subprocess, "run", fake_run)
+
+        remux_mod.replace_audio_stream(video, audio, out, keep_original_audio=True)
+
+        cmd = captured["cmd"]
+        map_args = [cmd[i + 1] for i, v in enumerate(cmd) if v == "-map"]
+        # Dubbed audio first (default track), then original, then subs.
+        assert map_args == ["0:v:0", "1:a:0", "0:a?", "0:s?"]
 
 
 class TestReplaceAudioStreamFromAudio:
@@ -2226,17 +2257,47 @@ class TestReplaceAudioStreamFromAudio:
         assert cmd[i_indices[1] + 1] == "-"
         # Stdin is requested.
         assert captured["stdin_kwarg"] is not None
-        # Map: video from input 0, audio from input 1.
+        # Map: video, dubbed audio (input 1), subtitles from input 0.
         map_indices = [i for i, v in enumerate(cmd) if v == "-map"]
-        assert len(map_indices) == 2
+        assert len(map_indices) == 3
         assert cmd[map_indices[0] + 1] == "0:v:0"
         assert cmd[map_indices[1] + 1] == "1:a:0"
+        assert cmd[map_indices[2] + 1] == "0:s?"
         assert "-c:v" in cmd and cmd[cmd.index("-c:v") + 1] == "copy"
+        assert "-c:s" in cmd and cmd[cmd.index("-c:s") + 1] == "copy"
         assert "-shortest" in cmd
         assert cmd[-1] == str(out)
         # WAV bytes were written: header "RIFF" then "WAVE".
         assert captured["stdin_bytes"][:4] == b"RIFF"
         assert captured["stdin_bytes"][8:12] == b"WAVE"
+
+    def test_keep_original_audio_adds_extra_map(self, tmp_path, sample_audio, monkeypatch):
+        """Streaming variant also threads ``keep_original_audio`` into ``-map`` order."""
+        import videopython.ai.dubbing.remux as remux_mod
+
+        video = tmp_path / "v.mp4"
+        video.write_bytes(b"fake")
+        out = tmp_path / "out.mp4"
+
+        captured: dict = {}
+
+        class FakeProcess:
+            returncode = 0
+
+            def communicate(self, _stdin):
+                return b"", b""
+
+        def fake_popen(cmd, stdin=None, stderr=None):
+            captured["cmd"] = cmd
+            return FakeProcess()
+
+        monkeypatch.setattr(remux_mod.subprocess, "Popen", fake_popen)
+
+        remux_mod.replace_audio_stream_from_audio(video, sample_audio, out, keep_original_audio=True)
+
+        cmd = captured["cmd"]
+        map_args = [cmd[i + 1] for i, v in enumerate(cmd) if v == "-map"]
+        assert map_args == ["0:v:0", "1:a:0", "0:a?", "0:s?"]
 
 
 class TestVideoDubberDubFile:
@@ -2337,6 +2398,60 @@ class TestVideoDubberDubFile:
         # Dubbed audio is forwarded by reference, not via a temp file.
         assert calls[2][1]["audio"] is sample_audio
         assert result is fake_result
+
+    def test_dub_file_propagates_keep_original_audio(self, tmp_path, sample_audio, sample_segment, monkeypatch):
+        """``keep_original_audio`` reaches replace_audio_stream_from_audio."""
+        import videopython.ai.dubbing.remux as remux_mod
+        from videopython.ai.dubbing import VideoDubber
+        from videopython.ai.dubbing.models import DubbingResult, TranslatedSegment
+        from videopython.base.audio import audio as audio_mod
+        from videopython.base.text.transcription import Transcription
+
+        input_path = tmp_path / "in.mp4"
+        input_path.write_bytes(b"fake")
+
+        monkeypatch.setattr(audio_mod.Audio, "from_path", classmethod(lambda cls, p: sample_audio))
+
+        fake_result = DubbingResult(
+            dubbed_audio=sample_audio,
+            translated_segments=[
+                TranslatedSegment(
+                    original_segment=sample_segment,
+                    translated_text="Hola",
+                    source_lang="en",
+                    target_lang="es",
+                )
+            ],
+            source_transcription=Transcription(segments=[sample_segment]),
+            source_lang="en",
+            target_lang="es",
+        )
+
+        class FakePipeline:
+            low_memory = False
+
+            def process(self, **_kwargs):
+                return fake_result
+
+        monkeypatch.setattr(
+            VideoDubber, "_init_local_pipeline", lambda self: setattr(self, "_local_pipeline", FakePipeline())
+        )
+
+        captured: dict = {}
+
+        def fake_replace(video_path, audio, output_path, **kwargs):
+            captured.update(kwargs)
+
+        monkeypatch.setattr(remux_mod, "replace_audio_stream_from_audio", fake_replace)
+
+        VideoDubber().dub_file(
+            input_path=input_path,
+            output_path=tmp_path / "out.mp4",
+            target_lang="es",
+            keep_original_audio=True,
+        )
+
+        assert captured.get("keep_original_audio") is True
 
     def test_dub_file_propagates_remux_error(self, tmp_path, sample_audio, sample_segment, monkeypatch):
         """RemuxError from the streaming helper propagates out of dub_file."""
@@ -2444,6 +2559,94 @@ class TestPeakMatch:
 
         out = _peak_match(target, reference)
         assert out is target
+
+
+class TestLoudnessMatch:
+    """Tests for the BS.1770 LUFS-based loudness match used post-mix on
+    DubbingResult.dubbed_audio."""
+
+    def _make_tone(self, amplitude: float, duration: float = 1.0, sample_rate: int = 24000) -> Audio:
+        """1 kHz sine tone — pyloudnorm's K-weighting is defined for this kind of broadband signal."""
+        frame_count = int(duration * sample_rate)
+        t = np.arange(frame_count, dtype=np.float32) / sample_rate
+        data = (amplitude * np.sin(2 * np.pi * 1000.0 * t)).astype(np.float32)
+        metadata = AudioMetadata(
+            sample_rate=sample_rate,
+            channels=1,
+            sample_width=2,
+            duration_seconds=duration,
+            frame_count=frame_count,
+        )
+        return Audio(data, metadata)
+
+    def test_matches_loudness_within_one_lu(self):
+        """Quiet target + loud reference: post-match LUFS difference should be < 1 LU."""
+        import pyloudnorm
+
+        from videopython.ai.dubbing.pipeline import _loudness_match
+
+        target = self._make_tone(0.1)  # quiet
+        reference = self._make_tone(0.5)  # ~14 dB louder
+
+        out = _loudness_match(target, reference)
+
+        meter_t = pyloudnorm.Meter(out.metadata.sample_rate)
+        meter_r = pyloudnorm.Meter(reference.metadata.sample_rate)
+        diff = abs(meter_t.integrated_loudness(out.data) - meter_r.integrated_loudness(reference.data))
+        assert diff < 1.0
+
+    def test_clamps_post_gain_peak_below_unity(self):
+        """When LUFS gain would push past 1.0, output is clamped to 0.99."""
+        from videopython.ai.dubbing.pipeline import _loudness_match
+
+        target = self._make_tone(0.05)
+        reference = self._make_tone(0.95)  # demands ~25 dB gain → would peak well past 1.0
+
+        out = _loudness_match(target, reference)
+        assert float(np.max(np.abs(out.data))) <= 0.99 + 1e-6
+
+    def test_short_clip_falls_back_to_peak_match(self, monkeypatch):
+        """Below the 400 ms BS.1770 gating block, the helper must use peak match."""
+        from videopython.ai.dubbing import pipeline as pipeline_mod
+
+        target = self._make_tone(0.3, duration=0.2)
+        reference = self._make_tone(0.9, duration=0.2)
+
+        called = {"meter": False}
+
+        def fail_if_called(*_args, **_kwargs):
+            called["meter"] = True
+            raise AssertionError("pyloudnorm.Meter must not be constructed for short clips")
+
+        import pyloudnorm
+
+        monkeypatch.setattr(pyloudnorm, "Meter", fail_if_called)
+
+        out = pipeline_mod._loudness_match(target, reference)
+        assert not called["meter"]
+        # Peak-match path: target peak now matches reference peak.
+        assert abs(float(np.max(np.abs(out.data))) - 0.9) < 1e-3
+
+    def test_silent_target_returns_target_unchanged(self):
+        """All-silent target: no usable loudness, fall through to peak-match no-op."""
+        from videopython.ai.dubbing.pipeline import _loudness_match
+
+        sample_rate = 24000
+        frame_count = sample_rate
+        silent = Audio(
+            np.zeros(frame_count, dtype=np.float32),
+            AudioMetadata(
+                sample_rate=sample_rate,
+                channels=1,
+                sample_width=2,
+                duration_seconds=1.0,
+                frame_count=frame_count,
+            ),
+        )
+        reference = self._make_tone(0.5)
+
+        out = _loudness_match(silent, reference)
+        assert out is silent
 
 
 class TestPipelineSpeechRegionGating:
@@ -3162,3 +3365,294 @@ class TestTranslationFailuresOnResult:
         )
 
         assert result.translation_failures == []
+
+
+class TestDubCacheUnit:
+    """Unit tests for DubCache key derivation + filesystem layout — no
+    pipeline involvement."""
+
+    def test_source_key_changes_with_audio_bytes(self, sample_audio):
+        from videopython.ai.dubbing.cache import DubCache
+
+        key_a = DubCache.source_key(sample_audio)
+        # Same Audio instance → same key.
+        assert DubCache.source_key(sample_audio) == key_a
+        # Mutated copy → different key.
+        mutated_data = sample_audio.data.copy()
+        mutated_data[0] = 0.999
+        mutated = Audio(mutated_data, sample_audio.metadata)
+        assert DubCache.source_key(mutated) != key_a
+
+    def test_transcription_kwargs_hash_changes_with_kwarg(self):
+        from videopython.ai.dubbing.cache import DubCache
+
+        base = dict(
+            whisper_model="turbo",
+            enable_diarization=False,
+            condition_on_previous_text=False,
+            no_speech_threshold=0.6,
+            logprob_threshold=-1.0,
+        )
+        h1 = DubCache.transcription_kwargs_hash(**base)
+        h2 = DubCache.transcription_kwargs_hash(**{**base, "whisper_model": "small"})
+        assert h1 != h2
+        # Stable across calls with same inputs.
+        assert h1 == DubCache.transcription_kwargs_hash(**base)
+
+    def test_translation_key_includes_translator_class(self):
+        from videopython.ai.dubbing.cache import DubCache
+
+        marian_key = DubCache.translation_key(source_lang="en", target_lang="es", translator_class="MarianTranslator")
+        qwen_key = DubCache.translation_key(source_lang="en", target_lang="es", translator_class="Qwen3Translator")
+        assert marian_key != qwen_key
+
+    def test_tts_key_changes_with_text_and_voice(self):
+        from videopython.ai.dubbing.cache import DubCache
+
+        text_a = DubCache.tts_key(translated_text="hola", voice_sample_bytes=b"v1", language="es")
+        text_b = DubCache.tts_key(translated_text="adios", voice_sample_bytes=b"v1", language="es")
+        voice_b = DubCache.tts_key(translated_text="hola", voice_sample_bytes=b"v2", language="es")
+        lang_b = DubCache.tts_key(translated_text="hola", voice_sample_bytes=b"v1", language="fr")
+        assert len({text_a, text_b, voice_b, lang_b}) == 4
+
+    def test_get_returns_none_on_empty_cache(self, tmp_path):
+        from videopython.ai.dubbing.cache import DubCache
+
+        cache = DubCache(tmp_path)
+        assert cache.get_transcription("nope", "k") is None
+        assert cache.get_translation("nope", "k") is None
+        assert cache.get_tts_path("nope", "k") is None
+
+    def test_schema_version_mismatch_invalidates(self, tmp_path, sample_audio):
+        """Bumping SCHEMA_VERSION on disk causes all artifacts in that dir to miss."""
+        import json
+
+        from videopython.ai.dubbing.cache import DubCache
+
+        cache = DubCache(tmp_path)
+        from videopython.base.text.transcription import Transcription
+
+        empty = Transcription(segments=[], language="en")
+        cache.put_transcription("src1", "kwargs1", empty, hash_inputs={})
+        # Sanity — fresh metadata reads back fine.
+        assert cache.get_transcription("src1", "kwargs1") is not None
+
+        # Forge a future schema version; the cache must treat the artifact as absent.
+        meta_path = tmp_path / "src1" / "metadata.json"
+        meta_path.write_text(json.dumps({"schema": 999, "hash_inputs": {}}))
+        assert cache.get_transcription("src1", "kwargs1") is None
+
+    def test_dub_cache_clear_removes_dir(self, tmp_path):
+        from videopython.ai.dubbing.cache import DubCache, dub_cache_clear
+        from videopython.base.text.transcription import Transcription
+
+        cache = DubCache(tmp_path)
+        cache.put_transcription("victim", "k", Transcription(segments=[], language="en"), hash_inputs={})
+        assert (tmp_path / "victim").exists()
+
+        dub_cache_clear(tmp_path, "victim")
+        assert not (tmp_path / "victim").exists()
+        # Root still exists; only the victim dir was removed.
+        assert tmp_path.exists()
+
+
+def _segment(text: str, start: float = 0.0, end: float = 1.0) -> TranscriptionSegment:
+    return TranscriptionSegment(
+        start=start,
+        end=end,
+        text=text,
+        words=[TranscriptionWord(start=start, end=end, word=text)],
+    )
+
+
+def _stub_dub_pipeline(
+    monkeypatch,
+    sample_audio,
+    *,
+    segments: list[TranscriptionSegment] | None = None,
+    translation_prefix: str = "translated:",
+) -> tuple[list, list, list]:
+    """Patch ``LocalDubbingPipeline`` init paths so ``process()`` runs end-to-end
+    without loading real models.
+
+    Returns ``(transcribe_calls, translate_calls, tts_calls)`` accumulators
+    that tests can assert against to confirm whether a stage actually ran.
+    """
+    from videopython.ai.dubbing.models import TranslatedSegment
+    from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+    from videopython.base.text.transcription import Transcription
+
+    fixture_segments = segments if segments is not None else [_segment("hello")]
+    transcribe_calls: list = []
+    translate_calls: list = []
+    tts_calls: list = []
+
+    class FakeTranscriber:
+        def transcribe(self, audio):
+            transcribe_calls.append(audio)
+            return Transcription(segments=fixture_segments, language="en")
+
+        def unload(self):
+            pass
+
+    class FakeTranslator:
+        translation_failures: list[int] = []
+
+        def translate_segments(self, segments, target_lang, source_lang, progress_callback=None):
+            translate_calls.append([s.text for s in segments])
+            return [
+                TranslatedSegment(
+                    original_segment=s,
+                    translated_text=f"{translation_prefix}{s.text}",
+                    source_lang=source_lang,
+                    target_lang=target_lang,
+                )
+                for s in segments
+            ]
+
+        def unload(self):
+            pass
+
+    class FakeTTS:
+        def generate_audio(self, text, voice_sample=None, voice_sample_path=None):
+            tts_calls.append(text)
+            return sample_audio
+
+        def unload(self):
+            pass
+
+    class FakeSynchronizer:
+        def synchronize_segments(self, segments, durations):
+            return segments, []
+
+        def assemble_with_timing(self, segments, start_times, total_duration):
+            return segments[0] if segments else sample_audio
+
+    monkeypatch.setattr(
+        LocalDubbingPipeline,
+        "_init_transcriber",
+        lambda self, enable_diarization=False: setattr(self, "_transcriber", FakeTranscriber()),
+    )
+    monkeypatch.setattr(
+        LocalDubbingPipeline,
+        "_init_translator",
+        lambda self, source_lang, target_lang: setattr(self, "_translator", FakeTranslator()),
+    )
+    monkeypatch.setattr(
+        LocalDubbingPipeline,
+        "_init_tts",
+        lambda self, language="en": setattr(self, "_tts", FakeTTS()),
+    )
+    monkeypatch.setattr(
+        LocalDubbingPipeline,
+        "_init_synchronizer",
+        lambda self: setattr(self, "_synchronizer", FakeSynchronizer()),
+    )
+    return transcribe_calls, translate_calls, tts_calls
+
+
+def _run_dub(pipeline, sample_audio):
+    """Common process() invocation for cache tests — no separation, no voice clone."""
+    return pipeline.process(
+        source_audio=sample_audio,
+        target_lang="es",
+        preserve_background=False,
+        voice_clone=False,
+        enable_diarization=False,
+    )
+
+
+class TestDubCachePipelineIntegration:
+    """Pipeline reads/writes the dub cache when ``cache_dir`` is set, and
+    the cache is a true no-op when ``cache_dir=None``.
+
+    Each test stubs the heavy components (translator, TTS, synchronizer)
+    so we exercise the cache wiring without loading models.
+    """
+
+    def test_cache_off_when_dir_none(self, sample_audio, monkeypatch):
+        """cache_dir=None: pipeline._cache stays None; no filesystem writes."""
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+
+        _stub_dub_pipeline(monkeypatch, sample_audio)
+
+        pipeline = LocalDubbingPipeline()
+        _run_dub(pipeline, sample_audio)
+        assert pipeline._cache is None
+
+    def test_cache_miss_then_hit(self, tmp_path, sample_audio, monkeypatch):
+        """First run populates the cache; second run skips transcription + translation + TTS."""
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+
+        transcribe_calls, translate_calls, tts_calls = _stub_dub_pipeline(monkeypatch, sample_audio)
+
+        cache_dir = tmp_path / "cache"
+        _run_dub(LocalDubbingPipeline(cache_dir=cache_dir), sample_audio)
+        assert (len(transcribe_calls), len(translate_calls), len(tts_calls)) == (1, 1, 1)
+
+        _run_dub(LocalDubbingPipeline(cache_dir=cache_dir), sample_audio)
+        # Every stage was a cache hit on the second run.
+        assert (len(transcribe_calls), len(translate_calls), len(tts_calls)) == (1, 1, 1)
+
+    def test_cache_invalidates_on_whisper_kwarg_change(self, tmp_path, sample_audio, monkeypatch):
+        """Different whisper_model => transcription cache miss, even with same source bytes."""
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+
+        transcribe_calls, _, _ = _stub_dub_pipeline(monkeypatch, sample_audio)
+
+        cache_dir = tmp_path / "cache"
+        _run_dub(LocalDubbingPipeline(cache_dir=cache_dir, whisper_model="turbo"), sample_audio)
+        _run_dub(LocalDubbingPipeline(cache_dir=cache_dir, whisper_model="small"), sample_audio)
+        assert len(transcribe_calls) == 2  # second run re-transcribed.
+
+    def test_cache_invalidates_on_translator_change(self, tmp_path, sample_audio, monkeypatch):
+        """Switching translator (marian → qwen3) invalidates the translation cache."""
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+
+        _, translate_calls, _ = _stub_dub_pipeline(monkeypatch, sample_audio)
+
+        cache_dir = tmp_path / "cache"
+        _run_dub(LocalDubbingPipeline(cache_dir=cache_dir, translator="marian"), sample_audio)
+        _run_dub(LocalDubbingPipeline(cache_dir=cache_dir, translator="qwen3"), sample_audio)
+        assert len(translate_calls) == 2
+
+    def test_tts_cache_per_segment(self, tmp_path, sample_audio, monkeypatch):
+        """Pre-populating one segment's TTS WAV makes the run TTS only the missing one."""
+        from videopython.ai.dubbing.cache import DubCache
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+
+        segs = [_segment("seg-A", 0.0, 1.0), _segment("seg-B", 1.0, 2.0)]
+        _, _, tts_calls = _stub_dub_pipeline(monkeypatch, sample_audio, segments=segs, translation_prefix="t:")
+
+        cache_dir = tmp_path / "cache"
+        # Pre-populate the cache for seg-A: write a WAV at the path the pipeline will compute.
+        cache = DubCache(cache_dir)
+        src_hash = DubCache.source_key(sample_audio)
+        seg_a_key = DubCache.tts_key(translated_text="t:seg-A", voice_sample_bytes=None, language="es")
+        sample_audio.save(cache.reserve_tts_path(src_hash, seg_a_key))
+
+        _run_dub(LocalDubbingPipeline(cache_dir=cache_dir), sample_audio)
+        assert tts_calls == ["t:seg-B"]
+
+
+class TestVideoDubberCacheKwarg:
+    def test_cache_dir_propagates_to_pipeline(self, tmp_path, monkeypatch):
+        from videopython.ai.dubbing import VideoDubber
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+
+        captured: dict = {}
+        original_init = LocalDubbingPipeline.__init__
+
+        def capturing_init(self, *args, **kwargs):
+            captured.update(kwargs)
+            original_init(self, *args, **kwargs)
+
+        monkeypatch.setattr(LocalDubbingPipeline, "__init__", capturing_init)
+
+        VideoDubber(cache_dir=tmp_path)._init_local_pipeline()
+        assert captured.get("cache_dir") == tmp_path
+
+    def test_cache_dir_default_is_none(self):
+        from videopython.ai.dubbing import VideoDubber
+
+        assert VideoDubber().cache_dir is None

@@ -1,5 +1,19 @@
 # Release Notes
 
+## 0.28.2
+
+### Added
+
+- `cache_dir: str | Path | None = None` constructor kwarg on `VideoDubber` and `LocalDubbingPipeline`. When set, transcription, translated segments, and per-segment TTS WAVs are persisted under that directory and skipped on subsequent runs whose hash inputs match. Designed for resuming crashed long runs and iterating on dub configuration without re-paying transcription cost. Cache invalidates conservatively on whisper/translator/voice-sample/text changes — false misses are cheap; false hits would be bugs. Cache grows unbounded; clear with the new `dub_cache_clear` helper.
+- `videopython.ai.dubbing.cache.DubCache` and `dub_cache_clear()` exported from `videopython.ai.dubbing`. `DubCache` exposes the three artifact getters/setters and the key-derivation static methods so external callers can pre-warm or inspect cache state.
+- `keep_original_audio: bool = False` kwarg on `VideoDubber.dub_file` and the two `videopython.ai.dubbing.remux` helpers (`replace_audio_stream`, `replace_audio_stream_from_audio`). When True, the source audio is retained as a secondary audio track in the output (dubbed audio remains the default playback track). Useful for editorial A/B.
+- `TranslatedSegment.to_dict` / `from_dict` for round-tripping translations through the dub cache. Symmetric with `Transcription` and `TimingSummary`.
+
+### Changed
+
+- Replaced the post-mix peak-amplitude match with BS.1770 integrated-loudness matching via `pyloudnorm` (BSD-3, added to the `ai` extra). The dubbed track now lands within ~1 LU of the source on dialogue-heavy mixes, fixing the perceptually-thinner output that peak ratio left behind. Falls back to peak-match for clips shorter than the BS.1770 gating block (400 ms) or when measurement returns -inf. Post-gain peaks are clamped to 0.99 to keep BS.1770's lack of a peak ceiling from clipping quiet sources.
+- `replace_audio_stream` and `replace_audio_stream_from_audio` now carry subtitle streams from the source video through stream-copy by default (`-map 0:s? -c:s copy`). Sources without subtitles are tolerated by the `?` modifier, so existing fixtures aren't disturbed.
+
 ## 0.28.1
 
 ### Added
