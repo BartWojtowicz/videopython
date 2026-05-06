@@ -51,6 +51,9 @@ class TextToSpeech:
         text: str,
         voice_sample: Audio | None = None,
         voice_sample_path: str | Path | None = None,
+        exaggeration: float | None = None,
+        cfg_weight: float | None = None,
+        temperature: float | None = None,
     ) -> Audio:
         """Generate speech audio from text.
 
@@ -64,6 +67,15 @@ class TextToSpeech:
                 precedence over ``voice_sample`` and ``self.voice``. Used by
                 the dubbing pipeline to encode each speaker's sample once and
                 reuse it across all of that speaker's segments.
+            exaggeration: Chatterbox emotional-intensity knob (default
+                ``0.5``). ``None`` (default) means do not pass the kwarg —
+                Chatterbox uses its own default and we stay forward-compatible
+                with changes to it. ``0.7+`` produces dramatic output.
+            cfg_weight: Chatterbox classifier-free-guidance weight (default
+                ``0.5``). ``None`` means do not pass. Lower values (~``0.3``)
+                slow pacing.
+            temperature: Chatterbox sampling temperature (default ``0.8``).
+                ``None`` means do not pass.
         """
         import tempfile
         from pathlib import Path
@@ -86,11 +98,23 @@ class TextToSpeech:
                     speaker_wav_path = Path(f.name)
                     cleanup_path = True
 
+        # Only forward knobs the caller explicitly set. Passing nothing
+        # for a knob lets Chatterbox use its own default — important so a
+        # future Chatterbox default change doesn't get pinned by us.
+        knobs: dict[str, float] = {}
+        if exaggeration is not None:
+            knobs["exaggeration"] = exaggeration
+        if cfg_weight is not None:
+            knobs["cfg_weight"] = cfg_weight
+        if temperature is not None:
+            knobs["temperature"] = temperature
+
         try:
             wav = self._model.generate(
                 text=text,
                 language_id=self.language,
                 audio_prompt_path=str(speaker_wav_path) if speaker_wav_path else None,
+                **knobs,
             )
 
             audio_data = wav.cpu().float().numpy().squeeze()

@@ -11,7 +11,7 @@ import numpy as np
 
 from videopython.ai._device import select_device
 from videopython.ai.dubbing.cache import DubCache
-from videopython.ai.dubbing.models import DubbingResult, RevoiceResult, SeparatedAudio, TimingSummary
+from videopython.ai.dubbing.models import DubbingResult, Expressiveness, RevoiceResult, SeparatedAudio, TimingSummary
 from videopython.ai.dubbing.quality import GarbageTranscriptError, assess_transcript
 from videopython.ai.dubbing.timing import TimingSynchronizer
 from videopython.ai.generation.qwen3 import Qwen3Translator
@@ -117,6 +117,40 @@ logger = logging.getLogger(__name__)
 PEAK_CLIP_THRESHOLD = 0.99
 MIN_VOCAL_BG_RMS_RATIO = 1.5
 VOICE_SAMPLE_TARGET_DURATION = 6.0
+
+# Prosody-conditioning thresholds. Source-segment RMS / whole-vocals RMS
+# below CALM lands in the calm bucket; above DRAMATIC in the dramatic
+# bucket; in between gets Chatterbox's defaults. Knob values picked
+# by-ear on cam1_1min.mp4 — see RELEASE_NOTES 0.29.0.
+CALM_RATIO_THRESHOLD = 0.7
+DRAMATIC_RATIO_THRESHOLD = 1.3
+_CALM = Expressiveness(exaggeration=0.3, cfg_weight=0.7)
+_DRAMATIC = Expressiveness(exaggeration=0.85, cfg_weight=0.35)
+
+
+def _rms(data: np.ndarray) -> float:
+    """RMS over samples; ``0.0`` for empty input. float64 reduction so a
+    long slice can't overflow the squared accumulator."""
+    if data.size == 0:
+        return 0.0
+    return float(np.sqrt(np.mean(np.square(data, dtype=np.float64))))
+
+
+def _expressiveness_for(source_slice: Audio, baseline_rms: float) -> Expressiveness:
+    """Map a source vocals slice to a Chatterbox expressiveness profile
+    by RMS ratio. Falls back to the no-knobs default for empty or silent
+    inputs."""
+    if baseline_rms <= 0.0:
+        return Expressiveness()
+    segment_rms = _rms(source_slice.data)
+    if segment_rms <= 0.0:
+        return Expressiveness()
+    ratio = segment_rms / baseline_rms
+    if ratio < CALM_RATIO_THRESHOLD:
+        return _CALM
+    if ratio > DRAMATIC_RATIO_THRESHOLD:
+        return _DRAMATIC
+    return Expressiveness()
 
 
 class LocalDubbingPipeline:
@@ -236,6 +270,7 @@ class LocalDubbingPipeline:
         voice_samples: dict[str, Audio],
         speaker_wav_paths: dict[str, Path],
         src_hash_for_tts: str,
+        expressiveness: Expressiveness = Expressiveness(),
     ) -> Audio | None:
         """Produce the TTS audio for a single segment, with cache-around-the-call.
 
@@ -244,6 +279,11 @@ class LocalDubbingPipeline:
         TTS model is lazy-initialized and the per-speaker temp WAV is
         materialized before generation; on cache hit none of that runs,
         so a fully-cached run never loads Chatterbox.
+
+        ``expressiveness`` carries the M4 Chatterbox knobs derived from
+        the source segment's prosody. Default is the no-knobs profile —
+        lets Chatterbox use its own defaults — so callers that don't yet
+        derive prosody (e.g. ``revoice``) keep pre-M4 behaviour.
         """
         from videopython.base.audio import Audio as _Audio
 
@@ -253,6 +293,7 @@ class LocalDubbingPipeline:
                 translated_text=segment.translated_text,
                 voice_sample_bytes=speaker_bytes,
                 language=target_lang,
+                **expressiveness.as_kwargs(),
             )
             cached_path = self._cache.get_tts_path(src_hash_for_tts, tts_cache_key)
             if cached_path is not None:
@@ -270,10 +311,11 @@ class LocalDubbingPipeline:
 
         wav_path = speaker_wav_paths.get(speaker) if voice_clone else None
         try:
-            if wav_path is not None:
-                dubbed_audio = self._tts.generate_audio(segment.translated_text, voice_sample_path=wav_path)
-            else:
-                dubbed_audio = self._tts.generate_audio(segment.translated_text)
+            dubbed_audio = self._tts.generate_audio(
+                segment.translated_text,
+                voice_sample_path=wav_path,
+                **expressiveness.as_kwargs(),
+            )
         except Exception as exc:
             # Chatterbox occasionally crashes on short translated text
             # (alignment_stream_analyzer indexing on tensors with <=5
@@ -748,15 +790,31 @@ class LocalDubbingPipeline:
             report_progress("Extracting voice samples", 0.25)
             voice_samples = self._extract_voice_samples(vocal_audio, background_audio, transcription)
 
-        # vocals is no longer needed; voice_samples are independent copies.
-        # In low_memory mode this is the only ref keeping the buffer alive
-        # (separated_audio was dropped above), so dropping the local frees it.
-        del vocal_audio
-
         report_progress("Translating text", 0.35)
         translated_segments, translation_failures = self._translate_with_cache(
             transcription, source_audio, detected_lang, target_lang, report_progress
         )
+
+        # Per-segment expressiveness derived from source vocals RMS.
+        # Computed before vocal_audio is released so the TTS loop doesn't
+        # hold the buffer. Segment ends are clamped to the vocals duration
+        # — transcription timestamps can drift past the buffer tail
+        # (especially on synthetic test audio) and Audio.slice rejects
+        # out-of-range ends past a 0.1s tolerance.
+        baseline_rms = _rms(vocal_audio.data)
+        vocal_duration = vocal_audio.metadata.duration_seconds
+        expressiveness_per_segment = [
+            _expressiveness_for(
+                vocal_audio.slice(min(s.start, vocal_duration), min(s.end, vocal_duration)),
+                baseline_rms,
+            )
+            for s in translated_segments
+        ]
+
+        # vocals is no longer needed; voice_samples are independent copies.
+        # In low_memory mode this is the only ref keeping the buffer alive
+        # (separated_audio was dropped above), so dropping the local frees it.
+        del vocal_audio
 
         report_progress("Generating dubbed speech", 0.50)
 
@@ -800,6 +858,7 @@ class LocalDubbingPipeline:
                     voice_samples=voice_samples,
                     speaker_wav_paths=speaker_wav_paths,
                     src_hash_for_tts=src_hash_for_tts,
+                    expressiveness=expressiveness_per_segment[i],
                 )
                 if dubbed_audio is None:
                     continue

@@ -157,14 +157,27 @@ class DubCache:
         translated_text: str,
         voice_sample_bytes: bytes | None,
         language: str,
+        exaggeration: float | None = None,
+        cfg_weight: float | None = None,
+        temperature: float | None = None,
     ) -> str:
-        """Per-segment key over text + voice sample + language."""
+        """Per-segment key over text + voice sample + language + expressiveness.
+
+        ``exaggeration`` / ``cfg_weight`` / ``temperature`` are the M4
+        Chatterbox knobs. Defaulting to ``None`` keeps pre-M4 callers that
+        omit them hashing the same way (no-knob profile collides with
+        absent kwargs), so cache invalidation is driven by *passing
+        non-None values*, not by the M4 code path being present.
+        """
         h = hashlib.sha256()
         h.update(translated_text.encode("utf-8"))
         h.update(b"\x00")
         h.update(voice_sample_bytes or b"")
         h.update(b"\x00")
         h.update(language.encode("utf-8"))
+        for knob in (exaggeration, cfg_weight, temperature):
+            h.update(b"\x00")
+            h.update(repr(knob).encode("utf-8"))
         return h.hexdigest()[:16]
 
     # ----- path resolution -------------------------------------------------

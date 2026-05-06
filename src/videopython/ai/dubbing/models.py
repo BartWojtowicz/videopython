@@ -19,6 +19,42 @@ if TYPE_CHECKING:
 CLEAN_SPEED_TOLERANCE = 0.01
 
 
+@dataclass(frozen=True)
+class Expressiveness:
+    """Chatterbox ``generate()`` knobs derived from source-segment prosody.
+
+    ``None`` on any field means "let Chatterbox use its own default" —
+    avoids pinning the dub against future Chatterbox default changes.
+
+    Attributes:
+        exaggeration: Emotional intensity. Chatterbox default ``0.5``;
+            ``0.7+`` produces dramatic output.
+        cfg_weight: Classifier-free guidance weight. Chatterbox default
+            ``0.5``; lower values (~``0.3``) slow pacing.
+        temperature: Sampling temperature. Chatterbox default ``0.8``.
+    """
+
+    exaggeration: float | None = None
+    cfg_weight: float | None = None
+    temperature: float | None = None
+
+    def as_kwargs(self) -> dict[str, float]:
+        """Knobs as a dict, dropping ``None`` entries.
+
+        Suitable for ``**``-expansion into Chatterbox or
+        :meth:`DubCache.tts_key`.
+        """
+        return {
+            name: value
+            for name, value in (
+                ("exaggeration", self.exaggeration),
+                ("cfg_weight", self.cfg_weight),
+                ("temperature", self.temperature),
+            )
+            if value is not None
+        }
+
+
 @dataclass
 class TranslatedSegment:
     """A segment of translated text with timing information.
