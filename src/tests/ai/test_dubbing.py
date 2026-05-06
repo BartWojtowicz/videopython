@@ -1025,7 +1025,7 @@ class TestTranslationProgressCallback:
 
         def fake_init_tts(self, language="en"):
             class _FakeTTS:
-                def generate_audio(self, text, voice_sample=None, voice_sample_path=None):
+                def generate_audio(self, text, voice_sample=None, voice_sample_path=None, **_kwargs):
                     sr = 24000
                     n = int(sr * 0.2)
                     return Audio(
@@ -1705,7 +1705,7 @@ class TestPipelineSuppliedTranscriptionDiarization:
 
         def fake_init_tts(self, language="en"):
             class FakeTTS:
-                def generate_audio(self, text, voice_sample=None, voice_sample_path=None):
+                def generate_audio(self, text, voice_sample=None, voice_sample_path=None, **_kwargs):
                     sample_rate = 24000
                     duration = 0.2
                     frame_count = int(sample_rate * duration)
@@ -1934,7 +1934,7 @@ class TestVoiceSampleCache:
 
         def fake_init_tts(self, language="en"):
             class FakeTTS:
-                def generate_audio(self, text, voice_sample=None, voice_sample_path=None):
+                def generate_audio(self, text, voice_sample=None, voice_sample_path=None, **_kwargs):
                     tts_calls.append({"voice_sample_path": voice_sample_path, "voice_sample": voice_sample})
                     sample_rate = 24000
                     duration = 0.2
@@ -2031,7 +2031,7 @@ class TestVoiceSampleCache:
 
         def fake_init_tts(self, language="en"):
             class FakeTTS:
-                def generate_audio(self, text, voice_sample=None, voice_sample_path=None):
+                def generate_audio(self, text, voice_sample=None, voice_sample_path=None, **_kwargs):
                     tts_calls.append({"voice_sample_path": voice_sample_path})
                     sample_rate = 24000
                     duration = 0.2
@@ -2710,7 +2710,7 @@ class TestPipelineSpeechRegionGating:
 
         def fake_init_tts(self, language="en"):
             class FakeTTS:
-                def generate_audio(self, text, voice_sample=None, voice_sample_path=None):
+                def generate_audio(self, text, voice_sample=None, voice_sample_path=None, **_kwargs):
                     sr = 24000
                     n = int(sr * 0.2)
                     data = np.zeros(n, dtype=np.float32)
@@ -2801,7 +2801,7 @@ class TestPipelineEmptyTranslationSkipped:
 
         def fake_init_tts(self, language="en"):
             class FakeTTS:
-                def generate_audio(self, text, voice_sample=None, voice_sample_path=None):
+                def generate_audio(self, text, voice_sample=None, voice_sample_path=None, **_kwargs):
                     tts_calls.append(text)
                     sr = 24000
                     n = int(sr * 0.2)
@@ -3050,7 +3050,7 @@ class TestStrictQualityIntegration:
 
         def fake_init_tts(self, language="en"):
             class FakeTTS:
-                def generate_audio(self, text, voice_sample=None, voice_sample_path=None):
+                def generate_audio(self, text, voice_sample=None, voice_sample_path=None, **_kwargs):
                     sr = 24000
                     n = int(sr * 0.2)
                     return Audio(
@@ -3267,7 +3267,7 @@ class TestTranslationFailuresOnResult:
 
         def fake_init_tts(self, language="en"):
             class FakeTTS:
-                def generate_audio(self, text, voice_sample=None, voice_sample_path=None):
+                def generate_audio(self, text, voice_sample=None, voice_sample_path=None, **_kwargs):
                     sr = 24000
                     n = int(sr * 0.2)
                     return Audio(
@@ -3331,7 +3331,7 @@ class TestTranslationFailuresOnResult:
 
         def fake_init_tts(self, language="en"):
             class FakeTTS:
-                def generate_audio(self, text, voice_sample=None, voice_sample_path=None):
+                def generate_audio(self, text, voice_sample=None, voice_sample_path=None, **_kwargs):
                     sr = 24000
                     n = int(sr * 0.2)
                     return Audio(
@@ -3514,7 +3514,7 @@ def _stub_dub_pipeline(
             pass
 
     class FakeTTS:
-        def generate_audio(self, text, voice_sample=None, voice_sample_path=None):
+        def generate_audio(self, text, voice_sample=None, voice_sample_path=None, **_kwargs):
             tts_calls.append(text)
             return sample_audio
 
@@ -3656,3 +3656,67 @@ class TestVideoDubberCacheKwarg:
         from videopython.ai.dubbing import VideoDubber
 
         assert VideoDubber().cache_dir is None
+
+
+class TestProsody:
+    """Unit tests for the prosody-conditioning helpers in pipeline.py."""
+
+    @staticmethod
+    def _audio_with_amplitude(amplitude: float, duration: float = 1.0, sample_rate: int = 24000) -> Audio:
+        """Constant-amplitude buffer whose RMS == amplitude — easiest
+        input for reasoning about RMS ratios exactly."""
+        frame_count = int(sample_rate * duration)
+        data = np.full(frame_count, amplitude, dtype=np.float32)
+        metadata = AudioMetadata(
+            sample_rate=sample_rate,
+            channels=1,
+            sample_width=2,
+            duration_seconds=duration,
+            frame_count=frame_count,
+        )
+        return Audio(data, metadata)
+
+    def test_rms_matches_known_amplitude(self):
+        from videopython.ai.dubbing.pipeline import _rms
+
+        audio = self._audio_with_amplitude(0.3)
+        assert _rms(audio.data) == pytest.approx(0.3, abs=1e-4)
+
+    def test_expressiveness_default_when_baseline_zero(self):
+        from videopython.ai.dubbing import Expressiveness
+        from videopython.ai.dubbing.pipeline import _expressiveness_for
+
+        # Silent baseline → can't compute a ratio, must degrade safely.
+        result = _expressiveness_for(self._audio_with_amplitude(0.5), baseline_rms=0.0)
+        assert result == Expressiveness()
+
+    def test_expressiveness_default_when_segment_silent(self):
+        from videopython.ai.dubbing import Expressiveness
+        from videopython.ai.dubbing.pipeline import _expressiveness_for
+
+        result = _expressiveness_for(self._audio_with_amplitude(0.0), baseline_rms=0.5)
+        assert result == Expressiveness()
+
+    def test_expressiveness_calm_when_quiet(self):
+        from videopython.ai.dubbing.pipeline import _expressiveness_for
+
+        # ratio = 0.3 / 1.0 = 0.3 < CALM_RATIO_THRESHOLD (0.7) → calm
+        result = _expressiveness_for(self._audio_with_amplitude(0.3), baseline_rms=1.0)
+        assert result.exaggeration == 0.3
+        assert result.cfg_weight == 0.7
+
+    def test_expressiveness_dramatic_when_loud(self):
+        from videopython.ai.dubbing.pipeline import _expressiveness_for
+
+        # ratio = 1.5 > DRAMATIC_RATIO_THRESHOLD (1.3) → dramatic
+        result = _expressiveness_for(self._audio_with_amplitude(1.5), baseline_rms=1.0)
+        assert result.exaggeration == 0.85
+        assert result.cfg_weight == 0.35
+
+    def test_expressiveness_normal_in_band(self):
+        from videopython.ai.dubbing import Expressiveness
+        from videopython.ai.dubbing.pipeline import _expressiveness_for
+
+        # ratio = 1.0 sits squarely in the normal band → no-knobs profile
+        result = _expressiveness_for(self._audio_with_amplitude(1.0), baseline_rms=1.0)
+        assert result == Expressiveness()

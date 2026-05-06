@@ -2,7 +2,13 @@
 
 from videopython.ai.dubbing.cache import DubCache, dub_cache_clear
 from videopython.ai.dubbing.dubber import VideoDubber
-from videopython.ai.dubbing.models import DubbingResult, RevoiceResult, SeparatedAudio, TranslatedSegment
+from videopython.ai.dubbing.models import (
+    DubbingResult,
+    Expressiveness,
+    RevoiceResult,
+    SeparatedAudio,
+    TranslatedSegment,
+)
 from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
 from videopython.ai.dubbing.quality import GarbageTranscriptError, TranscriptQuality, assess_transcript
 from videopython.ai.dubbing.timing import TimingSynchronizer
@@ -22,4 +28,5 @@ __all__ = [
     "UnsupportedLanguageError",
     "DubCache",
     "dub_cache_clear",
+    "Expressiveness",
 ]

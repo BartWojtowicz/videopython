@@ -1,5 +1,16 @@
 # Release Notes
 
+## 0.28.3
+
+### Added
+
+- `Expressiveness` dataclass exposed from `videopython.ai.dubbing` carrying the three Chatterbox `generate()` knobs (`exaggeration`, `cfg_weight`, `temperature`) as `Optional[float]`. `None` means "don't pass the kwarg, use Chatterbox's default". Same three knobs added as optional kwargs on `TextToSpeech.generate_audio`.
+
+### Changed
+
+- Dubbing pipeline now derives a per-segment `Expressiveness` from source vocals RMS and forwards it to Chatterbox, so the dub tracks the source's loud/quiet shape instead of using flat defaults. Three buckets: <0.7× baseline → `exaggeration=0.3, cfg_weight=0.7`; >1.3× → `exaggeration=0.85, cfg_weight=0.35`; in between → Chatterbox defaults. Knob values picked by-ear on `cam1_1min.mp4`. Pure numpy, no new dep.
+- `DubCache.tts_key` folds the three knobs into the hash. Pre-0.28.3 cache entries miss on first hit and re-synthesize; old WAVs stay on disk until `dub_cache_clear`. All-`None` profile hashes the same as absent kwargs.
+
 ## 0.28.2
 
 ### Added
