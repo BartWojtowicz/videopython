@@ -2446,6 +2446,94 @@ class TestPeakMatch:
         assert out is target
 
 
+class TestLoudnessMatch:
+    """Tests for the BS.1770 LUFS-based loudness match used post-mix on
+    DubbingResult.dubbed_audio."""
+
+    def _make_tone(self, amplitude: float, duration: float = 1.0, sample_rate: int = 24000) -> Audio:
+        """1 kHz sine tone — pyloudnorm's K-weighting is defined for this kind of broadband signal."""
+        frame_count = int(duration * sample_rate)
+        t = np.arange(frame_count, dtype=np.float32) / sample_rate
+        data = (amplitude * np.sin(2 * np.pi * 1000.0 * t)).astype(np.float32)
+        metadata = AudioMetadata(
+            sample_rate=sample_rate,
+            channels=1,
+            sample_width=2,
+            duration_seconds=duration,
+            frame_count=frame_count,
+        )
+        return Audio(data, metadata)
+
+    def test_matches_loudness_within_one_lu(self):
+        """Quiet target + loud reference: post-match LUFS difference should be < 1 LU."""
+        import pyloudnorm
+
+        from videopython.ai.dubbing.pipeline import _loudness_match
+
+        target = self._make_tone(0.1)  # quiet
+        reference = self._make_tone(0.5)  # ~14 dB louder
+
+        out = _loudness_match(target, reference)
+
+        meter_t = pyloudnorm.Meter(out.metadata.sample_rate)
+        meter_r = pyloudnorm.Meter(reference.metadata.sample_rate)
+        diff = abs(meter_t.integrated_loudness(out.data) - meter_r.integrated_loudness(reference.data))
+        assert diff < 1.0
+
+    def test_clamps_post_gain_peak_below_unity(self):
+        """When LUFS gain would push past 1.0, output is clamped to 0.99."""
+        from videopython.ai.dubbing.pipeline import _loudness_match
+
+        target = self._make_tone(0.05)
+        reference = self._make_tone(0.95)  # demands ~25 dB gain → would peak well past 1.0
+
+        out = _loudness_match(target, reference)
+        assert float(np.max(np.abs(out.data))) <= 0.99 + 1e-6
+
+    def test_short_clip_falls_back_to_peak_match(self, monkeypatch):
+        """Below the 400 ms BS.1770 gating block, the helper must use peak match."""
+        from videopython.ai.dubbing import pipeline as pipeline_mod
+
+        target = self._make_tone(0.3, duration=0.2)
+        reference = self._make_tone(0.9, duration=0.2)
+
+        called = {"meter": False}
+
+        def fail_if_called(*_args, **_kwargs):
+            called["meter"] = True
+            raise AssertionError("pyloudnorm.Meter must not be constructed for short clips")
+
+        import pyloudnorm
+
+        monkeypatch.setattr(pyloudnorm, "Meter", fail_if_called)
+
+        out = pipeline_mod._loudness_match(target, reference)
+        assert not called["meter"]
+        # Peak-match path: target peak now matches reference peak.
+        assert abs(float(np.max(np.abs(out.data))) - 0.9) < 1e-3
+
+    def test_silent_target_returns_target_unchanged(self):
+        """All-silent target: no usable loudness, fall through to peak-match no-op."""
+        from videopython.ai.dubbing.pipeline import _loudness_match
+
+        sample_rate = 24000
+        frame_count = sample_rate
+        silent = Audio(
+            np.zeros(frame_count, dtype=np.float32),
+            AudioMetadata(
+                sample_rate=sample_rate,
+                channels=1,
+                sample_width=2,
+                duration_seconds=1.0,
+                frame_count=frame_count,
+            ),
+        )
+        reference = self._make_tone(0.5)
+
+        out = _loudness_match(silent, reference)
+        assert out is silent
+
+
 class TestPipelineSpeechRegionGating:
     """Pipeline calls separate_regions with merged transcription regions, not separate()."""
 
