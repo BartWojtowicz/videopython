@@ -3456,6 +3456,112 @@ class TestDubCacheUnit:
         assert tmp_path.exists()
 
 
+def _segment(text: str, start: float = 0.0, end: float = 1.0) -> TranscriptionSegment:
+    return TranscriptionSegment(
+        start=start,
+        end=end,
+        text=text,
+        words=[TranscriptionWord(start=start, end=end, word=text)],
+    )
+
+
+def _stub_dub_pipeline(
+    monkeypatch,
+    sample_audio,
+    *,
+    segments: list[TranscriptionSegment] | None = None,
+    translation_prefix: str = "translated:",
+) -> tuple[list, list, list]:
+    """Patch ``LocalDubbingPipeline`` init paths so ``process()`` runs end-to-end
+    without loading real models.
+
+    Returns ``(transcribe_calls, translate_calls, tts_calls)`` accumulators
+    that tests can assert against to confirm whether a stage actually ran.
+    """
+    from videopython.ai.dubbing.models import TranslatedSegment
+    from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+    from videopython.base.text.transcription import Transcription
+
+    fixture_segments = segments if segments is not None else [_segment("hello")]
+    transcribe_calls: list = []
+    translate_calls: list = []
+    tts_calls: list = []
+
+    class FakeTranscriber:
+        def transcribe(self, audio):
+            transcribe_calls.append(audio)
+            return Transcription(segments=fixture_segments, language="en")
+
+        def unload(self):
+            pass
+
+    class FakeTranslator:
+        translation_failures: list[int] = []
+
+        def translate_segments(self, segments, target_lang, source_lang, progress_callback=None):
+            translate_calls.append([s.text for s in segments])
+            return [
+                TranslatedSegment(
+                    original_segment=s,
+                    translated_text=f"{translation_prefix}{s.text}",
+                    source_lang=source_lang,
+                    target_lang=target_lang,
+                )
+                for s in segments
+            ]
+
+        def unload(self):
+            pass
+
+    class FakeTTS:
+        def generate_audio(self, text, voice_sample=None, voice_sample_path=None):
+            tts_calls.append(text)
+            return sample_audio
+
+        def unload(self):
+            pass
+
+    class FakeSynchronizer:
+        def synchronize_segments(self, segments, durations):
+            return segments, []
+
+        def assemble_with_timing(self, segments, start_times, total_duration):
+            return segments[0] if segments else sample_audio
+
+    monkeypatch.setattr(
+        LocalDubbingPipeline,
+        "_init_transcriber",
+        lambda self, enable_diarization=False: setattr(self, "_transcriber", FakeTranscriber()),
+    )
+    monkeypatch.setattr(
+        LocalDubbingPipeline,
+        "_init_translator",
+        lambda self, source_lang, target_lang: setattr(self, "_translator", FakeTranslator()),
+    )
+    monkeypatch.setattr(
+        LocalDubbingPipeline,
+        "_init_tts",
+        lambda self, language="en": setattr(self, "_tts", FakeTTS()),
+    )
+    monkeypatch.setattr(
+        LocalDubbingPipeline,
+        "_init_synchronizer",
+        lambda self: setattr(self, "_synchronizer", FakeSynchronizer()),
+    )
+    return transcribe_calls, translate_calls, tts_calls
+
+
+def _run_dub(pipeline, sample_audio):
+    """Common process() invocation for cache tests — no separation, no voice clone."""
+    return pipeline.process(
+        source_audio=sample_audio,
+        target_lang="es",
+        preserve_background=False,
+        voice_clone=False,
+        enable_diarization=False,
+    )
+
+
 class TestDubCachePipelineIntegration:
     """Pipeline reads/writes the dub cache when ``cache_dir`` is set, and
     the cache is a true no-op when ``cache_dir=None``.
@@ -3464,280 +3570,68 @@ class TestDubCachePipelineIntegration:
     so we exercise the cache wiring without loading models.
     """
 
-    def _segments(self):
-        words = [TranscriptionWord(start=0.0, end=1.0, word="hello")]
-        return [TranscriptionSegment(start=0.0, end=1.0, text="hello", words=words)]
-
-    def _stub_pipeline(self, monkeypatch, transcribe_calls, translate_calls, tts_calls, sample_audio):
-        """Patches LocalDubbingPipeline init/run paths so process() goes
-        end-to-end without real models. Returns nothing — call sites supply
-        their own counters via the *_calls list arguments.
-        """
-        from videopython.ai.dubbing.models import TranslatedSegment
-        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
-        from videopython.base.text.transcription import Transcription
-
-        segments = self._segments()
-
-        class FakeTranscriber:
-            def transcribe(self, audio):
-                transcribe_calls.append(audio)
-                return Transcription(segments=segments, language="en")
-
-            def unload(self):
-                pass
-
-        def fake_init_transcriber(self, enable_diarization=False):
-            self._transcriber = FakeTranscriber()
-
-        def fake_init_translator(self, source_lang, target_lang):
-            class FakeTranslator:
-                translation_failures: list[int] = []
-
-                def translate_segments(self, segments, target_lang, source_lang, progress_callback=None):
-                    translate_calls.append([s.text for s in segments])
-                    return [
-                        TranslatedSegment(
-                            original_segment=s,
-                            translated_text=f"translated:{s.text}",
-                            source_lang=source_lang,
-                            target_lang=target_lang,
-                        )
-                        for s in segments
-                    ]
-
-                def unload(self):
-                    pass
-
-            self._translator = FakeTranslator()
-
-        def fake_init_tts(self, language="en"):
-            class FakeTTS:
-                def generate_audio(self, text, voice_sample=None, voice_sample_path=None):
-                    tts_calls.append(text)
-                    return sample_audio
-
-                def unload(self):
-                    pass
-
-            self._tts = FakeTTS()
-
-        class FakeSynchronizer:
-            def synchronize_segments(self, segments, durations):
-                return segments, []
-
-            def assemble_with_timing(self, segments, start_times, total_duration):
-                return segments[0] if segments else sample_audio
-
-        monkeypatch.setattr(LocalDubbingPipeline, "_init_transcriber", fake_init_transcriber)
-        monkeypatch.setattr(LocalDubbingPipeline, "_init_translator", fake_init_translator)
-        monkeypatch.setattr(LocalDubbingPipeline, "_init_tts", fake_init_tts)
-        monkeypatch.setattr(
-            LocalDubbingPipeline,
-            "_init_synchronizer",
-            lambda self: setattr(self, "_synchronizer", FakeSynchronizer()),
-        )
-
-    def test_cache_off_when_dir_none(self, tmp_path, sample_audio, monkeypatch):
-        """cache_dir=None: pipeline runs without writing anything to disk."""
+    def test_cache_off_when_dir_none(self, sample_audio, monkeypatch):
+        """cache_dir=None: pipeline._cache stays None; no filesystem writes."""
         from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
 
-        transcribe_calls: list = []
-        translate_calls: list = []
-        tts_calls: list = []
-        self._stub_pipeline(monkeypatch, transcribe_calls, translate_calls, tts_calls, sample_audio)
+        _stub_dub_pipeline(monkeypatch, sample_audio)
 
         pipeline = LocalDubbingPipeline()
-        pipeline.process(
-            source_audio=sample_audio,
-            target_lang="es",
-            preserve_background=False,
-            voice_clone=False,
-            enable_diarization=False,
-        )
-
-        # tmp_path should have nothing — nothing was supposed to write to it.
-        # (We just confirm the pipeline didn't crash or leak a default path.)
+        _run_dub(pipeline, sample_audio)
         assert pipeline._cache is None
 
     def test_cache_miss_then_hit(self, tmp_path, sample_audio, monkeypatch):
         """First run populates the cache; second run skips transcription + translation + TTS."""
         from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
 
-        transcribe_calls: list = []
-        translate_calls: list = []
-        tts_calls: list = []
-        self._stub_pipeline(monkeypatch, transcribe_calls, translate_calls, tts_calls, sample_audio)
+        transcribe_calls, translate_calls, tts_calls = _stub_dub_pipeline(monkeypatch, sample_audio)
 
         cache_dir = tmp_path / "cache"
-        pipeline = LocalDubbingPipeline(cache_dir=cache_dir)
-        pipeline.process(
-            source_audio=sample_audio,
-            target_lang="es",
-            preserve_background=False,
-            voice_clone=False,
-            enable_diarization=False,
-        )
-        assert len(transcribe_calls) == 1
-        assert len(translate_calls) == 1
-        assert len(tts_calls) == 1
+        _run_dub(LocalDubbingPipeline(cache_dir=cache_dir), sample_audio)
+        assert (len(transcribe_calls), len(translate_calls), len(tts_calls)) == (1, 1, 1)
 
-        # Second pipeline instance with the same cache_dir.
-        pipeline2 = LocalDubbingPipeline(cache_dir=cache_dir)
-        pipeline2.process(
-            source_audio=sample_audio,
-            target_lang="es",
-            preserve_background=False,
-            voice_clone=False,
-            enable_diarization=False,
-        )
-
-        # No new transcribe/translate/TTS calls — every stage was a cache hit.
-        assert len(transcribe_calls) == 1
-        assert len(translate_calls) == 1
-        assert len(tts_calls) == 1
+        _run_dub(LocalDubbingPipeline(cache_dir=cache_dir), sample_audio)
+        # Every stage was a cache hit on the second run.
+        assert (len(transcribe_calls), len(translate_calls), len(tts_calls)) == (1, 1, 1)
 
     def test_cache_invalidates_on_whisper_kwarg_change(self, tmp_path, sample_audio, monkeypatch):
         """Different whisper_model => transcription cache miss, even with same source bytes."""
         from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
 
-        transcribe_calls: list = []
-        self._stub_pipeline(monkeypatch, transcribe_calls, [], [], sample_audio)
+        transcribe_calls, _, _ = _stub_dub_pipeline(monkeypatch, sample_audio)
 
         cache_dir = tmp_path / "cache"
-        LocalDubbingPipeline(cache_dir=cache_dir, whisper_model="turbo").process(
-            source_audio=sample_audio,
-            target_lang="es",
-            preserve_background=False,
-            voice_clone=False,
-            enable_diarization=False,
-        )
-        LocalDubbingPipeline(cache_dir=cache_dir, whisper_model="small").process(
-            source_audio=sample_audio,
-            target_lang="es",
-            preserve_background=False,
-            voice_clone=False,
-            enable_diarization=False,
-        )
+        _run_dub(LocalDubbingPipeline(cache_dir=cache_dir, whisper_model="turbo"), sample_audio)
+        _run_dub(LocalDubbingPipeline(cache_dir=cache_dir, whisper_model="small"), sample_audio)
         assert len(transcribe_calls) == 2  # second run re-transcribed.
 
     def test_cache_invalidates_on_translator_change(self, tmp_path, sample_audio, monkeypatch):
         """Switching translator (marian → qwen3) invalidates the translation cache."""
         from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
 
-        translate_calls: list = []
-        self._stub_pipeline(monkeypatch, [], translate_calls, [], sample_audio)
+        _, translate_calls, _ = _stub_dub_pipeline(monkeypatch, sample_audio)
 
         cache_dir = tmp_path / "cache"
-        LocalDubbingPipeline(cache_dir=cache_dir, translator="marian").process(
-            source_audio=sample_audio,
-            target_lang="es",
-            preserve_background=False,
-            voice_clone=False,
-            enable_diarization=False,
-        )
-        LocalDubbingPipeline(cache_dir=cache_dir, translator="qwen3").process(
-            source_audio=sample_audio,
-            target_lang="es",
-            preserve_background=False,
-            voice_clone=False,
-            enable_diarization=False,
-        )
+        _run_dub(LocalDubbingPipeline(cache_dir=cache_dir, translator="marian"), sample_audio)
+        _run_dub(LocalDubbingPipeline(cache_dir=cache_dir, translator="qwen3"), sample_audio)
         assert len(translate_calls) == 2
 
     def test_tts_cache_per_segment(self, tmp_path, sample_audio, monkeypatch):
-        """Pre-populating half the segments' TTS WAVs makes the second run TTS only the missing half."""
+        """Pre-populating one segment's TTS WAV makes the run TTS only the missing one."""
         from videopython.ai.dubbing.cache import DubCache
-        from videopython.ai.dubbing.models import TranslatedSegment
         from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
-        from videopython.base.text.transcription import Transcription
 
-        # Two-segment fixture so we can pre-warm one and force a miss on the other.
-        words = [TranscriptionWord(start=0.0, end=1.0, word="a")]
-        segs = [
-            TranscriptionSegment(start=0.0, end=1.0, text="seg-A", words=words),
-            TranscriptionSegment(start=1.0, end=2.0, text="seg-B", words=words),
-        ]
-
-        tts_calls: list = []
-
-        class FakeTranscriber:
-            def transcribe(self, audio):
-                return Transcription(segments=segs, language="en")
-
-            def unload(self):
-                pass
-
-        def fake_init_translator(self, source_lang, target_lang):
-            class FakeTranslator:
-                translation_failures: list[int] = []
-
-                def translate_segments(self, segments, target_lang, source_lang, progress_callback=None):
-                    return [
-                        TranslatedSegment(
-                            original_segment=s,
-                            translated_text=f"t:{s.text}",
-                            source_lang=source_lang,
-                            target_lang=target_lang,
-                        )
-                        for s in segments
-                    ]
-
-                def unload(self):
-                    pass
-
-            self._translator = FakeTranslator()
-
-        def fake_init_tts(self, language="en"):
-            class FakeTTS:
-                def generate_audio(self, text, voice_sample=None, voice_sample_path=None):
-                    tts_calls.append(text)
-                    return sample_audio
-
-                def unload(self):
-                    pass
-
-            self._tts = FakeTTS()
-
-        class FakeSynchronizer:
-            def synchronize_segments(self, segments, durations):
-                return segments, []
-
-            def assemble_with_timing(self, segments, start_times, total_duration):
-                return segments[0] if segments else sample_audio
-
-        monkeypatch.setattr(
-            LocalDubbingPipeline,
-            "_init_transcriber",
-            lambda self, enable_diarization=False: setattr(self, "_transcriber", FakeTranscriber()),
-        )
-        monkeypatch.setattr(LocalDubbingPipeline, "_init_translator", fake_init_translator)
-        monkeypatch.setattr(LocalDubbingPipeline, "_init_tts", fake_init_tts)
-        monkeypatch.setattr(
-            LocalDubbingPipeline,
-            "_init_synchronizer",
-            lambda self: setattr(self, "_synchronizer", FakeSynchronizer()),
-        )
+        segs = [_segment("seg-A", 0.0, 1.0), _segment("seg-B", 1.0, 2.0)]
+        _, _, tts_calls = _stub_dub_pipeline(monkeypatch, sample_audio, segments=segs, translation_prefix="t:")
 
         cache_dir = tmp_path / "cache"
-
-        # Pre-populate the cache for seg-A by hand: write a WAV at the path
-        # the pipeline will compute.
+        # Pre-populate the cache for seg-A: write a WAV at the path the pipeline will compute.
         cache = DubCache(cache_dir)
         src_hash = DubCache.source_key(sample_audio)
         seg_a_key = DubCache.tts_key(translated_text="t:seg-A", voice_sample_bytes=None, language="es")
-        out_path = cache.reserve_tts_path(src_hash, seg_a_key)
-        sample_audio.save(out_path)
+        sample_audio.save(cache.reserve_tts_path(src_hash, seg_a_key))
 
-        LocalDubbingPipeline(cache_dir=cache_dir).process(
-            source_audio=sample_audio,
-            target_lang="es",
-            preserve_background=False,
-            voice_clone=False,
-            enable_diarization=False,
-        )
-
-        # Only seg-B should have triggered a real TTS call.
+        _run_dub(LocalDubbingPipeline(cache_dir=cache_dir), sample_audio)
         assert tts_calls == ["t:seg-B"]
 
 

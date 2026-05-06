@@ -22,7 +22,9 @@ from videopython.ai.generation.translation import (
 )
 
 if TYPE_CHECKING:
+    from videopython.ai.dubbing.models import TranslatedSegment
     from videopython.base.audio import Audio
+    from videopython.base.text.transcription import Transcription
 
 
 TranslatorChoice = Literal["auto", "marian", "qwen3"]
@@ -182,6 +184,172 @@ class LocalDubbingPipeline:
         if callable(unload):
             logger.info("low_memory: unloading %s", component_name.lstrip("_"))
             unload()
+
+    def _transcribe_with_cache(
+        self,
+        source_audio: Audio,
+        enable_diarization: bool,
+    ) -> Transcription:
+        """Run transcription with cache-around-the-call.
+
+        Cache miss: lazy-init the transcriber, transcribe, store the
+        result (including all hashed kwargs in metadata.json so future
+        invalidators have provenance).
+        Cache hit: return the deserialized :class:`Transcription` without
+        touching Whisper/diarization at all.
+        """
+        src_hash, kwargs_hash = self._transcription_cache_keys(source_audio, enable_diarization)
+        if self._cache is not None:
+            cached = self._cache.get_transcription(src_hash, kwargs_hash)
+            if cached is not None:
+                return cached
+
+        if self._transcriber is None or self._transcriber_diarization != enable_diarization:
+            self._init_transcriber(enable_diarization=enable_diarization)
+            self._transcriber_diarization = enable_diarization
+
+        transcription = self._transcriber.transcribe(source_audio)
+        self._maybe_unload("_transcriber")
+
+        if self._cache is not None:
+            self._cache.put_transcription(
+                src_hash,
+                kwargs_hash,
+                transcription,
+                hash_inputs={
+                    "whisper_model": self.whisper_model,
+                    "enable_diarization": enable_diarization,
+                    "condition_on_previous_text": self.condition_on_previous_text,
+                    "no_speech_threshold": self.no_speech_threshold,
+                    "logprob_threshold": self.logprob_threshold,
+                },
+            )
+        return transcription
+
+    def _tts_segment_audio(
+        self,
+        segment: TranslatedSegment,
+        speaker: str,
+        speaker_bytes: bytes | None,
+        target_lang: str,
+        voice_clone: bool,
+        voice_samples: dict[str, Audio],
+        speaker_wav_paths: dict[str, Path],
+        src_hash_for_tts: str,
+    ) -> Audio | None:
+        """Produce the TTS audio for a single segment, with cache-around-the-call.
+
+        Returns the synthesized :class:`Audio`, or ``None`` if Chatterbox
+        crashed on the segment (the caller skips it). On cache miss the
+        TTS model is lazy-initialized and the per-speaker temp WAV is
+        materialized before generation; on cache hit none of that runs,
+        so a fully-cached run never loads Chatterbox.
+        """
+        from videopython.base.audio import Audio as _Audio
+
+        tts_cache_key: str | None = None
+        if self._cache is not None:
+            tts_cache_key = DubCache.tts_key(
+                translated_text=segment.translated_text,
+                voice_sample_bytes=speaker_bytes,
+                language=target_lang,
+            )
+            cached_path = self._cache.get_tts_path(src_hash_for_tts, tts_cache_key)
+            if cached_path is not None:
+                return _Audio.from_path(cached_path)
+
+        # Cache miss: pay for TTS init + voice-sample WAV exactly once
+        # across the loop. Both are wasted work when every segment hits.
+        if self._tts is None or self._tts_language != target_lang:
+            self._init_tts(language=target_lang)
+            self._tts_language = target_lang
+        if voice_clone and speaker not in speaker_wav_paths and speaker in voice_samples:
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                voice_samples[speaker].save(f.name)
+                speaker_wav_paths[speaker] = Path(f.name)
+
+        wav_path = speaker_wav_paths.get(speaker) if voice_clone else None
+        try:
+            if wav_path is not None:
+                dubbed_audio = self._tts.generate_audio(segment.translated_text, voice_sample_path=wav_path)
+            else:
+                dubbed_audio = self._tts.generate_audio(segment.translated_text)
+        except Exception as exc:
+            # Chatterbox occasionally crashes on short translated text
+            # (alignment_stream_analyzer indexing on tensors with <=5
+            # speech tokens). One bad segment shouldn't lose a long
+            # multi-hour run — log and let the caller skip.
+            logger.warning(
+                "TTS failed for segment (speaker=%s, text=%r): %s — skipping",
+                speaker,
+                segment.translated_text,
+                exc,
+            )
+            return None
+
+        if self._cache is not None and tts_cache_key is not None:
+            dubbed_audio.save(self._cache.reserve_tts_path(src_hash_for_tts, tts_cache_key))
+        return dubbed_audio
+
+    def _translate_with_cache(
+        self,
+        transcription: Transcription,
+        source_audio: Audio,
+        source_lang: str,
+        target_lang: str,
+        report_progress: Callable[[str, float], None],
+    ) -> tuple[list[TranslatedSegment], list[int]]:
+        """Run translation with cache-around-the-call.
+
+        Returns ``(translated_segments, translation_failures)``. Only
+        fully-successful translations are cached — partial Qwen failures
+        would otherwise lock in an incomplete dub across runs. The
+        progress callback maps the backend's [0, 1] fraction onto the
+        pipeline's translation window (0.35 → 0.50).
+        """
+        from videopython.ai.dubbing.models import TranslatedSegment
+
+        cache_key: str | None = None
+        if self._cache is not None:
+            cache_key = DubCache.translation_key(
+                source_lang=source_lang,
+                target_lang=target_lang,
+                translator_class=self._resolved_translator_class_name(source_lang, target_lang),
+            )
+            cached = self._cache.get_translation(DubCache.source_key(source_audio), cache_key)
+            if cached is not None:
+                return [TranslatedSegment.from_dict(d) for d in cached], []
+
+        if self._translator is None:
+            self._init_translator(source_lang=source_lang, target_lang=target_lang)
+
+        # Translation stage spans 0.35 → 0.50 of overall pipeline progress.
+        # MarianMT runs sequentially over 8-segment batches; on a 15-min
+        # source that's minutes of silent dwell on 0.35 without per-batch
+        # ticks. Map the [0,1] translation fraction onto that 15% window.
+        def _on_translation_progress(fraction: float) -> None:
+            clamped = max(0.0, min(1.0, fraction))
+            report_progress(f"Translating text ({int(clamped * 100)}%)", 0.35 + 0.15 * clamped)
+
+        translated_segments = self._translator.translate_segments(
+            segments=transcription.segments,
+            target_lang=target_lang,
+            source_lang=source_lang,
+            progress_callback=_on_translation_progress,
+        )
+        # Capture per-segment failures (always empty for Marian) before
+        # _maybe_unload nukes the backend in low_memory mode.
+        translation_failures = list(self._translator.translation_failures)
+        self._maybe_unload("_translator")
+
+        if self._cache is not None and cache_key is not None and not translation_failures:
+            self._cache.put_translation(
+                DubCache.source_key(source_audio),
+                cache_key,
+                [s.to_dict() for s in translated_segments],
+            )
+
+        return translated_segments, translation_failures
 
     def _transcription_cache_keys(self, source_audio: Audio, enable_diarization: bool = False) -> tuple[str, str]:
         """Return ``(src_hash, kwargs_hash)`` for the current transcription config.
@@ -513,32 +681,7 @@ class LocalDubbingPipeline:
                 )
         else:
             report_progress("Transcribing audio", 0.05)
-            transcription = None
-            src_hash, transcription_kwargs_hash = self._transcription_cache_keys(source_audio, enable_diarization)
-            if self._cache is not None:
-                transcription = self._cache.get_transcription(src_hash, transcription_kwargs_hash)
-
-            if transcription is None:
-                if self._transcriber is None or self._transcriber_diarization != enable_diarization:
-                    self._init_transcriber(enable_diarization=enable_diarization)
-                    self._transcriber_diarization = enable_diarization
-
-                transcription = self._transcriber.transcribe(source_audio)
-                self._maybe_unload("_transcriber")
-
-                if self._cache is not None:
-                    self._cache.put_transcription(
-                        src_hash,
-                        transcription_kwargs_hash,
-                        transcription,
-                        hash_inputs={
-                            "whisper_model": self.whisper_model,
-                            "enable_diarization": enable_diarization,
-                            "condition_on_previous_text": self.condition_on_previous_text,
-                            "no_speech_threshold": self.no_speech_threshold,
-                            "logprob_threshold": self.logprob_threshold,
-                        },
-                    )
+            transcription = self._transcribe_with_cache(source_audio, enable_diarization)
 
         if not transcription.segments:
             return DubbingResult(
@@ -611,55 +754,9 @@ class LocalDubbingPipeline:
         del vocal_audio
 
         report_progress("Translating text", 0.35)
-
-        from videopython.ai.dubbing.models import TranslatedSegment
-
-        translated_segments: list[TranslatedSegment] | None = None
-        translation_failures: list[int] = []
-        translation_lang_key: str | None = None
-        if self._cache is not None:
-            src_hash_for_translation = DubCache.source_key(source_audio)
-            translation_lang_key = DubCache.translation_key(
-                source_lang=detected_lang,
-                target_lang=target_lang,
-                translator_class=self._resolved_translator_class_name(detected_lang, target_lang),
-            )
-            cached = self._cache.get_translation(src_hash_for_translation, translation_lang_key)
-            if cached is not None:
-                translated_segments = [TranslatedSegment.from_dict(d) for d in cached]
-
-        if translated_segments is None:
-            if self._translator is None:
-                self._init_translator(source_lang=detected_lang, target_lang=target_lang)
-
-            # Translation stage spans 0.35 → 0.50 of overall pipeline progress.
-            # MarianMT runs sequentially over 8-segment batches; on a 15-min
-            # source that's minutes of silent dwell on 0.35 without per-batch
-            # ticks. Map the [0,1] translation fraction onto that 15% window.
-            def _on_translation_progress(fraction: float) -> None:
-                clamped = max(0.0, min(1.0, fraction))
-                report_progress(f"Translating text ({int(clamped * 100)}%)", 0.35 + 0.15 * clamped)
-
-            translated_segments = self._translator.translate_segments(
-                segments=transcription.segments,
-                target_lang=target_lang,
-                source_lang=detected_lang,
-                progress_callback=_on_translation_progress,
-            )
-            # Capture per-segment failures (always empty for Marian) before
-            # _maybe_unload nukes the backend in low_memory mode.
-            translation_failures = list(self._translator.translation_failures)
-            self._maybe_unload("_translator")
-
-            if self._cache is not None and translation_lang_key is not None:
-                # Only cache fully successful translations — partial failures
-                # would otherwise lock in incomplete dubs across runs.
-                if not translation_failures:
-                    self._cache.put_translation(
-                        DubCache.source_key(source_audio),
-                        translation_lang_key,
-                        [s.to_dict() for s in translated_segments],
-                    )
+        translated_segments, translation_failures = self._translate_with_cache(
+            transcription, source_audio, detected_lang, target_lang, report_progress
+        )
 
         report_progress("Generating dubbed speech", 0.50)
 
@@ -675,11 +772,9 @@ class LocalDubbingPipeline:
         target_durations: list[float] = []
         start_times: list[float] = []
 
-        # Encode each speaker's voice sample to a temp WAV exactly once and
-        # reuse the path across every segment for that speaker. Without this
-        # cache, TextToSpeech.generate_audio re-encodes the same voice sample
-        # on every call (one temp WAV write + delete per segment), which is
-        # pure overhead for long dubs with many segments per speaker.
+        # Per-speaker temp WAVs are materialized lazily by _tts_segment_audio
+        # so a fully-cached run never writes one. The dict is loop-scoped
+        # state so the finally block can clean up regardless of cache outcome.
         speaker_wav_paths: dict[str, Path] = {}
         try:
             for i, segment in enumerate(translated_segments):
@@ -696,61 +791,18 @@ class LocalDubbingPipeline:
                 report_progress(f"Generating speech ({i + 1}/{len(translated_segments)})", progress)
 
                 speaker = segment.speaker or "speaker_0"
-                speaker_bytes = voice_sample_bytes.get(speaker)
-
-                # Cache lookup before any model work.
-                cached_tts_path: Path | None = None
-                tts_cache_key: str | None = None
-                if self._cache is not None:
-                    tts_cache_key = DubCache.tts_key(
-                        translated_text=segment.translated_text,
-                        voice_sample_bytes=speaker_bytes,
-                        language=target_lang,
-                    )
-                    cached_tts_path = self._cache.get_tts_path(src_hash_for_tts, tts_cache_key)
-
-                if cached_tts_path is not None:
-                    from videopython.base.audio import Audio as _Audio
-
-                    dubbed_audio = _Audio.from_path(cached_tts_path)
-                else:
-                    # First cache miss in the loop also pays for TTS init +
-                    # voice-sample WAV encoding; both are wasted work when
-                    # every segment hits cache.
-                    if self._tts is None or self._tts_language != target_lang:
-                        self._init_tts(language=target_lang)
-                        self._tts_language = target_lang
-                    if voice_clone and speaker not in speaker_wav_paths and speaker in voice_samples:
-                        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-                            voice_samples[speaker].save(f.name)
-                            speaker_wav_paths[speaker] = Path(f.name)
-                    cached_path = speaker_wav_paths.get(speaker) if voice_clone else None
-
-                    try:
-                        if cached_path is not None:
-                            dubbed_audio = self._tts.generate_audio(
-                                segment.translated_text, voice_sample_path=cached_path
-                            )
-                        else:
-                            dubbed_audio = self._tts.generate_audio(segment.translated_text)
-                    except Exception as e:
-                        # Chatterbox occasionally crashes on short translated text
-                        # (alignment_stream_analyzer indexing on tensors with <=5
-                        # speech tokens). One bad segment shouldn't lose a long
-                        # multi-hour run — log and skip so the rest proceeds.
-                        logger.warning(
-                            "TTS failed for segment %d/%d (speaker=%s, text=%r): %s — skipping",
-                            i + 1,
-                            len(translated_segments),
-                            speaker,
-                            segment.translated_text,
-                            e,
-                        )
-                        continue
-
-                    if self._cache is not None and tts_cache_key is not None:
-                        out_path = self._cache.reserve_tts_path(src_hash_for_tts, tts_cache_key)
-                        dubbed_audio.save(out_path)
+                dubbed_audio = self._tts_segment_audio(
+                    segment=segment,
+                    speaker=speaker,
+                    speaker_bytes=voice_sample_bytes.get(speaker),
+                    target_lang=target_lang,
+                    voice_clone=voice_clone,
+                    voice_samples=voice_samples,
+                    speaker_wav_paths=speaker_wav_paths,
+                    src_hash_for_tts=src_hash_for_tts,
+                )
+                if dubbed_audio is None:
+                    continue
 
                 dubbed_segments.append(dubbed_audio)
                 target_durations.append(segment.duration)
