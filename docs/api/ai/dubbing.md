@@ -4,7 +4,7 @@ Dub videos into different languages or replace speech with custom text using voi
 
 ## Local Pipeline
 
-Video dubbing runs with a local pipeline combining Whisper, MarianMT translation, Chatterbox Multilingual TTS, and Demucs.
+Video dubbing runs with a local pipeline combining Whisper for transcription, MarianMT or Qwen3 for translation, Chatterbox Multilingual TTS for speech synthesis, and Demucs for source separation. Translation backend selection is automatic by default — see [Translation Backend](#translation-backend) for details.
 
 ## VideoDubber
 
@@ -83,8 +83,9 @@ result = dubber.dub(
 
 ### Memory-Efficient Dubbing
 
-The default pipeline keeps all four models (Whisper, Demucs, MarianMT, Chatterbox)
-resident in memory and operates on `Video` objects that hold every frame in RAM.
+The default pipeline keeps all four models (Whisper, Demucs, the translation
+backend, Chatterbox) resident in memory and operates on `Video` objects that
+hold every frame in RAM.
 For long or high-resolution sources — or memory-constrained hardware — two flags
 trade a modest amount of latency for a much lower memory ceiling.
 
@@ -150,6 +151,186 @@ dubber = VideoDubber(no_speech_threshold=0.85)
 ```
 
 See [`AudioToText`](understanding.md#audiototext) for the full rationale.
+
+### Translation Backend
+
+Two translation backends ship with the dubbing pipeline:
+
+- **MarianMT** (Helsinki-NLP) — fast on CPU, segment-isolated translation. Covers
+  ~30 high-resource language pairs out of the box.
+- **Qwen3** — Qwen3-4B-Instruct via `llama-cpp-python` (Q4_K_M GGUF, ~2.4 GB,
+  downloaded on first use). Context-aware: prompts include a per-segment
+  character budget derived from source duration and a `low_confidence` hint
+  sourced from Whisper `avg_logprob`. Per-segment fallback to Marian if Qwen
+  parse-retries both fail and the language pair is supported.
+
+```python
+# Auto resolver: Qwen3 on GPU when supported, MarianMT on CPU.
+dubber = VideoDubber(translator="auto")
+
+# Force MarianMT (e.g. CPU machines where Qwen3 wall time is impractical).
+dubber = VideoDubber(translator="marian")
+
+# Force Qwen3. Logs a WARNING on CPU because Qwen3-4B Q4_K_M runs ~10-15x
+# slower than Marian without GPU acceleration.
+dubber = VideoDubber(translator="qwen3")
+```
+
+Hard failures from Qwen3 (both the primary call and the per-segment Marian
+fallback fail) are surfaced on `DubbingResult.translation_failures` as a list
+of segment indices; those segments land on the result with empty translated
+text. Empty list under MarianTranslator.
+
+If neither backend covers the requested pair the auto resolver raises
+`UnsupportedLanguageError` (importable from `videopython.ai.dubbing`).
+
+### Resume Cache
+
+Long dubbing runs are restartable via `cache_dir`. When set, transcription,
+translated segments, and per-segment TTS WAVs are persisted under the directory
+and skipped on subsequent runs whose hash inputs match. Designed for resuming
+after a crash and for iterating on dub configuration without re-paying the
+transcription / translation cost each time.
+
+```python
+from videopython.ai.dubbing import VideoDubber, dub_cache_clear
+
+dubber = VideoDubber(cache_dir="./dub_cache")
+result = dubber.dub_file("movie.mp4", "movie_es.mp4", target_lang="es")
+
+# A second run with the same source + kwargs hits cache for every stage:
+dubber.dub_file("movie.mp4", "movie_es.mp4", target_lang="es")
+
+# Clear all cached artifacts when done.
+dub_cache_clear("./dub_cache")
+```
+
+Layout under `<cache_dir>` is keyed by source-audio sha256:
+
+```
+<cache_dir>/<src_hash>/
+    metadata.json              # schema version + hash inputs
+    transcription.json
+    translation_<lang_key>.json
+    tts/<seg_key>.wav
+```
+
+Cache keys are conservative — every kwarg that affects a stage's output is
+folded into the key. Whisper model, translator class, Whisper anti-hallucination
+flags, voice-sample sha256, and the Chatterbox `Expressiveness` knobs all
+invalidate independently. False misses are cheap; false hits would be bugs, so
+the design errs toward more re-computation.
+
+The cache grows unbounded; clear it with `dub_cache_clear(cache_dir)` or
+`dub_cache_clear(cache_dir, src_hash=...)` to drop a single source's artifacts.
+
+### Output Options for `dub_file`
+
+`dub_file()` writes the dubbed video by stream-copying the source video and
+muxing the new audio. Two extras carry through automatically and one is opt-in:
+
+- **Subtitles pass-through (automatic).** Subtitle streams from the source
+  video are stream-copied into the output by default. Sources without subtitles
+  are tolerated.
+- **Source loudness match (automatic).** The dubbed audio is gain-matched to
+  the source via BS.1770 integrated-loudness measurement (`pyloudnorm`,
+  BSD-3) so the dub lands within ~1 LU of the source on dialogue-heavy mixes.
+  Falls back to peak-amplitude match for clips shorter than 400 ms; post-gain
+  peaks are clamped to 0.99.
+- **`keep_original_audio=True` (opt-in).** Retains the source audio as a
+  secondary audio track behind the dubbed one. Useful for editorial A/B; the
+  dubbed track stays the default-playback track.
+
+```python
+result = dubber.dub_file(
+    input_path="interview.mp4",
+    output_path="interview_es.mp4",
+    target_lang="es",
+    keep_original_audio=True,  # source audio rides along as track #2
+)
+```
+
+### Transcript Quality Gating
+
+Even with `condition_on_previous_text=False`, sufficiently degenerate input
+(ambient music, mostly-silent windows misread as speech) can still produce
+unusable transcripts. The pipeline runs a cheap heuristic over the Whisper
+output and exposes the assessment on every result.
+
+Three checks fire flags:
+
+- **Dominant phrase** — one phrase covers ≥70% of segment characters
+  (catches cascades like the Japanese YouTube outro `「ご視聴ありがとうございました」`).
+- **Low decoder confidence** — median `avg_logprob` < `-1.5`.
+- **Sparse speech** — speech-region duration is <5% of clip duration on
+  inputs >30s.
+
+The `recommendation` is `"reject"` when the dominance flag fires together
+with at least one other flag, `"warn"` when any single flag fires, `"ok"`
+otherwise. Single repetition alone (chants, song lyrics) only warns.
+
+```python
+result = dubber.dub(video, target_lang="es")
+
+q = result.transcript_quality
+if q is not None:
+    print(q.recommendation)            # "ok" | "warn" | "reject"
+    print(q.dominant_phrase_fraction)  # 0.0-1.0
+    print(q.flags)                     # ["dominant_phrase", ...]
+```
+
+Use `strict_quality=True` to refuse low-quality transcripts before paying for
+Demucs, translation, and TTS:
+
+```python
+from videopython.ai.dubbing import GarbageTranscriptError
+
+dubber = VideoDubber(strict_quality=True)
+try:
+    dubber.dub(video, target_lang="es")
+except GarbageTranscriptError as exc:
+    print("Refused:", exc.quality.flags)
+```
+
+### Timing Summary
+
+`DubbingResult.timing_summary` aggregates the per-segment timing adjustments
+the synchronizer applied to fit translated speech into source durations. High
+truncation rates indicate translation produced text that was too long for the
+source's spoken regions — a quality red flag worth surfacing in eval harnesses
+or product UI.
+
+```python
+result = dubber.dub(video, target_lang="es")
+
+ts = result.timing_summary
+if ts is not None:
+    print(f"{ts.clean_count}/{ts.total_segments} clean")
+    print(f"{ts.truncated_count} truncated, worst {ts.max_truncation_seconds:.2f}s")
+    print(f"mean speed factor {ts.mean_speed_factor:.3f}")
+```
+
+### Source-Prosody Expressiveness
+
+`ChatterboxMultilingualTTS.generate()` exposes `exaggeration`, `cfg_weight`,
+and `temperature` knobs. The dubbing pipeline derives an `Expressiveness`
+profile per segment from source vocals RMS (relative to whole-vocals baseline)
+and forwards it to Chatterbox, so the dub tracks the source's loud/quiet shape
+instead of using flat defaults on every segment.
+
+Three buckets, picked by-ear on `cam1_1min.mp4`:
+
+| RMS ratio vs baseline | `exaggeration` | `cfg_weight` |
+|---|---|---|
+| `< 0.7×` (calm) | `0.3` | `0.7` |
+| `0.7×–1.3×` (normal) | Chatterbox default | Chatterbox default |
+| `> 1.3×` (dramatic) | `0.85` | `0.35` |
+
+The `Expressiveness` dataclass is exported from `videopython.ai.dubbing`. The
+three knobs are also folded into the TTS cache key, so re-runs after a knob
+change re-synthesize. Pre-0.28.3 cache entries miss on first hit and
+re-synthesize with the new values; old WAVs stay on disk until
+`dub_cache_clear`.
 
 ### Supplying a Pre-Computed Transcription
 
@@ -250,6 +431,55 @@ Individual translated speech segment with timing information.
 Audio separated into vocals and background components.
 
 ::: videopython.ai.dubbing.SeparatedAudio
+
+## Expressiveness
+
+Per-segment Chatterbox `generate()` knobs (`exaggeration`, `cfg_weight`,
+`temperature`). `None` on any field means "let Chatterbox use its default".
+The dubbing pipeline derives this from source vocals RMS automatically; the
+type is exposed for users who want to inspect or override per-segment values.
+
+::: videopython.ai.dubbing.Expressiveness
+
+## TimingSummary
+
+Aggregate stats over per-segment timing adjustments applied by the
+synchronizer. Surfaces truncation and speed-change counts that translation
+quality eval harnesses can compare across backends.
+
+::: videopython.ai.dubbing.models.TimingSummary
+
+## TranscriptQuality
+
+Heuristic quality assessment over a Whisper transcription. Surfaced on every
+`DubbingResult`; drives the optional `strict_quality` reject path.
+
+::: videopython.ai.dubbing.TranscriptQuality
+
+## GarbageTranscriptError
+
+Raised by the pipeline when `strict_quality=True` and the transcript-quality
+heuristic returns `recommendation="reject"`. Carries the triggering
+`TranscriptQuality` as `error.quality` for caller introspection.
+
+::: videopython.ai.dubbing.GarbageTranscriptError
+
+## DubCache
+
+Filesystem cache for dubbing pipeline artifacts. Most users only need
+`cache_dir=...` on `VideoDubber` plus `dub_cache_clear(cache_dir)`; `DubCache`
+is the lower-level handle for pre-warming, inspecting, or composing custom
+flows.
+
+::: videopython.ai.dubbing.DubCache
+
+## UnsupportedLanguageError
+
+Raised by the translator auto-resolver when neither MarianMT nor Qwen3 covers
+the requested `(source_lang, target_lang)` pair. Carries both fields for
+caller introspection without parsing the message.
+
+::: videopython.ai.dubbing.UnsupportedLanguageError
 
 ## Supported Languages
 
