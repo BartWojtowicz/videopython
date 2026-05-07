@@ -36,6 +36,27 @@ transcriber = AudioToText(no_speech_threshold=0.85)
 transcriber = AudioToText(condition_on_previous_text=True)
 ```
 
+### Per-segment confidence
+
+`TranscriptionSegment` carries three optional confidence fields populated from
+the raw Whisper output: `avg_logprob`, `no_speech_prob`, and
+`compression_ratio`. They are `None` when not available (e.g. on the
+diarization-only path that builds segments from words without overlap match,
+or on transcripts loaded from formats that don't carry the metadata).
+
+These signals feed the dubbing pipeline's transcript-quality gate (median
+`avg_logprob` is one of three reject flags) and Qwen3's confidence-aware
+translation prompt (segments below threshold get a `low_confidence` hint). They
+are also useful for downstream callers that want to drop low-quality segments
+before further processing.
+
+```python
+result = AudioToText().transcribe(video)
+for segment in result.segments:
+    if segment.avg_logprob is not None and segment.avg_logprob < -1.0:
+        print(f"low confidence: {segment.text!r}")
+```
+
 ::: videopython.ai.AudioToText
 
 ## AudioClassifier
