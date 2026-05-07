@@ -8,6 +8,8 @@ Minimal, LLM-friendly Python library for programmatic video editing, processing,
 
 Full documentation: [videopython.com](https://videopython.com)
 
+> **Disclaimer:** This project started as a hand-written hobby project, but most of the code is now produced by LLM agents. Humans still drive direction, approve changes, and own design decisions.
+
 ## Installation
 
 ### 1. Install FFmpeg
