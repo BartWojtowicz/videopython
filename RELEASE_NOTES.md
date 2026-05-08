@@ -1,5 +1,36 @@
 # Release Notes
 
+## 0.29.0
+
+### Added
+
+- `SceneDescription` dataclass on `videopython.base.description` (caption + open-list `subjects` + closed-enum `shot_type`). `SceneVLM.analyze_scene` and `analyze_frame` now return `SceneDescription` instead of a free-form string. Few-shot JSON prompting + tolerant parse + one retry; the final fallback returns the raw text inside the caption field so a scene always gets *something*.
+- `SceneVLM.model_size` is now `Literal["4b", "9b", "27b"]` (Qwen3.5-4B/9B/27B). `"4b"` is the default. The previous `"2b"` value is gone — 2B was not reliable enough for structured JSON output, and shipping a tier with a different return shape was an API smell. Constructor logs a loud WARNING when `"27b"` is requested with less than ~45 GB free VRAM (does not raise — knowledgeable users may run with their own quantization layer).
+- `SceneVLM.unload()` for `low_memory` parity with the Marian/Qwen translator backends and other unloadable stages.
+- `VideoAnalyzer(sampling="low" | "medium" | "high")` kwarg controls the per-scene SceneVLM frame budget. `"low"` is a fast preview pass for long videos, `"high"` keeps talking-head depth, `"medium"` is the previous default. Replaces the four `_SCENE_VLM_*` module constants with a `_SAMPLING_PRESETS` table.
+- Perceptual-hash dedup inside `_run_scene_vlm_batched` — talking-head shots collapse to 1-2 frames so action shots keep their budget. Hard floor of one frame survives per group. Threshold lives in `PHASH_DEDUP_DISTANCE` (module constant).
+- New `videopython.ai.understanding.faces` module with `FaceTracker.track_shot(frames, frame_indices)` that returns a list of per-shot `FaceTrack` objects (id-stable within a scene via IoU association, no embedding re-id). New `face_tracker` analyzer id wired into `VideoAnalyzer`; results land on `SceneAnalysisSample.faces`.
+- `FaceTrack` dataclass on `videopython.base.description`.
+- `SceneDescription` and `FaceTrack` are also re-exported from `videopython.base`.
+
+### Changed
+
+- **Breaking:** `SceneAnalysisSample.caption: str | None` renamed to `scene_description: SceneDescription | None`. `to_dict` / `from_dict` updated. Persisted JSON from 0.28.x will no longer round-trip.
+- **Breaking:** `FaceTracker` import path moved from `videopython.ai.transforms` to `videopython.ai.understanding.faces`. `videopython.ai.FaceTracker` still works (re-exported from `videopython/ai/__init__.py`). The internal `_FaceDetectionBackend` was renamed to `_FaceDetector`.
+- `qwen-vl-utils` is now a pinned dependency in the `ai` extra. The previous transitive-import fallback inside `_generate_from_message_batch` was removed — install issues now surface immediately instead of silently using a manual-image-construction shim.
+
+### Removed
+
+- **Breaking:** `ActionRecognizer` (VideoMAE/Kinetics-400) deleted from `videopython.ai.understanding.temporal`. It was never wired into `VideoAnalyzer`. Direct importers must remove the call.
+- **Breaking:** `DetectedAction` dataclass deleted from `videopython.base.description`. Nothing in the codebase produced or consumed it after `ActionRecognizer` was removed.
+- **Breaking:** `easyocr` removed from the `ai` extra. The dependency had zero source references; the VLM does OCR inline.
+
+### Notes
+
+- All six pieces of M5 ship together in this 0.29.0 minor bump. No staged patch releases, no back-compat shims.
+- `model_size="9b"` weights are ~18 GB FP16, fitting a 24 GB GPU only when SceneVLM runs solo. The analyzer already releases Whisper/TransNetV2 GPU memory before SceneVLM loads (`gc.collect()` + `torch.cuda.empty_cache()`).
+- A caption-quality A/B harness lives at `scripts/eval_scene_vlm.py` for by-eye review across `model_size` and `sampling` combinations. Manual run, not a CI gate.
+
 ## 0.28.3
 
 ### Added

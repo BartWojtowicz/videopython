@@ -626,7 +626,7 @@ class TestGPUFaceTracking:
         results = tracker.track_video(np.array([]))
         assert results == []
 
-    @patch("videopython.ai.transforms._FaceDetectionBackend")
+    @patch("videopython.ai.understanding.faces._FaceDetector")
     def test_face_tracker_passes_gpu_params_to_detector(self, mock_detector_class):
         """Test FaceTracker passes GPU params to internal detector backend."""
         mock_detector = MagicMock()

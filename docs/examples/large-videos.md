@@ -124,7 +124,9 @@ for scene in scenes:
 
 ## AI Video Analysis (Scene-First)
 
-`VideoAnalyzer.analyze_path()` returns scene-centered outputs:
+`VideoAnalyzer.analyze_path()` returns scene-centered outputs. For long
+videos, use `sampling="low"` to keep wall time down (8-frame budget per
+scene, 20-second adjacent-merge threshold):
 
 ```python
 from videopython.ai import VideoAnalyzer, VideoAnalysisConfig
@@ -133,11 +135,13 @@ config = VideoAnalysisConfig(
     enabled_analyzers={"audio_to_text", "semantic_scene_detector", "scene_vlm"},
 )
 
-analysis = VideoAnalyzer(config=config).analyze_path("long_video.mp4")
+analysis = VideoAnalyzer(config=config, sampling="low").analyze_path("long_video.mp4")
 for scene in (analysis.scenes.samples if analysis.scenes else []):
     print(scene.scene_index, scene.start_second, scene.end_second)
-    for chunk in scene.visual_segments:
-        print("  ", chunk.start_second, chunk.end_second, chunk.caption)
+    if scene.scene_description:
+        print("   caption:", scene.scene_description.caption)
+        print("  subjects:", scene.scene_description.subjects)
+        print(" shot_type:", scene.scene_description.shot_type)
 ```
 
 ## Processing a Segment

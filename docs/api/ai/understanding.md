@@ -1,6 +1,6 @@
 # AI Understanding
 
-Analyze videos, transcribe audio, and describe visual content.
+Analyze videos, transcribe audio, describe visual content, and track faces per shot.
 
 For a single aggregate, serializable analysis object across multiple analyzers, see [Video Analysis](video_analysis.md).
 
@@ -8,10 +8,11 @@ For a single aggregate, serializable analysis object across multiple analyzers, 
 
 | Class | Local Model Family |
 |-------|--------------------|
-| SceneVLM | Qwen3.5 |
+| SceneVLM | Qwen3.5 (4B / 9B / 27B) |
 | AudioToText | Whisper |
 | AudioClassifier | AST |
 | SemanticSceneDetector | TransNetV2 |
+| FaceTracker | YOLOv8-face |
 
 ## AudioToText
 
@@ -87,12 +88,35 @@ for event in result.events:
 
 ## SceneVLM
 
-`SceneVLM` supports both Qwen3.5 `2B` and `4B` model variants.
-Device selection is automatic by default (`cuda` -> `cpu`).
+`SceneVLM` supports Qwen3.5 dense vision-capable variants via the
+`model_size` kwarg: `"4b"` (default, ~8 GB FP16), `"9b"` (~18 GB FP16),
+`"27b"` (~54 GB FP16, needs ≥48 GB). Device selection is automatic by
+default (`cuda` -> `mps` -> `cpu`).
+
+`analyze_scene()` and `analyze_frame()` return a structured
+[`SceneDescription`](#scenedescription) with three fields: a one-sentence
+`caption`, an open-list `subjects`, and a closed-enum `shot_type`. The
+class uses few-shot JSON prompting with one parse-retry; on persistent
+parse failure, the raw text becomes the caption while `subjects` and
+`shot_type` are returned empty / `None`.
+
+```python
+from videopython.ai import SceneVLM
+
+vlm = SceneVLM(model_size="4b")  # default
+description = vlm.analyze_frame(frame_array)
+
+print(description.caption)     # "A man in a cap speaks into a microphone."
+print(description.subjects)    # ["man", "microphone", "cap"]
+print(description.shot_type)   # "medium"
+```
+
+`SceneVLM.unload()` releases the model + processor for `low_memory`
+parity with the dubbing pipeline's translator backends.
 
 ::: videopython.ai.SceneVLM
 
-### SemanticSceneDetector
+## SemanticSceneDetector
 
 ML-based scene boundary detection using TransNetV2. More accurate than histogram-based detection, especially for gradual transitions like fades and dissolves.
 
@@ -108,6 +132,33 @@ for scene in scenes:
 
 ::: videopython.ai.SemanticSceneDetector
 
+## FaceTracker
+
+`FaceTracker` runs YOLOv8-face detection and stitches detections into
+per-shot tracks via IoU association — no embedding re-id, so a track
+does not survive across shot boundaries. Two surfaces:
+
+- `track_shot(frames, frame_indices)` returns a list of
+  [`FaceTrack`](#facetrack) objects with stable ids within the shot.
+  This is the API the analyzer uses, and the one M6 lip-sync consumes.
+- `detect_and_track(frame, frame_index)` / `track_video(frames)` are
+  the legacy single-subject smoothed-position APIs used by
+  `FaceTrackingCrop` and `SplitScreenComposite` (see
+  [AI Transforms](transforms.md)).
+
+```python
+from videopython.ai import FaceTracker
+
+tracker = FaceTracker(backend="auto")
+tracks = tracker.track_shot(frames)
+
+for track in tracks:
+    print(f"track #{track.track_id}: {track.length} frames, "
+          f"first frame {track.frame_indices[0]}")
+```
+
+::: videopython.ai.FaceTracker
+
 ## Scene Data Classes
 
 These classes are used by scene and audio analyzers to represent analysis results:
@@ -115,6 +166,10 @@ These classes are used by scene and audio analyzers to represent analysis result
 ### SceneBoundary
 
 ::: videopython.base.SceneBoundary
+
+### SceneDescription
+
+::: videopython.base.SceneDescription
 
 ### BoundingBox
 
@@ -124,9 +179,17 @@ These classes are used by scene and audio analyzers to represent analysis result
 
 ::: videopython.base.DetectedObject
 
+### DetectedFace
+
+::: videopython.base.DetectedFace
+
 ### DetectedText
 
 ::: videopython.base.DetectedText
+
+### FaceTrack
+
+::: videopython.base.FaceTrack
 
 ### AudioEvent
 
@@ -135,7 +198,3 @@ These classes are used by scene and audio analyzers to represent analysis result
 ### AudioClassification
 
 ::: videopython.base.AudioClassification
-
-### DetectedAction
-
-::: videopython.base.DetectedAction

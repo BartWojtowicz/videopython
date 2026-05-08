@@ -4,6 +4,10 @@ AI-powered video transforms that use face detection for intelligent cropping and
 Framing-oriented behavior (headroom / thirds / speed clamp) is implemented on
 `FaceTrackingCrop`.
 
+The underlying `FaceTracker` lives in
+[`videopython.ai.understanding.faces`](understanding.md#facetracker)
+since 0.29.0; the transforms below construct one internally.
+
 ## Usage
 
 ```python
@@ -25,10 +29,6 @@ framed_video = framing.apply(video)
 composite = SplitScreenComposite(layout="2x1")
 split_video = composite.apply(video, video2)
 ```
-
-## FaceTracker
-
-::: videopython.ai.FaceTracker
 
 ## FaceTrackingCrop
 

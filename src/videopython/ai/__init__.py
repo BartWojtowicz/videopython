@@ -2,11 +2,11 @@ from videopython.ai import registry as _ai_registry  # noqa: F401
 
 from .generation import ImageToVideo, TextToImage, TextToMusic, TextToSpeech, TextToVideo
 from .swapping import ObjectSwapper
-from .transforms import FaceTracker, FaceTrackingCrop, SplitScreenComposite
+from .transforms import FaceTrackingCrop, SplitScreenComposite
 from .understanding import (
-    ActionRecognizer,
     AudioClassifier,
     AudioToText,
+    FaceTracker,
     SceneVLM,
     SemanticSceneDetector,
 )
@@ -22,12 +22,10 @@ __all__ = [
     # Understanding
     "AudioToText",
     "AudioClassifier",
+    "FaceTracker",
     "SceneVLM",
-    # Temporal
-    "ActionRecognizer",
     "SemanticSceneDetector",
     # Transforms (AI-powered)
-    "FaceTracker",
     "FaceTrackingCrop",
     "SplitScreenComposite",
     # Swapping

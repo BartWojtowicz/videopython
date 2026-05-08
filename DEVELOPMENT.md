@@ -44,16 +44,9 @@ uv run pytest src/tests/ai -m "not requires_model_download"
 
 ### AI test markers
 
-Tests requiring models 100MB+ are marked with `@pytest.mark.requires_model_download` and excluded from CI:
+Tests requiring models 100MB+ are marked with `@pytest.mark.requires_model_download` and excluded from CI. The bulk of the AI test surface relies on monkey-patched fakes (see `_FakeSceneVLM`, `_FakeFaceTracker`, etc. in `src/tests/ai/test_video_analysis_scene_first.py`) so it stays fast and CI-friendly.
 
-| Test Class | Model | Size | Runs in CI |
-|------------|-------|------|------------|
-| `TestObjectDetectorLocal` | YOLO | ~6MB | Yes |
-| `TestTextDetectorLocal` | EasyOCR | ~100MB+ | No (marked) |
-| `TestAudioClassifier` | PANNs | ~80MB | Yes |
-| `TestFaceDetector` | OpenCV cascade | bundled | Yes |
-| `TestCameraMotionDetector` | OpenCV optical flow | bundled | Yes |
-| `test_transforms.py` | mocked | none | Yes |
+`requires_model_download` is configured in `pyproject.toml` under `[tool.pytest.ini_options].markers` and is respected by `conftest.py`.
 
 We use [pre-commit](https://pre-commit.com/) to run [Ruff](https://docs.astral.sh/ruff/) and [mypy](https://github.com/python/mypy) checks locally, and CI runs the same hooks.
 ```bash

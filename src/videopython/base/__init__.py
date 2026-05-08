@@ -3,12 +3,13 @@ from .description import (
     AudioClassification,
     AudioEvent,
     BoundingBox,
-    DetectedAction,
     DetectedFace,
     DetectedObject,
     DetectedText,
+    FaceTrack,
     MotionInfo,
     SceneBoundary,
+    SceneDescription,
 )
 from .effects import (
     AudioEffect,
@@ -136,12 +137,13 @@ __all__ = [
     # Scene Detection
     "SceneDetector",
     "SceneBoundary",
+    "SceneDescription",
     # Detection types
     "BoundingBox",
     "DetectedObject",
     "DetectedFace",
     "DetectedText",
-    "DetectedAction",
+    "FaceTrack",
     "AudioEvent",
     "AudioClassification",
     "MotionInfo",
