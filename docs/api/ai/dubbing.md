@@ -152,6 +152,22 @@ dubber = VideoDubber(no_speech_threshold=0.85)
 
 See [`AudioToText`](understanding.md#audiototext) for the full rationale.
 
+### Brand-Name Vocabulary
+
+Pass a list of brand names, product names, or proper nouns that may appear in
+the source audio. The list is forwarded to `AudioToText` and biases Whisper's
+first-window decoder via `initial_prompt`, recovering near-mishears (e.g.
+Klarna → "carna") on brand-monitoring inputs.
+
+```python
+dubber = VideoDubber(vocabulary=["Klarna", "Allegro", "InPost"])
+```
+
+Changing the list invalidates the transcription cache (translation and TTS
+artifacts are unaffected). See [Brand-name vocabulary
+biasing](understanding.md#brand-name-vocabulary-biasing) for normalization
+rules and the token-budget guard.
+
 ### Translation Backend
 
 Two translation backends ship with the dubbing pipeline:

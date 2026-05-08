@@ -58,7 +58,10 @@ config = VideoAnalysisConfig(
     },
     analyzer_params={
         "scene_vlm": {"model_size": "9b"},   # default is "4b"
-        "audio_to_text": {"model_name": "large"},
+        "audio_to_text": {
+            "model_name": "large",
+            "vocabulary": ["Klarna", "Allegro", "InPost"],  # brand-name biasing
+        },
     },
 )
 
