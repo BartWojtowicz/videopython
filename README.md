@@ -147,10 +147,10 @@ API docs: [Core](https://videopython.com/api/index/) | [Video](https://videopyth
 | Area | Highlights |
 |---|---|
 | **Generation** | `TextToVideo`, `ImageToVideo`, `TextToImage`, `TextToSpeech`, `TextToMusic` |
-| **Understanding** | `AudioToText` (transcription), `AudioClassifier`, `SceneVLM` (visual scene description), `ActionRecognizer` |
+| **Understanding** | `AudioToText` (transcription), `AudioClassifier`, `SceneVLM` (structured visual scene description), `FaceTracker` (per-shot face tracks) |
 | **Scene detection** | `SemanticSceneDetector` (neural scene boundaries) |
 | **Video analysis** | `VideoAnalyzer` - full-pipeline analysis combining multiple AI capabilities |
-| **Transforms** | `FaceTracker`, `FaceTrackingCrop`, `SplitScreenComposite` |
+| **Transforms** | `FaceTrackingCrop`, `SplitScreenComposite` |
 | **Dubbing** | `VideoDubber` - voice cloning and revoicing with timing sync |
 | **Object swapping** | `ObjectSwapper` - detect, segment, and inpaint objects in video |
 

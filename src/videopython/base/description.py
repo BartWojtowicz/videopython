@@ -11,59 +11,9 @@ __all__ = [
     "AudioClassification",
     "MotionInfo",
     "SceneBoundary",
-    "DetectedAction",
+    "SceneDescription",
+    "FaceTrack",
 ]
-
-
-@dataclass
-class DetectedAction:
-    """An action/activity detected in a video segment.
-
-    Attributes:
-        label: Name of the detected action (e.g., "walking", "running", "dancing")
-        confidence: Detection confidence score between 0 and 1
-        start_frame: Start frame index of the action
-        end_frame: End frame index of the action (exclusive)
-        start_time: Start time in seconds
-        end_time: End time in seconds
-    """
-
-    label: str
-    confidence: float
-    start_frame: int | None = None
-    end_frame: int | None = None
-    start_time: float | None = None
-    end_time: float | None = None
-
-    @property
-    def duration(self) -> float | None:
-        """Duration of the action in seconds."""
-        if self.start_time is not None and self.end_time is not None:
-            return self.end_time - self.start_time
-        return None
-
-    def to_dict(self) -> dict:
-        """Convert to dictionary for JSON serialization."""
-        return {
-            "label": self.label,
-            "confidence": self.confidence,
-            "start_frame": self.start_frame,
-            "end_frame": self.end_frame,
-            "start_time": self.start_time,
-            "end_time": self.end_time,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "DetectedAction":
-        """Create DetectedAction from dictionary."""
-        return cls(
-            label=data["label"],
-            confidence=data["confidence"],
-            start_frame=data.get("start_frame"),
-            end_frame=data.get("end_frame"),
-            start_time=data.get("start_time"),
-            end_time=data.get("end_time"),
-        )
 
 
 @dataclass
@@ -369,4 +319,84 @@ class MotionInfo:
             motion_type=data["motion_type"],
             magnitude=data["magnitude"],
             raw_magnitude=data["raw_magnitude"],
+        )
+
+
+@dataclass
+class SceneDescription:
+    """Structured visual scene description from the SceneVLM.
+
+    The v1 schema is intentionally narrow (caption + subjects + shot_type).
+    Wider schemas drop JSON parse rate on small models without eval data
+    to defend the cost. Fields are added in v2 as parse-rate measurements
+    justify them; closed enums first, open lists last.
+
+    Attributes:
+        caption: One-sentence summary of the scene.
+        subjects: Open list of named subjects visible in the frames.
+        shot_type: Closed enum framing the camera distance, or None
+            when JSON parsing fell back to raw text.
+    """
+
+    caption: str
+    subjects: list[str] = field(default_factory=list)
+    shot_type: str | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "caption": self.caption,
+            "subjects": list(self.subjects),
+            "shot_type": self.shot_type,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "SceneDescription":
+        return cls(
+            caption=str(data["caption"]),
+            subjects=[str(s) for s in data.get("subjects", [])],
+            shot_type=data.get("shot_type"),
+        )
+
+
+@dataclass
+class FaceTrack:
+    """A face tracked across consecutive frames within a single shot.
+
+    Tracks are produced by IoU association — no embedding re-id, so a
+    track does not survive across shot/scene boundaries. ``frame_indices``
+    and ``boxes`` are parallel lists of equal length.
+
+    Attributes:
+        track_id: Stable id within the shot the track was produced in.
+            Not globally unique across scenes.
+        frame_indices: Source-video frame indices for each detection.
+        boxes: Per-frame bounding boxes (normalized 0-1 coords).
+        confidences: Per-frame detection confidence in [0, 1].
+    """
+
+    track_id: int
+    frame_indices: list[int]
+    boxes: list[BoundingBox]
+    confidences: list[float] = field(default_factory=list)
+
+    @property
+    def length(self) -> int:
+        """Number of frames in this track."""
+        return len(self.frame_indices)
+
+    def to_dict(self) -> dict:
+        return {
+            "track_id": self.track_id,
+            "frame_indices": list(self.frame_indices),
+            "boxes": [box.to_dict() for box in self.boxes],
+            "confidences": list(self.confidences),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "FaceTrack":
+        return cls(
+            track_id=int(data["track_id"]),
+            frame_indices=[int(i) for i in data.get("frame_indices", [])],
+            boxes=[BoundingBox.from_dict(b) for b in data.get("boxes", [])],
+            confidences=[float(c) for c in data.get("confidences", [])],
         )

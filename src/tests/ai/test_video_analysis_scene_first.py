@@ -9,7 +9,10 @@ import videopython.ai.video_analysis as va
 from videopython.base.description import (
     AudioClassification,
     AudioEvent,
+    BoundingBox,
+    FaceTrack,
     SceneBoundary,
+    SceneDescription,
 )
 from videopython.base.text.transcription import Transcription, TranscriptionSegment
 from videopython.base.video import Video
@@ -48,7 +51,11 @@ class _FakeSceneVLM:
         pass
 
     def analyze_scene(self, frames):
-        return f"scene_with_{len(frames)}_frames"
+        return SceneDescription(
+            caption=f"scene_with_{len(frames)}_frames",
+            subjects=["test"],
+            shot_type="medium",
+        )
 
 
 class _FailingSceneVLM:
@@ -70,11 +77,29 @@ class _FakeAudioClassifier:
         )
 
 
+class _FakeFaceTracker:
+    def __init__(self, **_kwargs):
+        pass
+
+    def track_shot(self, frames, frame_indices=None):
+        if frame_indices is None:
+            frame_indices = list(range(len(frames)))
+        return [
+            FaceTrack(
+                track_id=1,
+                frame_indices=list(frame_indices),
+                boxes=[BoundingBox(x=0.1, y=0.1, width=0.2, height=0.2) for _ in frame_indices],
+                confidences=[0.9 for _ in frame_indices],
+            )
+        ]
+
+
 def _patch_scene_first_analyzers(monkeypatch: pytest.MonkeyPatch, *, failing_vlm: bool = False) -> None:
     monkeypatch.setattr(va, "AudioToText", _FakeAudioToText)
     monkeypatch.setattr(va, "SemanticSceneDetector", _FakeSceneDetector)
     monkeypatch.setattr(va, "SceneVLM", _FailingSceneVLM if failing_vlm else _FakeSceneVLM)
     monkeypatch.setattr(va, "AudioClassifier", _FakeAudioClassifier)
+    monkeypatch.setattr(va, "FaceTracker", _FakeFaceTracker)
 
 
 def _video_4s() -> Video:
@@ -94,11 +119,26 @@ def test_scene_analysis_sample_roundtrip_dict() -> None:
         end_second=2.0,
         start_frame=0,
         end_frame=20,
-        caption="two people talking",
+        scene_description=SceneDescription(
+            caption="two people talking",
+            subjects=["person", "person"],
+            shot_type="medium",
+        ),
         audio_classification=AudioClassification(
             events=[AudioEvent(start=0.1, end=0.9, label="Speech", confidence=0.8)],
             clip_predictions={"Speech": 0.8},
         ),
+        faces=[
+            FaceTrack(
+                track_id=1,
+                frame_indices=[0, 1],
+                boxes=[
+                    BoundingBox(x=0.1, y=0.1, width=0.2, height=0.2),
+                    BoundingBox(x=0.12, y=0.11, width=0.2, height=0.2),
+                ],
+                confidences=[0.95, 0.93],
+            )
+        ],
     )
 
     restored = va.SceneAnalysisSample.from_dict(sample.to_dict())
@@ -126,8 +166,13 @@ def test_scene_first_full_run_outputs_scene_payload(monkeypatch: pytest.MonkeyPa
         "second line",
         "third line",
     ]
-    assert analysis.scenes.samples[0].caption is not None
+    description = analysis.scenes.samples[0].scene_description
+    assert description is not None
+    assert description.caption.startswith("scene_with_")
+    assert description.subjects == ["test"]
+    assert description.shot_type == "medium"
     assert analysis.scenes.samples[0].audio_classification is not None
+    assert analysis.scenes.samples[0].faces is not None
     assert not hasattr(analysis, "frames")
     payload = analysis.to_dict()
     assert "frames" not in payload
@@ -142,8 +187,9 @@ def test_disabled_analyzers_do_not_run(monkeypatch: pytest.MonkeyPatch) -> None:
     assert analysis.audio is None
     assert analysis.scenes is not None
     assert analysis.scenes.samples
-    assert analysis.scenes.samples[0].caption is None
+    assert analysis.scenes.samples[0].scene_description is None
     assert analysis.scenes.samples[0].audio_classification is None
+    assert analysis.scenes.samples[0].faces is None
 
 
 def test_scene_payload_survives_vlm_failure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -153,18 +199,34 @@ def test_scene_payload_survives_vlm_failure(monkeypatch: pytest.MonkeyPatch) -> 
 
     assert analysis.scenes is not None
     assert len(analysis.scenes.samples) == 2
-    assert analysis.scenes.samples[0].caption is None
+    assert analysis.scenes.samples[0].scene_description is None
 
 
-def test_scene_vlm_produces_single_caption_with_scaled_frames(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_scene_vlm_produces_structured_output_with_scaled_frames(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_scene_first_analyzers(monkeypatch)
     config = va.VideoAnalysisConfig(enabled_analyzers={va.SCENE_VLM})
     analysis = va.VideoAnalyzer(config=config).analyze(_video_30s())
 
     assert analysis.scenes is not None
     assert len(analysis.scenes.samples) == 1
-    # 30s scene: ceil(3 * ln(30/5 + 1)) = 6 frames
-    assert analysis.scenes.samples[0].caption == "scene_with_6_frames"
+    description = analysis.scenes.samples[0].scene_description
+    assert description is not None
+    # 30s scene at sampling=medium: ceil(3 * ln(30/5 + 1)) = 6 frames; phash dedup
+    # is a no-op on identical zero frames so the deduped list has 1 frame.
+    assert description.caption == "scene_with_1_frames"
+
+
+def test_low_sampling_reduces_frame_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_scene_first_analyzers(monkeypatch)
+    config = va.VideoAnalysisConfig(enabled_analyzers={va.SCENE_VLM})
+    analyzer = va.VideoAnalyzer(config=config, sampling="low")
+    assert analyzer.sampling == "low"
+    assert analyzer._sampling_profile.max_frames == 8
+
+
+def test_unknown_sampling_preset_rejected() -> None:
+    with pytest.raises(ValueError, match="sampling must be one of"):
+        va.VideoAnalyzer(sampling="ultra")  # type: ignore[arg-type]
 
 
 def test_run_info_roundtrip_includes_stage_timings() -> None:
@@ -190,6 +252,7 @@ def test_analyze_populates_stage_durations_for_parallel_branch(monkeypatch: pyte
     assert "scene_analysis" in timings
     assert "scene_vlm" in timings
     assert "audio_classification" in timings
+    assert "face_tracker" in timings
     assert all(v > 0.0 for v in timings.values())
     assert analysis.run_info.total_duration_seconds is not None
     assert analysis.run_info.total_duration_seconds > 0.0

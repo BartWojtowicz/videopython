@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from importlib import metadata as importlib_metadata
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
 import numpy as np
 from PIL import Image
@@ -25,11 +25,14 @@ from videopython.ai.understanding import (
     SceneVLM,
     SemanticSceneDetector,
 )
+from videopython.ai.understanding.faces import FaceTracker
 from videopython.base.audio import Audio
 from videopython.base.description import (
     AudioClassification,
     AudioEvent,
+    FaceTrack,
     SceneBoundary,
+    SceneDescription,
 )
 from videopython.base.text.transcription import Transcription
 from videopython.base.video import Video, VideoMetadata, extract_frames_at_times
@@ -42,12 +45,14 @@ AUDIO_TO_TEXT = "audio_to_text"
 AUDIO_CLASSIFIER = "audio_classifier"
 SEMANTIC_SCENE_DETECTOR = "semantic_scene_detector"
 SCENE_VLM = "scene_vlm"
+FACE_TRACKER = "face_tracker"
 
 ALL_ANALYZER_IDS: tuple[str, ...] = (
     AUDIO_TO_TEXT,
     AUDIO_CLASSIFIER,
     SEMANTIC_SCENE_DETECTOR,
     SCENE_VLM,
+    FACE_TRACKER,
 )
 
 _CREATION_TIME_TAG_KEYS: tuple[str, ...] = (
@@ -62,10 +67,47 @@ _GEO_TAG_KEYS: tuple[str, ...] = (
     "location-eng",
 )
 
-_SCENE_VLM_FRAME_SCALE = 3.0  # controls log curve steepness for frame sampling
-_SCENE_VLM_FRAME_BASE = 5.0  # seconds per unit in log formula
-_SCENE_VLM_MAX_FRAMES = 30  # hard cap on frames per scene
-_SCENE_VLM_GROUP_THRESHOLD = 10.0  # seconds; adjacent scenes shorter than this get merged for one VLM call
+SamplingPreset = Literal["low", "medium", "high"]
+
+
+@dataclass(frozen=True)
+class _SamplingProfile:
+    """Per-scene frame budget knobs for SceneVLM sampling.
+
+    Replaces the four ``_SCENE_VLM_*`` module constants. The log-curve
+    formula stays:
+
+        frames = clip(1, max_frames, ceil(scale * log(duration/base + 1)))
+
+    so smaller budgets reach their cap on shorter scenes by tuning
+    ``scale`` and ``base`` together.
+    """
+
+    frame_scale: float
+    frame_base: float
+    max_frames: int
+    group_threshold_seconds: float
+
+
+_SAMPLING_PRESETS: dict[SamplingPreset, _SamplingProfile] = {
+    "low": _SamplingProfile(frame_scale=2.0, frame_base=8.0, max_frames=8, group_threshold_seconds=20.0),
+    "medium": _SamplingProfile(frame_scale=3.0, frame_base=5.0, max_frames=30, group_threshold_seconds=10.0),
+    "high": _SamplingProfile(frame_scale=4.0, frame_base=3.0, max_frames=60, group_threshold_seconds=4.0),
+}
+DEFAULT_SAMPLING_PRESET: SamplingPreset = "medium"
+
+# Hamming distance threshold for perceptual-hash dedup of sampled frames
+# inside one VLM group. 4 is the conventional cutoff for imagehash; same
+# pattern as the M1 voice-sample thresholds (constant, not user-facing).
+PHASH_DEDUP_DISTANCE = 4
+
+# Default per-shot face-tracking cadence. The analyzer samples one frame
+# per ``_FACE_TRACK_SAMPLE_PERIOD_SECONDS`` of scene duration -- enough
+# to bind a track to a subject for downstream consumers (M6 lip-sync
+# refines this with every-frame tracking). Module-level constant; same
+# pattern as the phash distance.
+_FACE_TRACK_SAMPLE_PERIOD_SECONDS = 0.5
+_FACE_TRACK_MAX_FRAMES_PER_SHOT = 60
 
 
 @dataclass
@@ -191,7 +233,7 @@ class VideoAnalysisConfig:
         VideoAnalysisConfig(
             analyzer_params={
                 "audio_to_text": {"model_name": "large"},
-                "scene_vlm": {"model_size": "2b"},
+                "scene_vlm": {"model_size": "9b"},
             }
         )
     """
@@ -252,15 +294,22 @@ class AudioAnalysisSection:
 
 @dataclass
 class SceneAnalysisSample:
-    """Flat scene payload with all per-scene analyzer outputs."""
+    """Flat scene payload with all per-scene analyzer outputs.
+
+    ``scene_description`` carries the structured SceneVLM output (caption +
+    subjects + shot type). ``faces`` is one list of tracks **per scene**
+    (not per frame); each ``FaceTrack`` carries its own per-frame
+    trajectory internally.
+    """
 
     scene_index: int
     start_second: float
     end_second: float
     start_frame: int | None = None
     end_frame: int | None = None
-    caption: str | None = None
+    scene_description: SceneDescription | None = None
     audio_classification: AudioClassification | None = None
+    faces: list[FaceTrack] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -269,24 +318,29 @@ class SceneAnalysisSample:
             "end_second": self.end_second,
             "start_frame": self.start_frame,
             "end_frame": self.end_frame,
-            "caption": self.caption,
+            "scene_description": self.scene_description.to_dict() if self.scene_description else None,
             "audio_classification": self.audio_classification.to_dict() if self.audio_classification else None,
+            "faces": [track.to_dict() for track in self.faces] if self.faces is not None else None,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "SceneAnalysisSample":
+        faces_raw = data.get("faces")
         return cls(
             scene_index=int(data["scene_index"]),
             start_second=float(data["start_second"]),
             end_second=float(data["end_second"]),
             start_frame=data.get("start_frame"),
             end_frame=data.get("end_frame"),
-            caption=data.get("caption"),
+            scene_description=(
+                SceneDescription.from_dict(data["scene_description"]) if data.get("scene_description") else None
+            ),
             audio_classification=(
                 AudioClassification.from_dict(data["audio_classification"])
                 if data.get("audio_classification")
                 else None
             ),
+            faces=[FaceTrack.from_dict(item) for item in faces_raw] if faces_raw is not None else None,
         )
 
 
@@ -355,10 +409,31 @@ class VideoAnalysis:
 
 
 class VideoAnalyzer:
-    """Orchestrates scene-first analyzers and builds `VideoAnalysis` output."""
+    """Orchestrates scene-first analyzers and builds `VideoAnalysis` output.
 
-    def __init__(self, config: VideoAnalysisConfig | None = None):
+    ``sampling`` controls how aggressively the SceneVLM samples frames per
+    scene. ``low`` is a fast preview pass for long videos, ``high`` keeps
+    talking-head depth, ``medium`` is the previous default. The preset
+    tunes the per-scene frame cap, the log-curve scale/base used to size
+    short scenes, and the threshold below which adjacent scenes get
+    merged into one VLM call.
+
+    ``sampling`` and the SceneVLM ``tier`` are orthogonal: small models
+    can't make use of dense sampling, but the user owns that tradeoff.
+    """
+
+    def __init__(
+        self,
+        config: VideoAnalysisConfig | None = None,
+        *,
+        sampling: SamplingPreset = DEFAULT_SAMPLING_PRESET,
+    ):
+        if sampling not in _SAMPLING_PRESETS:
+            supported = ", ".join(_SAMPLING_PRESETS)
+            raise ValueError(f"sampling must be one of: {supported}")
         self.config = config or VideoAnalysisConfig()
+        self.sampling: SamplingPreset = sampling
+        self._sampling_profile = _SAMPLING_PRESETS[sampling]
 
     def analyze_path(self, path: str | Path) -> VideoAnalysis:
         """Analyze a video path in scene-first mode."""
@@ -581,6 +656,14 @@ class VideoAnalyzer:
             logger.warning("Failed to initialize AudioClassifier, skipping audio classification", exc_info=True)
             audio_classifier = None
 
+        face_tracker: FaceTracker | None = None
+        if FACE_TRACKER in enabled:
+            try:
+                face_tracker = FaceTracker(**self.config.get_params(FACE_TRACKER))
+            except Exception:
+                logger.warning("Failed to initialize FaceTracker, skipping face tracks", exc_info=True)
+                face_tracker = None
+
         path_audio: Audio | None = None
         if audio_classifier is not None and source_path is not None:
             try:
@@ -592,11 +675,11 @@ class VideoAnalyzer:
                 path_audio = None
 
         # -- Batched SceneVLM: collect all timestamps, extract frames once, run one forward pass --
-        captions: list[str | None] = [None] * len(scenes)
+        descriptions: list[SceneDescription | None] = [None] * len(scenes)
         if scene_vlm is not None:
             with _record_stage(run_info, "scene_vlm"):
                 try:
-                    captions = self._run_scene_vlm_batched(
+                    descriptions = self._run_scene_vlm_batched(
                         scene_vlm=scene_vlm,
                         source_path=source_path,
                         video=video,
@@ -608,7 +691,8 @@ class VideoAnalyzer:
 
         samples: list[SceneAnalysisSample] = []
         audio_ctx = _record_stage(run_info, "audio_classification") if audio_classifier is not None else nullcontext()
-        with audio_ctx:
+        face_ctx = _record_stage(run_info, "face_tracker") if face_tracker is not None else nullcontext()
+        with audio_ctx, face_ctx:
             for index, scene in enumerate(scenes):
                 sample = SceneAnalysisSample(
                     scene_index=index,
@@ -616,7 +700,7 @@ class VideoAnalyzer:
                     end_second=float(scene.end),
                     start_frame=int(scene.start_frame),
                     end_frame=int(scene.end_frame),
-                    caption=captions[index],
+                    scene_description=descriptions[index],
                 )
 
                 if audio_classifier is not None:
@@ -648,9 +732,59 @@ class VideoAnalyzer:
                             exc_info=True,
                         )
 
+                if face_tracker is not None:
+                    try:
+                        sample.faces = self._run_scene_face_tracker(
+                            face_tracker=face_tracker,
+                            source_path=source_path,
+                            video=video,
+                            metadata=metadata,
+                            scene=scene,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "FaceTracker failed for scene %d (%.1f-%.1fs)",
+                            index,
+                            scene.start,
+                            scene.end,
+                            exc_info=True,
+                        )
+
                 samples.append(sample)
 
         return SceneAnalysisSection(samples=samples)
+
+    def _run_scene_face_tracker(
+        self,
+        *,
+        face_tracker: FaceTracker,
+        source_path: Path | None,
+        video: Video | None,
+        metadata: VideoMetadata,
+        scene: SceneBoundary,
+    ) -> list[FaceTrack] | None:
+        """Sample frames inside a scene and run per-shot IoU face tracking."""
+        duration = max(0.0, scene.end - scene.start)
+        if duration <= 0.0:
+            return None
+
+        sample_count = max(1, min(_FACE_TRACK_MAX_FRAMES_PER_SHOT, int(duration / _FACE_TRACK_SAMPLE_PERIOD_SECONDS)))
+        timestamps = self._sample_timestamps(start_second=scene.start, end_second=scene.end, frame_count=sample_count)
+        if not timestamps:
+            return None
+
+        frame_indices = [int(round(ts * metadata.fps)) for ts in timestamps]
+
+        if source_path is not None:
+            frames_array = extract_frames_at_times(source_path, timestamps)
+            frames: list[np.ndarray] = list(frames_array)
+        else:
+            current_video = _require_video(video)
+            max_frame = max(len(current_video.frames) - 1, 0)
+            frames = [current_video.frames[max(0, min(max_frame, idx))] for idx in frame_indices]
+
+        tracks = face_tracker.track_shot(frames, frame_indices=frame_indices)
+        return tracks if tracks else None
 
     def _run_scene_vlm_batched(
         self,
@@ -660,12 +794,17 @@ class VideoAnalyzer:
         video: Video | None,
         metadata: VideoMetadata,
         scenes: list[SceneBoundary],
-    ) -> list[str | None]:
-        """Extract frames for all scenes in one ffmpeg call, then caption each group.
+    ) -> list[SceneDescription | None]:
+        """Extract frames for all scenes in one ffmpeg call, then describe each group.
 
-        Adjacent short scenes (< _SCENE_VLM_GROUP_THRESHOLD seconds) are merged
-        into a single VLM call to reduce per-call overhead.
+        Adjacent short scenes (whose total duration would stay under the
+        sampling preset's ``group_threshold_seconds``) are merged into a
+        single VLM call to reduce per-call overhead. Within each group,
+        sampled frames are deduped by perceptual hash so static
+        talking-head shots collapse to 1-2 frames and free budget elsewhere.
         """
+        profile = self._sampling_profile
+
         # Group adjacent short scenes to reduce VLM call count.
         # Each group is a list of scene indices that share one VLM call.
         groups: list[list[int]] = []
@@ -673,7 +812,7 @@ class VideoAnalyzer:
         current_group_duration = 0.0
         for i, scene in enumerate(scenes):
             dur = max(0.0, scene.end - scene.start)
-            if current_group and current_group_duration + dur > _SCENE_VLM_GROUP_THRESHOLD:
+            if current_group and current_group_duration + dur > profile.group_threshold_seconds:
                 groups.append(current_group)
                 current_group = [i]
                 current_group_duration = dur
@@ -691,8 +830,8 @@ class VideoAnalyzer:
             span_end = scenes[group[-1]].end
             duration = max(0.0, span_end - span_start)
             frame_count = min(
-                _SCENE_VLM_MAX_FRAMES,
-                max(1, math.ceil(_SCENE_VLM_FRAME_SCALE * math.log(duration / _SCENE_VLM_FRAME_BASE + 1))),
+                profile.max_frames,
+                max(1, math.ceil(profile.frame_scale * math.log(duration / profile.frame_base + 1))),
             )
             timestamps = self._sample_timestamps(start_second=span_start, end_second=span_end, frame_count=frame_count)
             group_timestamps.append(timestamps)
@@ -712,17 +851,22 @@ class VideoAnalyzer:
             all_frames = [current_video.frames[idx] for idx in indices]
 
         # Caption each group and assign to all scenes in that group
-        captions: list[str | None] = [None] * len(scenes)
+        descriptions: list[SceneDescription | None] = [None] * len(scenes)
         offset = 0
+        total_in = 0
+        total_out = 0
         for group, timestamps in zip(groups, group_timestamps):
             frame_count = len(timestamps)
             group_frames = all_frames[offset : offset + frame_count]
             offset += frame_count
             if not group_frames:
                 continue
-            caption: str | None = None
+            deduped = _phash_dedup_frames(group_frames, max_distance=PHASH_DEDUP_DISTANCE)
+            total_in += len(group_frames)
+            total_out += len(deduped)
+            description: SceneDescription | None = None
             try:
-                caption = scene_vlm.analyze_scene(group_frames) or None
+                description = scene_vlm.analyze_scene(deduped)
             except Exception:
                 logger.warning(
                     "SceneVLM failed for scenes %d-%d (%.1f-%.1fs)",
@@ -732,11 +876,18 @@ class VideoAnalyzer:
                     scenes[group[-1]].end,
                     exc_info=True,
                 )
-                caption = None
+                description = None
             for i in group:
-                captions[i] = caption
-        logger.info("SceneVLM: %d groups from %d scenes", len(groups), len(scenes))
-        return captions
+                descriptions[i] = description
+        logger.info(
+            "SceneVLM: %d groups from %d scenes (sampling=%s, frames %d -> %d after phash dedup)",
+            len(groups),
+            len(scenes),
+            self.sampling,
+            total_in,
+            total_out,
+        )
+        return descriptions
 
     def _run_scene_audio_classification(
         self,
@@ -913,6 +1064,41 @@ class VideoAnalyzer:
         return tags
 
 
+def _phash_dedup_frames(
+    frames: list[np.ndarray | Image.Image],
+    *,
+    max_distance: int,
+) -> list[np.ndarray | Image.Image]:
+    """Drop near-duplicate frames inside a single VLM group via perceptual hash.
+
+    Static talking-head shots collapse to 1-2 frames; action shots keep
+    their budget. The first frame is always retained; subsequent frames
+    are kept only if their hash differs from every kept frame by more
+    than ``max_distance`` Hamming bits. **At least one frame survives**
+    even when every frame collides.
+    """
+    if len(frames) <= 1:
+        return list(frames)
+
+    import imagehash
+
+    kept: list[np.ndarray | Image.Image] = []
+    kept_hashes: list[Any] = []
+    for frame in frames:
+        pil = Image.fromarray(frame) if isinstance(frame, np.ndarray) else frame
+        h = imagehash.phash(pil)
+        if any((h - prev) <= max_distance for prev in kept_hashes):
+            continue
+        kept.append(frame)
+        kept_hashes.append(h)
+
+    # Hard floor: never let dedup empty a group; it would silently lose
+    # the scene's caption budget.
+    if not kept:
+        return [frames[0]]
+    return kept
+
+
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -1002,9 +1188,3 @@ def _parse_iso6709_or_pair(value: str) -> GeoMetadata | None:
         return GeoMetadata(latitude=lat, longitude=lon, altitude=alt)
 
     return None
-
-
-def _normalize_text(value: str | None) -> str:
-    if not value:
-        return ""
-    return re.sub(r"\s+", " ", str(value)).strip()
