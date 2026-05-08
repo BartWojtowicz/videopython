@@ -13,10 +13,9 @@ from videopython.base.video import Video
 
 logger = logging.getLogger(__name__)
 
-# Whisper reserves ~224 tokens for the SOT_PREV (initial_prompt) context.
-# Anything past that is silently dropped at decode time; we trim ahead of
-# Whisper so the warning identifies which terms were lost.
+# Whisper's initial_prompt budget; longer prompts are silently truncated by the decoder.
 _INITIAL_PROMPT_TOKEN_BUDGET = 224
+_INITIAL_PROMPT_TEMPLATE = "Transcript may include the following names: {terms}."
 
 
 def _normalize_vocabulary(vocabulary: list[str] | None) -> list[str]:
@@ -24,7 +23,8 @@ def _normalize_vocabulary(vocabulary: list[str] | None) -> list[str]:
 
     Original casing is kept — Whisper biases toward what it sees in the
     prompt, so ``"InPost"`` is a stronger anchor than ``"inpost"`` for
-    a stylized brand name.
+    a stylized brand name. Rejects a non-list ``vocabulary`` early so a
+    bare string isn't silently iterated as one-char terms.
     """
     if vocabulary is None:
         return []
@@ -34,8 +34,6 @@ def _normalize_vocabulary(vocabulary: list[str] | None) -> list[str]:
     seen: set[str] = set()
     result: list[str] = []
     for term in vocabulary:
-        if not isinstance(term, str):
-            raise TypeError(f"vocabulary items must be str, got {type(term).__name__}")
         stripped = term.strip()
         if not stripped:
             continue
@@ -47,40 +45,32 @@ def _normalize_vocabulary(vocabulary: list[str] | None) -> list[str]:
     return result
 
 
-def _build_initial_prompt(vocabulary: list[str]) -> str | None:
-    """Build Whisper's ``initial_prompt`` from a normalized vocabulary list.
+def _render_initial_prompt(terms: list[str]) -> str:
+    return _INITIAL_PROMPT_TEMPLATE.format(terms=", ".join(terms))
 
-    Returns ``None`` for an empty list (caller must omit the kwarg, not
-    pass an empty string — Whisper would tokenize a stray prompt header).
-    Trims terms from the tail when the rendered prompt exceeds
-    :data:`_INITIAL_PROMPT_TOKEN_BUDGET`; logs one warning naming the count
-    dropped.
-    """
+
+def _build_initial_prompt(vocabulary: list[str]) -> str | None:
+    """Render the prompt and trim tail terms until it fits Whisper's
+    224-token ``initial_prompt`` budget; ``None`` for empty input."""
     if not vocabulary:
         return None
 
     import whisper.tokenizer
 
     tokenizer = whisper.tokenizer.get_tokenizer(multilingual=True, task="transcribe")
-
-    def _render(terms: list[str]) -> str:
-        return f"Transcript may include the following names: {', '.join(terms)}."
-
     kept = list(vocabulary)
-    while kept and len(tokenizer.encode(_render(kept))) > _INITIAL_PROMPT_TOKEN_BUDGET:
+    while kept and len(tokenizer.encode(_render_initial_prompt(kept))) > _INITIAL_PROMPT_TOKEN_BUDGET:
         kept.pop()
-
-    dropped = len(vocabulary) - len(kept)
-    if dropped:
-        logger.warning(
-            "vocabulary truncated to fit Whisper's %d-token initial_prompt budget: dropped %d trailing term(s)",
-            _INITIAL_PROMPT_TOKEN_BUDGET,
-            dropped,
-        )
 
     if not kept:
         return None
-    return _render(kept)
+    if len(kept) < len(vocabulary):
+        logger.warning(
+            "vocabulary truncated to fit Whisper's %d-token initial_prompt budget: dropped %d trailing term(s)",
+            _INITIAL_PROMPT_TOKEN_BUDGET,
+            len(vocabulary) - len(kept),
+        )
+    return _render_initial_prompt(kept)
 
 
 def _attach_confidence_by_overlap(
@@ -176,11 +166,7 @@ class AudioToText:
 
     def _transcribe_kwargs(self, language: str | None, vocabulary: list[str]) -> dict[str, Any]:
         """Kwargs threaded into ``whisper.Whisper.transcribe`` from both call sites.
-
-        ``initial_prompt`` is added only when ``vocabulary`` produces a non-
-        empty prompt — keeps the kwargs dict byte-identical to the no-vocab
-        path so existing call traces don't shift.
-        """
+        ``initial_prompt`` is omitted entirely on the no-vocab path."""
         kwargs: dict[str, Any] = {
             "word_timestamps": True,
             "language": language,

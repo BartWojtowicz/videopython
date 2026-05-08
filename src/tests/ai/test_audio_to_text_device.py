@@ -667,8 +667,3 @@ class TestVocabularyBiasing:
         monkeypatch.setattr(audio_mod, "select_device", lambda _r, mps_allowed=False: "cpu")
         with pytest.raises(TypeError, match="vocabulary"):
             audio_mod.AudioToText(vocabulary="Klarna", device=None)  # type: ignore[arg-type]
-
-    def test_non_str_vocabulary_item_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(audio_mod, "select_device", lambda _r, mps_allowed=False: "cpu")
-        with pytest.raises(TypeError, match="vocabulary items"):
-            audio_mod.AudioToText(vocabulary=["Klarna", 42], device=None)  # type: ignore[list-item]

@@ -27,6 +27,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from videopython.ai.understanding.audio import _normalize_vocabulary
+
 if TYPE_CHECKING:
     from videopython.base.audio import Audio
     from videopython.base.text.transcription import Transcription
@@ -77,30 +79,6 @@ def _stable_hash(*parts: str | int | float | bool | None) -> str:
         h.update(repr(part).encode("utf-8"))
         h.update(b"\x00")
     return h.hexdigest()[:16]
-
-
-def _normalize_vocabulary_for_hash(vocabulary: list[str] | None) -> list[str]:
-    """Order-preserving, case-insensitive dedup. Mirrors ``AudioToText``'s
-    normalization so the cache key matches the list Whisper actually sees.
-
-    Defined here (not imported from understanding.audio) to keep the cache
-    module free of whisper / torch imports — :class:`DubCache` is
-    constructed in code paths that haven't loaded the AI extras yet.
-    """
-    if not vocabulary:
-        return []
-    seen: set[str] = set()
-    result: list[str] = []
-    for term in vocabulary:
-        stripped = term.strip()
-        if not stripped:
-            continue
-        key = stripped.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        result.append(stripped)
-    return result
 
 
 def _audio_bytes_hash(audio: Audio) -> str:
@@ -162,21 +140,15 @@ class DubCache:
         ``vocabulary`` is normalized (case-insensitive dedup, casing
         preserved) before hashing so trivial reordering/casing
         differences don't thrash the cache. Defaults to ``None`` so
-        callers from before the M1 vocabulary kwarg keep hashing the
-        same value (no-vocab profile collides with absent kwarg).
+        pre-M1 callers keep hashing the same value as before.
         """
-        # Join with NUL so terms that share prefixes can't collide via
-        # concatenation. ``_stable_hash`` already separates its arguments
-        # with NUL too, but each argument is itself stringified — flatten
-        # the list to one deterministic string for the hash input.
-        normalized_vocab = "\x00".join(_normalize_vocabulary_for_hash(vocabulary))
         return _stable_hash(
             whisper_model,
             enable_diarization,
             condition_on_previous_text,
             no_speech_threshold,
             logprob_threshold,
-            normalized_vocab,
+            *_normalize_vocabulary(vocabulary),
         )
 
     @staticmethod
