@@ -1,5 +1,20 @@
 # Release Notes
 
+## 0.29.1
+
+### Added
+
+- `vocabulary: list[str] | None = None` kwarg on `AudioToText.__init__`, `AudioToText.transcribe(...)`, `VideoDubber`, and `LocalDubbingPipeline`. When set, the list is rendered as `"Transcript may include the following names: <terms>."` and forwarded to Whisper as `initial_prompt`, biasing the first-window decoder toward stylized brand and proper-noun spellings (Klarna → "Klarna" instead of "carna", InPost → "InPost" instead of "in post"). Both the plain and diarized transcription paths funnel through `_transcribe_kwargs(language, vocabulary)` so a single change covers both. Per-call override on `transcribe()` wins over the constructor default; `vocabulary=[]` at call time disables biasing on a shared transcriber. Vocabulary is normalized (whitespace stripped, case-insensitive dedup, original casing of first occurrence preserved) and trimmed from the tail to fit Whisper's 224-token `initial_prompt` budget with a single `WARNING` log line on truncation. M1 of the brand-name-recognition roadmap (`ROADMAP.md` / `TRANSCRIPTION_IMPROVEMENT.md`).
+
+### Changed
+
+- `DubCache.SCHEMA_VERSION` 1 → 2. `DubCache.transcription_kwargs_hash` now includes the normalized vocabulary list. Pre-0.29.1 transcription cache entries miss on first hit and re-transcribe; translation and TTS artifacts are hashed independently and survive untouched. The `vocabulary` kwarg on `transcription_kwargs_hash` defaults to `None` so callers that don't yet pass it hash the same value as before (no-vocab profile collides with absent kwarg).
+
+### Notes
+
+- M1 alone does not promise a measurable recall lift — Whisper's `initial_prompt` is a soft bias, not a hotword decoder. The eval-harness work that anchors the customer-facing claim ships with M2 (LLM correction pass), which consumes the same `vocabulary` list.
+- For `VideoAnalyzer`, pass `analyzer_params={"audio_to_text": {"vocabulary": [...]}}` — no new analyzer-level kwarg was introduced.
+
 ## 0.29.0
 
 ### Added

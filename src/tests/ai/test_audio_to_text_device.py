@@ -502,3 +502,173 @@ class TestDetectLanguageWindow:
         assert captured["n_mels_passed"] == 80
         assert len(fake_model.detect_language_calls) == 1
         assert result == "ja"
+
+
+class TestVocabularyBiasing:
+    """``vocabulary`` becomes Whisper's ``initial_prompt`` when set, and is
+    silently absent when not. Constructor default + per-call override both
+    work; normalization (dedup, strip, casing) is applied."""
+
+    @staticmethod
+    def _vad_and_lang(monkeypatch: pytest.MonkeyPatch) -> None:
+        """Stub VAD + language detection so transcribe() reaches the model."""
+        monkeypatch.setattr(audio_mod.AudioToText, "_run_vad", lambda self, _a: [(0.0, 1.0)])
+        monkeypatch.setattr(audio_mod.AudioToText, "_detect_language", lambda self, _a, _s: "en")
+
+    def test_no_vocabulary_omits_initial_prompt(
+        self,
+        cpu_transcriber: audio_mod.AudioToText,
+        fake_whisper: _FakeWhisperModel,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Default constructor has no vocabulary; the kwargs dict must not
+        # carry an ``initial_prompt`` key — preserves byte-identity with
+        # pre-M1 call shape.
+        self._vad_and_lang(monkeypatch)
+
+        cpu_transcriber.transcribe(_short_audio())
+
+        assert "initial_prompt" not in fake_whisper.transcribe_calls[0]
+
+    def test_constructor_vocabulary_injects_prompt(
+        self, fake_whisper: _FakeWhisperModel, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._vad_and_lang(monkeypatch)
+        monkeypatch.setattr(audio_mod, "select_device", lambda _r, mps_allowed=False: "cpu")
+        transcriber = audio_mod.AudioToText(vocabulary=["Klarna", "Allegro", "InPost"], device=None)
+
+        transcriber.transcribe(_short_audio())
+
+        prompt = fake_whisper.transcribe_calls[0]["initial_prompt"]
+        # All three terms appear, casing preserved.
+        assert "Klarna" in prompt
+        assert "Allegro" in prompt
+        assert "InPost" in prompt
+
+    def test_per_call_vocabulary_overrides_constructor(
+        self, fake_whisper: _FakeWhisperModel, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._vad_and_lang(monkeypatch)
+        monkeypatch.setattr(audio_mod, "select_device", lambda _r, mps_allowed=False: "cpu")
+        transcriber = audio_mod.AudioToText(vocabulary=["Klarna"], device=None)
+
+        transcriber.transcribe(_short_audio(), vocabulary=["Pyszne", "Wolt"])
+
+        prompt = fake_whisper.transcribe_calls[0]["initial_prompt"]
+        assert "Klarna" not in prompt
+        assert "Pyszne" in prompt
+        assert "Wolt" in prompt
+
+    def test_per_call_empty_list_overrides_constructor_to_no_prompt(
+        self, fake_whisper: _FakeWhisperModel, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Per-call ``[]`` is an explicit "ignore the instance default" — the
+        # only escape hatch when one shared transcriber serves callers who
+        # don't want biasing.
+        self._vad_and_lang(monkeypatch)
+        monkeypatch.setattr(audio_mod, "select_device", lambda _r, mps_allowed=False: "cpu")
+        transcriber = audio_mod.AudioToText(vocabulary=["Klarna"], device=None)
+
+        transcriber.transcribe(_short_audio(), vocabulary=[])
+
+        assert "initial_prompt" not in fake_whisper.transcribe_calls[0]
+
+    def test_diarization_branch_carries_initial_prompt(
+        self, fake_whisper: _FakeWhisperModel, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Both transcribe paths funnel through ``_transcribe_kwargs`` so
+        # diarization must see the same ``initial_prompt``.
+        monkeypatch.setattr(audio_mod, "select_device", lambda _r, mps_allowed=False: "cpu")
+        transcriber = audio_mod.AudioToText(vocabulary=["Klarna"], enable_diarization=True, device=None)
+
+        def fake_init_diarization(self: Any) -> None:
+            class _EmptyAnnotation:
+                def itertracks(self, yield_label: bool = True):
+                    return iter([])
+
+            class _DiarOutput:
+                exclusive_speaker_diarization = _EmptyAnnotation()
+
+            self._diarization_pipeline = lambda _payload: _DiarOutput()
+
+        monkeypatch.setattr(audio_mod.AudioToText, "_init_diarization", fake_init_diarization)
+        self._vad_and_lang(monkeypatch)
+
+        transcriber.transcribe(_short_audio())
+
+        assert "Klarna" in fake_whisper.transcribe_calls[0]["initial_prompt"]
+
+    def test_normalization_dedup_strip_preserve_casing(
+        self, fake_whisper: _FakeWhisperModel, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._vad_and_lang(monkeypatch)
+        monkeypatch.setattr(audio_mod, "select_device", lambda _r, mps_allowed=False: "cpu")
+        transcriber = audio_mod.AudioToText(
+            vocabulary=["  Klarna  ", "klarna", "KLARNA", "", "Allegro"],
+            device=None,
+        )
+
+        # Constructor-level normalization: 5 inputs collapse to 2 unique.
+        assert transcriber.vocabulary == ["Klarna", "Allegro"]
+
+        transcriber.transcribe(_short_audio())
+        prompt = fake_whisper.transcribe_calls[0]["initial_prompt"]
+        # Original casing of the *first occurrence* survives; lowercase
+        # duplicates are dropped.
+        assert "Klarna" in prompt
+        assert "klarna," not in prompt and "KLARNA" not in prompt
+        assert "Allegro" in prompt
+
+    def test_whitespace_only_vocabulary_omits_prompt(
+        self, fake_whisper: _FakeWhisperModel, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._vad_and_lang(monkeypatch)
+        monkeypatch.setattr(audio_mod, "select_device", lambda _r, mps_allowed=False: "cpu")
+        transcriber = audio_mod.AudioToText(vocabulary=["", "   ", "\t"], device=None)
+
+        transcriber.transcribe(_short_audio())
+
+        assert "initial_prompt" not in fake_whisper.transcribe_calls[0]
+
+    def test_token_budget_truncation_warns(
+        self,
+        fake_whisper: _FakeWhisperModel,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        # 500 unique multi-syllable names trivially exceeds Whisper's 224-
+        # token initial_prompt window. The builder must trim from the tail
+        # and emit one warning.
+        import logging
+
+        self._vad_and_lang(monkeypatch)
+        monkeypatch.setattr(audio_mod, "select_device", lambda _r, mps_allowed=False: "cpu")
+        big_vocab = [f"Brandname{i:04d}" for i in range(500)]
+        transcriber = audio_mod.AudioToText(vocabulary=big_vocab, device=None)
+
+        with caplog.at_level(logging.WARNING, logger=audio_mod.logger.name):
+            transcriber.transcribe(_short_audio())
+
+        prompt = fake_whisper.transcribe_calls[0]["initial_prompt"]
+        # Verify the actually-emitted prompt fits the budget.
+        import whisper.tokenizer
+
+        tok = whisper.tokenizer.get_tokenizer(multilingual=True, task="transcribe")
+        assert len(tok.encode(prompt)) <= audio_mod._INITIAL_PROMPT_TOKEN_BUDGET
+
+        # Front of the list is preserved; tail is dropped.
+        assert "Brandname0000" in prompt
+        assert "Brandname0499" not in prompt
+
+        warning_lines = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("vocabulary truncated" in r.message for r in warning_lines)
+
+    def test_non_list_vocabulary_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(audio_mod, "select_device", lambda _r, mps_allowed=False: "cpu")
+        with pytest.raises(TypeError, match="vocabulary"):
+            audio_mod.AudioToText(vocabulary="Klarna", device=None)  # type: ignore[arg-type]
+
+    def test_non_str_vocabulary_item_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(audio_mod, "select_device", lambda _r, mps_allowed=False: "cpu")
+        with pytest.raises(TypeError, match="vocabulary items"):
+            audio_mod.AudioToText(vocabulary=["Klarna", 42], device=None)  # type: ignore[list-item]

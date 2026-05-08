@@ -37,7 +37,12 @@ logger = logging.getLogger(__name__)
 # Cache schema version. Bump on incompatible changes to any artifact's
 # on-disk format (e.g. TranscriptionSegment field changes that break
 # from_dict). Mismatched cache entries are treated as a miss.
-SCHEMA_VERSION = 1
+#
+# v2 (0.29.1): vocabulary added to transcription_kwargs_hash for M1
+# vocabulary biasing. Pre-v2 transcription artifacts miss on first hit
+# and re-run; translation/TTS artifacts are unaffected (hashed
+# independently and survive).
+SCHEMA_VERSION = 2
 
 # Reserved for M4.3 per-speaker voice library. M3.2 does not write here;
 # documented so future code knows the path is taken.
@@ -72,6 +77,30 @@ def _stable_hash(*parts: str | int | float | bool | None) -> str:
         h.update(repr(part).encode("utf-8"))
         h.update(b"\x00")
     return h.hexdigest()[:16]
+
+
+def _normalize_vocabulary_for_hash(vocabulary: list[str] | None) -> list[str]:
+    """Order-preserving, case-insensitive dedup. Mirrors ``AudioToText``'s
+    normalization so the cache key matches the list Whisper actually sees.
+
+    Defined here (not imported from understanding.audio) to keep the cache
+    module free of whisper / torch imports — :class:`DubCache` is
+    constructed in code paths that haven't loaded the AI extras yet.
+    """
+    if not vocabulary:
+        return []
+    seen: set[str] = set()
+    result: list[str] = []
+    for term in vocabulary:
+        stripped = term.strip()
+        if not stripped:
+            continue
+        key = stripped.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(stripped)
+    return result
 
 
 def _audio_bytes_hash(audio: Audio) -> str:
@@ -126,13 +155,28 @@ class DubCache:
         condition_on_previous_text: bool,
         no_speech_threshold: float,
         logprob_threshold: float | None,
+        vocabulary: list[str] | None = None,
     ) -> str:
+        """Hash captures the kwargs that affect Whisper's output.
+
+        ``vocabulary`` is normalized (case-insensitive dedup, casing
+        preserved) before hashing so trivial reordering/casing
+        differences don't thrash the cache. Defaults to ``None`` so
+        callers from before the M1 vocabulary kwarg keep hashing the
+        same value (no-vocab profile collides with absent kwarg).
+        """
+        # Join with NUL so terms that share prefixes can't collide via
+        # concatenation. ``_stable_hash`` already separates its arguments
+        # with NUL too, but each argument is itself stringified — flatten
+        # the list to one deterministic string for the hash input.
+        normalized_vocab = "\x00".join(_normalize_vocabulary_for_hash(vocabulary))
         return _stable_hash(
             whisper_model,
             enable_diarization,
             condition_on_previous_text,
             no_speech_threshold,
             logprob_threshold,
+            normalized_vocab,
         )
 
     @staticmethod

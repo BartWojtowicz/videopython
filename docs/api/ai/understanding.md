@@ -37,6 +37,49 @@ transcriber = AudioToText(no_speech_threshold=0.85)
 transcriber = AudioToText(condition_on_previous_text=True)
 ```
 
+### Brand-name vocabulary biasing
+
+Bias Whisper's first-window decoder toward a caller-supplied list of brand
+names, product names, or proper nouns via the native `initial_prompt`
+channel. Recovers near-mishears (e.g. Klarna → "carna", InPost →
+"in post") on brand-monitoring inputs without any new model
+dependencies.
+
+```python
+from videopython.ai import AudioToText
+
+# Constructor default — applies to every transcribe() call on this instance.
+transcriber = AudioToText(vocabulary=["Klarna", "Allegro", "InPost"])
+result = transcriber.transcribe(video)
+
+# Per-call override — useful when one transcriber serves multiple tenants.
+result = transcriber.transcribe(video, vocabulary=["Pyszne", "Wolt"])
+```
+
+The list is normalized at construction (whitespace stripped,
+case-insensitive dedup, casing of the first occurrence preserved).
+Whisper reserves ~224 tokens for the prompt; longer lists are trimmed
+from the tail with a single `WARNING` log line naming the count
+dropped.
+
+`VideoDubber` and `LocalDubbingPipeline` accept the same `vocabulary`
+kwarg; it threads through to the underlying transcriber. Within
+`VideoAnalyzer`, pass it via `analyzer_params`:
+
+```python
+from videopython.ai import VideoAnalyzer
+from videopython.ai.video_analysis import VideoAnalysisConfig
+
+config = VideoAnalysisConfig(
+    analyzer_params={"audio_to_text": {"vocabulary": ["Klarna", "Allegro"]}}
+)
+analysis = VideoAnalyzer(config=config).analyze_path("brand_review.mp4")
+```
+
+Recovers names Whisper *almost* heard correctly. It will not catch
+zero-prior names — that gap is what M2 (LLM correction pass) closes;
+see `ROADMAP.md`.
+
 ### Per-segment confidence
 
 `TranscriptionSegment` carries three optional confidence fields populated from

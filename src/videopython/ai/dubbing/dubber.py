@@ -37,6 +37,11 @@ class VideoDubber:
             gate; raise to drop more low-confidence windows.
         logprob_threshold: Forwarded to ``AudioToText``. Whisper's average
             log-probability gate.
+        vocabulary: Forwarded to ``AudioToText``. Optional list of brand
+            names, product names, or proper nouns to bias Whisper's first-
+            window decoder via ``initial_prompt``. Recovers near-mishears
+            (e.g. Klarna → "carna") on brand-monitoring inputs without new
+            model deps.
         strict_quality: When True, the pipeline raises
             :class:`GarbageTranscriptError` before Demucs/translation/TTS run
             if the transcript-quality heuristic returns ``"reject"``. When
@@ -67,6 +72,7 @@ class VideoDubber:
         condition_on_previous_text: bool = False,
         no_speech_threshold: float = 0.6,
         logprob_threshold: float | None = -1.0,
+        vocabulary: list[str] | None = None,
         strict_quality: bool = False,
         translator: TranslatorChoice = "auto",
         cache_dir: str | Path | None = None,
@@ -77,6 +83,7 @@ class VideoDubber:
         self.condition_on_previous_text = condition_on_previous_text
         self.no_speech_threshold = no_speech_threshold
         self.logprob_threshold = logprob_threshold
+        self.vocabulary = vocabulary
         self.strict_quality = strict_quality
         self.translator = translator
         self.cache_dir = cache_dir
@@ -101,6 +108,7 @@ class VideoDubber:
             condition_on_previous_text=self.condition_on_previous_text,
             no_speech_threshold=self.no_speech_threshold,
             logprob_threshold=self.logprob_threshold,
+            vocabulary=self.vocabulary,
             strict_quality=self.strict_quality,
             translator=self.translator,
             cache_dir=self.cache_dir,
