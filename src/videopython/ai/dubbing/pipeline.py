@@ -170,6 +170,7 @@ class LocalDubbingPipeline:
         condition_on_previous_text: bool = False,
         no_speech_threshold: float = 0.6,
         logprob_threshold: float | None = -1.0,
+        vocabulary: list[str] | None = None,
         strict_quality: bool = False,
         translator: TranslatorChoice = "auto",
         cache_dir: str | Path | None = None,
@@ -180,6 +181,7 @@ class LocalDubbingPipeline:
         self.condition_on_previous_text = condition_on_previous_text
         self.no_speech_threshold = no_speech_threshold
         self.logprob_threshold = logprob_threshold
+        self.vocabulary = vocabulary
         self.strict_quality = strict_quality
         self.translator = translator
         self.cache_dir = Path(cache_dir) if cache_dir is not None else None
@@ -256,6 +258,7 @@ class LocalDubbingPipeline:
                     "condition_on_previous_text": self.condition_on_previous_text,
                     "no_speech_threshold": self.no_speech_threshold,
                     "logprob_threshold": self.logprob_threshold,
+                    "vocabulary": self.vocabulary,
                 },
             )
         return transcription
@@ -406,6 +409,7 @@ class LocalDubbingPipeline:
             condition_on_previous_text=self.condition_on_previous_text,
             no_speech_threshold=self.no_speech_threshold,
             logprob_threshold=self.logprob_threshold,
+            vocabulary=self.vocabulary,
         )
         return src_hash, kwargs_hash
 
@@ -420,6 +424,7 @@ class LocalDubbingPipeline:
             condition_on_previous_text=self.condition_on_previous_text,
             no_speech_threshold=self.no_speech_threshold,
             logprob_threshold=self.logprob_threshold,
+            vocabulary=self.vocabulary,
         )
 
     def _init_translator(self, source_lang: str, target_lang: str) -> None:

@@ -1,5 +1,15 @@
 # Release Notes
 
+## 0.29.1
+
+### Added
+
+- `vocabulary: list[str] | None` kwarg on `AudioToText`, `VideoDubber`, and `LocalDubbingPipeline`. Forwarded to Whisper as `initial_prompt` to bias the first-window decoder toward stylized brand and proper-noun spellings. Per-call override on `AudioToText.transcribe()`. Recovers near-mishears; not a hotword decoder. Plumbs the API surface for the brand-name-recognition roadmap.
+
+### Changed
+
+- `DubCache.SCHEMA_VERSION` 1 → 2; the transcription cache key now includes vocabulary. Pre-0.29.1 transcription artifacts re-run once on next cached call; translation and TTS artifacts survive.
+
 ## 0.29.0
 
 ### Added

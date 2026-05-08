@@ -27,6 +27,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from videopython.ai.understanding.audio import _normalize_vocabulary
+
 if TYPE_CHECKING:
     from videopython.base.audio import Audio
     from videopython.base.text.transcription import Transcription
@@ -37,7 +39,12 @@ logger = logging.getLogger(__name__)
 # Cache schema version. Bump on incompatible changes to any artifact's
 # on-disk format (e.g. TranscriptionSegment field changes that break
 # from_dict). Mismatched cache entries are treated as a miss.
-SCHEMA_VERSION = 1
+#
+# v2 (0.29.1): vocabulary added to transcription_kwargs_hash for M1
+# vocabulary biasing. Pre-v2 transcription artifacts miss on first hit
+# and re-run; translation/TTS artifacts are unaffected (hashed
+# independently and survive).
+SCHEMA_VERSION = 2
 
 # Reserved for M4.3 per-speaker voice library. M3.2 does not write here;
 # documented so future code knows the path is taken.
@@ -126,13 +133,22 @@ class DubCache:
         condition_on_previous_text: bool,
         no_speech_threshold: float,
         logprob_threshold: float | None,
+        vocabulary: list[str] | None = None,
     ) -> str:
+        """Hash captures the kwargs that affect Whisper's output.
+
+        ``vocabulary`` is normalized (case-insensitive dedup, casing
+        preserved) before hashing so trivial reordering/casing
+        differences don't thrash the cache. Defaults to ``None`` so
+        pre-M1 callers keep hashing the same value as before.
+        """
         return _stable_hash(
             whisper_model,
             enable_diarization,
             condition_on_previous_text,
             no_speech_threshold,
             logprob_threshold,
+            *_normalize_vocabulary(vocabulary),
         )
 
     @staticmethod

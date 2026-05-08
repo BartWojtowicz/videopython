@@ -63,6 +63,7 @@ Model options:
 - `tiny`, `base`, `small`, `medium`, `large`, `turbo`
 - Enable diarization with `AudioToText(enable_diarization=True)` when needed.
 - VAD-gated language detection runs by default (`enable_vad=True`); pass `enable_vad=False` to skip it.
+- Bias Whisper toward brand or proper-noun spellings with `AudioToText(vocabulary=["Klarna", "Allegro"])`. See [Brand-name vocabulary biasing](../api/ai/understanding.md#brand-name-vocabulary-biasing).
 
 ### 2. Configure Subtitle Style
 

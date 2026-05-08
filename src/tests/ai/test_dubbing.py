@@ -1570,6 +1570,47 @@ class TestAntiHallucinationKwargPlumbing:
         assert captured["logprob_threshold"] is None
 
 
+class TestVocabularyKwargPlumbing:
+    """``vocabulary`` flows VideoDubber -> LocalDubbingPipeline -> AudioToText
+    and is included in the transcription cache hash so changing the list
+    invalidates a previously-cached transcription."""
+
+    def test_dubber_default_is_none(self):
+        from videopython.ai.dubbing import VideoDubber
+
+        assert VideoDubber().vocabulary is None
+
+    def test_pipeline_default_is_none(self):
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+
+        assert LocalDubbingPipeline().vocabulary is None
+
+    def test_dubber_propagates_to_pipeline(self):
+        from videopython.ai.dubbing import VideoDubber
+
+        dubber = VideoDubber(vocabulary=["Klarna", "Allegro"])
+        dubber._init_local_pipeline()
+
+        assert dubber._local_pipeline.vocabulary == ["Klarna", "Allegro"]
+
+    def test_pipeline_propagates_to_transcriber(self, monkeypatch):
+        from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+        from videopython.ai.understanding import audio as audio_mod
+
+        captured: dict[str, object] = {}
+
+        class FakeAudioToText:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        monkeypatch.setattr(audio_mod, "AudioToText", FakeAudioToText)
+
+        pipeline = LocalDubbingPipeline(vocabulary=["Klarna"])
+        pipeline._init_transcriber()
+
+        assert captured["vocabulary"] == ["Klarna"]
+
+
 class TestDiarizeTranscription:
     """Tests for AudioToText.diarize_transcription standalone diarization helper."""
 
@@ -3398,6 +3439,43 @@ class TestDubCacheUnit:
         assert h1 != h2
         # Stable across calls with same inputs.
         assert h1 == DubCache.transcription_kwargs_hash(**base)
+
+    def test_transcription_kwargs_hash_changes_with_vocabulary(self):
+        from videopython.ai.dubbing.cache import DubCache
+
+        base = dict(
+            whisper_model="turbo",
+            enable_diarization=False,
+            condition_on_previous_text=False,
+            no_speech_threshold=0.6,
+            logprob_threshold=-1.0,
+        )
+        no_vocab = DubCache.transcription_kwargs_hash(**base)
+        # Pre-M1 callers (no vocabulary kwarg) must keep hashing the same value.
+        assert no_vocab == DubCache.transcription_kwargs_hash(**base, vocabulary=None)
+        assert no_vocab == DubCache.transcription_kwargs_hash(**base, vocabulary=[])
+
+        with_vocab = DubCache.transcription_kwargs_hash(**base, vocabulary=["Klarna"])
+        different_vocab = DubCache.transcription_kwargs_hash(**base, vocabulary=["Allegro"])
+        assert no_vocab != with_vocab != different_vocab
+
+        # Whitespace and duplicate elimination are cache-stable — they don't
+        # change what Whisper sees, so they shouldn't thrash the cache.
+        assert DubCache.transcription_kwargs_hash(
+            **base, vocabulary=["Klarna", "Allegro"]
+        ) == DubCache.transcription_kwargs_hash(**base, vocabulary=["  Klarna  ", "Allegro"])
+        assert DubCache.transcription_kwargs_hash(
+            **base, vocabulary=["Klarna", "Allegro"]
+        ) == DubCache.transcription_kwargs_hash(**base, vocabulary=["Klarna", "Klarna", "Allegro"])
+
+        # Casing and order DO change the rendered prompt Whisper sees, so they
+        # must invalidate the cached transcription.
+        assert DubCache.transcription_kwargs_hash(**base, vocabulary=["Klarna"]) != DubCache.transcription_kwargs_hash(
+            **base, vocabulary=["klarna"]
+        )
+        assert DubCache.transcription_kwargs_hash(
+            **base, vocabulary=["Klarna", "Allegro"]
+        ) != DubCache.transcription_kwargs_hash(**base, vocabulary=["Allegro", "Klarna"])
 
     def test_translation_key_includes_translator_class(self):
         from videopython.ai.dubbing.cache import DubCache

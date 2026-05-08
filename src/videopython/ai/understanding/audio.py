@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Literal
 
 from videopython.ai._device import log_device_initialization, release_device_memory, select_device
@@ -9,6 +10,67 @@ from videopython.base.audio import Audio
 from videopython.base.description import AudioClassification, AudioEvent
 from videopython.base.text.transcription import Transcription, TranscriptionSegment, TranscriptionWord
 from videopython.base.video import Video
+
+logger = logging.getLogger(__name__)
+
+# Whisper's initial_prompt budget; longer prompts are silently truncated by the decoder.
+_INITIAL_PROMPT_TOKEN_BUDGET = 224
+_INITIAL_PROMPT_TEMPLATE = "Transcript may include the following names: {terms}."
+
+
+def _normalize_vocabulary(vocabulary: list[str] | None) -> list[str]:
+    """Strip, drop empties, and order-preserving dedup (case-insensitive key).
+
+    Original casing is kept — Whisper biases toward what it sees in the
+    prompt, so ``"InPost"`` is a stronger anchor than ``"inpost"`` for
+    a stylized brand name. Rejects a non-list ``vocabulary`` early so a
+    bare string isn't silently iterated as one-char terms.
+    """
+    if vocabulary is None:
+        return []
+    if not isinstance(vocabulary, list):
+        raise TypeError(f"vocabulary must be a list[str] or None, got {type(vocabulary).__name__}")
+
+    seen: set[str] = set()
+    result: list[str] = []
+    for term in vocabulary:
+        stripped = term.strip()
+        if not stripped:
+            continue
+        key = stripped.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(stripped)
+    return result
+
+
+def _render_initial_prompt(terms: list[str]) -> str:
+    return _INITIAL_PROMPT_TEMPLATE.format(terms=", ".join(terms))
+
+
+def _build_initial_prompt(vocabulary: list[str]) -> str | None:
+    """Render the prompt and trim tail terms until it fits Whisper's
+    224-token ``initial_prompt`` budget; ``None`` for empty input."""
+    if not vocabulary:
+        return None
+
+    import whisper.tokenizer
+
+    tokenizer = whisper.tokenizer.get_tokenizer(multilingual=True, task="transcribe")
+    kept = list(vocabulary)
+    while kept and len(tokenizer.encode(_render_initial_prompt(kept))) > _INITIAL_PROMPT_TOKEN_BUDGET:
+        kept.pop()
+
+    if not kept:
+        return None
+    if len(kept) < len(vocabulary):
+        logger.warning(
+            "vocabulary truncated to fit Whisper's %d-token initial_prompt budget: dropped %d trailing term(s)",
+            _INITIAL_PROMPT_TOKEN_BUDGET,
+            len(vocabulary) - len(kept),
+        )
+    return _render_initial_prompt(kept)
 
 
 def _attach_confidence_by_overlap(
@@ -64,6 +126,12 @@ class AudioToText:
       Whisper's documented defaults (``0.6`` and ``-1.0``); raising
       ``no_speech_threshold`` biases toward dropping low-confidence windows
       instead of emitting filler.
+
+    ``vocabulary`` biases Whisper's first-window decoder toward a caller-
+    supplied list of brand names, product names, or proper nouns via the
+    native ``initial_prompt`` channel. Recovers near-mishears (e.g. Klarna
+    → "carna") without new model deps; will not catch zero-prior names.
+    Per-call override is available on :meth:`transcribe`.
     """
 
     PYANNOTE_DIARIZATION_MODEL = "pyannote/speaker-diarization-community-1"
@@ -76,6 +144,7 @@ class AudioToText:
         condition_on_previous_text: bool = False,
         no_speech_threshold: float = 0.6,
         logprob_threshold: float | None = -1.0,
+        vocabulary: list[str] | None = None,
         device: str | None = None,
     ):
         self.model_name = model_name
@@ -84,6 +153,7 @@ class AudioToText:
         self.condition_on_previous_text = condition_on_previous_text
         self.no_speech_threshold = no_speech_threshold
         self.logprob_threshold = logprob_threshold
+        self.vocabulary = _normalize_vocabulary(vocabulary)
         self.device = select_device(device, mps_allowed=False)
         log_device_initialization(
             "AudioToText",
@@ -94,15 +164,20 @@ class AudioToText:
         self._diarization_pipeline: Any = None
         self._vad_model: Any = None
 
-    def _transcribe_kwargs(self, language: str | None) -> dict[str, Any]:
-        """Kwargs threaded into ``whisper.Whisper.transcribe`` from both call sites."""
-        return {
+    def _transcribe_kwargs(self, language: str | None, vocabulary: list[str]) -> dict[str, Any]:
+        """Kwargs threaded into ``whisper.Whisper.transcribe`` from both call sites.
+        ``initial_prompt`` is omitted entirely on the no-vocab path."""
+        kwargs: dict[str, Any] = {
             "word_timestamps": True,
             "language": language,
             "condition_on_previous_text": self.condition_on_previous_text,
             "no_speech_threshold": self.no_speech_threshold,
             "logprob_threshold": self.logprob_threshold,
         }
+        prompt = _build_initial_prompt(vocabulary)
+        if prompt is not None:
+            kwargs["initial_prompt"] = prompt
+        return kwargs
 
     def _init_local(self) -> None:
         """Initialize local Whisper model."""
@@ -307,7 +382,9 @@ class AudioToText:
         _, probs = self._model.detect_language(mel)
         return max(probs, key=probs.get)
 
-    def _transcribe_with_diarization(self, audio_mono: Audio, language: str | None) -> Transcription:
+    def _transcribe_with_diarization(
+        self, audio_mono: Audio, language: str | None, vocabulary: list[str]
+    ) -> Transcription:
         """Transcribe with word timestamps and assign speakers via pyannote."""
         import numpy as np
         import torch
@@ -316,7 +393,7 @@ class AudioToText:
             self._init_diarization()
 
         audio_data = audio_mono.data
-        transcription_result = self._model.transcribe(audio=audio_data, **self._transcribe_kwargs(language))
+        transcription_result = self._model.transcribe(audio=audio_data, **self._transcribe_kwargs(language, vocabulary))
 
         waveform = torch.from_numpy(audio_data.astype(np.float32)).unsqueeze(0)
         diarization_result = self._diarization_pipeline(
@@ -343,7 +420,7 @@ class AudioToText:
         _attach_confidence_by_overlap(rebuilt.segments, whisper_segments)
         return rebuilt
 
-    def _transcribe_local(self, audio: Audio) -> Transcription:
+    def _transcribe_local(self, audio: Audio, vocabulary: list[str]) -> Transcription:
         """Transcribe using local Whisper model.
 
         When ``enable_vad`` is True (default), Silero VAD locates voiced
@@ -370,13 +447,21 @@ class AudioToText:
             language = self._detect_language(audio_mono, voiced_spans)
 
         if self.enable_diarization:
-            return self._transcribe_with_diarization(audio_mono, language)
+            return self._transcribe_with_diarization(audio_mono, language, vocabulary)
 
-        transcription_result = self._model.transcribe(audio=audio_mono.data, **self._transcribe_kwargs(language))
+        transcription_result = self._model.transcribe(
+            audio=audio_mono.data, **self._transcribe_kwargs(language, vocabulary)
+        )
         return self._process_transcription_result(transcription_result)
 
-    def transcribe(self, media: Audio | Video) -> Transcription:
-        """Transcribe audio or video to text."""
+    def transcribe(self, media: Audio | Video, vocabulary: list[str] | None = None) -> Transcription:
+        """Transcribe audio or video to text.
+
+        ``vocabulary`` overrides the constructor default for this call only;
+        a per-call list wins over the instance's vocabulary so one
+        :class:`AudioToText` instance can serve multiple tenants. Pass
+        ``None`` (the default) to use the constructor's list.
+        """
         if isinstance(media, Video):
             if media.audio.is_silent:
                 return Transcription(segments=[])
@@ -388,7 +473,8 @@ class AudioToText:
         else:
             raise TypeError(f"Unsupported media type: {type(media)}. Expected Audio or Video.")
 
-        return self._transcribe_local(audio)
+        effective_vocab = self.vocabulary if vocabulary is None else _normalize_vocabulary(vocabulary)
+        return self._transcribe_local(audio, effective_vocab)
 
 
 class AudioClassifier:
