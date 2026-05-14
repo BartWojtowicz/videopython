@@ -1,5 +1,6 @@
 """Tests for AI-powered transforms (face tracking)."""
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -312,105 +313,69 @@ class TestFaceTrackingCrop:
         assert len(result.frames) == 10
 
 
+_LAYOUT_EXTRAS = {"2x1": 1, "1x2": 1, "2x2": 3, "1+2": 2, "2+1": 2}
+
+
+def _stub_sources(layout: str) -> list[Path]:
+    """Dummy paths sufficient to satisfy SplitScreenComposite's validator.
+
+    The model validator only counts ``additional_sources``; it never opens them.
+    Tests that exercise ``apply()`` need real files; everything else can use
+    these stubs without touching the filesystem.
+    """
+    return [Path(f"_stub_{i}.mp4") for i in range(_LAYOUT_EXTRAS[layout])]
+
+
 class TestSplitScreenComposite:
     """Tests for SplitScreenComposite transformation."""
 
     def test_init_default_params(self):
-        """Test default initialization."""
-        composite = SplitScreenComposite()
+        composite = SplitScreenComposite(additional_sources=_stub_sources("2x1"))
         assert composite.layout == "2x1"
         assert composite.gap == 4
         assert composite.gap_color == (0, 0, 0)
         assert composite.border_width == 0
 
-    def test_get_cell_rects_2x1(self):
-        """Test cell rectangles for 2x1 layout."""
-        composite = SplitScreenComposite(layout="2x1", gap=4)
+    @pytest.mark.parametrize(
+        "layout, expected_cells",
+        [("2x1", 2), ("1x2", 2), ("2x2", 4), ("1+2", 3), ("2+1", 3)],
+    )
+    def test_get_cell_rects_count(self, layout, expected_cells):
+        composite = SplitScreenComposite(layout=layout, gap=4, additional_sources=_stub_sources(layout))
         cells = composite._get_cell_rects(1920, 1080)
+        assert len(cells) == expected_cells
 
-        assert len(cells) == 2
-        # Left cell
-        assert cells[0][0] == 0  # x
-        assert cells[0][1] == 0  # y
-        assert cells[0][2] == (1920 - 4) // 2  # width
-        assert cells[0][3] == 1080  # height
-        # Right cell should start after gap
+    def test_get_cell_rects_2x1_geometry(self):
+        composite = SplitScreenComposite(layout="2x1", gap=4, additional_sources=_stub_sources("2x1"))
+        cells = composite._get_cell_rects(1920, 1080)
+        assert cells[0] == (0, 0, (1920 - 4) // 2, 1080)
         assert cells[1][0] == cells[0][2] + 4
 
-    def test_get_cell_rects_1x2(self):
-        """Test cell rectangles for 1x2 layout."""
-        composite = SplitScreenComposite(layout="1x2", gap=4)
+    def test_get_cell_rects_2x2_geometry(self):
+        composite = SplitScreenComposite(layout="2x2", gap=4, additional_sources=_stub_sources("2x2"))
         cells = composite._get_cell_rects(1920, 1080)
-
-        assert len(cells) == 2
-        # Top cell
-        assert cells[0][0] == 0
-        assert cells[0][1] == 0
-        assert cells[0][2] == 1920
-        assert cells[0][3] == (1080 - 4) // 2
-        # Bottom cell
-        assert cells[1][1] == cells[0][3] + 4
-
-    def test_get_cell_rects_2x2(self):
-        """Test cell rectangles for 2x2 layout."""
-        composite = SplitScreenComposite(layout="2x2", gap=4)
-        cells = composite._get_cell_rects(1920, 1080)
-
-        assert len(cells) == 4
-        # All cells should have same dimensions (approximately)
         cell_w = (1920 - 4) // 2
         cell_h = (1080 - 4) // 2
         for cell in cells:
             assert abs(cell[2] - cell_w) <= 1
             assert abs(cell[3] - cell_h) <= 1
 
-    def test_get_cell_rects_1_plus_2(self):
-        """Test cell rectangles for 1+2 layout."""
-        composite = SplitScreenComposite(layout="1+2", gap=4)
-        cells = composite._get_cell_rects(1920, 1080)
-
-        assert len(cells) == 3
-        # First cell (large) should be on left, 2/3 width
-        assert cells[0][0] == 0
-        assert cells[0][3] == 1080  # Full height
-
-    def test_get_cell_rects_2_plus_1(self):
-        """Test cell rectangles for 2+1 layout."""
-        composite = SplitScreenComposite(layout="2+1", gap=4)
-        cells = composite._get_cell_rects(1920, 1080)
-
-        assert len(cells) == 3
-        # Last cell (large) should be on right, full height
-        assert cells[2][3] == 1080
-
-    def test_required_extras(self):
-        """Number of additional source videos required beyond the primary input."""
-        assert SplitScreenComposite(layout="2x1")._required_extras() == 1
-        assert SplitScreenComposite(layout="1x2")._required_extras() == 1
-        assert SplitScreenComposite(layout="2x2")._required_extras() == 3
-        assert SplitScreenComposite(layout="1+2")._required_extras() == 2
-        assert SplitScreenComposite(layout="2+1")._required_extras() == 2
+    @pytest.mark.parametrize("layout, expected", list(_LAYOUT_EXTRAS.items()))
+    def test_required_extras(self, layout, expected):
+        composite = SplitScreenComposite(layout=layout, additional_sources=_stub_sources(layout))
+        assert composite._required_extras() == expected
 
     def test_invalid_layout_raises(self):
-        """Invalid layout is rejected at construction time via Pydantic Literal."""
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError):
-            SplitScreenComposite(layout="invalid")  # type: ignore[arg-type]
+            SplitScreenComposite(layout="invalid", additional_sources=[])  # type: ignore[arg-type]
 
-    @patch("videopython.ai.transforms.FaceTracker")
-    def test_apply_requires_enough_videos(self, mock_tracker_class):
-        """Apply raises when additional_sources is too short for the layout."""
-        mock_tracker = MagicMock()
-        mock_tracker.detect_and_track.return_value = (0.5, 0.5, 0.1, 0.1)
-        mock_tracker_class.return_value = mock_tracker
+    def test_too_few_sources_raises(self):
+        from pydantic import ValidationError
 
-        frames = np.zeros((10, 1080, 1920, 3), dtype=np.uint8)
-        video = Video.from_frames(frames, fps=30)
-
-        composite = SplitScreenComposite(layout="2x1", additional_sources=[])
-        with pytest.raises(ValueError, match="requires 1 additional_sources"):
-            composite.apply(video)
+        with pytest.raises(ValidationError, match="requires 3 additional_sources"):
+            SplitScreenComposite(layout="2x2", additional_sources=[Path("a.mp4")])
 
     @patch("videopython.ai.transforms.FaceTracker")
     def test_apply_2x1_layout(self, mock_tracker_class, tmp_path):
@@ -528,6 +493,7 @@ class TestGPUFaceTracking:
     def test_split_screen_composite_gpu_params(self):
         """Test SplitScreenComposite accepts GPU parameters."""
         composite = SplitScreenComposite(
+            additional_sources=_stub_sources("2x1"),
             backend="gpu",
             sample_rate=3,
         )

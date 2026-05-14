@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from enum import Enum
-from typing import Any, ClassVar, Literal, TypeAlias
+from typing import ClassVar, Literal, TypeAlias
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -1057,7 +1057,6 @@ class TranscriptionOverlay(Effect):
         self,
         video: Video,
         transcription: Transcription | None = None,
-        **_context: Any,
     ) -> Video:
         if transcription is None:
             raise ValueError(
@@ -1080,9 +1079,6 @@ class TranscriptionOverlay(Effect):
         new_video = Video.from_frames(np.array(new_frames), fps=video.fps)
         new_video.audio = video.audio
         return new_video
-
-    def _apply(self, video: Video) -> Video:
-        raise NotImplementedError("TranscriptionOverlay needs a transcription -- pass it through apply().")
 
     def _apply_overlay_to_frame(self, frame: np.ndarray, overlay: np.ndarray) -> np.ndarray:
         frame_pil = Image.fromarray(frame)

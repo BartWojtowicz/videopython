@@ -8,7 +8,7 @@ from typing import ClassVar, Literal
 
 import cv2
 import numpy as np
-from pydantic import Field
+from pydantic import Field, model_validator
 from tqdm import tqdm
 
 from videopython.ai.understanding.faces import FaceTracker
@@ -249,6 +249,15 @@ class SplitScreenComposite(Operation):
     backend: Literal["cpu", "gpu", "auto"] = "auto"
     sample_rate: int = Field(1, ge=1)
 
+    @model_validator(mode="after")
+    def _validate_source_count(self) -> SplitScreenComposite:
+        required = self._required_extras()
+        if len(self.additional_sources) < required:
+            raise ValueError(
+                f"Layout '{self.layout}' requires {required} additional_sources, got {len(self.additional_sources)}"
+            )
+        return self
+
     def _required_extras(self) -> int:
         """Number of EXTRA sources needed beyond the primary input."""
         if self.layout in ("2x1", "1x2"):
@@ -295,11 +304,6 @@ class SplitScreenComposite(Operation):
         ]
 
     def apply(self, video: Video) -> Video:
-        required = self._required_extras()
-        if len(self.additional_sources) < required:
-            raise ValueError(
-                f"Layout '{self.layout}' requires {required} additional_sources, got {len(self.additional_sources)}"
-            )
         extras = [Video.from_path(str(p)) for p in self.additional_sources]
         all_videos = [video] + extras
         n_frames = len(video.frames)

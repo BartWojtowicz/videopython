@@ -462,19 +462,25 @@ class Fade(Effect):
 
     _stream_alpha: np.ndarray | None = PrivateAttr(default=None)
 
-    def _compute_alpha(self, n_frames: int, fps: float) -> np.ndarray:
-        fade_frames = min(round(self.duration * fps), n_frames)
-        alpha = np.ones(n_frames, dtype=np.float32)
+    def _fade_envelope(self, length: int, rate: float) -> np.ndarray:
+        """Build the per-sample (or per-frame) alpha envelope for ``length`` ticks.
+
+        ``rate`` is fps for video frames or sample_rate for audio samples;
+        ``self.duration`` is converted to a tick count via ``rate`` and clipped
+        to ``length``. The ramp shape follows ``self.curve``.
+        """
+        ramp = min(round(self.duration * rate), length)
+        alpha = np.ones(length, dtype=np.float32)
         if self.mode in ("in", "in_out"):
-            t = np.linspace(0, 1, fade_frames, dtype=np.float32)
-            alpha[:fade_frames] = _compute_curve(t, self.curve)
+            t = np.linspace(0, 1, ramp, dtype=np.float32)
+            alpha[:ramp] = _compute_curve(t, self.curve)
         if self.mode in ("out", "in_out"):
-            t = np.linspace(1, 0, fade_frames, dtype=np.float32)
-            alpha[-fade_frames:] = np.minimum(alpha[-fade_frames:], _compute_curve(t, self.curve))
+            t = np.linspace(1, 0, ramp, dtype=np.float32)
+            alpha[-ramp:] = np.minimum(alpha[-ramp:], _compute_curve(t, self.curve))
         return alpha
 
     def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
-        self._stream_alpha = self._compute_alpha(total_frames, fps)
+        self._stream_alpha = self._fade_envelope(total_frames, fps)
 
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
         assert self._stream_alpha is not None
@@ -485,13 +491,11 @@ class Fade(Effect):
         return (frame.astype(np.float32) * a).astype(np.uint8)
 
     def apply(self, video: Video, **context: Any) -> Video:  # type: ignore[override]
-        original_shape = video.video_shape
         start_s, stop_s = self._resolved_window(video.total_seconds)
-
         start_f = round(start_s * video.fps)
         end_f = round(stop_s * video.fps)
         n_effect = end_f - start_f
-        alpha = self._compute_alpha(n_effect, video.fps)
+        alpha = self._fade_envelope(n_effect, video.fps)
 
         batch_size = 64
         for batch_start in range(0, n_effect, batch_size):
@@ -505,30 +509,15 @@ class Fade(Effect):
                 np.uint8
             )
 
-        if video.video_shape != original_shape:
-            raise RuntimeError("Fade must not change the number of frames or the shape of the frames!")
-
         if video.audio is not None and not video.audio.is_silent:
             self._apply_audio(video.audio, start_s, stop_s)
         return video
-
-    def _apply(self, video: Video) -> Video:
-        raise NotImplementedError("Fade overrides apply() directly")
 
     def _apply_audio(self, audio: Audio, start_s: float, stop_s: float) -> None:
         sample_rate = audio.metadata.sample_rate
         audio_start = round(start_s * sample_rate)
         audio_end = min(round(stop_s * sample_rate), len(audio.data))
-        n_samples = audio_end - audio_start
-        fade_samples = min(round(self.duration * sample_rate), n_samples)
-
-        alpha = np.ones(n_samples, dtype=np.float32)
-        if self.mode in ("in", "in_out"):
-            t = np.linspace(0, 1, fade_samples, dtype=np.float32)
-            alpha[:fade_samples] = _compute_curve(t, self.curve)
-        if self.mode in ("out", "in_out"):
-            t = np.linspace(1, 0, fade_samples, dtype=np.float32)
-            alpha[-fade_samples:] = np.minimum(alpha[-fade_samples:], _compute_curve(t, self.curve))
+        alpha = self._fade_envelope(audio_end - audio_start, sample_rate)
 
         if audio.data.ndim == 1:
             audio.data[audio_start:audio_end] *= alpha
@@ -555,9 +544,6 @@ class VolumeAdjust(Effect):
 
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
         return frame
-
-    def _apply(self, video: Video) -> Video:
-        raise NotImplementedError("VolumeAdjust overrides apply() directly")
 
     def apply(self, video: Video, **context: Any) -> Video:  # type: ignore[override]
         start_s, stop_s = self._resolved_window(video.total_seconds)
