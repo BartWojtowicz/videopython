@@ -150,7 +150,7 @@ API docs: [Core](https://videopython.com/api/index/) | [Video](https://videopyth
 | **Understanding** | `AudioToText` (transcription), `AudioClassifier`, `SceneVLM` (structured visual scene description), `FaceTracker` (per-shot face tracks) |
 | **Scene detection** | `SemanticSceneDetector` (neural scene boundaries) |
 | **Video analysis** | `VideoAnalyzer` - full-pipeline analysis combining multiple AI capabilities |
-| **Transforms** | `FaceTrackingCrop`, `SplitScreenComposite` |
+| **Transforms** | `FaceTrackingCrop` |
 | **Dubbing** | `VideoDubber` - voice cloning and revoicing with timing sync |
 
 API docs: [Generation](https://videopython.com/api/ai/generation/) | [Understanding](https://videopython.com/api/ai/understanding/) | [Transforms](https://videopython.com/api/ai/transforms/) | [Dubbing](https://videopython.com/api/ai/dubbing/)

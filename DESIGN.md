@@ -41,12 +41,11 @@ Context-dependent ops (silence removal, subtitles) declare
 `requires: ClassVar[tuple[str, ...]] = ("transcription",)`; the runner injects
 matching keys into `apply()`. Replaces the `requires_transcript` tag.
 
-Multi-source ops (`PictureInPicture`, `SplitScreenComposite`) take a
-`source: Path` field and load just-in-time.
-
-Transitions and `MultiCamEdit` are deleted — they have no live consumers and
-their current 2→1 shape pre-dates the streaming pipeline. A clean redesign is
-easier once `Operation` is in trunk; tracked as a follow-up, not in scope here.
+Multi-source ops (`PictureInPicture`, `SplitScreenComposite`, transitions,
+`MultiCamEdit`) are all deleted — they have no live consumers and their
+current 2→1 / N→1 shape pre-dates the single-input `Operation` contract. A
+clean redesign of the multi-source story is easier once `Operation` is in
+trunk; tracked as a follow-up, not in scope here.
 
 ## Registry
 

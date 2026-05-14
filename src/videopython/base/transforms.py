@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 from enum import Enum
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 import cv2
@@ -21,7 +20,6 @@ from videopython.base.operation import FilterCtx, OpCategory, Operation
 from videopython.base.video import Video, _round_dimension_to_even
 
 if TYPE_CHECKING:
-    from videopython.base.audio import Audio
     from videopython.base.text.transcription import Transcription
     from videopython.base.video import VideoMetadata
 
@@ -36,7 +34,6 @@ __all__ = [
     "Crop",
     "CropMode",
     "SpeedChange",
-    "PictureInPicture",
     "Reverse",
     "FreezeFrame",
     "SilenceRemoval",
@@ -377,154 +374,6 @@ class SpeedChange(Operation):
             frame_count=new_count,
             total_seconds=round(new_count / meta.fps, 4),
         )
-
-
-class PictureInPicture(Operation):
-    """Places a smaller video on top of the main video (picture-in-picture).
-
-    The overlay is loaded just-in-time from ``source`` when ``apply`` runs, so
-    a ``PictureInPicture`` instance is fully JSON-serialisable.
-
-    Args:
-        source: Path to the overlay video file.
-        position: Center of the inset as normalized (x, y) in [0, 1].
-        scale: Inset width as a fraction of the main video width, in (0, 1].
-        border_width: Border thickness in pixels. 0 = no border.
-        border_color: Border color as [R, G, B], each in [0, 255].
-        corner_radius: Rounded corner radius in pixels. 0 = square corners.
-        opacity: Inset transparency in [0, 1]. 0 = invisible, 1 = fully opaque.
-        audio_mode: 'main' keeps only main audio, 'overlay' uses inset audio,
-            'mix' blends both.
-        audio_mix: Volume levels as [main, overlay] when audio_mode is 'mix'.
-    """
-
-    op: Literal["picture_in_picture"] = "picture_in_picture"
-    category: ClassVar[OpCategory] = OpCategory.TRANSFORM
-
-    source: Path
-    position: tuple[float, float] = (0.7, 0.7)
-    scale: float = Field(0.25, gt=0, le=1)
-    border_width: int = Field(0, ge=0)
-    border_color: tuple[int, int, int] = (255, 255, 255)
-    corner_radius: int = Field(0, ge=0)
-    opacity: float = Field(1.0, ge=0, le=1)
-    audio_mode: Literal["main", "overlay", "mix"] = "main"
-    audio_mix: tuple[float, float] = (1.0, 1.0)
-
-    @model_validator(mode="after")
-    def _validate(self) -> PictureInPicture:
-        if not (0 <= self.position[0] <= 1 and 0 <= self.position[1] <= 1):
-            raise ValueError("position must be normalized values in [0, 1]")
-        if self.audio_mix[0] < 0 or self.audio_mix[1] < 0:
-            raise ValueError("audio_mix factors must be non-negative")
-        return self
-
-    def _create_rounded_mask(self, width: int, height: int) -> np.ndarray:
-        if self.corner_radius <= 0:
-            return np.ones((height, width), dtype=np.float32)
-        radius = min(self.corner_radius, width // 2, height // 2)
-        mask = np.ones((height, width), dtype=np.float32)
-        corners = [
-            (0, radius, 0, radius, radius, radius),
-            (0, radius, width - radius, width, width - radius, radius),
-            (height - radius, height, 0, radius, radius, height - radius),
-            (height - radius, height, width - radius, width, width - radius, height - radius),
-        ]
-        radius_sq = float(radius * radius)
-        for y_start, y_end, x_start, x_end, center_x, center_y in corners:
-            yy, xx = np.ogrid[y_start:y_end, x_start:x_end]
-            outside = ((xx - center_x) ** 2 + (yy - center_y) ** 2) > radius_sq
-            mask[y_start:y_end, x_start:x_end][outside] = 0.0
-        return mask
-
-    def _add_border(self, frame: np.ndarray, mask: np.ndarray) -> np.ndarray:
-        if self.border_width <= 0:
-            return frame
-        bordered = frame.copy()
-        border_color = np.array(self.border_color, dtype=np.uint8)
-        bordered[: self.border_width, :] = border_color
-        bordered[-self.border_width :, :] = border_color
-        bordered[:, : self.border_width] = border_color
-        bordered[:, -self.border_width :] = border_color
-        if self.corner_radius > 0:
-            bordered = bordered * mask[:, :, None].astype(np.uint8)
-        return bordered
-
-    def apply(self, video: Video) -> Video:
-        overlay = Video.from_path(str(self.source))
-        main_h, main_w = video.frame_shape[:2]
-        n_main = len(video.frames)
-        n_overlay = len(overlay.frames)
-
-        overlay_w = int(main_w * self.scale)
-        overlay_aspect = overlay.metadata.width / overlay.metadata.height
-        overlay_h = int(overlay_w / overlay_aspect)
-
-        pos_x = int(self.position[0] * main_w - overlay_w / 2)
-        pos_y = int(self.position[1] * main_h - overlay_h / 2)
-        pos_x = max(0, min(pos_x, main_w - overlay_w))
-        pos_y = max(0, min(pos_y, main_h - overlay_h))
-
-        logger.info(f"Resizing overlay to {overlay_w}x{overlay_h}...")
-        resized_overlay = np.asarray(
-            [
-                cv2.resize(frame, (overlay_w, overlay_h), interpolation=cv2.INTER_AREA)
-                for frame in tqdm(overlay.frames, desc="Resizing overlay")
-            ],
-            dtype=np.uint8,
-        )
-
-        mask = self._create_rounded_mask(overlay_w, overlay_h)
-        alpha = mask[:, :, None] * self.opacity
-
-        if self.border_width > 0:
-            resized_overlay = np.asarray(
-                [self._add_border(frame, mask) for frame in resized_overlay],
-                dtype=np.uint8,
-            )
-
-        logger.info("Applying picture-in-picture...")
-        new_frames = []
-        for i in tqdm(range(n_main), desc="Picture-in-picture"):
-            main_frame = video.frames[i].copy()
-            overlay_frame = resized_overlay[i % n_overlay]
-            region = main_frame[pos_y : pos_y + overlay_h, pos_x : pos_x + overlay_w]
-            if self.corner_radius > 0 or self.opacity < 1.0:
-                blended = (overlay_frame * alpha + region * (1 - alpha)).astype(np.uint8)
-            else:
-                blended = overlay_frame
-            main_frame[pos_y : pos_y + overlay_h, pos_x : pos_x + overlay_w] = blended
-            new_frames.append(main_frame)
-
-        video.frames = np.array(new_frames, dtype=np.uint8)
-        video.audio = self._handle_audio(video.audio, overlay, len(video.frames) / video.fps)
-        return video
-
-    def _handle_audio(self, main_audio: Audio, overlay: Video, target_duration: float) -> Audio:
-        if self.audio_mode == "main":
-            return main_audio.fit_to_duration(target_duration)
-        if self.audio_mode == "overlay":
-            return self._prepare_overlay_audio(overlay, target_duration)
-        scaled_main = main_audio.scale_volume(self.audio_mix[0])
-        overlay_audio = self._prepare_overlay_audio(overlay, target_duration)
-        scaled_overlay = overlay_audio.scale_volume(self.audio_mix[1])
-        if scaled_main.metadata.sample_rate != scaled_overlay.metadata.sample_rate:
-            scaled_overlay = scaled_overlay.resample(scaled_main.metadata.sample_rate)
-        return scaled_main.overlay(scaled_overlay, position=0.0)
-
-    def _prepare_overlay_audio(self, overlay: Video, target_duration: float) -> Audio:
-        from videopython.base.audio import Audio as _Audio
-
-        overlay_audio = overlay.audio
-        if overlay_audio is None or overlay_audio.is_silent:
-            return _Audio.create_silent(target_duration, stereo=True, sample_rate=44100)
-        if overlay_audio.metadata.duration_seconds < target_duration:
-            loops = int(np.ceil(target_duration / overlay_audio.metadata.duration_seconds))
-            looped = overlay_audio
-            for _ in range(loops - 1):
-                looped = looped.concat(overlay_audio)
-            return looped.slice(0, target_duration)
-        return overlay_audio.slice(0, target_duration)
 
 
 class Reverse(Operation):

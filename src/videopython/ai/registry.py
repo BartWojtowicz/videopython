@@ -4,7 +4,7 @@ from videopython.base.registry import OperationCategory, get_operation_spec, reg
 
 
 def _register_ai_operations() -> None:
-    from videopython.ai.transforms import FaceTrackingCrop, SplitScreenComposite
+    from videopython.ai.transforms import FaceTrackingCrop
 
     specs = [
         spec_from_class(
@@ -14,13 +14,6 @@ def _register_ai_operations() -> None:
             tags={"requires_faces", "changes_dimensions"},
             aliases=("face_tracking_crop",),
             metadata_method="crop_to_aspect_even",
-        ),
-        spec_from_class(
-            SplitScreenComposite,
-            op_id="split_screen",
-            category=OperationCategory.TRANSFORMATION,
-            tags={"requires_faces", "multi_source", "changes_dimensions"},
-            aliases=("split_screen_composite",),
         ),
     ]
 

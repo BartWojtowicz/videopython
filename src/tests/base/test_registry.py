@@ -12,7 +12,7 @@ import pytest
 
 from videopython.base.effects import Blur, FullImageOverlay, KenBurns
 from videopython.base.text.overlay import TranscriptionOverlay
-from videopython.base.transforms import CutSeconds, PictureInPicture
+from videopython.base.transforms import CutSeconds
 from videopython.base.transitions import FadeTransition
 
 BASE_OPERATION_IDS = {
@@ -224,7 +224,6 @@ def test_ai_ops_appear_only_after_import_videopython_ai() -> None:
     ("op_id", "cls", "excluded_params"),
     [
         ("cut", CutSeconds, set()),
-        ("picture_in_picture", PictureInPicture, {"overlay"}),
         ("ken_burns", KenBurns, {"start_region", "end_region"}),
         ("full_image_overlay", FullImageOverlay, {"overlay_image"}),
     ],

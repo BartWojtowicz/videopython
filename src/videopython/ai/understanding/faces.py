@@ -1,8 +1,8 @@
 """Face detection and per-shot tracking for the understanding layer.
 
 Lifted from ``ai/transforms.py`` so analysis code (``VideoAnalyzer``) and
-transforms (``FaceTrackingCrop`` / ``SplitScreenComposite``) can share a
-single source. M6 lip-sync also consumes this directly.
+transforms (``FaceTrackingCrop``) can share a single source. M6 lip-sync
+also consumes this directly.
 
 Tracking is IoU-only — no embedding re-id. Tracks do not survive across
 shot/scene boundaries; a shot here means a ``SceneBoundary`` produced by
@@ -167,9 +167,8 @@ class FaceTracker:
     Two surfaces:
 
     - ``detect_and_track(frame, frame_index)`` / ``track_video(frames)`` —
-      legacy single-subject API used by ``FaceTrackingCrop`` /
-      ``SplitScreenComposite``. Returns a smoothed
-      ``(cx, cy, w, h)`` tuple.
+      legacy single-subject API used by ``FaceTrackingCrop``. Returns a
+      smoothed ``(cx, cy, w, h)`` tuple.
     - ``track_shot(frames, frame_indices)`` — new per-shot multi-track API
       returning ``list[FaceTrack]``. Used by the analysis pipeline (M5)
       and lip-sync (M6) to bind detections to subjects across the

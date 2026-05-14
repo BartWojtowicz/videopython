@@ -479,7 +479,6 @@ def _register_base_operations() -> None:
         CutFrames,
         CutSeconds,
         FreezeFrame,
-        PictureInPicture,
         ResampleFPS,
         Resize,
         Reverse,
@@ -571,21 +570,6 @@ def _register_base_operations() -> None:
                 "end_speed": {"exclusive_minimum": 0},
             },
             metadata_method="speed_change",
-        )
-    )
-    register(
-        spec_from_class(
-            PictureInPicture,
-            op_id="picture_in_picture",
-            category=OperationCategory.TRANSFORMATION,
-            tags={"multi_source"},
-            exclude_params={"overlay"},
-            param_overrides={
-                "scale": {"exclusive_minimum": 0, "maximum": 1},
-                "border_width": {"minimum": 0},
-                "corner_radius": {"minimum": 0},
-                "opacity": {"minimum": 0, "maximum": 1},
-            },
         )
     )
     register(

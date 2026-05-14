@@ -13,7 +13,7 @@ import pytest
 
 from tests.test_config import BIG_VIDEO_PATH, SMALL_VIDEO_METADATA, SMALL_VIDEO_PATH
 from videopython.base.text.transcription import Transcription, TranscriptionWord
-from videopython.base.transforms import CropMode, PictureInPicture
+from videopython.base.transforms import CropMode
 from videopython.base.video import Video, VideoMetadata
 from videopython.editing.video_edit import SegmentConfig, VideoEdit, _StepRecord
 
@@ -404,18 +404,6 @@ class TestValidation:
         }
         with pytest.raises(ValueError, match="exceeds timeline duration"):
             VideoEdit.from_dict(plan).validate()
-
-    def test_unsupported_transform_metadata_via_direct_record(self):
-        dummy_overlay = _make_synthetic_video(100, 100, 24, 1.0)
-        pip = PictureInPicture(overlay=dummy_overlay)
-        segment = SegmentConfig(
-            source_video=Path(SMALL_VIDEO_PATH),
-            start_second=0.0,
-            end_second=2.0,
-            transform_records=(_StepRecord.create("picture_in_picture", {}, {}, pip),),
-        )
-        with pytest.raises(ValueError, match="Metadata prediction is not supported"):
-            VideoEdit(segments=[segment]).validate()
 
 
 class TestSegmentMatching:
