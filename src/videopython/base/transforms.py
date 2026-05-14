@@ -16,7 +16,7 @@ import numpy as np
 from pydantic import Field, model_validator
 from tqdm import tqdm
 
-from videopython.base._dimensions import round_to_even
+from videopython.base._dimensions import floor_to_even, round_to_even
 from videopython.base.operation import FilterCtx, OpCategory, Operation
 from videopython.base.video import Video
 
@@ -251,10 +251,10 @@ class Crop(Operation):
         if cw > meta.width or ch > meta.height:
             raise ValueError(f"Crop {cw}x{ch} exceeds source {meta.width}x{meta.height}")
         if self.mode == CropMode.CENTER:
-            # Mirror apply()'s `mid - cw//2 : mid + cw//2` slice, which produces
-            # 2 * (cw // 2) pixels — i.e. odd targets get rounded down to even.
-            cw = round_to_even(cw, mode="floor", min_value=0)
-            ch = round_to_even(ch, mode="floor", min_value=0)
+            # Mirror apply()'s `mid - cw//2 : mid + cw//2` slice, which
+            # produces 2 * (cw // 2) pixels — odd targets round down.
+            cw = floor_to_even(cw)
+            ch = floor_to_even(ch)
         return meta.with_dimensions(cw, ch)
 
     def to_ffmpeg_filter(self, ctx: FilterCtx) -> str | None:

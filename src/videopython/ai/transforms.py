@@ -11,16 +11,11 @@ from pydantic import Field
 from tqdm import tqdm
 
 from videopython.ai.understanding.faces import FaceTracker
-from videopython.base._dimensions import round_to_even
+from videopython.base._dimensions import floor_to_even
 from videopython.base.operation import OpCategory, Operation
 from videopython.base.video import Video
 
 logger = logging.getLogger(__name__)
-
-
-def _make_even(value: int) -> int:
-    """Round down to nearest even number for H.264 compatibility."""
-    return round_to_even(value, mode="floor", min_value=0)
 
 
 __all__ = [
@@ -106,17 +101,17 @@ class FaceTrackingCrop(Operation):
         frame_ratio = frame_w / frame_h
 
         if target_ratio < frame_ratio:
-            crop_h = _make_even(frame_h)
-            crop_w = _make_even(int(crop_h * target_ratio))
+            crop_h = floor_to_even(frame_h)
+            crop_w = floor_to_even(int(crop_h * target_ratio))
         else:
-            crop_w = _make_even(frame_w)
-            crop_h = _make_even(int(crop_w / target_ratio))
+            crop_w = floor_to_even(frame_w)
+            crop_h = floor_to_even(int(crop_w / target_ratio))
 
         min_face_dim = max(face_w * frame_w, face_h * frame_h)
         min_crop_dim = min_face_dim * (1 + 2 * self.padding)
         if crop_w < min_crop_dim * target_ratio:
-            crop_w = _make_even(min(int(min_crop_dim * target_ratio), frame_w))
-            crop_h = _make_even(min(int(crop_w / target_ratio), frame_h))
+            crop_w = floor_to_even(min(int(min_crop_dim * target_ratio), frame_w))
+            crop_h = floor_to_even(min(int(crop_w / target_ratio), frame_h))
 
         if center_position is None:
             center_position = self._apply_framing_offset(face_cx, face_cy, face_h)
@@ -142,11 +137,11 @@ class FaceTrackingCrop(Operation):
         h, w = video.frame_shape[:2]
         target_ratio = self.target_aspect[0] / self.target_aspect[1]
         if target_ratio < w / h:
-            out_h = _make_even(h)
-            out_w = _make_even(int(out_h * target_ratio))
+            out_h = floor_to_even(h)
+            out_w = floor_to_even(int(out_h * target_ratio))
         else:
-            out_w = _make_even(w)
-            out_h = _make_even(int(out_w / target_ratio))
+            out_w = floor_to_even(w)
+            out_h = floor_to_even(int(out_w / target_ratio))
 
         default_x = (w - out_w) // 2
         default_y = (h - out_h) // 2

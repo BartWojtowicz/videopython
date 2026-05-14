@@ -16,8 +16,6 @@ from typing import Sequence
 
 from videopython.base.exceptions import FFmpegProbeError
 
-BASE_FLAGS: tuple[str, ...] = ("-hide_banner", "-loglevel", "error")
-
 
 def probe(path: str | Path, *, extra_args: Sequence[str] | None = None) -> dict:
     """Run ffprobe and return the parsed JSON payload.
