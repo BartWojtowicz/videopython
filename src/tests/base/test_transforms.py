@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from videopython.audio import Audio, AudioMetadata
-from videopython.base.text.transcription import Transcription, TranscriptionSegment, TranscriptionWord
+from videopython.base.transcription import Transcription, TranscriptionSegment, TranscriptionWord
 from videopython.base.transforms import (
     Crop,
     CropMode,

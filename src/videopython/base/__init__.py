@@ -35,17 +35,11 @@ from .exceptions import (
     VideoMetadataError,
     VideoPythonError,
 )
+from .image_text import AnchorPoint, ImageText, TextAlign
 from .operation import FilterCtx, OpCategory, Operation, TimeRange
 from .scene import SceneDetector
-from .text import (
-    AnchorPoint,
-    ImageText,
-    TextAlign,
-    Transcription,
-    TranscriptionOverlay,
-    TranscriptionSegment,
-    TranscriptionWord,
-)
+from .text import TranscriptionOverlay
+from .transcription import Transcription, TranscriptionSegment, TranscriptionWord
 from .transforms import (
     Crop,
     CropMode,

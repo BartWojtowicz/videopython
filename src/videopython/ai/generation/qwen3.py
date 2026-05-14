@@ -27,7 +27,7 @@ from videopython.ai.generation.translation import (
     MarianTranslator,
     _is_translatable_text,
 )
-from videopython.base.text.transcription import TranscriptionSegment
+from videopython.base.transcription import TranscriptionSegment
 
 # Imported under TYPE_CHECKING only — qwen3 sits below videopython.ai.dubbing
 # in the import order (pipeline.py imports Qwen3Translator), so a top-level

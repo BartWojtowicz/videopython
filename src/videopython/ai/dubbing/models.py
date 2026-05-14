@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from videopython.audio import Audio
-from videopython.base.text.transcription import Transcription, TranscriptionSegment
+from videopython.base.transcription import Transcription, TranscriptionSegment
 
 if TYPE_CHECKING:
     from videopython.ai.dubbing.quality import TranscriptQuality

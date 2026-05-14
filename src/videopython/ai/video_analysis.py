@@ -35,7 +35,7 @@ from videopython.base.description import (
     SceneDescription,
 )
 from videopython.base.exceptions import FFmpegProbeError
-from videopython.base.text.transcription import Transcription
+from videopython.base.transcription import Transcription
 from videopython.base.video import Video, VideoMetadata, extract_frames_at_times
 
 __all__ = ["VideoAnalysis", "VideoAnalysisConfig", "VideoAnalyzer"]

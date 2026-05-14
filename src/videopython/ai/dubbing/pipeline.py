@@ -23,7 +23,7 @@ from videopython.ai.generation.translation import (
 if TYPE_CHECKING:
     from videopython.ai.dubbing.models import TranslatedSegment
     from videopython.audio import Audio
-    from videopython.base.text.transcription import Transcription
+    from videopython.base.transcription import Transcription
 
 
 TranslatorChoice = Literal["auto", "marian", "qwen3"]
@@ -558,7 +558,7 @@ class LocalDubbingPipeline:
                 can use ``Audio.from_path(path)`` to avoid loading video frames.
             transcription: Optional pre-computed Transcription object. When provided,
                 the internal Whisper transcription step is skipped (saving time and VRAM).
-                Must be a ``videopython.base.text.transcription.Transcription`` instance
+                Must be a ``videopython.base.transcription.Transcription`` instance
                 with populated ``segments``. Speaker labels on the supplied transcription
                 drive per-speaker voice cloning. If the supplied transcription has no
                 speakers and ``enable_diarization=True``, pyannote is run standalone on

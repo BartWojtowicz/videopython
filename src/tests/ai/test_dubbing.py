@@ -6,7 +6,7 @@ import pytest
 from videopython.ai.dubbing.models import DubbingResult, SeparatedAudio, TranslatedSegment
 from videopython.ai.dubbing.timing import TimingSynchronizer
 from videopython.audio import Audio, AudioMetadata
-from videopython.base.text.transcription import TranscriptionSegment, TranscriptionWord
+from videopython.base.transcription import TranscriptionSegment, TranscriptionWord
 
 
 @pytest.fixture
@@ -313,7 +313,7 @@ class TestDubbingResult:
 
     def test_creation(self, sample_audio, sample_segment):
         """Test creating a DubbingResult."""
-        from videopython.base.text.transcription import Transcription
+        from videopython.base.transcription import Transcription
 
         translated = TranslatedSegment(
             original_segment=sample_segment,
@@ -337,7 +337,7 @@ class TestDubbingResult:
 
     def test_get_segments_by_speaker(self, sample_audio, sample_segment):
         """Test grouping segments by speaker."""
-        from videopython.base.text.transcription import Transcription
+        from videopython.base.transcription import Transcription
 
         # Create segments with different speakers
         segment1 = TranslatedSegment(
@@ -505,7 +505,7 @@ class TestTimingSummary:
     def test_dubbing_result_carries_summary(self, sample_audio, sample_segment):
         """DubbingResult accepts and exposes a TimingSummary."""
         from videopython.ai.dubbing.models import TimingSummary
-        from videopython.base.text.transcription import Transcription
+        from videopython.base.transcription import Transcription
 
         translated = TranslatedSegment(
             original_segment=sample_segment,
@@ -536,7 +536,7 @@ class TestTimingSummary:
 
     def test_dubbing_result_default_timing_summary_none(self, sample_audio, sample_segment):
         """DubbingResult constructed without a TimingSummary keeps the field as None (back-compat)."""
-        from videopython.base.text.transcription import Transcription
+        from videopython.base.transcription import Transcription
 
         translated = TranslatedSegment(
             original_segment=sample_segment,
@@ -621,7 +621,7 @@ class TestVoiceSampleQualityGating:
 
     @staticmethod
     def _fake_transcription(segments: list):
-        from videopython.base.text.transcription import Transcription
+        from videopython.base.transcription import Transcription
 
         return Transcription(segments=segments)
 
@@ -995,7 +995,7 @@ class TestTranslationProgressCallback:
     def test_pipeline_emits_translation_progress(self, sample_audio, monkeypatch):
         """LocalDubbingPipeline.process() maps translation fraction onto [0.35, 0.50]."""
         from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
-        from videopython.base.text.transcription import (
+        from videopython.base.transcription import (
             Transcription,
             TranscriptionSegment,
             TranscriptionWord,
@@ -1615,7 +1615,7 @@ class TestDiarizeTranscription:
     """Tests for AudioToText.diarize_transcription standalone diarization helper."""
 
     def _make_transcription_with_words(self):
-        from videopython.base.text.transcription import Transcription, TranscriptionSegment, TranscriptionWord
+        from videopython.base.transcription import Transcription, TranscriptionSegment, TranscriptionWord
 
         # Two segments, each with multiple words — passes the word-level-timing check.
         seg1_words = [
@@ -1635,7 +1635,7 @@ class TestDiarizeTranscription:
     def test_rejects_transcription_without_word_level_timings(self, sample_audio):
         """SRT-loaded transcriptions (one synthetic word per segment) must be rejected."""
         from videopython.ai.understanding.audio import AudioToText
-        from videopython.base.text.transcription import Transcription
+        from videopython.base.transcription import Transcription
 
         srt = "1\n00:00:00,000 --> 00:00:01,000\nHello world\n\n"
         transcription = Transcription.from_srt(srt)
@@ -1646,7 +1646,7 @@ class TestDiarizeTranscription:
 
     def test_rejects_empty_transcription(self, sample_audio):
         from videopython.ai.understanding.audio import AudioToText
-        from videopython.base.text.transcription import Transcription
+        from videopython.base.transcription import Transcription
 
         transcriber = AudioToText()
         with pytest.raises(ValueError, match="no words"):
@@ -1702,7 +1702,7 @@ class TestPipelineSuppliedTranscriptionDiarization:
     """Tests for diarization-on-supplied-transcription plumbing in LocalDubbingPipeline."""
 
     def _make_transcription(self, *, with_speakers: bool):
-        from videopython.base.text.transcription import Transcription, TranscriptionSegment, TranscriptionWord
+        from videopython.base.transcription import Transcription, TranscriptionSegment, TranscriptionWord
 
         words1 = [
             TranscriptionWord(start=0.0, end=0.5, word="Hello"),
@@ -1806,7 +1806,7 @@ class TestPipelineSuppliedTranscriptionDiarization:
     def test_supplied_no_speakers_with_diarization_runs_diarize(self, sample_audio, monkeypatch):
         """No-speaker transcription + enable_diarization=True must trigger diarize_transcription."""
         from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
-        from videopython.base.text.transcription import Transcription, TranscriptionSegment, TranscriptionWord
+        from videopython.base.transcription import Transcription, TranscriptionSegment, TranscriptionWord
 
         pipeline = LocalDubbingPipeline()
         self._install_fakes(pipeline, monkeypatch)
@@ -1892,7 +1892,7 @@ class TestVoiceSampleCache:
     """Pipeline encodes each speaker's voice sample to a temp WAV exactly once."""
 
     def _make_two_speaker_transcription(self):
-        from videopython.base.text.transcription import Transcription, TranscriptionSegment, TranscriptionWord
+        from videopython.base.transcription import Transcription, TranscriptionSegment, TranscriptionWord
 
         segs = [
             TranscriptionSegment(
@@ -2334,7 +2334,7 @@ class TestVideoDubberDubFile:
         from videopython.ai.dubbing import VideoDubber
         from videopython.ai.dubbing.models import DubbingResult, TranslatedSegment
         from videopython.audio import audio as audio_mod
-        from videopython.base.text.transcription import Transcription
+        from videopython.base.transcription import Transcription
 
         input_path = tmp_path / "in.mp4"
         input_path.write_bytes(b"fake mp4 bytes")
@@ -2412,7 +2412,7 @@ class TestVideoDubberDubFile:
         from videopython.ai.dubbing import VideoDubber
         from videopython.ai.dubbing.models import DubbingResult, TranslatedSegment
         from videopython.audio import audio as audio_mod
-        from videopython.base.text.transcription import Transcription
+        from videopython.base.transcription import Transcription
 
         input_path = tmp_path / "in.mp4"
         input_path.write_bytes(b"fake")
@@ -2466,7 +2466,7 @@ class TestVideoDubberDubFile:
         from videopython.ai.dubbing import VideoDubber
         from videopython.ai.dubbing.models import DubbingResult, TranslatedSegment
         from videopython.audio import audio as audio_mod
-        from videopython.base.text.transcription import Transcription
+        from videopython.base.transcription import Transcription
 
         input_path = tmp_path / "in.mp4"
         input_path.write_bytes(b"fake")
@@ -2664,7 +2664,7 @@ class TestPipelineSpeechRegionGating:
         from videopython.ai.dubbing.models import SeparatedAudio
         from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
         from videopython.ai.understanding.separation import AudioSeparator
-        from videopython.base.text.transcription import Transcription, TranscriptionSegment, TranscriptionWord
+        from videopython.base.transcription import Transcription, TranscriptionSegment, TranscriptionWord
 
         captured: dict = {}
 
@@ -2780,7 +2780,7 @@ class TestPipelineEmptyTranslationSkipped:
 
     def test_empty_translated_text_is_not_tts_called(self, sample_audio, monkeypatch):
         from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
-        from videopython.base.text.transcription import Transcription, TranscriptionSegment, TranscriptionWord
+        from videopython.base.transcription import Transcription, TranscriptionSegment, TranscriptionWord
 
         tts_calls: list[str] = []
 
@@ -2866,7 +2866,7 @@ class TestTranscriptQuality:
 
     @classmethod
     def _transcription(cls, segments):
-        from videopython.base.text.transcription import Transcription
+        from videopython.base.transcription import Transcription
 
         return Transcription(segments=segments, language="en")
 
@@ -2989,7 +2989,7 @@ class TestStrictQualityIntegration:
 
     @staticmethod
     def _garbage_transcription():
-        from videopython.base.text.transcription import Transcription
+        from videopython.base.transcription import Transcription
 
         words = [TranscriptionWord(start=0.0, end=0.3, word="thanks")]
         # 12 dominant-phrase segments + low logprob → reject.
@@ -3252,7 +3252,7 @@ class TestTranslationFailuresOnResult:
         """When Qwen marks an index as failed, the pipeline copies it to
         DubbingResult.translation_failures."""
         from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
-        from videopython.base.text.transcription import Transcription, TranscriptionSegment, TranscriptionWord
+        from videopython.base.transcription import Transcription, TranscriptionSegment, TranscriptionWord
 
         # Fake translator that marks segment 1 as a hard failure.
         class FakeTranslator:
@@ -3317,7 +3317,7 @@ class TestTranslationFailuresOnResult:
         """A backend that returns no translation_failures (e.g. Marian)
         leaves DubbingResult.translation_failures as an empty list."""
         from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
-        from videopython.base.text.transcription import Transcription, TranscriptionSegment, TranscriptionWord
+        from videopython.base.transcription import Transcription, TranscriptionSegment, TranscriptionWord
 
         class FakeMarianlikeTranslator:
             translation_failures: list[int] = []

@@ -1,6 +1,6 @@
-from .image_text import AnchorPoint, ImageText, TextAlign
-from .overlay import TranscriptionOverlay
-from .transcription import Transcription, TranscriptionSegment, TranscriptionWord
+from videopython.base.image_text import AnchorPoint, ImageText, TextAlign
+from videopython.base.text.overlay import TranscriptionOverlay
+from videopython.base.transcription import Transcription, TranscriptionSegment, TranscriptionWord
 
 __all__ = [
     "Transcription",

@@ -321,7 +321,7 @@ class TestAttachConfidenceByOverlap:
 
     @staticmethod
     def _seg(start: float, end: float, *, avg_logprob=None, no_speech_prob=None, compression_ratio=None):
-        from videopython.base.text.transcription import TranscriptionSegment
+        from videopython.base.transcription import TranscriptionSegment
 
         return TranscriptionSegment(
             start=start,

@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
-    from videopython.base.text.transcription import Transcription
+    from videopython.base.transcription import Transcription
 
 
 # Tuned conservatively to favor "warn" over "reject"; first-week production

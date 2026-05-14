@@ -21,7 +21,7 @@ from videopython.base.operation import FilterCtx, OpCategory, Operation
 from videopython.base.video import Video
 
 if TYPE_CHECKING:
-    from videopython.base.text.transcription import Transcription
+    from videopython.base.transcription import Transcription
     from videopython.base.video import VideoMetadata
 
 logger = logging.getLogger(__name__)
