@@ -234,3 +234,15 @@ class TestEffectApply:
     def test_default_process_frame_raises(self):
         with pytest.raises(NotImplementedError, match="does not support streaming"):
             _Brighten(delta=1).process_frame(np.zeros((10, 10, 3), dtype=np.uint8), 0)
+
+    def test_predict_metadata_accepts_context_kwargs(self):
+        """Effects preserve shape/frame_count, so predict_metadata is identity —
+        but it must accept arbitrary ``**context`` so requires-aware effects
+        (e.g. ``TranscriptionOverlay``) don't blow up when the runner threads
+        kwargs in. Symmetric with ``Effect.apply``'s ``**context``.
+        """
+        from videopython.base.video import VideoMetadata as _Meta
+
+        meta = _Meta(height=720, width=1280, fps=30, frame_count=300, total_seconds=10.0)
+        out = _Brighten(delta=1).predict_metadata(meta, transcription="ignored", anything=42)
+        assert out == meta

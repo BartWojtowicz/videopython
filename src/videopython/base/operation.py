@@ -279,6 +279,15 @@ class Effect(Operation):
             )
         return result
 
+    def predict_metadata(self, meta: VideoMetadata, **_context: Any) -> VideoMetadata:  # type: ignore[override]
+        """Effects preserve shape and frame count, so the prediction is identity.
+
+        Accepts ``**_context`` so requires-aware effects (``TranscriptionOverlay``)
+        validate without subclasses needing to override just to widen the
+        signature. Mirrors :meth:`Effect.apply`'s ``**context`` accept-all.
+        """
+        return meta
+
     def _resolved_window(self, total_seconds: float) -> tuple[float, float]:
         win = self.window or TimeRange()
         start_s = 0.0 if win.start is None else float(win.start)
