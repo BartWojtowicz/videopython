@@ -24,7 +24,7 @@ from pydantic import Field, PrivateAttr, model_validator
 from tqdm import tqdm
 
 from videopython.base.description import BoundingBox
-from videopython.base.operation import Effect
+from videopython.editing.operation import Effect
 
 if TYPE_CHECKING:
     from videopython.audio import Audio

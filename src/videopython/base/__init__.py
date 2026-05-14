@@ -1,4 +1,30 @@
 from videopython.audio import Audio, AudioMetadata
+from videopython.editing.effects import (
+    Blur,
+    ColorGrading,
+    Effect,
+    Fade,
+    FullImageOverlay,
+    KenBurns,
+    TextOverlay,
+    Vignette,
+    VolumeAdjust,
+    Zoom,
+)
+from videopython.editing.operation import FilterCtx, OpCategory, Operation, TimeRange
+from videopython.editing.transcription_overlay import TranscriptionOverlay
+from videopython.editing.transforms import (
+    Crop,
+    CropMode,
+    CutFrames,
+    CutSeconds,
+    FreezeFrame,
+    ResampleFPS,
+    Resize,
+    Reverse,
+    SilenceRemoval,
+    SpeedChange,
+)
 
 from .description import (
     AudioClassification,
@@ -12,18 +38,6 @@ from .description import (
     SceneBoundary,
     SceneDescription,
 )
-from .effects import (
-    Blur,
-    ColorGrading,
-    Effect,
-    Fade,
-    FullImageOverlay,
-    KenBurns,
-    TextOverlay,
-    Vignette,
-    VolumeAdjust,
-    Zoom,
-)
 from .exceptions import (
     AudioError,
     AudioLoadError,
@@ -36,22 +50,8 @@ from .exceptions import (
     VideoPythonError,
 )
 from .image_text import AnchorPoint, ImageText, TextAlign
-from .operation import FilterCtx, OpCategory, Operation, TimeRange
 from .scene import SceneDetector
-from .text import TranscriptionOverlay
 from .transcription import Transcription, TranscriptionSegment, TranscriptionWord
-from .transforms import (
-    Crop,
-    CropMode,
-    CutFrames,
-    CutSeconds,
-    FreezeFrame,
-    ResampleFPS,
-    Resize,
-    Reverse,
-    SilenceRemoval,
-    SpeedChange,
-)
 from .video import FrameIterator, Video, VideoMetadata
 
 __all__ = [

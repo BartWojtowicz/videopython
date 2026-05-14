@@ -5,7 +5,8 @@ from pydantic import ValidationError
 
 from videopython.audio import Audio, AudioMetadata
 from videopython.base.transcription import Transcription, TranscriptionSegment, TranscriptionWord
-from videopython.base.transforms import (
+from videopython.base.video import Video
+from videopython.editing.transforms import (
     Crop,
     CropMode,
     CutFrames,
@@ -17,7 +18,6 @@ from videopython.base.transforms import (
     SilenceRemoval,
     SpeedChange,
 )
-from videopython.base.video import Video
 
 
 @pytest.mark.parametrize("start, end", [(0, 100), (100, 101), (100, 120)])

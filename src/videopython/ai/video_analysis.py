@@ -949,7 +949,7 @@ class VideoAnalyzer:
             return None
         if source_path is not None:
             return Video.from_path(str(source_path), start_second=start_second, end_second=end_second)
-        from videopython.base.transforms import CutSeconds
+        from videopython.editing.transforms import CutSeconds
 
         return CutSeconds(start=start_second, end=end_second).apply(_require_video(video))
 

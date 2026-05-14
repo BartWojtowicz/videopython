@@ -13,14 +13,14 @@ import numpy as np
 import pytest
 from pydantic import Field, ValidationError
 
-from videopython.base.operation import (
+from videopython.base.video import Video
+from videopython.editing.operation import (
     Effect,
     FilterCtx,
     OpCategory,
     Operation,
     TimeRange,
 )
-from videopython.base.video import Video
 
 
 @pytest.fixture(autouse=True)
