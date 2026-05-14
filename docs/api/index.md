@@ -8,7 +8,6 @@ Core video and audio processing functionality with no AI dependencies:
 
 - [**Video**](core/video.md) - Core video class for loading, manipulating, and saving videos
 - [**Audio**](core/audio.md) - Core audio class for loading, manipulating, analyzing, and saving audio
-- [**Scene Detection**](core/scene.md) - Detect scene changes using histogram comparison
 - [**Editing Plans (`VideoEdit`)**](editing.md) - Multi-segment editing plans with JSON parsing, validation, and schema generation
 - [**Operations**](operations.md) - The `Operation` Pydantic base, auto-registry, and discriminated-union schema
 - [**Transforms**](transforms.md) - Frame transformations (cut, resize, resample)
@@ -36,7 +35,6 @@ from videopython.base import (
     Video,
     Audio,
     AudioMetadata,
-    SceneDetector,
     CutSeconds,
     Resize,
     Blur,

@@ -99,25 +99,6 @@ def extract_thumbnails(video_path: str, output_dir: str, interval_seconds: float
 extract_thumbnails("2_hour_movie.mp4", "thumbnails/", interval_seconds=60)
 ```
 
-## Scene Detection on Large Videos
-
-Use streaming scene detection for memory-efficient processing:
-
-```python
-from videopython.base import SceneDetector
-
-detector = SceneDetector(threshold=0.3, min_scene_length=1.0)
-
-# Streaming: O(1) memory, processes frames one at a time
-scenes = detector.detect_streaming("long_video.mp4")
-
-# Or parallel: Faster on multi-core systems
-scenes = detector.detect_parallel("long_video.mp4", num_workers=8)
-
-for scene in scenes:
-    print(f"Scene: {scene.start:.1f}s - {scene.end:.1f}s")
-```
-
 ## AI Video Analysis (Scene-First)
 
 `VideoAnalyzer.analyze_path()` returns scene-centered outputs. For long
@@ -193,13 +174,10 @@ See [AI Dubbing](../api/ai/dubbing.md#memory-efficient-dubbing) for more on the
 | `VideoEdit.run_to_file()` | O(1) | Fast | Editing long videos with effects/transforms |
 | `Video.from_path()` | O(all frames) | Fast access | Short videos, need random access |
 | `FrameIterator` | O(1) | Sequential | Long videos, single pass analysis |
-| `SceneDetector.detect_streaming()` | O(1) | Slower | Memory-constrained |
-| `SceneDetector.detect_parallel()` | O(workers) | Fastest | Multi-core systems |
 | `VideoDubber.dub_file()` | O(audio + model weights) | Same as `dub_and_replace` | Dubbing long/high-res videos without loading frames |
 
 ## Tips
 
 - **Check metadata first**: Use `VideoMetadata.from_path()` to check video size before deciding how to process it.
 - **Sample wisely**: For AI analysis, 0.1-0.5 FPS is usually sufficient. Higher rates waste compute.
-- **Use parallel detection**: `detect_parallel()` is 3-4x faster than streaming on multi-core machines.
 - **Process segments**: If you only need part of a video, use `start_second`/`end_second` parameters.

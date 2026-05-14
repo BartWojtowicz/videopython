@@ -50,7 +50,6 @@ from .exceptions import (
     VideoPythonError,
 )
 from .image_text import AnchorPoint, ImageText, TextAlign
-from .scene import SceneDetector
 from .transcription import Transcription, TranscriptionSegment, TranscriptionWord
 from .video import FrameIterator, Video, VideoMetadata
 
@@ -107,8 +106,7 @@ __all__ = [
     "ImageText",
     "TextAlign",
     "AnchorPoint",
-    # Scene Detection
-    "SceneDetector",
+    # Scene Detection result types (detectors live in videopython.ai)
     "SceneBoundary",
     "SceneDescription",
     # Detection types

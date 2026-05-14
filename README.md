@@ -167,7 +167,6 @@ Docs: [Editing Plans](https://videopython.com/api/editing/) | [Operations](https
 | **Effects** | Blur, zoom, color grading, vignette, Ken Burns, image overlay, fade, text overlay, volume adjust |
 | **Audio** | Load/save, overlay, concat, normalize, time-stretch, silence detection, segment classification |
 | **Text** | Transcription data classes, `TranscriptionOverlay` for subtitle rendering |
-| **Scene detection** | Histogram-based scene boundaries (`detect`, `detect_streaming`, `detect_parallel`) |
 
 API docs: [Core](https://videopython.com/api/index/) | [Video](https://videopython.com/api/core/video/) | [Audio](https://videopython.com/api/core/audio/) | [Editing Plans](https://videopython.com/api/editing/) | [Operations](https://videopython.com/api/operations/) | [Transforms](https://videopython.com/api/transforms/) | [Effects](https://videopython.com/api/effects/) | [Text](https://videopython.com/api/text/)
 
