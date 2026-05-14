@@ -23,6 +23,17 @@ from videopython.base.operation import (
 )
 from videopython.base.video import Video
 
+
+@pytest.fixture(autouse=True)
+def _isolate_operation_registry():
+    """Snapshot Operation._registry around every test so toy subclasses
+    defined in test bodies don't leak across modules."""
+    snapshot = dict(Operation._registry)
+    yield
+    Operation._registry.clear()
+    Operation._registry.update(snapshot)
+
+
 # --- TimeRange ---------------------------------------------------------------
 
 

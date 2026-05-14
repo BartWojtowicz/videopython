@@ -30,21 +30,16 @@ Subclass contract::
 
 from __future__ import annotations
 
-import functools
 import inspect
-import logging
-import operator
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, get_args, get_origin
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Union, get_args, get_origin
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Discriminator, Field, TypeAdapter, model_validator
 
 if TYPE_CHECKING:
     from videopython.base.video import Video, VideoMetadata
-
-logger = logging.getLogger(__name__)
 
 __all__ = [
     "OpCategory",
@@ -213,8 +208,7 @@ class Operation(BaseModel):
         if not Operation._registry:
             return {"type": "object"}
         ops = sorted(Operation._registry.values(), key=lambda c: c.__name__)
-        union_type = functools.reduce(operator.or_, ops) if len(ops) > 1 else ops[0]
-        annotated = Annotated[union_type, Discriminator("op")]  # type: ignore[valid-type]
+        annotated = Annotated[Union[tuple(ops)], Discriminator("op")]  # type: ignore[valid-type]  # noqa: UP007
         return TypeAdapter(annotated).json_schema()
 
     def apply(self, video: Video, **context: Any) -> Video:
