@@ -17,6 +17,7 @@ from typing import get_args
 import numpy as np
 from tqdm import tqdm
 
+from videopython.base import _ffmpeg
 from videopython.base._dimensions import require_even
 from videopython.base.audio import Audio
 from videopython.base.effects import Effect
@@ -256,25 +257,24 @@ def concat_files(segment_files: list[Path], output_path: Path) -> Path:
         list_path = Path(f.name)
 
     try:
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-f",
-            "concat",
-            "-safe",
-            "0",
-            "-i",
-            str(list_path),
-            "-c",
-            "copy",
-            str(output_path),
-        ]
-        result = subprocess.run(cmd, capture_output=True)
-        if result.returncode != 0:
-            raise RuntimeError(f"FFmpeg concat failed: {result.stderr.decode(errors='ignore')}")
+        _ffmpeg.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                str(list_path),
+                "-c",
+                "copy",
+                str(output_path),
+            ]
+        )
         return output_path
     finally:
         list_path.unlink(missing_ok=True)

@@ -2143,24 +2143,18 @@ class TestReplaceAudioStream:
 
     def test_ffmpeg_failure_raises_remux_error(self, tmp_path, monkeypatch):
         """Non-zero ffmpeg exit code is wrapped in RemuxError with stderr."""
-        import subprocess as sp
-
         import videopython.ai.dubbing.remux as remux_mod
+        from videopython.base.exceptions import FFmpegRunError
 
         video = tmp_path / "v.mp4"
         video.write_bytes(b"not a real video")
         audio = tmp_path / "a.wav"
         audio.write_bytes(b"not a real wav")
 
-        class FakeResult:
-            returncode = 1
-            stderr = b"simulated ffmpeg error"
+        def fake_run(cmd, *, stdin=None):
+            raise FFmpegRunError("simulated ffmpeg error")
 
-        def fake_run(cmd, capture_output):
-            return FakeResult()
-
-        monkeypatch.setattr(sp, "run", fake_run)
-        monkeypatch.setattr(remux_mod.subprocess, "run", fake_run)
+        monkeypatch.setattr(remux_mod._ffmpeg, "run", fake_run)
 
         with pytest.raises(remux_mod.RemuxError, match="simulated ffmpeg error"):
             remux_mod.replace_audio_stream(video, audio, tmp_path / "out.mp4")
@@ -2177,15 +2171,11 @@ class TestReplaceAudioStream:
 
         captured: dict = {}
 
-        class FakeResult:
-            returncode = 0
-            stderr = b""
-
-        def fake_run(cmd, capture_output):
+        def fake_run(cmd, *, stdin=None):
             captured["cmd"] = cmd
-            return FakeResult()
+            return b""
 
-        monkeypatch.setattr(remux_mod.subprocess, "run", fake_run)
+        monkeypatch.setattr(remux_mod._ffmpeg, "run", fake_run)
 
         remux_mod.replace_audio_stream(video, audio, out)
 
@@ -2215,15 +2205,11 @@ class TestReplaceAudioStream:
 
         captured: dict = {}
 
-        class FakeResult:
-            returncode = 0
-            stderr = b""
-
-        def fake_run(cmd, capture_output):
+        def fake_run(cmd, *, stdin=None):
             captured["cmd"] = cmd
-            return FakeResult()
+            return b""
 
-        monkeypatch.setattr(remux_mod.subprocess, "run", fake_run)
+        monkeypatch.setattr(remux_mod._ffmpeg, "run", fake_run)
 
         remux_mod.replace_audio_stream(video, audio, out, keep_original_audio=True)
 
@@ -2245,20 +2231,15 @@ class TestReplaceAudioStreamFromAudio:
     def test_ffmpeg_failure_raises_remux_error(self, tmp_path, sample_audio, monkeypatch):
         """Non-zero ffmpeg exit code is wrapped in RemuxError with stderr."""
         import videopython.ai.dubbing.remux as remux_mod
+        from videopython.base.exceptions import FFmpegRunError
 
         video = tmp_path / "v.mp4"
         video.write_bytes(b"fake")
 
-        class FakeProcess:
-            returncode = 1
+        def fake_run(cmd, *, stdin=None):
+            raise FFmpegRunError("simulated ffmpeg error")
 
-            def communicate(self, _stdin):
-                return b"", b"simulated ffmpeg error"
-
-        def fake_popen(cmd, stdin=None, stderr=None):
-            return FakeProcess()
-
-        monkeypatch.setattr(remux_mod.subprocess, "Popen", fake_popen)
+        monkeypatch.setattr(remux_mod._ffmpeg, "run", fake_run)
 
         with pytest.raises(remux_mod.RemuxError, match="simulated ffmpeg error"):
             remux_mod.replace_audio_stream_from_audio(video, sample_audio, tmp_path / "out.mp4")
@@ -2273,19 +2254,12 @@ class TestReplaceAudioStreamFromAudio:
 
         captured: dict = {}
 
-        class FakeProcess:
-            returncode = 0
-
-            def communicate(self, stdin_bytes):
-                captured["stdin_bytes"] = stdin_bytes
-                return b"", b""
-
-        def fake_popen(cmd, stdin=None, stderr=None):
+        def fake_run(cmd, *, stdin=None):
             captured["cmd"] = cmd
-            captured["stdin_kwarg"] = stdin
-            return FakeProcess()
+            captured["stdin"] = stdin
+            return b""
 
-        monkeypatch.setattr(remux_mod.subprocess, "Popen", fake_popen)
+        monkeypatch.setattr(remux_mod._ffmpeg, "run", fake_run)
 
         remux_mod.replace_audio_stream_from_audio(video, sample_audio, out)
 
@@ -2296,8 +2270,6 @@ class TestReplaceAudioStreamFromAudio:
         assert len(i_indices) == 2
         assert cmd[i_indices[0] + 1] == str(video)
         assert cmd[i_indices[1] + 1] == "-"
-        # Stdin is requested.
-        assert captured["stdin_kwarg"] is not None
         # Map: video, dubbed audio (input 1), subtitles from input 0.
         map_indices = [i for i, v in enumerate(cmd) if v == "-map"]
         assert len(map_indices) == 3
@@ -2308,9 +2280,9 @@ class TestReplaceAudioStreamFromAudio:
         assert "-c:s" in cmd and cmd[cmd.index("-c:s") + 1] == "copy"
         assert "-shortest" in cmd
         assert cmd[-1] == str(out)
-        # WAV bytes were written: header "RIFF" then "WAVE".
-        assert captured["stdin_bytes"][:4] == b"RIFF"
-        assert captured["stdin_bytes"][8:12] == b"WAVE"
+        # WAV bytes were piped via stdin: header "RIFF" then "WAVE".
+        assert captured["stdin"][:4] == b"RIFF"
+        assert captured["stdin"][8:12] == b"WAVE"
 
     def test_keep_original_audio_adds_extra_map(self, tmp_path, sample_audio, monkeypatch):
         """Streaming variant also threads ``keep_original_audio`` into ``-map`` order."""
@@ -2322,17 +2294,11 @@ class TestReplaceAudioStreamFromAudio:
 
         captured: dict = {}
 
-        class FakeProcess:
-            returncode = 0
-
-            def communicate(self, _stdin):
-                return b"", b""
-
-        def fake_popen(cmd, stdin=None, stderr=None):
+        def fake_run(cmd, *, stdin=None):
             captured["cmd"] = cmd
-            return FakeProcess()
+            return b""
 
-        monkeypatch.setattr(remux_mod.subprocess, "Popen", fake_popen)
+        monkeypatch.setattr(remux_mod._ffmpeg, "run", fake_run)
 
         remux_mod.replace_audio_stream_from_audio(video, sample_audio, out, keep_original_audio=True)
 

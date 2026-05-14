@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import io
 import logging
-import subprocess
 import wave
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
+
+from videopython.base import _ffmpeg
+from videopython.base.exceptions import FFmpegRunError
 
 if TYPE_CHECKING:
     from videopython.base.audio import Audio
@@ -95,9 +97,10 @@ def replace_audio_stream(
     ]
 
     logger.info("replace_audio_stream: %s + %s -> %s", video_path, audio_path, output_path)
-    result = subprocess.run(cmd, capture_output=True)
-    if result.returncode != 0:
-        raise RemuxError(f"ffmpeg failed (exit {result.returncode}): {result.stderr.decode(errors='replace')}")
+    try:
+        _ffmpeg.run(cmd)
+    except FFmpegRunError as e:
+        raise RemuxError(str(e)) from e
 
 
 def replace_audio_stream_from_audio(
@@ -175,7 +178,7 @@ def replace_audio_stream_from_audio(
         len(wav_bytes),
         output_path,
     )
-    process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
-    _, stderr = process.communicate(wav_bytes)
-    if process.returncode != 0:
-        raise RemuxError(f"ffmpeg failed (exit {process.returncode}): {stderr.decode(errors='replace')}")
+    try:
+        _ffmpeg.run(cmd, stdin=wav_bytes)
+    except FFmpegRunError as e:
+        raise RemuxError(str(e)) from e

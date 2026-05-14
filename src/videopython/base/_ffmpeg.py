@@ -14,7 +14,33 @@ import subprocess
 from pathlib import Path
 from typing import Sequence
 
-from videopython.base.exceptions import FFmpegProbeError
+from videopython.base.exceptions import FFmpegProbeError, FFmpegRunError
+
+
+def run(cmd: Sequence[str], *, stdin: bytes | None = None) -> bytes:
+    """Run a blocking ffmpeg/ffprobe command and return stdout.
+
+    Centralises non-zero exit handling so callers can map a single
+    ``FFmpegRunError`` to their own domain exception.
+
+    Args:
+        cmd: Full argv, starting with ``"ffmpeg"`` or ``"ffprobe"``.
+        stdin: Optional bytes to feed to the process's stdin (used by
+            the stdin-piped remux variant).
+
+    Returns:
+        Process stdout bytes (usually empty for muxing/concat commands).
+
+    Raises:
+        FFmpegRunError: On non-zero exit or missing binary.
+    """
+    try:
+        result = subprocess.run(cmd, capture_output=True, input=stdin)
+    except FileNotFoundError as e:
+        raise FFmpegRunError(f"binary not found on PATH: {cmd[0]}") from e
+    if result.returncode != 0:
+        raise FFmpegRunError(f"ffmpeg failed (exit {result.returncode}): {result.stderr.decode(errors='replace')}")
+    return result.stdout
 
 
 def probe(path: str | Path, *, extra_args: Sequence[str] | None = None) -> dict:
