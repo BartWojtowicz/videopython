@@ -25,8 +25,8 @@ from videopython.ai.understanding import (
     SemanticSceneDetector,
 )
 from videopython.ai.understanding.faces import FaceTracker
+from videopython.audio import Audio
 from videopython.base import _ffmpeg
-from videopython.base.audio import Audio
 from videopython.base.description import (
     AudioClassification,
     AudioEvent,

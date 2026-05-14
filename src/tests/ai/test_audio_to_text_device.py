@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 import videopython.ai.understanding.audio as audio_mod
-from videopython.base.audio import Audio, AudioMetadata
+from videopython.audio import Audio, AudioMetadata
 
 
 def test_audio_to_text_disables_mps_auto_selection(monkeypatch: pytest.MonkeyPatch) -> None:

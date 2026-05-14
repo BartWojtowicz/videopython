@@ -7,7 +7,7 @@ from typing import Any
 
 from videopython.ai._device import log_device_initialization, release_device_memory, select_device
 from videopython.ai.dubbing.models import SeparatedAudio
-from videopython.base.audio import Audio, AudioMetadata
+from videopython.audio import Audio, AudioMetadata
 
 logger = logging.getLogger(__name__)
 

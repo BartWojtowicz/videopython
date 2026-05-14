@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from videopython.base.audio import Audio, AudioMetadata
+from videopython.audio import Audio, AudioMetadata
 
 # Test constants
 MONO_SAMPLE_RATE = 44100
@@ -985,7 +985,7 @@ def test_detect_silence_no_silence():
 
 def test_classify_segments_synthetic_silence():
     """Test classification on silent audio"""
-    from videopython.base.audio.analysis import AudioSegmentType
+    from videopython.audio.analysis import AudioSegmentType
 
     audio = Audio.create_silent(duration_seconds=3.0)
     segments = audio.classify_segments(segment_length=2.0, overlap=0.0)
@@ -1000,7 +1000,7 @@ def test_classify_segments_synthetic_silence():
 
 def test_classify_segments_synthetic_noise():
     """Test classification on white noise"""
-    from videopython.base.audio.analysis import AudioSegmentType
+    from videopython.audio.analysis import AudioSegmentType
 
     sample_rate = 44100
     duration = 3.0

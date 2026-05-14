@@ -7,9 +7,9 @@ from typing import Generator
 
 import numpy as np
 
+from videopython.audio import Audio
 from videopython.base import _ffmpeg, _video_io
 from videopython.base._video_io import ALLOWED_VIDEO_FORMATS, ALLOWED_VIDEO_PRESETS
-from videopython.base.audio import Audio
 from videopython.base.exceptions import FFmpegProbeError, VideoMetadataError
 
 __all__ = [

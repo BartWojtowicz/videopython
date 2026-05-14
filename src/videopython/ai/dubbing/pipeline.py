@@ -22,7 +22,7 @@ from videopython.ai.generation.translation import (
 
 if TYPE_CHECKING:
     from videopython.ai.dubbing.models import TranslatedSegment
-    from videopython.base.audio import Audio
+    from videopython.audio import Audio
     from videopython.base.text.transcription import Transcription
 
 
@@ -41,7 +41,7 @@ def _peak_match(target: Audio, reference: Audio) -> Audio:
     Used as the fallback when LUFS measurement isn't viable (clip < 0.4s
     or silent input). The new ``Audio`` shares no buffer with ``target``.
     """
-    from videopython.base.audio import Audio as _Audio
+    from videopython.audio import Audio as _Audio
 
     target_peak = float(np.max(np.abs(target.data))) if target.data.size else 0.0
     reference_peak = float(np.max(np.abs(reference.data))) if reference.data.size else 0.0
@@ -71,7 +71,7 @@ def _loudness_match(target: Audio, reference: Audio) -> Audio:
     are clamped to 0.99 — BS.1770 has no peak ceiling and a sufficiently
     quiet source can demand gain that would otherwise clip.
     """
-    from videopython.base.audio import Audio as _Audio
+    from videopython.audio import Audio as _Audio
 
     target_dur = target.metadata.duration_seconds
     ref_dur = reference.metadata.duration_seconds
@@ -427,7 +427,7 @@ class LocalDubbingPipeline:
         every candidate is rejected, so the dub continues with the best
         sample we have rather than silently dropping the speaker.
         """
-        from videopython.base.audio import Audio
+        from videopython.audio import Audio
 
         voice_samples: dict[str, Audio] = {}
 
@@ -805,7 +805,7 @@ class LocalDubbingPipeline:
             source_audio: Source audio track to revoice. Callers with a ``Video``
                 object should pass ``video.audio``.
         """
-        from videopython.base.audio import Audio
+        from videopython.audio import Audio
 
         def report_progress(stage: str, progress: float) -> None:
             if progress_callback:

@@ -28,7 +28,7 @@ mixed = audio1.overlay(audio2, position=2.0)
 audio.save("output.wav")
 ```
 
-::: videopython.base.audio.Audio
+::: videopython.audio.Audio
 
 ## Audio Analysis
 
@@ -158,31 +158,31 @@ fitted = audio.fit_to_duration(10.0)
 
 Stores metadata for audio files including sample rate, channels, duration, and frame count.
 
-::: videopython.base.audio.AudioMetadata
+::: videopython.audio.AudioMetadata
 
 ### AudioLevels
 
 Audio level measurements (RMS, peak, dB values).
 
-::: videopython.base.audio.AudioLevels
+::: videopython.audio.AudioLevels
 
 ### SilentSegment
 
 Represents a detected silent segment with timestamps.
 
-::: videopython.base.audio.SilentSegment
+::: videopython.audio.SilentSegment
 
 ### AudioSegment
 
 A classified segment of audio with type and confidence.
 
-::: videopython.base.audio.AudioSegment
+::: videopython.audio.AudioSegment
 
 ### AudioSegmentType
 
 Enum for audio segment classification: `SILENCE`, `SPEECH`, `MUSIC`, `NOISE`.
 
-::: videopython.base.audio.AudioSegmentType
+::: videopython.audio.AudioSegmentType
 
 ## Exceptions
 

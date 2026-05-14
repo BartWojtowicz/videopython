@@ -5,7 +5,7 @@ import pytest
 
 from videopython.ai.dubbing.models import DubbingResult, SeparatedAudio, TranslatedSegment
 from videopython.ai.dubbing.timing import TimingSynchronizer
-from videopython.base.audio import Audio, AudioMetadata
+from videopython.audio import Audio, AudioMetadata
 from videopython.base.text.transcription import TranscriptionSegment, TranscriptionWord
 
 
@@ -1932,7 +1932,7 @@ class TestVoiceSampleCache:
         """Three segments across two speakers => exactly two Audio.save calls."""
         from videopython.ai.dubbing.models import TranslatedSegment
         from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
-        from videopython.base.audio import audio as audio_mod
+        from videopython.audio import audio as audio_mod
 
         save_count = {"n": 0}
         tts_calls: list[dict] = []
@@ -2043,7 +2043,7 @@ class TestVoiceSampleCache:
         """voice_clone=False => no voice-sample encodes, TTS gets no path."""
         from videopython.ai.dubbing.models import TranslatedSegment
         from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
-        from videopython.base.audio import audio as audio_mod
+        from videopython.audio import audio as audio_mod
 
         save_count = {"n": 0}
         tts_calls: list[dict] = []
@@ -2333,7 +2333,7 @@ class TestVideoDubberDubFile:
         import videopython.ai.dubbing.remux as remux_mod
         from videopython.ai.dubbing import VideoDubber
         from videopython.ai.dubbing.models import DubbingResult, TranslatedSegment
-        from videopython.base.audio import audio as audio_mod
+        from videopython.audio import audio as audio_mod
         from videopython.base.text.transcription import Transcription
 
         input_path = tmp_path / "in.mp4"
@@ -2411,7 +2411,7 @@ class TestVideoDubberDubFile:
         import videopython.ai.dubbing.remux as remux_mod
         from videopython.ai.dubbing import VideoDubber
         from videopython.ai.dubbing.models import DubbingResult, TranslatedSegment
-        from videopython.base.audio import audio as audio_mod
+        from videopython.audio import audio as audio_mod
         from videopython.base.text.transcription import Transcription
 
         input_path = tmp_path / "in.mp4"
@@ -2465,7 +2465,7 @@ class TestVideoDubberDubFile:
         import videopython.ai.dubbing.remux as remux_mod
         from videopython.ai.dubbing import VideoDubber
         from videopython.ai.dubbing.models import DubbingResult, TranslatedSegment
-        from videopython.base.audio import audio as audio_mod
+        from videopython.audio import audio as audio_mod
         from videopython.base.text.transcription import Transcription
 
         input_path = tmp_path / "in.mp4"

@@ -1,4 +1,5 @@
-from .audio import Audio, AudioMetadata
+from videopython.audio import Audio, AudioMetadata
+
 from .description import (
     AudioClassification,
     AudioEvent,

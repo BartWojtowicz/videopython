@@ -14,7 +14,7 @@ from videopython.base import _ffmpeg
 from videopython.base.exceptions import FFmpegRunError
 
 if TYPE_CHECKING:
-    from videopython.base.audio import Audio
+    from videopython.audio import Audio
 
 logger = logging.getLogger(__name__)
 

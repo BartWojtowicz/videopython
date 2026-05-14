@@ -28,7 +28,7 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SerializeAsAny, model_validator
 
-from videopython.base.audio import Audio, AudioLoadError
+from videopython.audio import Audio, AudioLoadError
 from videopython.base.effects import Effect, Fade, VolumeAdjust
 from videopython.base.operation import FilterCtx, Operation
 from videopython.base.streaming import EffectScheduleEntry, StreamingSegmentPlan, concat_files, stream_segment

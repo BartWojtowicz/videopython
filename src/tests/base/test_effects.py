@@ -4,7 +4,7 @@ from PIL import Image
 from pydantic import ValidationError
 
 from tests.test_config import TEST_FONT_PATH
-from videopython.base.audio import Audio, AudioMetadata
+from videopython.audio import Audio, AudioMetadata
 from videopython.base.description import BoundingBox
 from videopython.base.effects import (
     Blur,

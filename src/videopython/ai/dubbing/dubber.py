@@ -218,7 +218,7 @@ class VideoDubber:
             source transcription. The output video is written to ``output_path``.
         """
         from videopython.ai.dubbing.remux import replace_audio_stream_from_audio
-        from videopython.base.audio import Audio
+        from videopython.audio import Audio
 
         input_path = Path(input_path)
         output_path = Path(output_path)

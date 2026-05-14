@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from videopython.base.audio import Audio
+from videopython.audio import Audio
 from videopython.base.text.transcription import Transcription, TranscriptionSegment
 
 if TYPE_CHECKING:

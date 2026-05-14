@@ -27,7 +27,7 @@ from videopython.base.description import BoundingBox
 from videopython.base.operation import Effect
 
 if TYPE_CHECKING:
-    from videopython.base.audio import Audio
+    from videopython.audio import Audio
     from videopython.base.video import Video
 
 logger = logging.getLogger(__name__)
