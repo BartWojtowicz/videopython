@@ -136,6 +136,7 @@ Documentation = "https://videopython.com"
 
 [tool.mypy]
 mypy_path = "src/stubs"
+plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
 module = [
