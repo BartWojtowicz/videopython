@@ -17,6 +17,7 @@ from typing import get_args
 import numpy as np
 from tqdm import tqdm
 
+from videopython.base._dimensions import require_even
 from videopython.base.audio import Audio
 from videopython.base.effects import Effect
 from videopython.base.video import ALLOWED_VIDEO_FORMATS, ALLOWED_VIDEO_PRESETS, FrameIterator
@@ -121,11 +122,7 @@ class FrameEncoder:
         return cmd
 
     def __enter__(self) -> FrameEncoder:
-        if self._width % 2 != 0 or self._height % 2 != 0:
-            raise ValueError(
-                f"libx264 with yuv420p requires even dimensions, got {self._width}x{self._height}. "
-                "Resize or crop to even dimensions before encoding."
-            )
+        require_even(self._width, self._height)
         cmd = self._build_command()
         self._process = subprocess.Popen(
             cmd,

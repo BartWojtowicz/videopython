@@ -5,7 +5,6 @@ import json
 import logging
 import math
 import re
-import subprocess
 import time
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
@@ -26,6 +25,7 @@ from videopython.ai.understanding import (
     SemanticSceneDetector,
 )
 from videopython.ai.understanding.faces import FaceTracker
+from videopython.base import _ffmpeg
 from videopython.base.audio import Audio
 from videopython.base.description import (
     AudioClassification,
@@ -34,6 +34,7 @@ from videopython.base.description import (
     SceneBoundary,
     SceneDescription,
 )
+from videopython.base.exceptions import FFmpegProbeError
 from videopython.base.text.transcription import Transcription
 from videopython.base.video import Video, VideoMetadata, extract_frames_at_times
 
@@ -1032,21 +1033,9 @@ class VideoAnalyzer:
         if path is None:
             return {}
 
-        cmd = [
-            "ffprobe",
-            "-v",
-            "error",
-            "-show_entries",
-            "format_tags:stream_tags",
-            "-of",
-            "json",
-            str(path),
-        ]
-
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            payload = json.loads(result.stdout)
-        except (subprocess.CalledProcessError, json.JSONDecodeError, OSError):
+            payload = _ffmpeg.probe(path, extra_args=["-show_entries", "format_tags:stream_tags"])
+        except (FFmpegProbeError, OSError):
             return {}
 
         tags: dict[str, str] = {}

@@ -7,6 +7,24 @@ class VideoPythonError(Exception):
     pass
 
 
+class FFmpegError(VideoPythonError):
+    """Base exception for ffmpeg/ffprobe subprocess failures."""
+
+    pass
+
+
+class FFmpegProbeError(FFmpegError):
+    """Raised when an ffprobe invocation or its JSON output fails."""
+
+    pass
+
+
+class FFmpegRunError(FFmpegError):
+    """Raised when a blocking ffmpeg run returns a non-zero exit code."""
+
+    pass
+
+
 class VideoError(VideoPythonError):
     """Base exception for video-related errors."""
 

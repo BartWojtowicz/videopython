@@ -11,6 +11,7 @@ from pydantic import Field
 from tqdm import tqdm
 
 from videopython.ai.understanding.faces import FaceTracker
+from videopython.base._dimensions import round_to_even
 from videopython.base.operation import OpCategory, Operation
 from videopython.base.video import Video
 
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 def _make_even(value: int) -> int:
     """Round down to nearest even number for H.264 compatibility."""
-    return value - (value % 2)
+    return round_to_even(value, mode="floor", min_value=0)
 
 
 __all__ = [

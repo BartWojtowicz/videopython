@@ -16,8 +16,9 @@ import numpy as np
 from pydantic import Field, model_validator
 from tqdm import tqdm
 
+from videopython.base._dimensions import round_to_even
 from videopython.base.operation import FilterCtx, OpCategory, Operation
-from videopython.base.video import Video, _round_dimension_to_even
+from videopython.base.video import Video
 
 if TYPE_CHECKING:
     from videopython.base.text.transcription import Transcription
@@ -120,8 +121,8 @@ class Resize(Operation):
             new_h = self.height
             new_w = round(src_w * (self.height / src_h))
         if self.round_to_even:
-            new_w = _round_dimension_to_even(new_w)
-            new_h = _round_dimension_to_even(new_h)
+            new_w = round_to_even(new_w)
+            new_h = round_to_even(new_h)
         return new_w, new_h
 
     def apply(self, video: Video) -> Video:
@@ -252,8 +253,8 @@ class Crop(Operation):
         if self.mode == CropMode.CENTER:
             # Mirror apply()'s `mid - cw//2 : mid + cw//2` slice, which produces
             # 2 * (cw // 2) pixels — i.e. odd targets get rounded down to even.
-            cw = (cw // 2) * 2
-            ch = (ch // 2) * 2
+            cw = round_to_even(cw, mode="floor", min_value=0)
+            ch = round_to_even(ch, mode="floor", min_value=0)
         return meta.with_dimensions(cw, ch)
 
     def to_ffmpeg_filter(self, ctx: FilterCtx) -> str | None:

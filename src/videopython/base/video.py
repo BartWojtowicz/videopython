@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import subprocess
 import tempfile
 import uuid
@@ -12,8 +11,10 @@ from typing import Generator, Literal, get_args
 
 import numpy as np
 
+from videopython.base import _ffmpeg
+from videopython.base._dimensions import require_even
 from videopython.base.audio import Audio
-from videopython.base.exceptions import AudioLoadError, VideoLoadError, VideoMetadataError
+from videopython.base.exceptions import AudioLoadError, FFmpegProbeError, VideoLoadError, VideoMetadataError
 
 __all__ = [
     "Video",
@@ -32,11 +33,6 @@ ALLOWED_VIDEO_PRESETS = Literal[
 # Used to pre-allocate frame array with safety margin for frame rate variations
 FRAME_BUFFER_MULTIPLIER = 1.1  # 10% buffer for frame rate estimation errors
 FRAME_BUFFER_PADDING = 10  # Additional fixed frame padding
-
-
-def _round_dimension_to_even(value: int | float) -> int:
-    """Round a dimension to the nearest even integer (minimum 2)."""
-    return max(2, int(round(float(value) / 2.0) * 2))
 
 
 @dataclass
@@ -66,28 +62,20 @@ class VideoMetadata:
     @staticmethod
     def _run_ffprobe(video_path: str | Path) -> dict:
         """Run ffprobe and return parsed JSON output."""
-        cmd = [
-            "ffprobe",
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=width,height,r_frame_rate,nb_frames",
-            "-show_entries",
-            "format=duration",
-            "-print_format",
-            "json",
-            str(video_path),
-        ]
-
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            return json.loads(result.stdout)
-        except subprocess.CalledProcessError as e:
-            raise VideoMetadataError(f"FFprobe error: {e.stderr}")
-        except json.JSONDecodeError as e:
-            raise VideoMetadataError(f"Error parsing FFprobe output: {e}")
+            return _ffmpeg.probe(
+                video_path,
+                extra_args=[
+                    "-select_streams",
+                    "v:0",
+                    "-show_entries",
+                    "stream=width,height,r_frame_rate,nb_frames",
+                    "-show_entries",
+                    "format=duration",
+                ],
+            )
+        except FFmpegProbeError as e:
+            raise VideoMetadataError(str(e)) from e
 
     @classmethod
     def from_path(cls, video_path: str | Path) -> VideoMetadata:
@@ -743,12 +731,7 @@ class Video:
             )
 
         frame_height, frame_width = self.frame_shape[:2]
-        if frame_width % 2 != 0 or frame_height % 2 != 0:
-            raise ValueError(
-                "Current save pipeline uses libx264 with yuv420p, which requires even frame dimensions. "
-                f"Got {frame_width}x{frame_height}. "
-                "Resize, crop, or pad to an even width and height before saving."
-            )
+        require_even(frame_width, frame_height)
 
         if filename is None:
             filename = Path(f"{uuid.uuid4()}.{format}")
