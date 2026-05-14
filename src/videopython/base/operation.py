@@ -211,13 +211,14 @@ class Operation(BaseModel):
         annotated = Annotated[Union[tuple(ops)], Discriminator("op")]  # type: ignore[valid-type]  # noqa: UP007
         return TypeAdapter(annotated).json_schema()
 
-    def apply(self, video: Video, **context: Any) -> Video:
+    def apply(self, video: Video) -> Video:
         """Run this operation on ``video``.
 
         The runner passes pipeline-context values listed in ``cls.requires``
-        as keyword arguments (e.g. ``transcription=...``). Subclasses with
-        explicit dependencies should declare them as typed kwargs and ignore
-        ``**context``.
+        as keyword arguments (e.g. ``transcription=...``). Subclasses that
+        declare ``requires`` should override with a wider signature -- e.g.
+        ``def apply(self, video, transcription=None) -> Video`` -- and add
+        ``# type: ignore[override]`` to mute the mypy LSP warning.
         """
         raise NotImplementedError(f"{type(self).__name__}.apply not implemented")
 
@@ -252,7 +253,7 @@ class Effect(Operation):
         description="Time window for the effect in seconds. Omit to apply across the full duration.",
     )
 
-    def apply(self, video: Video, **context: Any) -> Video:
+    def apply(self, video: Video, **context: Any) -> Video:  # type: ignore[override]
         from videopython.base.video import Video as _Video
 
         original_shape = video.video_shape

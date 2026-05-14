@@ -1,19 +1,29 @@
+"""Transform Operations.
+
+A transform is any Operation that produces a new ``Video`` from a single
+input video, free to change dimensions, fps, duration, or frame count.
+See ``base/operation.py`` for the ``Operation`` base.
+"""
+
 from __future__ import annotations
 
 import logging
-from abc import ABC, abstractmethod
 from enum import Enum
-from typing import TYPE_CHECKING, Literal
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 import cv2
 import numpy as np
+from pydantic import Field, model_validator
 from tqdm import tqdm
 
+from videopython.base.operation import FilterCtx, OpCategory, Operation
 from videopython.base.video import Video, _round_dimension_to_even
 
 if TYPE_CHECKING:
     from videopython.base.audio import Audio
     from videopython.base.text.transcription import Transcription
+    from videopython.base.video import VideoMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -32,640 +42,502 @@ __all__ = [
     "SilenceRemoval",
 ]
 
-
-class Transformation(ABC):
-    """Abstract class for transformation on frames of video."""
-
-    @abstractmethod
-    def apply(self, video: Video) -> Video:
-        pass
+# Transitional alias kept while editing/video_edit.py and ai/transforms.py are
+# rewritten in follow-up commits; deleted along with the registry once those
+# consumers are gone.
+Transformation = Operation
 
 
-class CutFrames(Transformation):
-    """Cuts video to a specific frame range."""
+class CutFrames(Operation):
+    """Cuts video to a specific frame range.
 
-    def __init__(self, start: int, end: int):
-        """Initialize frame cutter.
+    Args:
+        start: Start frame index (inclusive).
+        end: End frame index (exclusive).
+    """
 
-        Args:
-            start: Start frame index (inclusive).
-            end: End frame index (exclusive).
-        """
-        self.start = start
-        self.end = end
+    op: Literal["cut_frames"] = "cut_frames"
+    category: ClassVar[OpCategory] = OpCategory.TRANSFORM
 
-    def apply(self, video: Video) -> Video:
-        """Apply frame cut to video.
+    start: int = Field(ge=0)
+    end: int = Field(ge=0)
 
-        Args:
-            video: Input video.
-
-        Returns:
-            Video with frames from start to end.
-        """
-        video = video[self.start : self.end]
-        return video
-
-
-class CutSeconds(Transformation):
-    """Cuts video to a specific time range in seconds."""
-
-    def __init__(self, start: float | int, end: float | int):
-        """Initialize time-based cutter.
-
-        Args:
-            start: Start time in seconds.
-            end: End time in seconds.
-        """
-        self.start = start
-        self.end = end
+    @model_validator(mode="after")
+    def _validate_range(self) -> CutFrames:
+        if self.end <= self.start:
+            raise ValueError(f"end ({self.end}) must be greater than start ({self.start})")
+        return self
 
     def apply(self, video: Video) -> Video:
-        """Apply time-based cut to video.
+        return video[self.start : self.end]
 
-        Args:
-            video: Input video.
-
-        Returns:
-            Video cut from start to end seconds.
-        """
-        video = video[round(self.start * video.fps) : round(self.end * video.fps)]
-        return video
+    def predict_metadata(self, meta: VideoMetadata) -> VideoMetadata:
+        if self.end > meta.frame_count:
+            raise ValueError(f"end frame ({self.end}) exceeds frame count ({meta.frame_count})")
+        duration = round((self.end - self.start) / meta.fps, 4)
+        return meta.with_duration(duration)
 
 
-class Resize(Transformation):
-    """Resizes video to specified dimensions, maintaining aspect ratio if only one dimension is provided."""
+class CutSeconds(Operation):
+    """Cuts video to a specific time range in seconds.
 
-    def __init__(self, width: int | None = None, height: int | None = None, round_to_even: bool = True):
-        """Initialize resizer.
+    Args:
+        start: Start time in seconds.
+        end: End time in seconds.
+    """
 
-        Args:
-            width: Target width in pixels, or None to maintain aspect ratio.
-            height: Target height in pixels, or None to maintain aspect ratio.
-            round_to_even: If True (default), snap output width/height to even numbers.
-        """
-        self.width = width
-        self.height = height
-        self.round_to_even = round_to_even
-        if width is None and height is None:
-            raise ValueError("You must provide either `width` or `height`!")
+    op: Literal["cut"] = "cut"
+    category: ClassVar[OpCategory] = OpCategory.TRANSFORM
 
-    def _resize_frame(self, frame: np.ndarray, new_width: int, new_height: int) -> np.ndarray:
-        return cv2.resize(
-            frame,
-            (new_width, new_height),
-            interpolation=cv2.INTER_AREA,
-        )
+    start: float = Field(ge=0)
+    end: float = Field(ge=0)
+
+    @model_validator(mode="after")
+    def _validate_range(self) -> CutSeconds:
+        if self.end <= self.start:
+            raise ValueError(f"end ({self.end}) must be greater than start ({self.start})")
+        return self
 
     def apply(self, video: Video) -> Video:
-        """Resize video frames to target dimensions.
+        return video[round(self.start * video.fps) : round(self.end * video.fps)]
 
-        Args:
-            video: Input video.
+    def predict_metadata(self, meta: VideoMetadata) -> VideoMetadata:
+        if self.end > meta.total_seconds:
+            raise ValueError(f"end time ({self.end}) exceeds video duration ({meta.total_seconds})")
+        # Mirror apply(): round both endpoints to frames before computing the duration.
+        start_f = round(self.start * meta.fps)
+        end_f = round(self.end * meta.fps)
+        duration = round((end_f - start_f) / meta.fps, 4)
+        return meta.with_duration(duration)
 
-        Returns:
-            Resized video.
-        """
-        if self.width and self.height:
-            new_height = self.height
-            new_width = self.width
-        elif self.height is None and self.width:
-            video_height = video.video_shape[1]
-            video_width = video.video_shape[2]
-            new_height = round(video_height * (self.width / video_width))
-            new_width = self.width
-        elif self.width is None and self.height:
-            video_height = video.video_shape[1]
-            video_width = video.video_shape[2]
-            new_width = round(video_width * (self.height / video_height))
-            new_height = self.height
 
+class Resize(Operation):
+    """Resizes video to specified dimensions, preserving aspect ratio if only one dimension is given.
+
+    Args:
+        width: Target width in pixels, or None to maintain aspect ratio.
+        height: Target height in pixels, or None to maintain aspect ratio.
+        round_to_even: If True (default), snap output width/height to even numbers.
+    """
+
+    op: Literal["resize"] = "resize"
+    category: ClassVar[OpCategory] = OpCategory.TRANSFORM
+    streamable: ClassVar[bool] = True
+
+    width: int | None = Field(None, gt=0)
+    height: int | None = Field(None, gt=0)
+    round_to_even: bool = True
+
+    @model_validator(mode="after")
+    def _require_one_dimension(self) -> Resize:
+        if self.width is None and self.height is None:
+            raise ValueError("Resize requires `width`, `height`, or both.")
+        return self
+
+    def _resolve_dims(self, src_w: int, src_h: int) -> tuple[int, int]:
+        if self.width is not None and self.height is not None:
+            new_w, new_h = self.width, self.height
+        elif self.width is not None:
+            new_w = self.width
+            new_h = round(src_h * (self.width / src_w))
+        else:
+            assert self.height is not None
+            new_h = self.height
+            new_w = round(src_w * (self.height / src_h))
         if self.round_to_even:
-            new_width = _round_dimension_to_even(new_width)
-            new_height = _round_dimension_to_even(new_height)
+            new_w = _round_dimension_to_even(new_w)
+            new_h = _round_dimension_to_even(new_h)
+        return new_w, new_h
 
-        logger.info(f"Resizing video to: {new_width}x{new_height}!")
+    def apply(self, video: Video) -> Video:
+        new_w, new_h = self._resolve_dims(video.video_shape[2], video.video_shape[1])
+        logger.info(f"Resizing video to: {new_w}x{new_h}!")
         video.frames = np.asarray(
-            [self._resize_frame(frame, new_width, new_height) for frame in video.frames],
+            [cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA) for frame in video.frames],
             dtype=np.uint8,
         )
         return video
 
+    def predict_metadata(self, meta: VideoMetadata) -> VideoMetadata:
+        new_w, new_h = self._resolve_dims(meta.width, meta.height)
+        return meta.with_dimensions(new_w, new_h)
 
-class ResampleFPS(Transformation):
-    """Resamples video to a different frame rate, upsampling or downsampling as needed."""
+    def to_ffmpeg_filter(self, ctx: FilterCtx) -> str | None:
+        new_w, new_h = self._resolve_dims(ctx.width, ctx.height)
+        return f"scale={new_w}:{new_h}"
 
-    def __init__(self, fps: int | float):
-        """Initialize FPS resampler.
 
-        Args:
-            fps: Target frames per second.
-        """
-        self.fps = float(fps)
+class ResampleFPS(Operation):
+    """Resamples video to a different frame rate, upsampling or downsampling as needed.
+
+    Args:
+        fps: Target frames per second.
+    """
+
+    op: Literal["resample_fps"] = "resample_fps"
+    category: ClassVar[OpCategory] = OpCategory.TRANSFORM
+    streamable: ClassVar[bool] = True
+
+    fps: float = Field(gt=0)
 
     def _downsample(self, video: Video) -> Video:
-        target_frame_count = int(len(video.frames) * (self.fps / video.fps))
-        new_frame_indices = np.round(np.linspace(0, len(video.frames) - 1, target_frame_count)).astype(int)
-        video.frames = video.frames[new_frame_indices]
+        target = int(len(video.frames) * (self.fps / video.fps))
+        idx = np.round(np.linspace(0, len(video.frames) - 1, target)).astype(int)
+        video.frames = video.frames[idx]
         video.fps = self.fps
         return video
 
     def _upsample(self, video: Video) -> Video:
-        target_frame_count = int(len(video.frames) * (self.fps / video.fps))
-        new_frame_indices = np.linspace(0, len(video.frames) - 1, target_frame_count)
+        target = int(len(video.frames) * (self.fps / video.fps))
+        positions = np.linspace(0, len(video.frames) - 1, target)
         new_frames = []
-        for i in tqdm(range(len(new_frame_indices)), desc="Interpolating frames"):
-            # Interpolate between the two nearest frames
-            ratio = new_frame_indices[i] % 1
-            new_frame = (1 - ratio) * video.frames[int(new_frame_indices[i])] + ratio * video.frames[
-                int(np.ceil(new_frame_indices[i]))
-            ]
-            new_frames.append(new_frame.astype(np.uint8))
+        for pos in tqdm(positions, desc="Interpolating frames"):
+            ratio = pos % 1
+            low = int(pos)
+            high = int(np.ceil(pos))
+            frame = (1 - ratio) * video.frames[low] + ratio * video.frames[high]
+            new_frames.append(frame.astype(np.uint8))
         video.frames = np.array(new_frames, dtype=np.uint8)
         video.fps = self.fps
         return video
 
     def apply(self, video: Video) -> Video:
-        """Resample video to target FPS.
-
-        Args:
-            video: Input video.
-
-        Returns:
-            Video with target frame rate.
-        """
         if video.fps == self.fps:
             return video
-        elif video.fps > self.fps:
+        if video.fps > self.fps:
             logger.info(f"Downsampling video from {video.fps} to {self.fps} FPS.")
             video = self._downsample(video)
         else:
             logger.info(f"Upsampling video from {video.fps} to {self.fps} FPS.")
             video = self._upsample(video)
         if video.audio is not None:
-            target_duration = len(video.frames) / video.fps
-            video.audio = video.audio.fit_to_duration(target_duration)
+            video.audio = video.audio.fit_to_duration(len(video.frames) / video.fps)
         return video
 
+    def predict_metadata(self, meta: VideoMetadata) -> VideoMetadata:
+        return meta.with_fps(self.fps)
 
-class CropMode(Enum):
+    def to_ffmpeg_filter(self, ctx: FilterCtx) -> str | None:
+        return f"fps={self.fps}"
+
+
+class CropMode(str, Enum):
     CENTER = "center"
-    CUSTOM = "custom"  # Use x, y coordinates for positioning
+    CUSTOM = "custom"
 
 
-class Crop(Transformation):
+class Crop(Operation):
     """Crops the frame to a smaller region.
 
     Accepts pixel values (int) or normalized 0-1 fractions (float). For
     example, width=0.5 crops to 50% of the original width.
+
+    Args:
+        width: Crop width in pixels (int) or fraction in (0, 1] of source width.
+        height: Crop height in pixels (int) or fraction in (0, 1] of source height.
+        x: Left edge X (only with mode='custom'). Pixels (int) or fraction in [0, 1].
+        y: Top edge Y (only with mode='custom'). Pixels (int) or fraction in [0, 1].
+        mode: 'center' crops from the middle, 'custom' uses x/y coordinates.
     """
 
-    def __init__(
-        self,
-        width: int | float,
-        height: int | float,
-        x: int | float = 0,
-        y: int | float = 0,
-        mode: CropMode = CropMode.CENTER,
-    ):
-        """Initialize cropper.
+    op: Literal["crop"] = "crop"
+    category: ClassVar[OpCategory] = OpCategory.TRANSFORM
+    streamable: ClassVar[bool] = True
 
-        Args:
-            width: Crop width. Pass an int for pixels, or a float in (0, 1]
-                as a fraction of the video width.
-            height: Crop height. Pass an int for pixels, or a float in (0, 1]
-                as a fraction of the video height.
-            x: Left edge X position. Only used when mode is "custom". Pass an
-                int for pixels or a float in [0, 1] for a fraction.
-            y: Top edge Y position. Only used when mode is "custom". Pass an
-                int for pixels or a float in [0, 1] for a fraction.
-            mode: "center" crops from the middle of the frame, "custom" uses
-                the x/y coordinates you provide.
-        """
-        self.width = width
-        self.height = height
-        self.x = x
-        self.y = y
-        self.mode = mode
+    width: int | float
+    height: int | float
+    x: int | float = 0
+    y: int | float = 0
+    mode: CropMode = CropMode.CENTER
 
-    def _to_pixels(self, value: int | float, dimension: int) -> int:
-        """Convert value to pixels. Floats in (0, 1] are treated as normalized."""
+    @staticmethod
+    def _to_pixels(value: int | float, dimension: int) -> int:
         if isinstance(value, float) and 0 < value <= 1:
             return int(value * dimension)
         return int(value)
 
-    def apply(self, video: Video) -> Video:
-        """Crop video to target dimensions.
-
-        Args:
-            video: Input video.
-
-        Returns:
-            Cropped video.
-        """
-        current_height, current_width = video.frame_shape[:2]
-
-        # Convert to pixels (handles both int and normalized float)
-        crop_width = self._to_pixels(self.width, current_width)
-        crop_height = self._to_pixels(self.height, current_height)
-        crop_x = self._to_pixels(self.x, current_width)
-        crop_y = self._to_pixels(self.y, current_height)
-
+    def _resolve_box(self, src_w: int, src_h: int) -> tuple[int, int, int, int]:
+        """Returns (x, y, width, height) in pixels for the resolved crop box."""
+        cw = self._to_pixels(self.width, src_w)
+        ch = self._to_pixels(self.height, src_h)
         if self.mode == CropMode.CENTER:
-            center_height = current_height // 2
-            center_width = current_width // 2
-            width_offset = crop_width // 2
-            height_offset = crop_height // 2
-            video.frames = video.frames[
-                :,
-                center_height - height_offset : center_height + height_offset,
-                center_width - width_offset : center_width + width_offset,
-                :,
-            ]
+            cx = (src_w - cw) // 2
+            cy = (src_h - ch) // 2
         else:
-            # Custom position crop using x, y coordinates
-            video.frames = video.frames[
-                :,
-                crop_y : crop_y + crop_height,
-                crop_x : crop_x + crop_width,
-                :,
-            ]
+            cx = self._to_pixels(self.x, src_w)
+            cy = self._to_pixels(self.y, src_h)
+        return cx, cy, cw, ch
+
+    def apply(self, video: Video) -> Video:
+        src_h, src_w = video.frame_shape[:2]
+        cx, cy, cw, ch = self._resolve_box(src_w, src_h)
+        if self.mode == CropMode.CENTER:
+            mid_w, mid_h = src_w // 2, src_h // 2
+            off_w, off_h = cw // 2, ch // 2
+            video.frames = video.frames[:, mid_h - off_h : mid_h + off_h, mid_w - off_w : mid_w + off_w, :]
+        else:
+            video.frames = video.frames[:, cy : cy + ch, cx : cx + cw, :]
         return video
 
+    def predict_metadata(self, meta: VideoMetadata) -> VideoMetadata:
+        _, _, cw, ch = self._resolve_box(meta.width, meta.height)
+        if cw > meta.width or ch > meta.height:
+            raise ValueError(f"Crop {cw}x{ch} exceeds source {meta.width}x{meta.height}")
+        return meta.with_dimensions(cw, ch)
 
-class SpeedChange(Transformation):
-    """Speeds up or slows down video playback.
+    def to_ffmpeg_filter(self, ctx: FilterCtx) -> str | None:
+        cx, cy, cw, ch = self._resolve_box(ctx.width, ctx.height)
+        return f"crop={cw}:{ch}:{cx}:{cy}"
 
-    Values above 1.0 speed up (2.0 = twice as fast), values below 1.0 slow
-    down (0.5 = half speed). Can also smoothly ramp between two speeds.
+
+class SpeedChange(Operation):
+    """Speeds up or slows down video playback, optionally ramping between two speeds.
+
+    Args:
+        speed: Playback speed multiplier. 2.0 = twice as fast, 0.5 = half speed.
+        end_speed: If set, smoothly ramp from speed to end_speed over the clip duration.
+        interpolate: Blend between frames when slowing down for smoother motion.
+        adjust_audio: Time-stretch audio to match the new speed.
     """
 
-    def __init__(
-        self,
-        speed: float,
-        end_speed: float | None = None,
-        interpolate: bool = True,
-        adjust_audio: bool = True,
-    ):
-        """Initialize speed changer.
+    op: Literal["speed_change"] = "speed_change"
+    category: ClassVar[OpCategory] = OpCategory.TRANSFORM
 
-        Args:
-            speed: Playback speed multiplier. 2.0 = twice as fast, 0.5 = half
-                speed, 1.0 = original speed.
-            end_speed: If set, smoothly ramp from speed to end_speed over the
-                clip duration. Omit for constant speed.
-            interpolate: Blend between frames when slowing down for smoother
-                motion. Disable for a choppy/stylistic look.
-            adjust_audio: Time-stretch audio to match the new speed. If false,
-                audio is sliced or padded instead (no pitch correction).
-        """
-        if speed <= 0:
-            raise ValueError("Speed must be positive!")
-        if end_speed is not None and end_speed <= 0:
-            raise ValueError("End speed must be positive!")
+    speed: float = Field(gt=0)
+    end_speed: float | None = Field(None, gt=0)
+    interpolate: bool = True
+    adjust_audio: bool = True
 
-        self.speed = speed
-        self.end_speed = end_speed
-        self.interpolate = interpolate
-        self.adjust_audio = adjust_audio
+    def _new_frame_count(self, n_frames: int) -> int:
+        if self.end_speed is None:
+            return int(n_frames / self.speed)
+        avg = (self.speed + self.end_speed) / 2
+        return int(n_frames / avg)
 
     def apply(self, video: Video) -> Video:
-        """Apply speed change to video.
-
-        Args:
-            video: Input video.
-
-        Returns:
-            Video with adjusted speed.
-        """
         n_frames = len(video.frames)
 
         if self.end_speed is None:
-            # Constant speed change
             logger.info(f"Applying {self.speed}x speed change...")
-            new_frame_count = int(n_frames / self.speed)
-
-            if new_frame_count == 0:
+            new_count = int(n_frames / self.speed)
+            if new_count == 0:
                 raise ValueError(f"Speed {self.speed}x would result in 0 frames!")
-
-            # Map new frame indices to original frame positions
-            source_indices = np.linspace(0, n_frames - 1, new_frame_count)
+            source_indices = np.linspace(0, n_frames - 1, new_count)
         else:
-            # Speed ramp: smoothly transition from speed to end_speed
             logger.info(f"Applying speed ramp from {self.speed}x to {self.end_speed}x...")
-
-            # Calculate frame positions with varying speed
-            # Use cumulative sum of inverse speeds to get source positions
-            num_samples = 1000  # High resolution for smooth ramp
+            num_samples = 1000
             speeds = np.linspace(self.speed, self.end_speed, num_samples)
-            # Time spent at each sample point (inverse of speed)
             time_per_sample = 1.0 / speeds
             cumulative_time = np.cumsum(time_per_sample)
-            cumulative_time = cumulative_time / cumulative_time[-1]  # Normalize to [0, 1]
-
-            # Total output duration based on average speed
-            avg_speed = (self.speed + self.end_speed) / 2
-            new_frame_count = int(n_frames / avg_speed)
-
-            if new_frame_count == 0:
+            cumulative_time = cumulative_time / cumulative_time[-1]
+            new_count = self._new_frame_count(n_frames)
+            if new_count == 0:
                 raise ValueError("Speed ramp would result in 0 frames!")
-
-            # Map output frames to source positions using the cumulative time curve
-            output_positions = np.linspace(0, 1, new_frame_count)
+            output_positions = np.linspace(0, 1, new_count)
             source_positions = np.interp(output_positions, cumulative_time, np.linspace(0, 1, num_samples))
             source_indices = source_positions * (n_frames - 1)
 
-        # Generate new frames
-        if self.interpolate and (self.speed < 1.0 or (self.end_speed and self.end_speed < 1.0)):
-            # Interpolate for smoother slow motion
+        slow = self.speed < 1.0 or (self.end_speed is not None and self.end_speed < 1.0)
+        if self.interpolate and slow:
             new_frames = []
             for idx in tqdm(source_indices, desc="Interpolating frames"):
                 idx_low = int(idx)
-                idx_high = min(idx_low + 1, len(video.frames) - 1)
+                idx_high = min(idx_low + 1, n_frames - 1)
                 ratio = idx - idx_low
                 if ratio == 0 or idx_low == idx_high:
                     new_frames.append(video.frames[idx_low])
                 else:
-                    interpolated = (1 - ratio) * video.frames[idx_low] + ratio * video.frames[idx_high]
-                    new_frames.append(interpolated.astype(np.uint8))
+                    frame = (1 - ratio) * video.frames[idx_low] + ratio * video.frames[idx_high]
+                    new_frames.append(frame.astype(np.uint8))
             video.frames = np.array(new_frames, dtype=np.uint8)
         else:
-            # Simple frame selection (faster, good for speedup)
-            frame_indices = np.round(source_indices).astype(int)
-            frame_indices = np.clip(frame_indices, 0, n_frames - 1)
-            video.frames = video.frames[frame_indices]
+            indices = np.clip(np.round(source_indices).astype(int), 0, n_frames - 1)
+            video.frames = video.frames[indices]
 
-        # Handle audio adjustment
         target_duration = len(video.frames) / video.fps
-
         if video.audio is not None and not video.audio.is_silent:
             if self.adjust_audio:
-                # Time-stretch audio to match video speed
-                effective_speed = self.speed if self.end_speed is None else (self.speed + self.end_speed) / 2
-                video.audio = video.audio.time_stretch(effective_speed)
-
-            # Ensure audio duration matches video duration
+                eff_speed = self.speed if self.end_speed is None else (self.speed + self.end_speed) / 2
+                video.audio = video.audio.time_stretch(eff_speed)
             video.audio = video.audio.fit_to_duration(target_duration)
         elif video.audio is not None:
-            # Silent audio - just adjust duration
             video.audio = video.audio.fit_to_duration(target_duration)
-
         return video
 
+    def predict_metadata(self, meta: VideoMetadata) -> VideoMetadata:
+        new_count = self._new_frame_count(meta.frame_count)
+        if new_count == 0:
+            raise ValueError(f"Speed {self.speed}x would result in 0 frames!")
+        from videopython.base.video import VideoMetadata as _Meta
 
-class PictureInPicture(Transformation):
+        return _Meta(
+            height=meta.height,
+            width=meta.width,
+            fps=meta.fps,
+            frame_count=new_count,
+            total_seconds=round(new_count / meta.fps, 4),
+        )
+
+
+class PictureInPicture(Operation):
     """Places a smaller video on top of the main video (picture-in-picture).
 
-    Useful for reaction videos, facecam overlays, tutorials with presenter
-    inset, and side-by-side commentary.
+    The overlay is loaded just-in-time from ``source`` when ``apply`` runs, so
+    a ``PictureInPicture`` instance is fully JSON-serialisable.
+
+    Args:
+        source: Path to the overlay video file.
+        position: Center of the inset as normalized (x, y) in [0, 1].
+        scale: Inset width as a fraction of the main video width, in (0, 1].
+        border_width: Border thickness in pixels. 0 = no border.
+        border_color: Border color as [R, G, B], each in [0, 255].
+        corner_radius: Rounded corner radius in pixels. 0 = square corners.
+        opacity: Inset transparency in [0, 1]. 0 = invisible, 1 = fully opaque.
+        audio_mode: 'main' keeps only main audio, 'overlay' uses inset audio,
+            'mix' blends both.
+        audio_mix: Volume levels as [main, overlay] when audio_mode is 'mix'.
     """
 
-    def __init__(
-        self,
-        overlay: Video,
-        position: tuple[float, float] = (0.7, 0.7),
-        scale: float = 0.25,
-        border_width: int = 0,
-        border_color: tuple[int, int, int] = (255, 255, 255),
-        corner_radius: int = 0,
-        opacity: float = 1.0,
-        audio_mode: Literal["main", "overlay", "mix"] = "main",
-        audio_mix: tuple[float, float] = (1.0, 1.0),
-    ):
-        """Initialize picture-in-picture transform.
+    op: Literal["picture_in_picture"] = "picture_in_picture"
+    category: ClassVar[OpCategory] = OpCategory.TRANSFORM
 
-        Args:
-            overlay: The video to show as the small inset.
-            position: Center of the inset as normalized (x, y). (0, 0) = top-left
-                corner, (1, 1) = bottom-right corner.
-            scale: Inset width as a fraction of the main video width.
-                0.25 = 25% of main width.
-            border_width: Border thickness in pixels. 0 = no border.
-            border_color: Border color as [R, G, B], each 0-255.
-            corner_radius: Rounded corner radius in pixels. 0 = square corners.
-            opacity: Inset transparency. 0 = invisible, 1 = fully opaque.
-            audio_mode: "main" keeps only the main audio, "overlay" uses only
-                the inset audio, "mix" blends both tracks together.
-            audio_mix: Volume levels as [main, overlay] when audio_mode is "mix".
-                1.0 = original level. Values above 1.0 amplify (may clip).
-        """
-        if not 0 <= position[0] <= 1 or not 0 <= position[1] <= 1:
-            raise ValueError("Position must be normalized values in range [0, 1]!")
-        if not 0 < scale <= 1:
-            raise ValueError("Scale must be in range (0, 1]!")
-        if border_width < 0:
-            raise ValueError("Border width must be non-negative!")
-        if corner_radius < 0:
-            raise ValueError("Corner radius must be non-negative!")
-        if not 0 <= opacity <= 1:
-            raise ValueError("Opacity must be in range [0, 1]!")
-        if audio_mode not in ("main", "overlay", "mix"):
-            raise ValueError(f"audio_mode must be 'main', 'overlay', or 'mix', got '{audio_mode}'")
-        if audio_mix[0] < 0 or audio_mix[1] < 0:
+    source: Path
+    position: tuple[float, float] = (0.7, 0.7)
+    scale: float = Field(0.25, gt=0, le=1)
+    border_width: int = Field(0, ge=0)
+    border_color: tuple[int, int, int] = (255, 255, 255)
+    corner_radius: int = Field(0, ge=0)
+    opacity: float = Field(1.0, ge=0, le=1)
+    audio_mode: Literal["main", "overlay", "mix"] = "main"
+    audio_mix: tuple[float, float] = (1.0, 1.0)
+
+    @model_validator(mode="after")
+    def _validate(self) -> PictureInPicture:
+        if not (0 <= self.position[0] <= 1 and 0 <= self.position[1] <= 1):
+            raise ValueError("position must be normalized values in [0, 1]")
+        if self.audio_mix[0] < 0 or self.audio_mix[1] < 0:
             raise ValueError("audio_mix factors must be non-negative")
-
-        self.overlay = overlay
-        self.position = position
-        self.scale = scale
-        self.border_width = border_width
-        self.border_color = border_color
-        self.corner_radius = corner_radius
-        self.opacity = opacity
-        self.audio_mode = audio_mode
-        self.audio_mix = audio_mix
+        return self
 
     def _create_rounded_mask(self, width: int, height: int) -> np.ndarray:
-        """Create a mask with rounded corners."""
         if self.corner_radius <= 0:
             return np.ones((height, width), dtype=np.float32)
-
         radius = min(self.corner_radius, width // 2, height // 2)
         mask = np.ones((height, width), dtype=np.float32)
-
-        # Vectorized equivalent of the previous per-pixel corner loop.
         corners = [
-            (0, radius, 0, radius, radius, radius),  # top-left
-            (0, radius, width - radius, width, width - radius, radius),  # top-right
-            (height - radius, height, 0, radius, radius, height - radius),  # bottom-left
-            (height - radius, height, width - radius, width, width - radius, height - radius),  # bottom-right
+            (0, radius, 0, radius, radius, radius),
+            (0, radius, width - radius, width, width - radius, radius),
+            (height - radius, height, 0, radius, radius, height - radius),
+            (height - radius, height, width - radius, width, width - radius, height - radius),
         ]
         radius_sq = float(radius * radius)
         for y_start, y_end, x_start, x_end, center_x, center_y in corners:
             yy, xx = np.ogrid[y_start:y_end, x_start:x_end]
             outside = ((xx - center_x) ** 2 + (yy - center_y) ** 2) > radius_sq
             mask[y_start:y_end, x_start:x_end][outside] = 0.0
-
         return mask
 
     def _add_border(self, frame: np.ndarray, mask: np.ndarray) -> np.ndarray:
-        """Add border around the overlay frame."""
         if self.border_width <= 0:
             return frame
-
-        h, w = frame.shape[:2]
         bordered = frame.copy()
-
-        # Create border by drawing on edges
         border_color = np.array(self.border_color, dtype=np.uint8)
-
-        # Top and bottom borders
         bordered[: self.border_width, :] = border_color
         bordered[-self.border_width :, :] = border_color
-
-        # Left and right borders
         bordered[:, : self.border_width] = border_color
         bordered[:, -self.border_width :] = border_color
-
-        # If we have rounded corners, apply mask to border too
         if self.corner_radius > 0:
             bordered = bordered * mask[:, :, None].astype(np.uint8)
-
         return bordered
 
     def apply(self, video: Video) -> Video:
-        """Apply picture-in-picture overlay to video.
-
-        Args:
-            video: Main video to apply overlay on.
-
-        Returns:
-            Video with overlay applied.
-        """
+        overlay = Video.from_path(str(self.source))
         main_h, main_w = video.frame_shape[:2]
-        n_main_frames = len(video.frames)
-        n_overlay_frames = len(self.overlay.frames)
+        n_main = len(video.frames)
+        n_overlay = len(overlay.frames)
 
-        # Calculate overlay dimensions
         overlay_w = int(main_w * self.scale)
-        # Maintain aspect ratio of overlay video
-        overlay_aspect = self.overlay.metadata.width / self.overlay.metadata.height
+        overlay_aspect = overlay.metadata.width / overlay.metadata.height
         overlay_h = int(overlay_w / overlay_aspect)
 
-        # Calculate position (position is center of overlay)
         pos_x = int(self.position[0] * main_w - overlay_w / 2)
         pos_y = int(self.position[1] * main_h - overlay_h / 2)
-
-        # Clamp position to keep overlay within bounds
         pos_x = max(0, min(pos_x, main_w - overlay_w))
         pos_y = max(0, min(pos_y, main_h - overlay_h))
 
-        # Resize overlay frames once
         logger.info(f"Resizing overlay to {overlay_w}x{overlay_h}...")
-        resized_overlay_frames = np.asarray(
+        resized_overlay = np.asarray(
             [
                 cv2.resize(frame, (overlay_w, overlay_h), interpolation=cv2.INTER_AREA)
-                for frame in tqdm(self.overlay.frames, desc="Resizing overlay")
+                for frame in tqdm(overlay.frames, desc="Resizing overlay")
             ],
             dtype=np.uint8,
         )
 
-        # Create rounded corner mask if needed
         mask = self._create_rounded_mask(overlay_w, overlay_h)
         alpha = mask[:, :, None] * self.opacity
 
-        # Apply border to overlay frames
         if self.border_width > 0:
-            resized_overlay_frames = np.asarray(
-                [self._add_border(frame, mask) for frame in resized_overlay_frames],
+            resized_overlay = np.asarray(
+                [self._add_border(frame, mask) for frame in resized_overlay],
                 dtype=np.uint8,
             )
 
         logger.info("Applying picture-in-picture...")
         new_frames = []
-        for i in tqdm(range(n_main_frames), desc="Picture-in-picture"):
+        for i in tqdm(range(n_main), desc="Picture-in-picture"):
             main_frame = video.frames[i].copy()
-
-            # Get overlay frame (loop if overlay is shorter)
-            overlay_idx = i % n_overlay_frames
-            overlay_frame = resized_overlay_frames[overlay_idx]
-
-            # Extract the region where overlay will be placed
+            overlay_frame = resized_overlay[i % n_overlay]
             region = main_frame[pos_y : pos_y + overlay_h, pos_x : pos_x + overlay_w]
-
-            # Apply mask and opacity
             if self.corner_radius > 0 or self.opacity < 1.0:
-                # Blend with mask and opacity
                 blended = (overlay_frame * alpha + region * (1 - alpha)).astype(np.uint8)
             else:
                 blended = overlay_frame
-
-            # Place the blended overlay back
             main_frame[pos_y : pos_y + overlay_h, pos_x : pos_x + overlay_w] = blended
             new_frames.append(main_frame)
 
         video.frames = np.array(new_frames, dtype=np.uint8)
-
-        # Handle audio based on audio_mode
-        main_duration = len(video.frames) / video.fps
-        video.audio = self._handle_audio(video.audio, main_duration)
-
+        video.audio = self._handle_audio(video.audio, overlay, len(video.frames) / video.fps)
         return video
 
-    def _handle_audio(self, main_audio: "Audio", target_duration: float) -> "Audio":
-        """Handle audio based on audio_mode setting."""
-
+    def _handle_audio(self, main_audio: Audio, overlay: Video, target_duration: float) -> Audio:
         if self.audio_mode == "main":
-            # Keep main video audio (current behavior)
             return main_audio.fit_to_duration(target_duration)
+        if self.audio_mode == "overlay":
+            return self._prepare_overlay_audio(overlay, target_duration)
+        scaled_main = main_audio.scale_volume(self.audio_mix[0])
+        overlay_audio = self._prepare_overlay_audio(overlay, target_duration)
+        scaled_overlay = overlay_audio.scale_volume(self.audio_mix[1])
+        if scaled_main.metadata.sample_rate != scaled_overlay.metadata.sample_rate:
+            scaled_overlay = scaled_overlay.resample(scaled_main.metadata.sample_rate)
+        return scaled_main.overlay(scaled_overlay, position=0.0)
 
-        elif self.audio_mode == "overlay":
-            # Use only overlay video audio (looped if necessary)
-            return self._prepare_overlay_audio(target_duration)
+    def _prepare_overlay_audio(self, overlay: Video, target_duration: float) -> Audio:
+        from videopython.base.audio import Audio as _Audio
 
-        else:  # mix
-            # Mix both audio tracks with volume factors
-            scaled_main = main_audio.scale_volume(self.audio_mix[0])
-            overlay_audio = self._prepare_overlay_audio(target_duration)
-            scaled_overlay = overlay_audio.scale_volume(self.audio_mix[1])
-
-            # Ensure sample rates match
-            if scaled_main.metadata.sample_rate != scaled_overlay.metadata.sample_rate:
-                scaled_overlay = scaled_overlay.resample(scaled_main.metadata.sample_rate)
-
-            # Mix using overlay at position 0
-            return scaled_main.overlay(scaled_overlay, position=0.0)
-
-    def _prepare_overlay_audio(self, target_duration: float) -> "Audio":
-        """Prepare overlay audio, looping if shorter than target duration."""
-        from videopython.base.audio import Audio
-
-        overlay_audio = self.overlay.audio
-
+        overlay_audio = overlay.audio
         if overlay_audio is None or overlay_audio.is_silent:
-            return Audio.create_silent(
-                target_duration,
-                stereo=True,
-                sample_rate=44100,
-            )
-
-        # Loop overlay audio if shorter than main video
+            return _Audio.create_silent(target_duration, stereo=True, sample_rate=44100)
         if overlay_audio.metadata.duration_seconds < target_duration:
-            # Calculate how many times to loop
-            loops_needed = int(np.ceil(target_duration / overlay_audio.metadata.duration_seconds))
-
-            # Concatenate copies
-            looped_audio = overlay_audio
-            for _ in range(loops_needed - 1):
-                looped_audio = looped_audio.concat(overlay_audio)
-
-            # Slice to exact duration
-            return looped_audio.slice(0, target_duration)
-        else:
-            # Slice to match main video duration
-            return overlay_audio.slice(0, target_duration)
+            loops = int(np.ceil(target_duration / overlay_audio.metadata.duration_seconds))
+            looped = overlay_audio
+            for _ in range(loops - 1):
+                looped = looped.concat(overlay_audio)
+            return looped.slice(0, target_duration)
+        return overlay_audio.slice(0, target_duration)
 
 
-class Reverse(Transformation):
-    """Plays the video backwards, with optional audio reversal."""
+class Reverse(Operation):
+    """Plays the video backwards, with optional audio reversal.
 
-    def __init__(self, reverse_audio: bool = True):
-        """Initialize reverse transform.
+    Args:
+        reverse_audio: If true, reverse the audio track along with the video.
+    """
 
-        Args:
-            reverse_audio: If true, reverse the audio track along with the
-                video. Set to false to keep original audio over reversed footage.
-        """
-        self.reverse_audio = reverse_audio
+    op: Literal["reverse"] = "reverse"
+    category: ClassVar[OpCategory] = OpCategory.TRANSFORM
+
+    reverse_audio: bool = True
 
     def apply(self, video: Video) -> Video:
         video.frames = video.frames[::-1].copy()
@@ -674,35 +546,21 @@ class Reverse(Transformation):
         return video
 
 
-class FreezeFrame(Transformation):
+class FreezeFrame(Operation):
     """Pauses video at a specific moment by holding a single frame.
 
-    The frozen frame is inserted into the timeline, making the video longer
-    (or replacing existing frames in "replace" mode).
+    Args:
+        timestamp: Time in seconds at which to capture the frame.
+        duration: How long to hold the frozen frame, in seconds.
+        position: 'after' / 'before' inserts frames; 'replace' swaps existing frames out.
     """
 
-    def __init__(
-        self,
-        timestamp: float,
-        duration: float = 2.0,
-        position: Literal["before", "after", "replace"] = "after",
-    ):
-        """Initialize freeze frame transform.
+    op: Literal["freeze_frame"] = "freeze_frame"
+    category: ClassVar[OpCategory] = OpCategory.TRANSFORM
 
-        Args:
-            timestamp: Time in seconds at which to capture the frame.
-            duration: How long to hold the frozen frame, in seconds.
-            position: Where to place the frozen frames. "after" inserts them
-                after the timestamp, "before" inserts them before it,
-                "replace" swaps out existing video at that point.
-        """
-        if timestamp < 0:
-            raise ValueError(f"timestamp must be >= 0, got {timestamp}")
-        if duration <= 0:
-            raise ValueError(f"duration must be > 0, got {duration}")
-        self.timestamp = timestamp
-        self.duration = duration
-        self.position = position
+    timestamp: float = Field(ge=0)
+    duration: float = Field(2.0, gt=0)
+    position: Literal["before", "after", "replace"] = "after"
 
     def apply(self, video: Video) -> Video:
         if self.timestamp >= video.total_seconds:
@@ -717,20 +575,17 @@ class FreezeFrame(Transformation):
             video.frames = np.concatenate([video.frames[:insert_idx], frozen, video.frames[insert_idx:]], axis=0)
         elif self.position == "before":
             video.frames = np.concatenate([video.frames[:frame_idx], frozen, video.frames[frame_idx:]], axis=0)
-        elif self.position == "replace":
+        else:  # replace
             replace_end = min(frame_idx + freeze_count, len(video.frames))
             video.frames = np.concatenate([video.frames[:frame_idx], frozen, video.frames[replace_end:]], axis=0)
 
-        # Rebuild audio to match new video duration
         if video.audio is not None:
             target_duration = len(video.frames) / video.fps
             sample_rate = video.audio.metadata.sample_rate
             channels = video.audio.metadata.channels
-
             silence_samples = round(self.duration * sample_rate)
             silence_shape = (silence_samples, channels) if channels > 1 else (silence_samples,)
             silence = np.zeros(silence_shape, dtype=np.float32)
-
             timestamp_sample = round(self.timestamp * sample_rate)
 
             if self.position == "after":
@@ -742,135 +597,118 @@ class FreezeFrame(Transformation):
                 video.audio.data = np.concatenate(
                     [video.audio.data[:timestamp_sample], silence, video.audio.data[timestamp_sample:]], axis=0
                 )
-            elif self.position == "replace":
+            else:
                 replace_end_sample = min(timestamp_sample + silence_samples, len(video.audio.data))
                 video.audio.data = np.concatenate(
                     [video.audio.data[:timestamp_sample], silence, video.audio.data[replace_end_sample:]], axis=0
                 )
-
             video.audio = video.audio.fit_to_duration(target_duration)
-
         return video
 
+    def predict_metadata(self, meta: VideoMetadata) -> VideoMetadata:
+        if self.timestamp >= meta.total_seconds:
+            raise ValueError(f"timestamp ({self.timestamp}) must be less than video duration ({meta.total_seconds})")
+        freeze_count = round(self.duration * meta.fps)
+        if self.position in ("after", "before"):
+            new_count = meta.frame_count + freeze_count
+        else:  # replace
+            frame_idx = round(self.timestamp * meta.fps)
+            replace_end = min(frame_idx + freeze_count, meta.frame_count)
+            new_count = meta.frame_count - (replace_end - frame_idx) + freeze_count
+        from videopython.base.video import VideoMetadata as _Meta
 
-class SilenceRemoval(Transformation):
+        return _Meta(
+            height=meta.height,
+            width=meta.width,
+            fps=meta.fps,
+            frame_count=new_count,
+            total_seconds=round(new_count / meta.fps, 4),
+        )
+
+
+class SilenceRemoval(Operation):
     """Cuts or fast-forwards through silent gaps between speech.
 
-    Uses word-level transcription timestamps to identify silent sections
-    and either removes them entirely or speeds them up. Requires a
-    transcription to be available.
+    Uses word-level transcription timestamps to identify silent sections and
+    either removes them entirely or speeds them up.
+
+    Args:
+        min_silence_duration: Ignore silences shorter than this many seconds.
+        padding: Seconds of breathing room around each speech boundary.
+        mode: 'cut' removes silent sections entirely; 'speed_up' speeds them up.
+        speed_factor: Speed multiplier for silent sections when mode='speed_up'.
     """
 
-    def __init__(
-        self,
-        min_silence_duration: float = 1.0,
-        padding: float = 0.15,
-        mode: Literal["cut", "speed_up"] = "cut",
-        speed_factor: float = 3.0,
-    ):
-        """Initialize silence removal transform.
+    op: Literal["silence_removal"] = "silence_removal"
+    category: ClassVar[OpCategory] = OpCategory.TRANSFORM
+    requires: ClassVar[tuple[str, ...]] = ("transcription",)
 
-        Args:
-            min_silence_duration: Ignore silences shorter than this many
-                seconds. Keeps natural pauses intact.
-            padding: Seconds of breathing room to keep around each speech
-                boundary so cuts don't feel abrupt.
-            mode: "cut" removes silent sections entirely, "speed_up" plays
-                them at a faster speed instead.
-            speed_factor: How fast to play silent sections when mode is
-                "speed_up". 3.0 = three times normal speed.
-        """
-        if min_silence_duration <= 0:
-            raise ValueError(f"min_silence_duration must be > 0, got {min_silence_duration}")
-        if padding < 0:
-            raise ValueError(f"padding must be >= 0, got {padding}")
-        if speed_factor <= 1.0:
-            raise ValueError(f"speed_factor must be > 1.0, got {speed_factor}")
-        self.min_silence_duration = min_silence_duration
-        self.padding = padding
-        self.mode = mode
-        self.speed_factor = speed_factor
+    min_silence_duration: float = Field(1.0, gt=0)
+    padding: float = Field(0.15, ge=0)
+    mode: Literal["cut", "speed_up"] = "cut"
+    speed_factor: float = Field(3.0, gt=1.0)
+
+    def _silence_ranges(self, words: list[Any], total_seconds: float) -> list[tuple[float, float]]:
+        speech: list[tuple[float, float]] = []
+        for word in words:
+            start = max(0.0, word.start - self.padding)
+            end = min(total_seconds, word.end + self.padding)
+            if speech and start <= speech[-1][1]:
+                speech[-1] = (speech[-1][0], max(speech[-1][1], end))
+            else:
+                speech.append((start, end))
+        silences: list[tuple[float, float]] = []
+        prev_end = 0.0
+        for s_start, s_end in speech:
+            if s_start - prev_end >= self.min_silence_duration:
+                silences.append((prev_end, s_start))
+            prev_end = s_end
+        if total_seconds - prev_end >= self.min_silence_duration:
+            silences.append((prev_end, total_seconds))
+        return silences
 
     def apply(self, video: Video, transcription: Transcription | None = None) -> Video:  # type: ignore[override]
-        """Apply silence removal to video.
-
-        Args:
-            video: Input video.
-            transcription: Word-level transcription (Transcription object).
-                Required -- raises ValueError if not provided.
-        """
         if transcription is None:
             raise ValueError(
                 "SilenceRemoval requires transcription data. "
                 "Pass it via VideoEdit.run(context={'transcription': ...}) or directly to apply()."
             )
-
         words = transcription.words
         if not words:
             return video
-
-        # Build speech ranges from word timestamps (with padding)
-        speech_ranges: list[tuple[float, float]] = []
-        for word in words:
-            start = max(0, word.start - self.padding)
-            end = min(video.total_seconds, word.end + self.padding)
-            if speech_ranges and start <= speech_ranges[-1][1]:
-                speech_ranges[-1] = (speech_ranges[-1][0], max(speech_ranges[-1][1], end))
-            else:
-                speech_ranges.append((start, end))
-
-        # Identify silence gaps
-        silence_ranges: list[tuple[float, float]] = []
-        prev_end = 0.0
-        for s_start, s_end in speech_ranges:
-            if s_start - prev_end >= self.min_silence_duration:
-                silence_ranges.append((prev_end, s_start))
-            prev_end = s_end
-        # Trailing silence
-        if video.total_seconds - prev_end >= self.min_silence_duration:
-            silence_ranges.append((prev_end, video.total_seconds))
-
-        if not silence_ranges:
+        silences = self._silence_ranges(words, video.total_seconds)
+        if not silences:
             return video
-
         if self.mode == "cut":
-            return self._apply_cut(video, silence_ranges)
-        else:
-            return self._apply_speed_up(video, silence_ranges)
+            return self._apply_cut(video, silences)
+        return self._apply_speed_up(video, silences)
 
     def _apply_cut(self, video: Video, silence_ranges: list[tuple[float, float]]) -> Video:
-        """Cut silent sections out of the video."""
-        keep_ranges: list[tuple[int, int]] = []
+        keep: list[tuple[int, int]] = []
         prev_frame = 0
         for s_start, s_end in silence_ranges:
             cut_start = round(s_start * video.fps)
             cut_end = round(s_end * video.fps)
             if cut_start > prev_frame:
-                keep_ranges.append((prev_frame, cut_start))
+                keep.append((prev_frame, cut_start))
             prev_frame = cut_end
         if prev_frame < len(video.frames):
-            keep_ranges.append((prev_frame, len(video.frames)))
-
-        if not keep_ranges:
+            keep.append((prev_frame, len(video.frames)))
+        if not keep:
             return video
-
-        frame_segments = [video.frames[start:end] for start, end in keep_ranges]
-        video.frames = np.concatenate(frame_segments, axis=0)
-
+        video.frames = np.concatenate([video.frames[s:e] for s, e in keep], axis=0)
         if video.audio is not None:
             sample_rate = video.audio.metadata.sample_rate
-            audio_segments = []
-            for start_f, end_f in keep_ranges:
+            chunks = []
+            for start_f, end_f in keep:
                 a_start = round((start_f / video.fps) * sample_rate)
                 a_end = round((end_f / video.fps) * sample_rate)
-                audio_segments.append(video.audio.data[a_start:a_end])
-            video.audio.data = np.concatenate(audio_segments, axis=0)
+                chunks.append(video.audio.data[a_start:a_end])
+            video.audio.data = np.concatenate(chunks, axis=0)
             video.audio = video.audio.fit_to_duration(len(video.frames) / video.fps)
-
         return video
 
     def _apply_speed_up(self, video: Video, silence_ranges: list[tuple[float, float]]) -> Video:
-        """Speed up silent sections instead of cutting them."""
         segments: list[tuple[int, int, float]] = []
         prev_frame = 0
         for s_start, s_end in silence_ranges:
@@ -885,19 +723,17 @@ class SilenceRemoval(Transformation):
 
         frame_parts: list[np.ndarray] = []
         for start_f, end_f, speed in segments:
-            n_frames = end_f - start_f
-            if n_frames <= 0:
+            n = end_f - start_f
+            if n <= 0:
                 continue
             if speed == 1.0:
                 frame_parts.append(video.frames[start_f:end_f])
             else:
-                target_count = max(1, round(n_frames / speed))
-                indices = np.linspace(start_f, end_f - 1, target_count).astype(int)
-                frame_parts.append(video.frames[indices])
-
+                target = max(1, round(n / speed))
+                idx = np.linspace(start_f, end_f - 1, target).astype(int)
+                frame_parts.append(video.frames[idx])
         if not frame_parts:
             return video
-
         video.frames = np.concatenate(frame_parts, axis=0)
 
         if video.audio is not None and not video.audio.is_silent:
@@ -910,10 +746,57 @@ class SilenceRemoval(Transformation):
                 if speed == 1.0 or len(chunk) == 0:
                     audio_parts.append(chunk)
                 else:
-                    target_len = max(1, round(len(chunk) / speed))
-                    indices = np.linspace(0, len(chunk) - 1, target_len).astype(int)
-                    audio_parts.append(chunk[indices])
+                    target = max(1, round(len(chunk) / speed))
+                    idx = np.linspace(0, len(chunk) - 1, target).astype(int)
+                    audio_parts.append(chunk[idx])
             video.audio.data = np.concatenate(audio_parts, axis=0)
             video.audio = video.audio.fit_to_duration(len(video.frames) / video.fps)
-
         return video
+
+    def predict_metadata(  # type: ignore[override]
+        self,
+        meta: VideoMetadata,
+        transcription: Transcription | None = None,
+    ) -> VideoMetadata:
+        from videopython.base.video import VideoMetadata as _Meta
+
+        identity = _Meta(
+            height=meta.height,
+            width=meta.width,
+            fps=meta.fps,
+            frame_count=meta.frame_count,
+            total_seconds=meta.total_seconds,
+        )
+        if transcription is None or not getattr(transcription, "words", None):
+            return identity
+        silences = self._silence_ranges(transcription.words, meta.total_seconds)
+        if not silences:
+            return identity
+
+        if self.mode == "cut":
+            keep = 0
+            prev_frame = 0
+            for s_start, s_end in silences:
+                cut_start = round(s_start * meta.fps)
+                cut_end = round(s_end * meta.fps)
+                if cut_start > prev_frame:
+                    keep += cut_start - prev_frame
+                prev_frame = cut_end
+            if prev_frame < meta.frame_count:
+                keep += meta.frame_count - prev_frame
+            new_count = max(1, keep)
+        else:
+            saved = 0
+            for s_start, s_end in silences:
+                gap = round((s_end - s_start) * meta.fps)
+                sped = max(1, round(gap / self.speed_factor))
+                saved += gap - sped
+            new_count = max(1, meta.frame_count - saved)
+
+        return _Meta(
+            height=meta.height,
+            width=meta.width,
+            fps=meta.fps,
+            frame_count=new_count,
+            total_seconds=round(new_count / meta.fps, 4),
+        )
