@@ -104,14 +104,11 @@ class TestVideoEditRunToFile:
                     "source": SMALL_VIDEO_PATH,
                     "start": 0,
                     "end": 2.0,
-                    "transforms": [],
-                    "effects": [
-                        {"op": "color_adjust", "args": {"brightness": 0.2}},
+                    "operations": [
+                        {"op": "color_adjust", "brightness": 0.2},
                     ],
                 }
             ],
-            "post_transforms": [],
-            "post_effects": [],
         }
         edit = VideoEdit.from_dict(plan)
         with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
@@ -134,14 +131,11 @@ class TestVideoEditRunToFile:
                     "source": SMALL_VIDEO_PATH,
                     "start": 0,
                     "end": 2.0,
-                    "transforms": [],
-                    "effects": [
-                        {"op": "color_adjust", "args": {"saturation": 0, "contrast": 1.15}},
+                    "operations": [
+                        {"op": "color_adjust", "saturation": 0, "contrast": 1.15},
                     ],
                 }
             ],
-            "post_transforms": [],
-            "post_effects": [],
         }
         # Eager path
         edit_eager = VideoEdit.from_dict(plan_dict)
@@ -178,9 +172,8 @@ class TestVideoEditRunToFile:
                     "source": SMALL_VIDEO_PATH,
                     "start": 0,
                     "end": 2.0,
-                    "transforms": [],
-                    "effects": [
-                        {"op": "volume_adjust", "args": {"volume": 1.5}},
+                    "operations": [
+                        {"op": "volume_adjust", "volume": 1.5},
                     ],
                 }
             ],
@@ -202,11 +195,10 @@ class TestVideoEditRunToFile:
                     "source": SMALL_VIDEO_PATH,
                     "start": 0,
                     "end": 2.0,
-                    "transforms": [],
-                    "effects": [
-                        {"op": "color_adjust", "args": {"saturation": 0}},
-                        {"op": "volume_adjust", "args": {"volume": 1.6}},
-                        {"op": "fade", "args": {"mode": "in_out", "duration": 0.5}},
+                    "operations": [
+                        {"op": "color_adjust", "saturation": 0},
+                        {"op": "volume_adjust", "volume": 1.6},
+                        {"op": "fade", "mode": "in_out", "duration": 0.5},
                     ],
                 }
             ],
@@ -247,8 +239,7 @@ class TestStreamableTransforms:
                         "source": SMALL_VIDEO_PATH,
                         "start": 0,
                         "end": 2.0,
-                        "transforms": [{"op": "resize", "args": {"width": 400, "height": 250}}],
-                        "effects": [],
+                        "operations": [{"op": "resize", "width": 400, "height": 250}],
                     }
                 ]
             }
@@ -264,8 +255,7 @@ class TestStreamableTransforms:
                         "source": SMALL_VIDEO_PATH,
                         "start": 0,
                         "end": 2.0,
-                        "transforms": [{"op": "crop", "args": {"width": 400, "height": 300, "mode": "center"}}],
-                        "effects": [],
+                        "operations": [{"op": "crop", "width": 400, "height": 300, "mode": "center"}],
                     }
                 ]
             }
@@ -281,8 +271,7 @@ class TestStreamableTransforms:
                         "source": SMALL_VIDEO_PATH,
                         "start": 0,
                         "end": 2.0,
-                        "transforms": [{"op": "resample_fps", "args": {"fps": 12}}],
-                        "effects": [],
+                        "operations": [{"op": "resample_fps", "fps": 12}],
                     }
                 ]
             }
@@ -298,8 +287,7 @@ class TestStreamableTransforms:
                         "source": SMALL_VIDEO_PATH,
                         "start": 0,
                         "end": 4.0,
-                        "transforms": [{"op": "speed_change", "args": {"speed": 2.0}}],
-                        "effects": [],
+                        "operations": [{"op": "speed_change", "speed": 2.0}],
                     }
                 ]
             }
@@ -315,13 +303,11 @@ class TestStreamableTransforms:
                         "source": SMALL_VIDEO_PATH,
                         "start": 0,
                         "end": 2.0,
-                        "transforms": [
-                            {"op": "resize", "args": {"width": 400, "height": 250}},
-                            {"op": "crop", "args": {"width": 380, "height": 230, "mode": "center"}},
-                        ],
-                        "effects": [
-                            {"op": "color_adjust", "args": {"brightness": 0.1}},
-                            {"op": "fade", "args": {"mode": "in", "duration": 0.5}},
+                        "operations": [
+                            {"op": "resize", "width": 400, "height": 250},
+                            {"op": "crop", "width": 380, "height": 230, "mode": "center"},
+                            {"op": "color_adjust", "brightness": 0.1},
+                            {"op": "fade", "mode": "in", "duration": 0.5},
                         ],
                     }
                 ]
@@ -341,8 +327,7 @@ class TestStreamableEffects:
                     "source": SMALL_VIDEO_PATH,
                     "start": start,
                     "end": end,
-                    "transforms": [],
-                    "effects": [effect_dict],
+                    "operations": [effect_dict],
                 }
             ]
         }
@@ -357,61 +342,65 @@ class TestStreamableEffects:
             out_path.unlink(missing_ok=True)
 
     def test_color_adjust(self):
-        result = self._run_effect({"op": "color_adjust", "args": {"saturation": 0, "contrast": 1.2}})
+        result = self._run_effect({"op": "color_adjust", "saturation": 0, "contrast": 1.2})
         assert result.frames.shape[0] > 0
 
     def test_blur_constant(self):
-        result = self._run_effect({"op": "blur_effect", "args": {"mode": "constant", "iterations": 5}})
+        result = self._run_effect({"op": "blur_effect", "mode": "constant", "iterations": 5})
         assert result.frames.shape[0] > 0
 
     def test_blur_ascending(self):
-        result = self._run_effect({"op": "blur_effect", "args": {"mode": "ascending", "iterations": 10}})
+        result = self._run_effect({"op": "blur_effect", "mode": "ascending", "iterations": 10})
         assert result.frames.shape[0] > 0
 
     def test_zoom_in(self):
-        result = self._run_effect({"op": "zoom_effect", "args": {"zoom_factor": 1.5, "mode": "in"}})
+        result = self._run_effect({"op": "zoom_effect", "zoom_factor": 1.5, "mode": "in"})
         assert result.frames.shape[0] > 0
 
     def test_zoom_out(self):
-        result = self._run_effect({"op": "zoom_effect", "args": {"zoom_factor": 1.5, "mode": "out"}})
+        result = self._run_effect({"op": "zoom_effect", "zoom_factor": 1.5, "mode": "out"})
         assert result.frames.shape[0] > 0
 
     def test_vignette(self):
-        result = self._run_effect({"op": "vignette", "args": {"strength": 0.8, "radius": 1.0}})
+        result = self._run_effect({"op": "vignette", "strength": 0.8, "radius": 1.0})
         assert result.frames.shape[0] > 0
 
     def test_fade_in(self):
-        result = self._run_effect({"op": "fade", "args": {"mode": "in", "duration": 0.5}})
+        result = self._run_effect({"op": "fade", "mode": "in", "duration": 0.5})
         assert result.frames[0].mean() < 5
 
     def test_fade_out(self):
-        result = self._run_effect({"op": "fade", "args": {"mode": "out", "duration": 0.5}})
+        result = self._run_effect({"op": "fade", "mode": "out", "duration": 0.5})
         assert result.frames[-1].mean() < 5
 
     def test_fade_in_out_all_curves(self):
         for curve in ("sqrt", "linear", "exponential"):
-            result = self._run_effect({"op": "fade", "args": {"mode": "in_out", "duration": 0.5, "curve": curve}})
+            result = self._run_effect({"op": "fade", "mode": "in_out", "duration": 0.5, "curve": curve})
             assert result.frames[0].mean() < 5
 
     def test_volume_adjust(self):
-        result = self._run_effect({"op": "volume_adjust", "args": {"volume": 0.5}})
+        result = self._run_effect({"op": "volume_adjust", "volume": 0.5})
         assert result.frames.shape[0] > 0
 
     def test_text_overlay(self):
-        result = self._run_effect({"op": "text_overlay", "args": {"text": "Test", "font_size": 24}})
+        result = self._run_effect({"op": "text_overlay", "text": "Test", "font_size": 24})
         assert result.frames.shape[0] > 0
 
-    def test_effect_with_time_range(self):
-        """Effect with start/stop apply args should work in streaming."""
+    def test_effect_with_window(self):
+        """Effect with `window` should work in streaming."""
         plan = {
             "segments": [
                 {
                     "source": SMALL_VIDEO_PATH,
                     "start": 0,
                     "end": 4.0,
-                    "transforms": [],
-                    "effects": [
-                        {"op": "fade", "args": {"mode": "in", "duration": 1.0}, "apply": {"start": 0, "stop": 2.0}},
+                    "operations": [
+                        {
+                            "op": "fade",
+                            "mode": "in",
+                            "duration": 1.0,
+                            "window": {"start": 0, "stop": 2.0},
+                        },
                     ],
                 }
             ]

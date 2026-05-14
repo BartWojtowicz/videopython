@@ -280,6 +280,11 @@ class Crop(Operation):
         _, _, cw, ch = self._resolve_box(meta.width, meta.height)
         if cw > meta.width or ch > meta.height:
             raise ValueError(f"Crop {cw}x{ch} exceeds source {meta.width}x{meta.height}")
+        if self.mode == CropMode.CENTER:
+            # Mirror apply()'s `mid - cw//2 : mid + cw//2` slice, which produces
+            # 2 * (cw // 2) pixels — i.e. odd targets get rounded down to even.
+            cw = (cw // 2) * 2
+            ch = (ch // 2) * 2
         return meta.with_dimensions(cw, ch)
 
     def to_ffmpeg_filter(self, ctx: FilterCtx) -> str | None:
