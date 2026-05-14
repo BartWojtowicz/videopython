@@ -52,21 +52,23 @@ class FullImageOverlay(Effect):
     Useful for watermarks, logos, or static graphic overlays. Supports
     transparency via RGBA images and an overall opacity control. The overlay
     is loaded just-in-time from ``source`` so the op stays JSON-serialisable.
-
-    Args:
-        source: Path to an RGB or RGBA image file. Loaded at apply time; the
-            image must match the video's width and height.
-        alpha: Overall opacity. 0 = fully transparent, 1 = fully opaque.
-        fade_time: Seconds to fade the overlay in at the start and out at the
-            end of its time range.
     """
 
     op: Literal["full_image_overlay"] = "full_image_overlay"
     streamable: ClassVar[bool] = True
 
-    source: Path
-    alpha: float = Field(1.0, ge=0, le=1)
-    fade_time: float = Field(0.0, ge=0)
+    source: Path = Field(
+        description=(
+            "Path to an RGB or RGBA image file. Loaded at apply time; "
+            "the image must match the video's width and height."
+        ),
+    )
+    alpha: float = Field(1.0, ge=0, le=1, description="Overall opacity. 0 = fully transparent, 1 = fully opaque.")
+    fade_time: float = Field(
+        0.0,
+        ge=0,
+        description="Seconds to fade the overlay in at the start and out at the end of its time range.",
+    )
 
     _overlay_rgba: np.ndarray | None = PrivateAttr(default=None)
     _stream_total: int = PrivateAttr(default=0)
@@ -120,23 +122,27 @@ class FullImageOverlay(Effect):
 
 
 class Blur(Effect):
-    """Applies Gaussian blur that can stay constant or ramp up/down over the clip.
-
-    Args:
-        mode: "constant" applies uniform blur, "ascending" ramps from sharp to
-            blurry, "descending" ramps from blurry to sharp.
-        iterations: Blur strength. Higher values produce a stronger blur
-            (e.g. 5 for subtle, 50+ for heavy).
-        kernel_size: Gaussian kernel [width, height] in pixels. Must be odd
-            numbers. Larger kernels spread the blur wider.
-    """
+    """Applies Gaussian blur that can stay constant or ramp up/down over the clip."""
 
     op: Literal["blur_effect"] = "blur_effect"
     streamable: ClassVar[bool] = True
 
-    mode: Literal["constant", "ascending", "descending"]
-    iterations: int = Field(ge=1)
-    kernel_size: tuple[int, int] = (5, 5)
+    mode: Literal["constant", "ascending", "descending"] = Field(
+        description=(
+            '"constant" applies uniform blur, "ascending" ramps from sharp to blurry, '
+            '"descending" ramps from blurry to sharp.'
+        ),
+    )
+    iterations: int = Field(
+        ge=1,
+        description="Blur strength. Higher values produce a stronger blur (e.g. 5 for subtle, 50+ for heavy).",
+    )
+    kernel_size: tuple[int, int] = Field(
+        (5, 5),
+        description=(
+            "Gaussian kernel [width, height] in pixels. Must be odd numbers. Larger kernels spread the blur wider."
+        ),
+    )
 
     _stream_sigmas: np.ndarray | None = PrivateAttr(default=None)
 
@@ -173,20 +179,18 @@ class Blur(Effect):
 
 
 class Zoom(Effect):
-    """Progressively zooms into or out of the frame center over the clip duration.
-
-    Args:
-        zoom_factor: How far to zoom. 1.5 is a subtle push, 2.0 is moderate,
-            3.0+ is dramatic. Must be greater than 1.
-        mode: "in" starts wide and pushes into the center, "out" starts tight
-            and pulls back.
-    """
+    """Progressively zooms into or out of the frame center over the clip duration."""
 
     op: Literal["zoom_effect"] = "zoom_effect"
     streamable: ClassVar[bool] = True
 
-    zoom_factor: float = Field(gt=1)
-    mode: Literal["in", "out"]
+    zoom_factor: float = Field(
+        gt=1,
+        description="How far to zoom. 1.5 is a subtle push, 2.0 is moderate, 3.0+ is dramatic. Must be greater than 1.",
+    )
+    mode: Literal["in", "out"] = Field(
+        description='"in" starts wide and pushes into the center, "out" starts tight and pulls back.',
+    )
 
     _stream_crops: np.ndarray | None = PrivateAttr(default=None)
     _stream_width: int = PrivateAttr(default=0)
@@ -229,26 +233,35 @@ class Zoom(Effect):
 
 
 class ColorGrading(Effect):
-    """Adjusts color properties: brightness, contrast, saturation, and temperature.
-
-    Args:
-        brightness: Shift brightness. -1.0 = much darker, 0 = unchanged,
-            1.0 = much brighter.
-        contrast: Scale contrast. 0.5 = flat/washed out, 1.0 = unchanged,
-            2.0 = high contrast.
-        saturation: Scale color intensity. 0.0 = grayscale, 1.0 = unchanged,
-            2.0 = vivid/oversaturated.
-        temperature: Shift color temperature. -1.0 = cool/blue tint,
-            0 = neutral, 1.0 = warm/orange tint.
-    """
+    """Adjusts color properties: brightness, contrast, saturation, and temperature."""
 
     op: Literal["color_adjust"] = "color_adjust"
     streamable: ClassVar[bool] = True
 
-    brightness: float = Field(0.0, ge=-1.0, le=1.0)
-    contrast: float = Field(1.0, ge=0.5, le=2.0)
-    saturation: float = Field(1.0, ge=0.0, le=2.0)
-    temperature: float = Field(0.0, ge=-1.0, le=1.0)
+    brightness: float = Field(
+        0.0,
+        ge=-1.0,
+        le=1.0,
+        description="Shift brightness. -1.0 = much darker, 0 = unchanged, 1.0 = much brighter.",
+    )
+    contrast: float = Field(
+        1.0,
+        ge=0.5,
+        le=2.0,
+        description="Scale contrast. 0.5 = flat/washed out, 1.0 = unchanged, 2.0 = high contrast.",
+    )
+    saturation: float = Field(
+        1.0,
+        ge=0.0,
+        le=2.0,
+        description="Scale color intensity. 0.0 = grayscale, 1.0 = unchanged, 2.0 = vivid/oversaturated.",
+    )
+    temperature: float = Field(
+        0.0,
+        ge=-1.0,
+        le=1.0,
+        description="Shift color temperature. -1.0 = cool/blue tint, 0 = neutral, 1.0 = warm/orange tint.",
+    )
 
     def _grade_frame(self, frame: np.ndarray) -> np.ndarray:
         img = frame.astype(np.float32) / 255.0
@@ -279,20 +292,26 @@ class ColorGrading(Effect):
 
 
 class Vignette(Effect):
-    """Darkens the edges of the frame, drawing attention to the center.
-
-    Args:
-        strength: Edge darkness amount. 0.0 = no darkening, 0.5 = moderate,
-            1.0 = fully black edges.
-        radius: Size of the bright center area. Smaller values (0.5) create a
-            tight spotlight, larger values (2.0) keep more of the frame lit.
-    """
+    """Darkens the edges of the frame, drawing attention to the center."""
 
     op: Literal["vignette"] = "vignette"
     streamable: ClassVar[bool] = True
 
-    strength: float = Field(0.5, ge=0.0, le=1.0)
-    radius: float = Field(1.0, ge=0.5, le=2.0)
+    strength: float = Field(
+        0.5,
+        ge=0.0,
+        le=1.0,
+        description="Edge darkness amount. 0.0 = no darkening, 0.5 = moderate, 1.0 = fully black edges.",
+    )
+    radius: float = Field(
+        1.0,
+        ge=0.5,
+        le=2.0,
+        description=(
+            "Size of the bright center area. Smaller values (0.5) create a tight spotlight, "
+            "larger values (2.0) keep more of the frame lit."
+        ),
+    )
 
     _mask: np.ndarray | None = PrivateAttr(default=None)
     _stream_mask_3d: np.ndarray | None = PrivateAttr(default=None)
@@ -333,23 +352,22 @@ class KenBurns(Effect):
     Creates movement by transitioning from a start region to an end region over
     the clip. Use it to add motion to still images or to guide the viewer's eye
     across a scene.
-
-    Args:
-        start_region: Starting crop region as a BoundingBox with normalized
-            0-1 coordinates.
-        end_region: Ending crop region as a BoundingBox with normalized
-            0-1 coordinates.
-        easing: Animation curve. "linear" moves at constant speed, "ease_in"
-            starts slow, "ease_out" ends slow, "ease_in_out" starts and ends
-            slow.
     """
 
     op: Literal["ken_burns"] = "ken_burns"
     streamable: ClassVar[bool] = True
 
-    start_region: BoundingBox
-    end_region: BoundingBox
-    easing: Literal["linear", "ease_in", "ease_out", "ease_in_out"] = "linear"
+    start_region: BoundingBox = Field(
+        description="Starting crop region as a BoundingBox with normalized 0-1 coordinates."
+    )
+    end_region: BoundingBox = Field(description="Ending crop region as a BoundingBox with normalized 0-1 coordinates.")
+    easing: Literal["linear", "ease_in", "ease_out", "ease_in_out"] = Field(
+        "linear",
+        description=(
+            'Animation curve. "linear" moves at constant speed, "ease_in" starts slow, '
+            '"ease_out" ends slow, "ease_in_out" starts and ends slow.'
+        ),
+    )
 
     _stream_regions: np.ndarray | None = PrivateAttr(default=None)
     _stream_target_w: int = PrivateAttr(default=0)
@@ -436,23 +454,22 @@ def _compute_curve(t: np.ndarray, curve: str) -> np.ndarray:
 
 
 class Fade(Effect):
-    """Fades video and audio to or from black.
-
-    Args:
-        mode: "in" fades from black at the start, "out" fades to black at the
-            end, "in_out" does both.
-        duration: Length of each fade in seconds.
-        curve: Brightness ramp shape. "sqrt" feels perceptually even
-            (recommended), "linear" is mathematically even, "exponential"
-            starts slow and finishes fast.
-    """
+    """Fades video and audio to or from black."""
 
     op: Literal["fade"] = "fade"
     streamable: ClassVar[bool] = True
 
-    mode: Literal["in", "out", "in_out"]
-    duration: float = Field(1.0, gt=0)
-    curve: Literal["sqrt", "linear", "exponential"] = "sqrt"
+    mode: Literal["in", "out", "in_out"] = Field(
+        description=('"in" fades from black at the start, "out" fades to black at the end, "in_out" does both.'),
+    )
+    duration: float = Field(1.0, gt=0, description="Length of each fade in seconds.")
+    curve: Literal["sqrt", "linear", "exponential"] = Field(
+        "sqrt",
+        description=(
+            'Brightness ramp shape. "sqrt" feels perceptually even (recommended), '
+            '"linear" is mathematically even, "exponential" starts slow and finishes fast.'
+        ),
+    )
 
     _stream_alpha: np.ndarray | None = PrivateAttr(default=None)
 
@@ -521,20 +538,21 @@ class Fade(Effect):
 
 
 class VolumeAdjust(Effect):
-    """Changes audio volume within a time range without affecting video frames.
-
-    Args:
-        volume: Volume multiplier. 0.0 = silence, 1.0 = original level,
-            2.0 = twice as loud (may clip).
-        ramp_duration: Seconds to smoothly ramp volume at the start and end of
-            the window, preventing audible clicks.
-    """
+    """Changes audio volume within a time range without affecting video frames."""
 
     op: Literal["volume_adjust"] = "volume_adjust"
     streamable: ClassVar[bool] = True
 
-    volume: float = Field(1.0, ge=0)
-    ramp_duration: float = Field(0.0, ge=0)
+    volume: float = Field(
+        1.0,
+        ge=0,
+        description="Volume multiplier. 0.0 = silence, 1.0 = original level, 2.0 = twice as loud (may clip).",
+    )
+    ramp_duration: float = Field(
+        0.0,
+        ge=0,
+        description="Seconds to smoothly ramp volume at the start and end of the window, preventing audible clicks.",
+    )
 
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
         return frame
@@ -568,35 +586,39 @@ class VolumeAdjust(Effect):
 
 
 class TextOverlay(Effect):
-    r"""Draws text on video frames, with auto word-wrap and optional background box.
-
-    Args:
-        text: The string to display. Use \n for line breaks.
-        position: Where to place the text as normalized (x, y) coordinates.
-            (0, 0) = top-left corner, (1, 1) = bottom-right corner.
-        font_size: Font size in pixels.
-        text_color: Text color as [R, G, B], each 0-255.
-        background_color: Background box color as [R, G, B, A] (0-255), or
-            null to disable the background.
-        background_padding: Padding in pixels between text and background edge.
-        max_width: Maximum text width as a fraction of frame width (0-1). Text
-            longer than this wraps to the next line.
-        anchor: Which point of the text box sits at the position coordinate.
-        font_filename: Path to a .ttf font file, or None for the default font.
-    """
+    """Draws text on video frames, with auto word-wrap and optional background box."""
 
     op: Literal["text_overlay"] = "text_overlay"
     streamable: ClassVar[bool] = True
 
-    text: str = Field(min_length=1)
-    position: tuple[float, float] = (0.5, 0.9)
-    font_size: int = Field(48, ge=1)
-    text_color: tuple[int, int, int] = (255, 255, 255)
-    background_color: tuple[int, int, int, int] | None = (0, 0, 0, 160)
-    background_padding: int = Field(12, ge=0)
-    max_width: float = Field(0.8, gt=0.0, le=1.0)
-    anchor: Literal["center", "top_left", "top_center", "bottom_center", "bottom_left", "bottom_right"] = "center"
-    font_filename: str | None = None
+    text: str = Field(min_length=1, description=r"The string to display. Use \n for line breaks.")
+    position: tuple[float, float] = Field(
+        (0.5, 0.9),
+        description=(
+            "Where to place the text as normalized (x, y) coordinates. "
+            "(0, 0) = top-left corner, (1, 1) = bottom-right corner."
+        ),
+    )
+    font_size: int = Field(48, ge=1, description="Font size in pixels.")
+    text_color: tuple[int, int, int] = Field((255, 255, 255), description="Text color as [R, G, B], each 0-255.")
+    background_color: tuple[int, int, int, int] | None = Field(
+        (0, 0, 0, 160),
+        description="Background box color as [R, G, B, A] (0-255), or null to disable the background.",
+    )
+    background_padding: int = Field(12, ge=0, description="Padding in pixels between text and background edge.")
+    max_width: float = Field(
+        0.8,
+        gt=0.0,
+        le=1.0,
+        description=(
+            "Maximum text width as a fraction of frame width (0-1). Text longer than this wraps to the next line."
+        ),
+    )
+    anchor: Literal["center", "top_left", "top_center", "bottom_center", "bottom_left", "bottom_right"] = Field(
+        "center",
+        description="Which point of the text box sits at the position coordinate.",
+    )
+    font_filename: str | None = Field(None, description="Path to a .ttf font file, or None for the default font.")
 
     _rendered: np.ndarray | None = PrivateAttr(default=None)
     _stream_noop: bool = PrivateAttr(default=False)

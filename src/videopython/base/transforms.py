@@ -40,18 +40,13 @@ __all__ = [
 
 
 class CutFrames(Operation):
-    """Cuts video to a specific frame range.
-
-    Args:
-        start: Start frame index (inclusive).
-        end: End frame index (exclusive).
-    """
+    """Cuts video to a specific frame range."""
 
     op: Literal["cut_frames"] = "cut_frames"
     category: ClassVar[OpCategory] = OpCategory.TRANSFORM
 
-    start: int = Field(ge=0)
-    end: int = Field(ge=0)
+    start: int = Field(ge=0, description="Start frame index (inclusive).")
+    end: int = Field(ge=0, description="End frame index (exclusive).")
 
     @model_validator(mode="after")
     def _validate_range(self) -> CutFrames:
@@ -70,18 +65,13 @@ class CutFrames(Operation):
 
 
 class CutSeconds(Operation):
-    """Cuts video to a specific time range in seconds.
-
-    Args:
-        start: Start time in seconds.
-        end: End time in seconds.
-    """
+    """Cuts video to a specific time range in seconds."""
 
     op: Literal["cut"] = "cut"
     category: ClassVar[OpCategory] = OpCategory.TRANSFORM
 
-    start: float = Field(ge=0)
-    end: float = Field(ge=0)
+    start: float = Field(ge=0, description="Start time in seconds.")
+    end: float = Field(ge=0, description="End time in seconds.")
 
     @model_validator(mode="after")
     def _validate_range(self) -> CutSeconds:
@@ -103,21 +93,15 @@ class CutSeconds(Operation):
 
 
 class Resize(Operation):
-    """Resizes video to specified dimensions, preserving aspect ratio if only one dimension is given.
-
-    Args:
-        width: Target width in pixels, or None to maintain aspect ratio.
-        height: Target height in pixels, or None to maintain aspect ratio.
-        round_to_even: If True (default), snap output width/height to even numbers.
-    """
+    """Resizes video to specified dimensions, preserving aspect ratio if only one dimension is given."""
 
     op: Literal["resize"] = "resize"
     category: ClassVar[OpCategory] = OpCategory.TRANSFORM
     streamable: ClassVar[bool] = True
 
-    width: int | None = Field(None, gt=0)
-    height: int | None = Field(None, gt=0)
-    round_to_even: bool = True
+    width: int | None = Field(None, gt=0, description="Target width in pixels, or None to maintain aspect ratio.")
+    height: int | None = Field(None, gt=0, description="Target height in pixels, or None to maintain aspect ratio.")
+    round_to_even: bool = Field(True, description="If True (default), snap output width/height to even numbers.")
 
     @model_validator(mode="after")
     def _require_one_dimension(self) -> Resize:
@@ -159,17 +143,13 @@ class Resize(Operation):
 
 
 class ResampleFPS(Operation):
-    """Resamples video to a different frame rate, upsampling or downsampling as needed.
-
-    Args:
-        fps: Target frames per second.
-    """
+    """Resamples video to a different frame rate, upsampling or downsampling as needed."""
 
     op: Literal["resample_fps"] = "resample_fps"
     category: ClassVar[OpCategory] = OpCategory.TRANSFORM
     streamable: ClassVar[bool] = True
 
-    fps: float = Field(gt=0)
+    fps: float = Field(gt=0, description="Target frames per second.")
 
     def _downsample(self, video: Video) -> Video:
         target = int(len(video.frames) * (self.fps / video.fps))
@@ -221,25 +201,20 @@ class Crop(Operation):
     """Crops the frame to a smaller region.
 
     Accepts pixel values (int) or normalized 0-1 fractions (float). For
-    example, width=0.5 crops to 50% of the original width.
-
-    Args:
-        width: Crop width in pixels (int) or fraction in (0, 1] of source width.
-        height: Crop height in pixels (int) or fraction in (0, 1] of source height.
-        x: Left edge X (only with mode='custom'). Pixels (int) or fraction in [0, 1].
-        y: Top edge Y (only with mode='custom'). Pixels (int) or fraction in [0, 1].
-        mode: 'center' crops from the middle, 'custom' uses x/y coordinates.
+    example, ``width=0.5`` crops to 50% of the original width.
     """
 
     op: Literal["crop"] = "crop"
     category: ClassVar[OpCategory] = OpCategory.TRANSFORM
     streamable: ClassVar[bool] = True
 
-    width: int | float
-    height: int | float
-    x: int | float = 0
-    y: int | float = 0
-    mode: CropMode = CropMode.CENTER
+    width: int | float = Field(description="Crop width in pixels (int) or fraction in (0, 1] of source width.")
+    height: int | float = Field(description="Crop height in pixels (int) or fraction in (0, 1] of source height.")
+    x: int | float = Field(0, description="Left edge X (only with mode='custom'). Pixels or fraction in [0, 1].")
+    y: int | float = Field(0, description="Top edge Y (only with mode='custom'). Pixels or fraction in [0, 1].")
+    mode: CropMode = Field(
+        CropMode.CENTER, description="'center' crops from the middle, 'custom' uses x/y coordinates."
+    )
 
     @staticmethod
     def _to_pixels(value: int | float, dimension: int) -> int:
@@ -287,22 +262,19 @@ class Crop(Operation):
 
 
 class SpeedChange(Operation):
-    """Speeds up or slows down video playback, optionally ramping between two speeds.
-
-    Args:
-        speed: Playback speed multiplier. 2.0 = twice as fast, 0.5 = half speed.
-        end_speed: If set, smoothly ramp from speed to end_speed over the clip duration.
-        interpolate: Blend between frames when slowing down for smoother motion.
-        adjust_audio: Time-stretch audio to match the new speed.
-    """
+    """Speeds up or slows down video playback, optionally ramping between two speeds."""
 
     op: Literal["speed_change"] = "speed_change"
     category: ClassVar[OpCategory] = OpCategory.TRANSFORM
 
-    speed: float = Field(gt=0)
-    end_speed: float | None = Field(None, gt=0)
-    interpolate: bool = True
-    adjust_audio: bool = True
+    speed: float = Field(gt=0, description="Playback speed multiplier. 2.0 = twice as fast, 0.5 = half speed.")
+    end_speed: float | None = Field(
+        None,
+        gt=0,
+        description="If set, smoothly ramp from speed to end_speed over the clip duration.",
+    )
+    interpolate: bool = Field(True, description="Blend between frames when slowing down for smoother motion.")
+    adjust_audio: bool = Field(True, description="Time-stretch audio to match the new speed.")
 
     def _new_frame_count(self, n_frames: int) -> int:
         if self.end_speed is None:
@@ -376,16 +348,12 @@ class SpeedChange(Operation):
 
 
 class Reverse(Operation):
-    """Plays the video backwards, with optional audio reversal.
-
-    Args:
-        reverse_audio: If true, reverse the audio track along with the video.
-    """
+    """Plays the video backwards, with optional audio reversal."""
 
     op: Literal["reverse"] = "reverse"
     category: ClassVar[OpCategory] = OpCategory.TRANSFORM
 
-    reverse_audio: bool = True
+    reverse_audio: bool = Field(True, description="If true, reverse the audio track along with the video.")
 
     def apply(self, video: Video) -> Video:
         video.frames = video.frames[::-1].copy()
@@ -395,20 +363,17 @@ class Reverse(Operation):
 
 
 class FreezeFrame(Operation):
-    """Pauses video at a specific moment by holding a single frame.
-
-    Args:
-        timestamp: Time in seconds at which to capture the frame.
-        duration: How long to hold the frozen frame, in seconds.
-        position: 'after' / 'before' inserts frames; 'replace' swaps existing frames out.
-    """
+    """Pauses video at a specific moment by holding a single frame."""
 
     op: Literal["freeze_frame"] = "freeze_frame"
     category: ClassVar[OpCategory] = OpCategory.TRANSFORM
 
-    timestamp: float = Field(ge=0)
-    duration: float = Field(2.0, gt=0)
-    position: Literal["before", "after", "replace"] = "after"
+    timestamp: float = Field(ge=0, description="Time in seconds at which to capture the frame.")
+    duration: float = Field(2.0, gt=0, description="How long to hold the frozen frame, in seconds.")
+    position: Literal["before", "after", "replace"] = Field(
+        "after",
+        description="'after' / 'before' inserts frames; 'replace' swaps existing frames out.",
+    )
 
     def apply(self, video: Video) -> Video:
         if self.timestamp >= video.total_seconds:
@@ -479,22 +444,19 @@ class SilenceRemoval(Operation):
 
     Uses word-level transcription timestamps to identify silent sections and
     either removes them entirely or speeds them up.
-
-    Args:
-        min_silence_duration: Ignore silences shorter than this many seconds.
-        padding: Seconds of breathing room around each speech boundary.
-        mode: 'cut' removes silent sections entirely; 'speed_up' speeds them up.
-        speed_factor: Speed multiplier for silent sections when mode='speed_up'.
     """
 
     op: Literal["silence_removal"] = "silence_removal"
     category: ClassVar[OpCategory] = OpCategory.TRANSFORM
     requires: ClassVar[tuple[str, ...]] = ("transcription",)
 
-    min_silence_duration: float = Field(1.0, gt=0)
-    padding: float = Field(0.15, ge=0)
-    mode: Literal["cut", "speed_up"] = "cut"
-    speed_factor: float = Field(3.0, gt=1.0)
+    min_silence_duration: float = Field(1.0, gt=0, description="Ignore silences shorter than this many seconds.")
+    padding: float = Field(0.15, ge=0, description="Seconds of breathing room around each speech boundary.")
+    mode: Literal["cut", "speed_up"] = Field(
+        "cut",
+        description="'cut' removes silent sections entirely; 'speed_up' speeds them up.",
+    )
+    speed_factor: float = Field(3.0, gt=1.0, description="Speed multiplier for silent sections when mode='speed_up'.")
 
     def _silence_ranges(self, words: list[Any], total_seconds: float) -> list[tuple[float, float]]:
         speech: list[tuple[float, float]] = []

@@ -1,9 +1,8 @@
 """Tests for the Operation/Effect base machinery in base/operation.py.
 
-Covers auto-registration, Google-style docstring -> field description bridging,
-the discriminated-union JSON schema, ``TimeRange`` validation, and the
-``Effect.apply`` window/invariant logic. Per-op behavioural tests live in
-``test_transforms.py`` / ``test_effects.py``.
+Covers auto-registration, the discriminated-union JSON schema, ``TimeRange``
+validation, and the ``Effect.apply`` window/invariant logic. Per-op
+behavioural tests live in ``test_transforms.py`` / ``test_effects.py``.
 """
 
 from __future__ import annotations
@@ -55,28 +54,17 @@ class TestTimeRange:
             TimeRange.model_validate({"start": 0, "stop": 1, "bogus": True})
 
 
-# --- Operation registry + docstring bridge -----------------------------------
+# --- Operation registry -----------------------------------------------------
 
 
 class _DocOp(Operation):
-    """A toy op for testing docstring -> description.
-
-    Args:
-        width: Target width in pixels.
-        height: Target height in pixels.
-    """
+    """A toy op for testing."""
 
     op: Literal["_doc_op"] = "_doc_op"
     category: ClassVar[OpCategory] = OpCategory.TRANSFORM
 
-    width: int = Field(1, gt=0)
-    height: int = Field(1, gt=0)
-
-
-class _NoDocOp(Operation):
-    op: Literal["_no_doc_op"] = "_no_doc_op"
-
-    width: int = 1
+    width: int = Field(1, gt=0, description="Target width in pixels.")
+    height: int = Field(1, gt=0, description="Target height in pixels.")
 
 
 class TestRegistry:
@@ -99,27 +87,10 @@ class TestRegistry:
     def test_op_id_property_mirrors_op(self):
         assert _DocOp(width=2, height=3).op_id == "_doc_op"
 
-
-class TestDocstringDescriptions:
-    def test_args_block_populates_field_descriptions(self):
-        assert _DocOp.model_fields["width"].description == "Target width in pixels."
-        assert _DocOp.model_fields["height"].description == "Target height in pixels."
-
-    def test_missing_docstring_leaves_descriptions_none(self):
-        assert _NoDocOp.model_fields["width"].description is None
-
-    def test_explicit_field_description_wins(self):
-        class _Explicit(Operation):
-            """An op.
-
-            Args:
-                width: docstring description.
-            """
-
-            op: Literal["_explicit_desc"] = "_explicit_desc"
-            width: int = Field(1, description="explicit description")
-
-        assert _Explicit.model_fields["width"].description == "explicit description"
+    def test_field_descriptions_flow_into_schema(self):
+        schema = _DocOp.model_json_schema()
+        assert schema["properties"]["width"]["description"] == "Target width in pixels."
+        assert schema["properties"]["height"]["description"] == "Target height in pixels."
 
 
 # --- JSON schema -------------------------------------------------------------
@@ -171,15 +142,11 @@ class TestOperationApplyDefault:
 
 
 class _Brighten(Effect):
-    """Add a constant brightness offset to every frame.
-
-    Args:
-        delta: Amount added to every pixel (clipped to uint8).
-    """
+    """Add a constant brightness offset to every frame."""
 
     op: Literal["_brighten"] = "_brighten"
 
-    delta: int = Field(10, ge=-255, le=255)
+    delta: int = Field(10, ge=-255, le=255, description="Amount added to every pixel (clipped to uint8).")
 
     def _apply(self, video: Video) -> Video:
         from videopython.base.video import Video as _V

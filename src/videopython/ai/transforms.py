@@ -36,44 +36,37 @@ class FaceTrackingCrop(Operation):
     Supports GPU acceleration for faster processing with optional frame sampling
     and simple cinematographic framing rules (headroom / thirds) plus optional
     movement speed clamping.
-
-    Args:
-        target_aspect: Output aspect ratio as (width, height).
-        face_selection: Strategy for selecting which face to track.
-        face_index: Index of face to track when using ``face_selection="index"``.
-        padding: Extra space around face (0.3 = 30% padding on each side).
-        vertical_offset: Legacy vertical position offset used by ``framing_rule="offset"``.
-        framing_rule: Subject framing strategy.
-            - "offset": Use legacy ``vertical_offset`` behavior.
-            - "center": Keep face centered.
-            - "headroom": Keep extra room above the face.
-            - "thirds": Place face near the upper-third line.
-            - "dynamic": Currently same as "headroom".
-        headroom: Headroom amount for framing rules that use it.
-        smoothing: Position smoothing factor (0-1, higher = smoother).
-        max_speed: Optional max camera movement per frame (normalized).
-        fallback: Behavior when no face detected.
-        detection_interval: Frames between face detections.
-        backend: Detection backend - "cpu", "gpu", or "auto".
-        sample_rate: For GPU backend, detect every Nth frame and interpolate.
     """
 
     op: Literal["face_crop"] = "face_crop"
     category: ClassVar[OpCategory] = OpCategory.TRANSFORM
 
-    target_aspect: tuple[int, int] = (9, 16)
-    face_selection: Literal["largest", "centered", "index"] = "largest"
-    face_index: int = Field(0, ge=0)
-    padding: float = Field(0.3, ge=0)
-    vertical_offset: float = -0.1
-    framing_rule: Literal["offset", "center", "headroom", "thirds", "dynamic"] = "offset"
-    headroom: float = 0.15
-    smoothing: float = Field(0.8, ge=0, le=1)
-    max_speed: float | None = Field(None, gt=0)
-    fallback: Literal["center", "last_position", "full_frame"] = "last_position"
-    detection_interval: int = Field(3, ge=1)
-    backend: Literal["cpu", "gpu", "auto"] = "auto"
-    sample_rate: int = Field(1, ge=1)
+    target_aspect: tuple[int, int] = Field((9, 16), description="Output aspect ratio as (width, height).")
+    face_selection: Literal["largest", "centered", "index"] = Field(
+        "largest", description="Strategy for selecting which face to track."
+    )
+    face_index: int = Field(0, ge=0, description='Index of face to track when using ``face_selection="index"``.')
+    padding: float = Field(0.3, ge=0, description="Extra space around face (0.3 = 30% padding on each side).")
+    vertical_offset: float = Field(
+        -0.1, description='Legacy vertical position offset used by ``framing_rule="offset"``.'
+    )
+    framing_rule: Literal["offset", "center", "headroom", "thirds", "dynamic"] = Field(
+        "offset",
+        description=(
+            'Subject framing strategy. "offset": legacy ``vertical_offset`` behavior; '
+            '"center": keep face centered; "headroom": extra room above the face; '
+            '"thirds": face near the upper-third line; "dynamic": currently same as "headroom".'
+        ),
+    )
+    headroom: float = Field(0.15, description="Headroom amount for framing rules that use it.")
+    smoothing: float = Field(0.8, ge=0, le=1, description="Position smoothing factor (0-1, higher = smoother).")
+    max_speed: float | None = Field(None, gt=0, description="Optional max camera movement per frame (normalized).")
+    fallback: Literal["center", "last_position", "full_frame"] = Field(
+        "last_position", description="Behavior when no face detected."
+    )
+    detection_interval: int = Field(3, ge=1, description="Frames between face detections.")
+    backend: Literal["cpu", "gpu", "auto"] = Field("auto", description='Detection backend - "cpu", "gpu", or "auto".')
+    sample_rate: int = Field(1, ge=1, description="For GPU backend, detect every Nth frame and interpolate.")
 
     def _apply_framing_offset(self, face_cx: float, face_cy: float, face_h: float) -> tuple[float, float]:
         if self.framing_rule == "offset":

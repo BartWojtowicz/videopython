@@ -30,7 +30,6 @@ Subclass contract::
 
 from __future__ import annotations
 
-import inspect
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Union, get_args, get_origin
@@ -86,45 +85,6 @@ class FilterCtx:
     fps: float
 
 
-def _parse_google_docstring_args(docstring: str | None) -> dict[str, str]:
-    """Extract ``{param_name: description}`` from a Google-style ``Args:`` block.
-
-    Used to populate ``model_fields[name].description`` automatically so that
-    the LLM-facing JSON schema stays in sync with the prose docstring.
-    """
-    if not docstring:
-        return {}
-    lines = docstring.strip().splitlines()
-    in_args = False
-    args: dict[str, str] = {}
-    current_name: str | None = None
-    current_desc_parts: list[str] = []
-    for line in lines:
-        stripped = line.strip()
-        if stripped == "Args:":
-            in_args = True
-            continue
-        if not in_args:
-            continue
-        if stripped and not line[0].isspace():
-            break
-        if not stripped:
-            continue
-        lstripped = line.lstrip()
-        indent = len(line) - len(lstripped)
-        if ": " in lstripped and indent <= 12:
-            if current_name is not None:
-                args[current_name] = " ".join(current_desc_parts).strip()
-            name_part, _, desc = lstripped.partition(": ")
-            current_name = name_part.split("(")[0].split(":")[0].strip()
-            current_desc_parts = [desc] if desc else []
-        elif current_name is not None:
-            current_desc_parts.append(stripped)
-    if current_name is not None:
-        args[current_name] = " ".join(current_desc_parts).strip()
-    return args
-
-
 class Operation(BaseModel):
     """Pydantic base for every editing primitive.
 
@@ -171,13 +131,6 @@ class Operation(BaseModel):
                 f"{existing.__module__}.{existing.__qualname__}"
             )
         Operation._registry[op_id] = cls
-
-        descs = _parse_google_docstring_args(inspect.getdoc(cls))
-        for name, desc in descs.items():
-            field = cls.model_fields.get(name)
-            if field is None or field.description:
-                continue
-            field.description = desc
 
     @property
     def op_id(self) -> str:

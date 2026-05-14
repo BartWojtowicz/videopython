@@ -960,48 +960,49 @@ class TranscriptionOverlay(Effect):
     Each word lights up in the highlight color as it is spoken, based on
     transcription timestamps. Requires a word-level transcription, which the
     runner supplies via the ``requires=("transcription",)`` declaration.
-
-    Args:
-        font_filename: Path to a .ttf font file for rendering subtitle text.
-        font_size: Base font size in pixels.
-        font_border_size: Outline thickness around each character in pixels.
-            0 = no outline.
-        text_color: Default text color as [R, G, B], each 0-255.
-        background_color: Subtitle box background as [R, G, B, A] (0-255),
-            or None to disable the background.
-        background_padding: Pixels of space between text and background edge.
-        position: Text box center as normalized (x, y). (0, 0) = top-left,
-            (1, 1) = bottom-right.
-        box_width: Width of the text box as a fraction of frame width, in (0, 1].
-        text_align: Text alignment within the box: "left", "right", or "center".
-        anchor: Which point of the text box sits at the position coordinate.
-        margin: Space around the text box in pixels, or a [top, right, bottom,
-            left] tuple of per-side values.
-        highlight_color: Color for the currently spoken word as [R, G, B].
-        highlight_size_multiplier: Scale factor for the highlighted word.
-            1.0 = same size, 1.2 = 20% larger.
-        highlight_bold_font: Path to a bold .ttf font for the highlighted
-            word, or None to use the regular font.
     """
 
     op: Literal["add_subtitles"] = "add_subtitles"
     streamable: ClassVar[bool] = False
     requires: ClassVar[tuple[str, ...]] = ("transcription",)
 
-    font_filename: str
-    font_size: int = Field(40, ge=1)
-    font_border_size: int = Field(2, ge=0)
-    text_color: tuple[int, int, int] = (255, 235, 59)
-    background_color: tuple[int, int, int, int] | None = (0, 0, 0, 100)
-    background_padding: int = Field(15, ge=0)
-    position: tuple[float, float] = (0.5, 0.7)
-    box_width: float = Field(0.6, gt=0.0, le=1.0)
-    text_align: TextAlign = TextAlign.CENTER
-    anchor: AnchorPoint = AnchorPoint.CENTER
-    margin: int | tuple[int, int, int, int] = 20
-    highlight_color: tuple[int, int, int] = (76, 175, 80)
-    highlight_size_multiplier: float = Field(1.2, gt=0)
-    highlight_bold_font: str | None = None
+    font_filename: str = Field(description="Path to a .ttf font file for rendering subtitle text.")
+    font_size: int = Field(40, ge=1, description="Base font size in pixels.")
+    font_border_size: int = Field(
+        2, ge=0, description="Outline thickness around each character in pixels. 0 = no outline."
+    )
+    text_color: tuple[int, int, int] = Field((255, 235, 59), description="Default text color as [R, G, B], each 0-255.")
+    background_color: tuple[int, int, int, int] | None = Field(
+        (0, 0, 0, 100),
+        description="Subtitle box background as [R, G, B, A] (0-255), or None to disable the background.",
+    )
+    background_padding: int = Field(15, ge=0, description="Pixels of space between text and background edge.")
+    position: tuple[float, float] = Field(
+        (0.5, 0.7),
+        description="Text box center as normalized (x, y). (0, 0) = top-left, (1, 1) = bottom-right.",
+    )
+    box_width: float = Field(
+        0.6, gt=0.0, le=1.0, description="Width of the text box as a fraction of frame width, in (0, 1]."
+    )
+    text_align: TextAlign = Field(
+        TextAlign.CENTER, description='Text alignment within the box: "left", "right", or "center".'
+    )
+    anchor: AnchorPoint = Field(
+        AnchorPoint.CENTER, description="Which point of the text box sits at the position coordinate."
+    )
+    margin: int | tuple[int, int, int, int] = Field(
+        20,
+        description="Space around the text box in pixels, or a [top, right, bottom, left] tuple of per-side values.",
+    )
+    highlight_color: tuple[int, int, int] = Field(
+        (76, 175, 80), description="Color for the currently spoken word as [R, G, B]."
+    )
+    highlight_size_multiplier: float = Field(
+        1.2, gt=0, description="Scale factor for the highlighted word. 1.0 = same size, 1.2 = 20% larger."
+    )
+    highlight_bold_font: str | None = Field(
+        None, description="Path to a bold .ttf font for the highlighted word, or None to use the regular font."
+    )
 
     _overlay_cache: dict[tuple[str, int | None], np.ndarray] = PrivateAttr(default_factory=dict)
 
