@@ -497,7 +497,6 @@ class Video:
             self.frames,
             self.fps,
             self.audio,
-            self.frame_shape,
             filename=filename,
             format=format,
             preset=preset,

@@ -78,16 +78,16 @@ def decode_video(
         if start_second is not None and end_second is not None and start_second >= end_second:
             raise ValueError("start_second must be less than end_second")
 
-        segment_duration = total_duration
         if start_second is not None and end_second is not None:
             segment_duration = end_second - start_second
         elif end_second is not None:
             segment_duration = end_second
         elif start_second is not None:
             segment_duration = total_duration - start_second
+        else:
+            segment_duration = total_duration
 
-        estimated_frames = int(segment_duration * out_fps)
-        estimated_bytes = estimated_frames * out_height * out_width * 3
+        estimated_bytes = int(segment_duration * out_fps) * out_height * out_width * 3
         estimated_gb = estimated_bytes / (1024**3)
         if estimated_gb > 10:
             warnings.warn(
@@ -134,17 +134,7 @@ def decode_video(
         )
 
         frame_size = out_width * out_height * 3
-
-        if start_second is not None and end_second is not None:
-            estimated_duration = end_second - start_second
-        elif end_second is not None:
-            estimated_duration = end_second
-        elif start_second is not None:
-            estimated_duration = total_duration - start_second
-        else:
-            estimated_duration = total_duration
-
-        estimated_frames = int(estimated_duration * out_fps * FRAME_BUFFER_MULTIPLIER) + FRAME_BUFFER_PADDING
+        estimated_frames = int(segment_duration * out_fps * FRAME_BUFFER_MULTIPLIER) + FRAME_BUFFER_PADDING
 
         frames = np.empty((estimated_frames, out_height, out_width, 3), dtype=np.uint8)
         frames_read = 0
@@ -210,7 +200,6 @@ def encode_video(
     frames: np.ndarray,
     fps: float,
     audio: Audio,
-    frame_shape: tuple[int, int, int],
     *,
     filename: str | Path | None = None,
     format: ALLOWED_VIDEO_FORMATS = "mp4",
@@ -219,25 +208,19 @@ def encode_video(
 ) -> Path:
     """Encode an RGB frame array + audio track to disk via ffmpeg.
 
-    ``frame_shape`` is ``(height, width, channels)``; passed in so this
-    helper stays a plain function rather than re-deriving shape from
-    the array.
-
     Raises:
         ValueError: If ``format`` or ``preset`` is not in the allowed set.
         FFmpegRunError: If ffmpeg fails to encode.
     """
-    if format.lower() not in get_args(ALLOWED_VIDEO_FORMATS):
-        raise ValueError(
-            f"Unsupported format: {format}. Allowed formats are: {', '.join(get_args(ALLOWED_VIDEO_FORMATS))}"
-        )
+    allowed_formats = get_args(ALLOWED_VIDEO_FORMATS)
+    if format.lower() not in allowed_formats:
+        raise ValueError(f"Unsupported format: {format}. Allowed formats are: {', '.join(allowed_formats)}")
 
-    if preset not in get_args(ALLOWED_VIDEO_PRESETS):
-        raise ValueError(
-            f"Unsupported preset: {preset}. Allowed presets are: {', '.join(get_args(ALLOWED_VIDEO_PRESETS))}"
-        )
+    allowed_presets = get_args(ALLOWED_VIDEO_PRESETS)
+    if preset not in allowed_presets:
+        raise ValueError(f"Unsupported preset: {preset}. Allowed presets are: {', '.join(allowed_presets)}")
 
-    frame_height, frame_width = frame_shape[:2]
+    frame_height, frame_width = frames.shape[1:3]
     require_even(frame_width, frame_height)
 
     if filename is None:
