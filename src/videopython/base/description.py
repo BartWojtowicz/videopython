@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from pydantic import BaseModel, ConfigDict, Field
+
 __all__ = [
     "BoundingBox",
     "DetectedObject",
@@ -65,23 +67,21 @@ class SceneBoundary:
         )
 
 
-@dataclass
-class BoundingBox:
-    """A bounding box for detected objects in an image.
+class BoundingBox(BaseModel):
+    """A bounding box for detected objects or crop regions in an image.
 
-    Coordinates are normalized to [0, 1] range relative to image dimensions.
-
-    Attributes:
-        x: Left edge of the box (0 = left edge of image)
-        y: Top edge of the box (0 = top edge of image)
-        width: Width of the box
-        height: Height of the box
+    Coordinates are normalized to ``[0, 1]`` relative to image dimensions.
+    Promoted to a Pydantic model so it can be embedded directly into
+    ``Operation`` fields (e.g. ``KenBurns.start_region``) and validated /
+    serialised as part of an op's JSON wire format.
     """
 
-    x: float
-    y: float
-    width: float
-    height: float
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    x: float = Field(description="Left edge of the box, 0=left of the image.")
+    y: float = Field(description="Top edge of the box, 0=top of the image.")
+    width: float = Field(description="Width of the box, normalized to image width.")
+    height: float = Field(description="Height of the box, normalized to image height.")
 
     @property
     def center(self) -> tuple[float, float]:
@@ -94,13 +94,13 @@ class BoundingBox:
         return self.width * self.height
 
     def to_dict(self) -> dict:
-        """Convert to dictionary for JSON serialization."""
-        return {"x": self.x, "y": self.y, "width": self.width, "height": self.height}
+        """Backwards-compat alias for ``model_dump()``."""
+        return self.model_dump()
 
     @classmethod
     def from_dict(cls, data: dict) -> BoundingBox:
-        """Create BoundingBox from dictionary."""
-        return cls(x=data["x"], y=data["y"], width=data["width"], height=data["height"])
+        """Backwards-compat alias for ``model_validate(data)``."""
+        return cls.model_validate(data)
 
 
 @dataclass
