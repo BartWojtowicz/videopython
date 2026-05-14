@@ -1,5 +1,22 @@
 # Release Notes
 
+## 0.31.2
+
+Internal refactor: `Video.from_path` and `Video.save` are now thin
+wrappers around plain functions in a new internal `base/_video_io.py`
+module. The `Video` data class is back to being a frame/audio
+container (~150 LOC) instead of a 440-LOC mix of state, decoder, and
+encoder. No public API changes.
+
+### Changed
+
+- New internal module `videopython.base._video_io` holds
+  `decode_video` and `encode_video`. `Video.from_path` and
+  `Video.save` delegate to them.
+- `ALLOWED_VIDEO_FORMATS` and `ALLOWED_VIDEO_PRESETS` are now defined
+  in `_video_io` and re-exported from `videopython.base.video` —
+  existing import paths keep working.
+
 ## 0.31.1
 
 Internal refactor: ffmpeg/ffprobe subprocess plumbing and dimension
