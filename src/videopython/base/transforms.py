@@ -26,7 +26,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "Transformation",
     "CutFrames",
     "CutSeconds",
     "Resize",
@@ -38,11 +37,6 @@ __all__ = [
     "FreezeFrame",
     "SilenceRemoval",
 ]
-
-# Transitional alias kept while editing/video_edit.py and ai/transforms.py are
-# rewritten in follow-up commits; deleted along with the registry once those
-# consumers are gone.
-Transformation = Operation
 
 
 class CutFrames(Operation):

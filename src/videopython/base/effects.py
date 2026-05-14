@@ -32,14 +32,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Transitional alias: editing/video_edit.py still imports ``AudioEffect`` until
-# it is rewritten in the same migration. ``VolumeAdjust`` is the only consumer
-# and now inherits directly from ``Effect``.
-AudioEffect = Effect
-
 __all__ = [
     "Effect",
-    "AudioEffect",
     "FullImageOverlay",
     "Blur",
     "Zoom",

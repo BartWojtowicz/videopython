@@ -1,5 +1,3 @@
-from videopython.ai import registry as _ai_registry  # noqa: F401
-
 from .generation import ImageToVideo, TextToImage, TextToMusic, TextToSpeech, TextToVideo
 from .transforms import FaceTrackingCrop
 from .understanding import (

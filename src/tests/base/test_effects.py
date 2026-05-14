@@ -7,7 +7,6 @@ from tests.test_config import TEST_FONT_PATH
 from videopython.base.audio import Audio, AudioMetadata
 from videopython.base.description import BoundingBox
 from videopython.base.effects import (
-    AudioEffect,
     Blur,
     ColorGrading,
     Fade,
@@ -321,9 +320,7 @@ class TestVolumeAdjust:
     def test_isinstance_effect(self):
         from videopython.base.effects import Effect
 
-        # AudioEffect is now a transitional alias for Effect; both checks pass.
         assert isinstance(VolumeAdjust(), Effect)
-        assert isinstance(VolumeAdjust(), AudioEffect)
 
     def test_invalid_volume_raises(self):
         with pytest.raises(ValidationError):

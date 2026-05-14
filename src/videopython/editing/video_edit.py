@@ -32,6 +32,7 @@ from videopython.base.audio import Audio, AudioLoadError
 from videopython.base.effects import Effect, Fade, VolumeAdjust
 from videopython.base.operation import FilterCtx, Operation
 from videopython.base.streaming import EffectScheduleEntry, StreamingSegmentPlan, concat_files, stream_segment
+from videopython.base.transforms import CutSeconds
 from videopython.base.video import ALLOWED_VIDEO_FORMATS, ALLOWED_VIDEO_PRESETS, Video, VideoMetadata
 
 __all__ = [
@@ -231,7 +232,7 @@ class VideoEdit(BaseModel):
         for i, (seg, meta) in enumerate(zip(self.segments, source_metas)):
             if seg.end > meta.total_seconds + 1e-3:
                 raise ValueError(f"Segment {i}: end ({seg.end}) exceeds source duration ({meta.total_seconds}s)")
-            cut_metas.append(meta.cut(seg.start, seg.end))
+            cut_metas.append(CutSeconds(start=seg.start, end=seg.end).predict_metadata(meta))
 
         matched = self._apply_matching(cut_metas)
         segment_outputs = [
