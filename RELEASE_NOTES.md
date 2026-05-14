@@ -1,5 +1,23 @@
 # Release Notes
 
+## 0.31.3
+
+Internal refactor: `ImageText` (the PIL rendering primitive) moves
+out of `base/text/overlay.py` into its own module
+`base/text/image_text.py`. `overlay.py` keeps only the
+`TranscriptionOverlay` subtitle effect that consumes it. Public
+imports through `videopython.base` and `videopython.base.text` are
+unchanged.
+
+### Changed
+
+- New module `videopython.base.text.image_text` owns `ImageText`,
+  `TextAlign`, and `AnchorPoint`. The package `__init__` re-exports
+  them so existing imports (`from videopython.base import ImageText`,
+  `from videopython.base.text import ImageText`) keep working.
+- `videopython.base.text.overlay` shrank from ~1090 LOC to ~160 LOC
+  and now contains only `TranscriptionOverlay`.
+
 ## 0.31.2
 
 Internal refactor: `Video.from_path` and `Video.save` are now thin

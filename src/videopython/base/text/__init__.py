@@ -1,4 +1,5 @@
-from .overlay import AnchorPoint, ImageText, TextAlign, TranscriptionOverlay
+from .image_text import AnchorPoint, ImageText, TextAlign
+from .overlay import TranscriptionOverlay
 from .transcription import Transcription, TranscriptionSegment, TranscriptionWord
 
 __all__ = [
