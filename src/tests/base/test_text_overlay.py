@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+from PIL import Image
 
 from tests.test_config import TEST_FONT_PATH
 from videopython.base.effects import FullImageOverlay
@@ -42,7 +43,7 @@ def test_text_is_rendered_correctly():
 
 
 @pytest.mark.parametrize("place", ["left", "center", "right"])
-def test_overlaying_video_with_text(place, small_video):
+def test_overlaying_video_with_text(place, small_video, tmp_path):
     my_overlay = ImageText(image_size=(500, 800))
     my_overlay.write_text_box(
         "Test test test test test test test",
@@ -58,8 +59,10 @@ def test_overlaying_video_with_text(place, small_video):
     overlay_array = my_overlay.img_array
     assert np.any(overlay_array[:, :, 3] > 0), "No visible pixels found in the overlay"
 
-    # Apply overlay to video
-    overlay = FullImageOverlay(overlay_image=overlay_array)
+    # FullImageOverlay loads from disk JIT, so persist the rendered RGBA array first.
+    overlay_path = tmp_path / "overlay.png"
+    Image.fromarray(overlay_array, mode="RGBA").save(overlay_path)
+    overlay = FullImageOverlay(source=str(overlay_path))
     original_video = small_video.copy()
     first_frame_before = original_video.frames[0].copy()
     overlayed_video = overlay.apply(original_video)

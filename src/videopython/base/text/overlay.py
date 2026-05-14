@@ -6,15 +6,19 @@ The main purpose of this file are 2 classes:
 2. `TranscriptionOverlay` class, which takes the `Transcription` and `Video` objects and overlays subtitles on `Video`.
 """
 
+from __future__ import annotations
+
 import logging
 from enum import Enum
-from typing import TypeAlias
+from typing import Any, ClassVar, Literal, TypeAlias
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+from pydantic import Field, PrivateAttr
 from tqdm import tqdm
 
 from videopython.base.exceptions import OutOfBoundsError
+from videopython.base.operation import Effect
 from videopython.base.text.transcription import Transcription, TranscriptionSegment
 from videopython.base.video import Video
 
@@ -950,103 +954,81 @@ class ImageText:
         return xmin, xmax, ymin, ymax
 
 
-class TranscriptionOverlay:
+class TranscriptionOverlay(Effect):
     """Renders animated word-by-word subtitles with the current word highlighted.
 
     Each word lights up in the highlight color as it is spoken, based on
-    transcription timestamps. Requires a word-level transcription.
+    transcription timestamps. Requires a word-level transcription, which the
+    runner supplies via the ``requires=("transcription",)`` declaration.
+
+    Args:
+        font_filename: Path to a .ttf font file for rendering subtitle text.
+        font_size: Base font size in pixels.
+        font_border_size: Outline thickness around each character in pixels.
+            0 = no outline.
+        text_color: Default text color as [R, G, B], each 0-255.
+        background_color: Subtitle box background as [R, G, B, A] (0-255),
+            or None to disable the background.
+        background_padding: Pixels of space between text and background edge.
+        position: Text box center as normalized (x, y). (0, 0) = top-left,
+            (1, 1) = bottom-right.
+        box_width: Width of the text box as a fraction of frame width, in (0, 1].
+        text_align: Text alignment within the box: "left", "right", or "center".
+        anchor: Which point of the text box sits at the position coordinate.
+        margin: Space around the text box in pixels, or a [top, right, bottom,
+            left] tuple of per-side values.
+        highlight_color: Color for the currently spoken word as [R, G, B].
+        highlight_size_multiplier: Scale factor for the highlighted word.
+            1.0 = same size, 1.2 = 20% larger.
+        highlight_bold_font: Path to a bold .ttf font for the highlighted
+            word, or None to use the regular font.
     """
 
-    def __init__(
-        self,
-        font_filename: str,
-        font_size: int = 40,
-        font_border_size: int = 2,
-        text_color: RGBColor = (255, 235, 59),
-        background_color: RGBAColor | None = (0, 0, 0, 100),
-        background_padding: int = 15,
-        position: PositionType = (0.5, 0.7),
-        box_width: int | float = 0.6,
-        text_align: TextAlign = TextAlign.CENTER,
-        anchor: AnchorPoint = AnchorPoint.CENTER,
-        margin: MarginType = 20,
-        highlight_color: RGBColor = (76, 175, 80),
-        highlight_size_multiplier: float = 1.2,
-        highlight_bold_font: str | None = None,
-    ):
-        """Initialize transcription overlay effect.
+    op: Literal["add_subtitles"] = "add_subtitles"
+    streamable: ClassVar[bool] = False
+    requires: ClassVar[tuple[str, ...]] = ("transcription",)
 
-        Args:
-            font_filename: Path to a .ttf font file for rendering subtitle text.
-            font_size: Base font size in pixels.
-            font_border_size: Outline thickness around each character in pixels.
-                0 = no outline.
-            text_color: Default text color as [R, G, B], each 0-255.
-            background_color: Subtitle box background as [R, G, B, A] (0-255),
-                or None to disable the background.
-            background_padding: Pixels of space between text and background edge.
-            position: Text box center as normalized (x, y). (0, 0) = top-left,
-                (1, 1) = bottom-right. Can also be absolute pixel values.
-            box_width: Width of the text box. Float in (0, 1] is a fraction of
-                frame width; int is absolute pixels.
-            text_align: Text alignment within the box: "left", "right", or "center".
-            anchor: Which point of the text box sits at the position coordinate.
-            margin: Space around the text box in pixels, or a dict with
-                per-side values.
-            highlight_color: Color for the currently spoken word as [R, G, B].
-            highlight_size_multiplier: Scale factor for the highlighted word.
-                1.0 = same size, 1.2 = 20% larger.
-            highlight_bold_font: Path to a bold .ttf font for the highlighted
-                word, or None to use the regular font.
-        """
-        self.font_filename = font_filename
-        self.font_size = font_size
-        self.text_color = text_color
-        self.font_border_size = font_border_size
-        self.background_color = background_color
-        self.background_padding = background_padding
-        self.position = position
-        self.box_width = box_width
-        self.text_align = text_align
-        self.anchor = anchor
-        self.margin = margin
-        self.highlight_color = highlight_color
-        self.highlight_size_multiplier = highlight_size_multiplier
-        self.highlight_bold_font = highlight_bold_font
+    font_filename: str
+    font_size: int = Field(40, ge=1)
+    font_border_size: int = Field(2, ge=0)
+    text_color: tuple[int, int, int] = (255, 235, 59)
+    background_color: tuple[int, int, int, int] | None = (0, 0, 0, 100)
+    background_padding: int = Field(15, ge=0)
+    position: tuple[float, float] = (0.5, 0.7)
+    box_width: float = Field(0.6, gt=0.0, le=1.0)
+    text_align: TextAlign = TextAlign.CENTER
+    anchor: AnchorPoint = AnchorPoint.CENTER
+    margin: int | tuple[int, int, int, int] = 20
+    highlight_color: tuple[int, int, int] = (76, 175, 80)
+    highlight_size_multiplier: float = Field(1.2, gt=0)
+    highlight_bold_font: str | None = None
 
-        # Cache for text overlays to avoid regenerating identical frames
-        self._overlay_cache: dict[tuple[str, int | None], np.ndarray] = {}
+    _overlay_cache: dict[tuple[str, int | None], np.ndarray] = PrivateAttr(default_factory=dict)
 
     def _get_active_segment(self, transcription: Transcription, timestamp: float) -> TranscriptionSegment | None:
-        """Get the transcription segment active at the given timestamp."""
         for segment in transcription.segments:
             if segment.start <= timestamp <= segment.end:
                 return segment
         return None
 
     def _get_active_word_index(self, segment: TranscriptionSegment, timestamp: float) -> int | None:
-        """Get the index of the word being spoken at the given timestamp within a segment."""
         for i, word in enumerate(segment.words):
             if word.start <= timestamp <= word.end:
                 return i
         return None
 
     def _create_text_overlay(
-        self, video_shape: tuple[int, int, int], segment: TranscriptionSegment, highlight_word_index: int | None
+        self,
+        video_shape: tuple[int, int, int],
+        segment: TranscriptionSegment,
+        highlight_word_index: int | None,
     ) -> np.ndarray:
-        """Create a text overlay image for the given segment and highlight."""
-        # Use video frame dimensions for overlay
         height, width = video_shape[:2]
-
-        # Create cache key based on segment text and highlight
         cache_key = (segment.text, highlight_word_index)
         if cache_key in self._overlay_cache:
             return self._overlay_cache[cache_key]
 
-        # Create ImageText with video dimensions
         img_text = ImageText(image_size=(height, width), background=(0, 0, 0, 0))
-
-        # Write text with highlighting
         img_text.write_text_box(
             text=segment.text,
             font_filename=self.font_filename,
@@ -1068,56 +1050,42 @@ class TranscriptionOverlay:
         )
 
         overlay_image = img_text.img_array
-
-        # Cache the overlay
         self._overlay_cache[cache_key] = overlay_image
-
         return overlay_image
 
-    def apply(self, video: Video, transcription: Transcription) -> Video:
-        """Apply transcription overlay to video frames."""
+    def apply(  # type: ignore[override]
+        self,
+        video: Video,
+        transcription: Transcription | None = None,
+        **_context: Any,
+    ) -> Video:
+        if transcription is None:
+            raise ValueError(
+                "TranscriptionOverlay requires transcription data. "
+                "Pass it via VideoEdit.run(context={'transcription': ...}) or directly to apply()."
+            )
+
         logger.info("Applying transcription overlay...")
-
         new_frames = []
-
         for frame_index, frame in enumerate(tqdm(video.frames, desc="Transcription overlay")):
-            # Calculate timestamp for this frame
             timestamp = frame_index / video.fps
-
-            # Get active segment at this timestamp
             active_segment = self._get_active_segment(transcription, timestamp)
-
             if active_segment is None:
-                # No active transcription, keep original frame
                 new_frames.append(frame)
                 continue
-
-            # Get active word index for highlighting
             highlight_word_index = self._get_active_word_index(active_segment, timestamp)
-
-            # Create text overlay
             text_overlay = self._create_text_overlay(video.frame_shape, active_segment, highlight_word_index)
+            new_frames.append(self._apply_overlay_to_frame(frame, text_overlay))
 
-            # Apply overlay to frame
-            overlaid_frame = self._apply_overlay_to_frame(frame, text_overlay)
-            new_frames.append(overlaid_frame)
-
-        # Create new video with overlaid frames
         new_video = Video.from_frames(np.array(new_frames), fps=video.fps)
-        new_video.audio = video.audio  # Preserve audio
-
+        new_video.audio = video.audio
         return new_video
 
+    def _apply(self, video: Video) -> Video:
+        raise NotImplementedError("TranscriptionOverlay needs a transcription -- pass it through apply().")
+
     def _apply_overlay_to_frame(self, frame: np.ndarray, overlay: np.ndarray) -> np.ndarray:
-        """Apply a text overlay to a single frame."""
-
-        # Convert frame to PIL Image
         frame_pil = Image.fromarray(frame)
-
-        # Convert overlay to PIL Image
         overlay_pil = Image.fromarray(overlay)
-
-        # Paste overlay onto frame using alpha channel
         frame_pil.paste(overlay_pil, (0, 0), overlay_pil)
-
         return np.array(frame_pil)

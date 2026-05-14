@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import pytest
+from pydantic import ValidationError
 
 from videopython.base.audio import Audio, AudioMetadata
 from videopython.base.text.transcription import Transcription, TranscriptionSegment, TranscriptionWord
@@ -234,40 +235,36 @@ class TestPictureInPicture:
         return Video.from_frames(frames, fps=30)
 
     @pytest.fixture
-    def overlay_video(self):
-        """Create an overlay video for testing."""
-        frames = np.full((30, 100, 150, 3), 200, dtype=np.uint8)  # Lighter gray video
-        return Video.from_frames(frames, fps=30)
+    def overlay_path(self, tmp_path_factory):
+        """Persist an overlay video to disk so PictureInPicture can load it JIT."""
+        frames = np.full((30, 100, 150, 3), 200, dtype=np.uint8)
+        path = tmp_path_factory.mktemp("pip") / "overlay.mp4"
+        Video.from_frames(frames, fps=30).save(str(path))
+        return path
 
-    def test_basic_overlay(self, main_video, overlay_video):
-        """Test basic PIP overlay."""
-        transform = PictureInPicture(overlay=overlay_video, position=(0.8, 0.8), scale=0.25)
+    def test_basic_overlay(self, main_video, overlay_path):
+        transform = PictureInPicture(source=overlay_path, position=(0.8, 0.8), scale=0.25)
         result = transform.apply(main_video)
 
-        # Should preserve main video dimensions
         assert result.frame_shape == main_video.frame_shape
         assert len(result.frames) == len(main_video.frames)
 
-    def test_overlay_position_corners(self, main_video, overlay_video):
-        """Test overlay at different corner positions."""
+    def test_overlay_position_corners(self, main_video, overlay_path):
         positions = [(0.1, 0.1), (0.9, 0.1), (0.1, 0.9), (0.9, 0.9)]
-
         for pos in positions:
-            transform = PictureInPicture(overlay=overlay_video, position=pos, scale=0.2)
+            transform = PictureInPicture(source=overlay_path, position=pos, scale=0.2)
             result = transform.apply(main_video.copy())
             assert result.frame_shape == main_video.frame_shape
 
-    def test_overlay_scale(self, main_video, overlay_video):
-        """Test different overlay scales."""
+    def test_overlay_scale(self, main_video, overlay_path):
         for scale in [0.1, 0.25, 0.5]:
-            transform = PictureInPicture(overlay=overlay_video, position=(0.5, 0.5), scale=scale)
+            transform = PictureInPicture(source=overlay_path, position=(0.5, 0.5), scale=scale)
             result = transform.apply(main_video.copy())
             assert result.frame_shape == main_video.frame_shape
 
-    def test_overlay_with_border(self, main_video, overlay_video):
-        """Test overlay with border."""
+    def test_overlay_with_border(self, main_video, overlay_path):
         transform = PictureInPicture(
-            overlay=overlay_video,
+            source=overlay_path,
             position=(0.7, 0.7),
             scale=0.25,
             border_width=5,
@@ -276,10 +273,9 @@ class TestPictureInPicture:
         result = transform.apply(main_video)
         assert result.frame_shape == main_video.frame_shape
 
-    def test_overlay_with_rounded_corners(self, main_video, overlay_video):
-        """Test overlay with rounded corners."""
+    def test_overlay_with_rounded_corners(self, main_video, overlay_path):
         transform = PictureInPicture(
-            overlay=overlay_video,
+            source=overlay_path,
             position=(0.7, 0.7),
             scale=0.25,
             corner_radius=10,
@@ -287,10 +283,9 @@ class TestPictureInPicture:
         result = transform.apply(main_video)
         assert result.frame_shape == main_video.frame_shape
 
-    def test_overlay_with_opacity(self, main_video, overlay_video):
-        """Test overlay with reduced opacity."""
+    def test_overlay_with_opacity(self, main_video, overlay_path):
         transform = PictureInPicture(
-            overlay=overlay_video,
+            source=overlay_path,
             position=(0.5, 0.5),
             scale=0.25,
             opacity=0.5,
@@ -298,47 +293,35 @@ class TestPictureInPicture:
         result = transform.apply(main_video)
         assert result.frame_shape == main_video.frame_shape
 
-    def test_overlay_loops_when_shorter(self, main_video):
-        """Test that shorter overlay loops."""
-        # Create shorter overlay (10 frames vs 30 in main)
-        short_overlay = Video.from_frames(
-            np.full((10, 100, 150, 3), 200, dtype=np.uint8),
-            fps=30,
-        )
-        transform = PictureInPicture(overlay=short_overlay, position=(0.5, 0.5), scale=0.25)
+    def test_overlay_loops_when_shorter(self, main_video, tmp_path):
+        # 10-frame overlay vs 30-frame main triggers the looping path.
+        short_path = tmp_path / "short.mp4"
+        Video.from_frames(np.full((10, 100, 150, 3), 200, dtype=np.uint8), fps=30).save(str(short_path))
+        transform = PictureInPicture(source=short_path, position=(0.5, 0.5), scale=0.25)
         result = transform.apply(main_video)
-
-        # Result should have same length as main video
         assert len(result.frames) == len(main_video.frames)
 
-    def test_invalid_position_raises(self, main_video, overlay_video):
-        """Test that invalid position raises error."""
-        with pytest.raises(ValueError):
-            PictureInPicture(overlay=overlay_video, position=(1.5, 0.5))
+    def test_invalid_position_raises(self, overlay_path):
+        with pytest.raises(ValidationError):
+            PictureInPicture(source=overlay_path, position=(1.5, 0.5))
+        with pytest.raises(ValidationError):
+            PictureInPicture(source=overlay_path, position=(-0.1, 0.5))
 
-        with pytest.raises(ValueError):
-            PictureInPicture(overlay=overlay_video, position=(-0.1, 0.5))
+    def test_invalid_scale_raises(self, overlay_path):
+        with pytest.raises(ValidationError):
+            PictureInPicture(source=overlay_path, scale=0)
+        with pytest.raises(ValidationError):
+            PictureInPicture(source=overlay_path, scale=1.5)
 
-    def test_invalid_scale_raises(self, main_video, overlay_video):
-        """Test that invalid scale raises error."""
-        with pytest.raises(ValueError):
-            PictureInPicture(overlay=overlay_video, scale=0)
+    def test_invalid_opacity_raises(self, overlay_path):
+        with pytest.raises(ValidationError):
+            PictureInPicture(source=overlay_path, opacity=-0.1)
+        with pytest.raises(ValidationError):
+            PictureInPicture(source=overlay_path, opacity=1.5)
 
-        with pytest.raises(ValueError):
-            PictureInPicture(overlay=overlay_video, scale=1.5)
-
-    def test_invalid_opacity_raises(self, main_video, overlay_video):
-        """Test that invalid opacity raises error."""
-        with pytest.raises(ValueError):
-            PictureInPicture(overlay=overlay_video, opacity=-0.1)
-
-        with pytest.raises(ValueError):
-            PictureInPicture(overlay=overlay_video, opacity=1.5)
-
-    def test_all_options_combined(self, main_video, overlay_video):
-        """Test with all options enabled."""
+    def test_all_options_combined(self, main_video, overlay_path):
         transform = PictureInPicture(
-            overlay=overlay_video,
+            source=overlay_path,
             position=(0.75, 0.75),
             scale=0.3,
             border_width=3,
@@ -349,73 +332,60 @@ class TestPictureInPicture:
         result = transform.apply(main_video)
         assert result.frame_shape == main_video.frame_shape
 
-    def test_audio_mode_main(self, main_video, overlay_video):
-        """Test audio_mode='main' keeps only main audio."""
+    def test_audio_mode_main(self, main_video, overlay_path):
         transform = PictureInPicture(
-            overlay=overlay_video,
+            source=overlay_path,
             position=(0.5, 0.5),
             scale=0.25,
             audio_mode="main",
         )
         result = transform.apply(main_video)
-
-        # Should preserve main video audio duration
         assert result.audio is not None
         assert abs(result.audio.metadata.duration_seconds - len(result.frames) / result.fps) < 0.1
 
-    def test_audio_mode_overlay(self, main_video, overlay_video):
-        """Test audio_mode='overlay' uses only overlay audio."""
+    def test_audio_mode_overlay(self, main_video, overlay_path):
         transform = PictureInPicture(
-            overlay=overlay_video,
+            source=overlay_path,
             position=(0.5, 0.5),
             scale=0.25,
             audio_mode="overlay",
         )
         result = transform.apply(main_video)
-
-        # Result should have audio with correct duration
         assert result.audio is not None
         assert abs(result.audio.metadata.duration_seconds - len(result.frames) / result.fps) < 0.1
 
-    def test_audio_mode_mix(self, main_video, overlay_video):
-        """Test audio_mode='mix' combines both audio tracks."""
+    def test_audio_mode_mix(self, main_video, overlay_path):
         transform = PictureInPicture(
-            overlay=overlay_video,
+            source=overlay_path,
             position=(0.5, 0.5),
             scale=0.25,
             audio_mode="mix",
             audio_mix=(1.0, 1.0),
         )
         result = transform.apply(main_video)
-
         assert result.audio is not None
         assert abs(result.audio.metadata.duration_seconds - len(result.frames) / result.fps) < 0.1
 
-    def test_audio_mix_factors(self, main_video, overlay_video):
-        """Test custom audio_mix volume factors."""
+    def test_audio_mix_factors(self, main_video, overlay_path):
         transform = PictureInPicture(
-            overlay=overlay_video,
+            source=overlay_path,
             position=(0.5, 0.5),
             scale=0.25,
             audio_mode="mix",
             audio_mix=(0.5, 0.8),
         )
         result = transform.apply(main_video)
-
         assert result.audio is not None
 
-    def test_invalid_audio_mode_raises(self, main_video, overlay_video):
-        """Test that invalid audio_mode raises ValueError."""
-        with pytest.raises(ValueError, match="audio_mode"):
-            PictureInPicture(overlay=overlay_video, audio_mode="invalid")
+    def test_invalid_audio_mode_raises(self, overlay_path):
+        with pytest.raises(ValidationError):
+            PictureInPicture(source=overlay_path, audio_mode="invalid")
 
-    def test_negative_audio_mix_raises(self, main_video, overlay_video):
-        """Test that negative audio_mix factors raise ValueError."""
-        with pytest.raises(ValueError, match="non-negative"):
-            PictureInPicture(overlay=overlay_video, audio_mix=(-1.0, 1.0))
-
-        with pytest.raises(ValueError, match="non-negative"):
-            PictureInPicture(overlay=overlay_video, audio_mix=(1.0, -0.5))
+    def test_negative_audio_mix_raises(self, overlay_path):
+        with pytest.raises(ValidationError):
+            PictureInPicture(source=overlay_path, audio_mix=(-1.0, 1.0))
+        with pytest.raises(ValidationError):
+            PictureInPicture(source=overlay_path, audio_mix=(1.0, -0.5))
 
 
 class TestSpeedChangeAudio:
@@ -602,11 +572,11 @@ class TestFreezeFrame:
             FreezeFrame(timestamp=5.0).apply(video_1s)
 
     def test_negative_timestamp_raises(self):
-        with pytest.raises(ValueError, match="must be >= 0"):
+        with pytest.raises(ValidationError):
             FreezeFrame(timestamp=-1.0)
 
     def test_zero_duration_raises(self):
-        with pytest.raises(ValueError, match="must be > 0"):
+        with pytest.raises(ValidationError):
             FreezeFrame(timestamp=0.5, duration=0)
 
 

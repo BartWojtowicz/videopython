@@ -12,7 +12,7 @@ from types import UnionType
 from typing import Any, Mapping, Sequence, Union, get_args, get_origin, get_type_hints
 
 from videopython.base.audio import Audio
-from videopython.base.effects import AudioEffect, Effect, Fade
+from videopython.base.effects import Effect, Fade
 from videopython.base.registry import (
     OperationCategory,
     OperationSpec,
@@ -328,7 +328,7 @@ class VideoEdit:
             return self._run_to_file_eager(output_path, format, preset, crf, context)
 
         for record in self.post_effect_records:
-            if not isinstance(record.operation, Effect) or not record.operation.supports_streaming:
+            if not isinstance(record.operation, Effect) or not record.operation.streamable:
                 return self._run_to_file_eager(output_path, format, preset, crf, context)
 
         # Compute matching targets
@@ -449,7 +449,7 @@ class VideoEdit:
         for record in segment.effect_records:
             if not isinstance(record.operation, Effect):
                 return None
-            if not record.operation.supports_streaming:
+            if not record.operation.streamable:
                 return None
             # Compute frame range
             start_s = _coerce_optional_number(record.apply_args.get("start"), "start")
@@ -488,15 +488,16 @@ class VideoEdit:
             warnings.warn(f"No audio found for `{segment.source_video}`, using silent track.")
             audio = Audio.create_silent(duration_seconds=round(duration, 2), stereo=True, sample_rate=44100)
 
-        # Apply audio effects (AudioEffect subclasses + Fade audio component)
+        # Apply audio effects (Fade + VolumeAdjust override apply() to touch audio
+        # directly; this loop replays the audio side for the streaming path).
+        from videopython.base.effects import VolumeAdjust
+
         for entry in plan.effect_schedule:
             effect = entry.effect
             start_s = entry.start_frame / plan.output_fps
             stop_s = entry.end_frame / plan.output_fps
-            if isinstance(effect, AudioEffect):
-                effect._apply_audio(audio, start_s, stop_s, plan.output_fps)
-            elif isinstance(effect, Fade) and audio is not None and not audio.is_silent:
-                effect.apply_audio(audio, start_s, stop_s)
+            if isinstance(effect, (Fade, VolumeAdjust)) and audio is not None and not audio.is_silent:
+                effect._apply_audio(audio, start_s, stop_s)
 
         return audio
 

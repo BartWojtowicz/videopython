@@ -383,23 +383,24 @@ class TestSplitScreenComposite:
         # Last cell (large) should be on right, full height
         assert cells[2][3] == 1080
 
-    def test_get_required_sources(self):
-        """Test required sources for different layouts."""
-        assert SplitScreenComposite(layout="2x1")._get_required_sources() == 2
-        assert SplitScreenComposite(layout="1x2")._get_required_sources() == 2
-        assert SplitScreenComposite(layout="2x2")._get_required_sources() == 4
-        assert SplitScreenComposite(layout="1+2")._get_required_sources() == 3
-        assert SplitScreenComposite(layout="2+1")._get_required_sources() == 3
+    def test_required_extras(self):
+        """Number of additional source videos required beyond the primary input."""
+        assert SplitScreenComposite(layout="2x1")._required_extras() == 1
+        assert SplitScreenComposite(layout="1x2")._required_extras() == 1
+        assert SplitScreenComposite(layout="2x2")._required_extras() == 3
+        assert SplitScreenComposite(layout="1+2")._required_extras() == 2
+        assert SplitScreenComposite(layout="2+1")._required_extras() == 2
 
     def test_invalid_layout_raises(self):
-        """Test invalid layout raises error."""
-        composite = SplitScreenComposite(layout="invalid")
-        with pytest.raises(ValueError, match="Unknown layout"):
-            composite._get_cell_rects(1920, 1080)
+        """Invalid layout is rejected at construction time via Pydantic Literal."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            SplitScreenComposite(layout="invalid")  # type: ignore[arg-type]
 
     @patch("videopython.ai.transforms.FaceTracker")
     def test_apply_requires_enough_videos(self, mock_tracker_class):
-        """Test apply raises error with insufficient videos."""
+        """Apply raises when additional_sources is too short for the layout."""
         mock_tracker = MagicMock()
         mock_tracker.detect_and_track.return_value = (0.5, 0.5, 0.1, 0.1)
         mock_tracker_class.return_value = mock_tracker
@@ -407,13 +408,13 @@ class TestSplitScreenComposite:
         frames = np.zeros((10, 1080, 1920, 3), dtype=np.uint8)
         video = Video.from_frames(frames, fps=30)
 
-        composite = SplitScreenComposite(layout="2x1")
-        with pytest.raises(ValueError, match="requires 2 videos"):
-            composite.apply(video)  # Only 1 video provided
+        composite = SplitScreenComposite(layout="2x1", additional_sources=[])
+        with pytest.raises(ValueError, match="requires 1 additional_sources"):
+            composite.apply(video)
 
     @patch("videopython.ai.transforms.FaceTracker")
-    def test_apply_2x1_layout(self, mock_tracker_class):
-        """Test apply with 2x1 layout."""
+    def test_apply_2x1_layout(self, mock_tracker_class, tmp_path):
+        """Apply with 2x1 layout loads the extra source from disk."""
         mock_tracker = MagicMock()
         mock_tracker.detect_and_track.return_value = (0.5, 0.5, 0.1, 0.1)
         mock_tracker_class.return_value = mock_tracker
@@ -421,12 +422,11 @@ class TestSplitScreenComposite:
         frames1 = np.full((10, 480, 640, 3), 100, dtype=np.uint8)
         frames2 = np.full((10, 480, 640, 3), 200, dtype=np.uint8)
         video1 = Video.from_frames(frames1, fps=30)
-        video2 = Video.from_frames(frames2, fps=30)
+        extra_path = tmp_path / "extra.mp4"
+        Video.from_frames(frames2, fps=30).save(str(extra_path))
 
-        composite = SplitScreenComposite(layout="2x1", gap=4)
-        result = composite.apply(video1, video2)
-
-        # Should produce correct frame count
+        composite = SplitScreenComposite(layout="2x1", gap=4, additional_sources=[extra_path])
+        result = composite.apply(video1)
         assert len(result.frames) == 10
 
 

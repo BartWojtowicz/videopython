@@ -174,8 +174,8 @@ class BlurTransition(Transition):
         end_frames = Video.from_frames(videos[0].frames[-effect_time_fps:], fps=video_fps)
         start_frames = Video.from_frames(videos[1].frames[:effect_time_fps], fps=video_fps)
 
-        ascending_blur = Blur("ascending", self.blur_iterations, self.blur_kernel_size)
-        descending_blur = Blur("descending", self.blur_iterations, self.blur_kernel_size)
+        ascending_blur = Blur(mode="ascending", iterations=self.blur_iterations, kernel_size=self.blur_kernel_size)
+        descending_blur = Blur(mode="descending", iterations=self.blur_iterations, kernel_size=self.blur_kernel_size)
         transition = ascending_blur.apply(end_frames) + descending_blur.apply(start_frames)
 
         blurred_videos = Video.from_frames(
