@@ -86,9 +86,8 @@ nav:
           - Audio: api/core/audio.md
           - Scene Detection: api/core/scene.md
       - Editing Plans: api/editing.md
-      - Operation Registry: api/registry.md
+      - Operations: api/operations.md
       - Transforms: api/transforms.md
-      - Transitions: api/transitions.md
       - Effects: api/effects.md
       - Text & Transcription: api/text.md
       - AI Generation: api/ai/generation.md

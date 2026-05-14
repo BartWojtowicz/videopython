@@ -1,5 +1,108 @@
 # Release Notes
 
+## 0.31.0
+
+Operation Unification — single sweep, breaking. Every editing primitive
+is now an `Operation` subclass — a Pydantic `BaseModel` whose fields ARE
+the JSON wire format. The class is the single source of truth: schema,
+validation, and (de)serialisation are free; subclasses just declare
+fields and implement `apply` / `predict_metadata`.
+
+### Added
+
+- New `videopython.base.Operation` Pydantic foundation: auto-registry
+  via `__pydantic_init_subclass__`, discriminated-union schema via
+  `Operation.json_schema()`, `Operation.registry()`, `Operation.get()`.
+- `Effect(Operation)` with a `window: TimeRange | None` field —
+  effect-time ranges are no longer a separate `apply: {start, stop}`
+  slot.
+- `videopython.base.TimeRange`, `videopython.base.OpCategory`,
+  `videopython.base.FilterCtx` are now public.
+- Context injection on the runner: ops declare
+  `requires: ClassVar[tuple[str, ...]] = ("transcription",)`, the
+  `VideoEdit` runner pulls matching keys from `context` and threads them
+  into `apply` / `predict_metadata`. Replaces the
+  `requires_transcript` registry tag.
+
+### Changed
+
+- **Breaking:** `VideoEdit` wire format flattens. `op` is inline per
+  operation, fields are hoisted (no more nested `args` / `apply`),
+  segments carry a single `operations` list (no more
+  `transforms` / `effects` split), and top-level
+  `post_transforms` / `post_effects` collapse into `post_operations`.
+
+  Old (`0.30.x`):
+
+  ```json
+  {"op": "blur_effect",
+   "args": {"mode": "constant", "iterations": 5},
+   "apply": {"start": 1, "stop": 3}}
+  ```
+
+  New (`0.31.0`):
+
+  ```json
+  {"op": "blur_effect", "mode": "constant", "iterations": 5,
+   "window": {"start": 1, "stop": 3}}
+  ```
+
+- **Breaking:** `Operation` subclasses construct from keyword args only,
+  positional args no longer work for the Pydantic shape. Most
+  call-sites already use kwargs; double-check inline construction.
+- `Crop.predict_metadata` now mirrors `apply`'s odd-dim center-crop
+  rounding (`(cw // 2) * 2`). Fixes a long-standing
+  validation-vs-runtime divergence for odd target dimensions.
+
+### Removed
+
+- **Breaking:** `videopython.base.registry` is gone. `OperationCategory`,
+  `OperationSpec`, `ParamSpec`, `register`, `get_operation_spec`,
+  `get_operation_specs`, `get_specs_by_category`, `get_specs_by_tag`,
+  `spec_from_class` are no longer importable. Use
+  `Operation.registry()`, `Operation.get()`, and `Operation.json_schema()`.
+- **Breaking:** `videopython.base.transitions` deleted —
+  `Transition`, `InstantTransition`, `FadeTransition`, `BlurTransition`.
+  Their 2→1 shape doesn't fit the single-input `Operation` contract.
+  Multi-source ops will return in a future minor with a coherent
+  redesign; revive from git history if you need them sooner.
+- **Breaking:** `videopython.editing.multicam` deleted —
+  `MultiCamEdit`, `CutPoint`. Same reasoning as transitions.
+- **Breaking:** `PictureInPicture` and `SplitScreenComposite` deleted —
+  no live consumers and a multi-source shape that fights the single-input
+  contract.
+- **Breaking:** `VideoMetadata` fluent prediction methods deleted:
+  `cut`, `cut_frames`, `resize`, `crop`, `resample_fps`, `speed_change`,
+  `reverse`, `freeze_frame`, `silence_removal`, `crop_to_aspect_even`,
+  `transition_to`, `can_be_merged_with`. Use
+  `Operation.predict_metadata(meta)` on the matching op instead. The
+  inner builders `with_duration`, `with_dimensions`, `with_fps` stay.
+- **Breaking:** `videopython.base.InsufficientDurationError` and
+  `videopython.base.IncompatibleVideoError` removed — no live consumers.
+- **Breaking:** Transitional aliases `Transformation = Operation` and
+  `AudioEffect = Effect` removed. Use `Operation` and `Effect` directly.
+- `videopython.ai.registry` deleted — AI ops now auto-register via
+  `Operation.__pydantic_init_subclass__` on `import videopython.ai`.
+
+### Migration
+
+Most user code only needs the wire-format update. For programmatic use,
+replace fluent metadata calls with the corresponding op:
+
+```python
+# Before
+new_meta = meta.cut(0, 5).resize(width=1280)
+
+# After
+from videopython.base import CutSeconds, Resize
+new_meta = CutSeconds(start=0, end=5).predict_metadata(meta)
+new_meta = Resize(width=1280).predict_metadata(new_meta)
+```
+
+For JSON plans, flatten op shapes and merge `transforms`/`effects` into
+`operations`. See `docs/api/editing.md` for the new schema and
+`docs/api/operations.md` for the `Operation` base contract.
+
 ## 0.30.0
 
 ### Removed

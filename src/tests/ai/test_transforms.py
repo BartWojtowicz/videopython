@@ -8,7 +8,6 @@ import pytest
 from videopython.ai.transforms import (
     FaceTracker,
     FaceTrackingCrop,
-    SplitScreenComposite,
 )
 from videopython.base.video import Video
 
@@ -312,124 +311,6 @@ class TestFaceTrackingCrop:
         assert len(result.frames) == 10
 
 
-class TestSplitScreenComposite:
-    """Tests for SplitScreenComposite transformation."""
-
-    def test_init_default_params(self):
-        """Test default initialization."""
-        composite = SplitScreenComposite()
-        assert composite.layout == "2x1"
-        assert composite.gap == 4
-        assert composite.gap_color == (0, 0, 0)
-        assert composite.border_width == 0
-
-    def test_get_cell_rects_2x1(self):
-        """Test cell rectangles for 2x1 layout."""
-        composite = SplitScreenComposite(layout="2x1", gap=4)
-        cells = composite._get_cell_rects(1920, 1080)
-
-        assert len(cells) == 2
-        # Left cell
-        assert cells[0][0] == 0  # x
-        assert cells[0][1] == 0  # y
-        assert cells[0][2] == (1920 - 4) // 2  # width
-        assert cells[0][3] == 1080  # height
-        # Right cell should start after gap
-        assert cells[1][0] == cells[0][2] + 4
-
-    def test_get_cell_rects_1x2(self):
-        """Test cell rectangles for 1x2 layout."""
-        composite = SplitScreenComposite(layout="1x2", gap=4)
-        cells = composite._get_cell_rects(1920, 1080)
-
-        assert len(cells) == 2
-        # Top cell
-        assert cells[0][0] == 0
-        assert cells[0][1] == 0
-        assert cells[0][2] == 1920
-        assert cells[0][3] == (1080 - 4) // 2
-        # Bottom cell
-        assert cells[1][1] == cells[0][3] + 4
-
-    def test_get_cell_rects_2x2(self):
-        """Test cell rectangles for 2x2 layout."""
-        composite = SplitScreenComposite(layout="2x2", gap=4)
-        cells = composite._get_cell_rects(1920, 1080)
-
-        assert len(cells) == 4
-        # All cells should have same dimensions (approximately)
-        cell_w = (1920 - 4) // 2
-        cell_h = (1080 - 4) // 2
-        for cell in cells:
-            assert abs(cell[2] - cell_w) <= 1
-            assert abs(cell[3] - cell_h) <= 1
-
-    def test_get_cell_rects_1_plus_2(self):
-        """Test cell rectangles for 1+2 layout."""
-        composite = SplitScreenComposite(layout="1+2", gap=4)
-        cells = composite._get_cell_rects(1920, 1080)
-
-        assert len(cells) == 3
-        # First cell (large) should be on left, 2/3 width
-        assert cells[0][0] == 0
-        assert cells[0][3] == 1080  # Full height
-
-    def test_get_cell_rects_2_plus_1(self):
-        """Test cell rectangles for 2+1 layout."""
-        composite = SplitScreenComposite(layout="2+1", gap=4)
-        cells = composite._get_cell_rects(1920, 1080)
-
-        assert len(cells) == 3
-        # Last cell (large) should be on right, full height
-        assert cells[2][3] == 1080
-
-    def test_get_required_sources(self):
-        """Test required sources for different layouts."""
-        assert SplitScreenComposite(layout="2x1")._get_required_sources() == 2
-        assert SplitScreenComposite(layout="1x2")._get_required_sources() == 2
-        assert SplitScreenComposite(layout="2x2")._get_required_sources() == 4
-        assert SplitScreenComposite(layout="1+2")._get_required_sources() == 3
-        assert SplitScreenComposite(layout="2+1")._get_required_sources() == 3
-
-    def test_invalid_layout_raises(self):
-        """Test invalid layout raises error."""
-        composite = SplitScreenComposite(layout="invalid")
-        with pytest.raises(ValueError, match="Unknown layout"):
-            composite._get_cell_rects(1920, 1080)
-
-    @patch("videopython.ai.transforms.FaceTracker")
-    def test_apply_requires_enough_videos(self, mock_tracker_class):
-        """Test apply raises error with insufficient videos."""
-        mock_tracker = MagicMock()
-        mock_tracker.detect_and_track.return_value = (0.5, 0.5, 0.1, 0.1)
-        mock_tracker_class.return_value = mock_tracker
-
-        frames = np.zeros((10, 1080, 1920, 3), dtype=np.uint8)
-        video = Video.from_frames(frames, fps=30)
-
-        composite = SplitScreenComposite(layout="2x1")
-        with pytest.raises(ValueError, match="requires 2 videos"):
-            composite.apply(video)  # Only 1 video provided
-
-    @patch("videopython.ai.transforms.FaceTracker")
-    def test_apply_2x1_layout(self, mock_tracker_class):
-        """Test apply with 2x1 layout."""
-        mock_tracker = MagicMock()
-        mock_tracker.detect_and_track.return_value = (0.5, 0.5, 0.1, 0.1)
-        mock_tracker_class.return_value = mock_tracker
-
-        frames1 = np.full((10, 480, 640, 3), 100, dtype=np.uint8)
-        frames2 = np.full((10, 480, 640, 3), 200, dtype=np.uint8)
-        video1 = Video.from_frames(frames1, fps=30)
-        video2 = Video.from_frames(frames2, fps=30)
-
-        composite = SplitScreenComposite(layout="2x1", gap=4)
-        result = composite.apply(video1, video2)
-
-        # Should produce correct frame count
-        assert len(result.frames) == 10
-
-
 class TestFaceTrackingCropFraming:
     """Tests for framing/speed features merged into FaceTrackingCrop."""
 
@@ -524,15 +405,6 @@ class TestGPUFaceTracking:
         )
         assert crop.backend == "gpu"
         assert crop.sample_rate == 5
-
-    def test_split_screen_composite_gpu_params(self):
-        """Test SplitScreenComposite accepts GPU parameters."""
-        composite = SplitScreenComposite(
-            backend="gpu",
-            sample_rate=3,
-        )
-        assert composite.backend == "gpu"
-        assert composite.sample_rate == 3
 
     def test_interpolate_bbox(self):
         """Test bounding box interpolation."""

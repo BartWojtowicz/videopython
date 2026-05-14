@@ -9,57 +9,42 @@ Generate images from text prompts, animate them into video segments, add AI-gene
 ## Full Example
 
 ```python
-from videopython.base import Video, FadeTransition
+from videopython.base import Resize, Fade
+from videopython.base.operation import TimeRange
 from videopython.ai import TextToImage, ImageToVideo, TextToSpeech
 
+
 def create_ai_video():
-    # Define scenes with prompts
     scenes = [
-        {
-            "image_prompt": "A serene mountain landscape at sunrise, photorealistic",
-            "narration": "In the mountains, every sunrise brings new possibilities.",
-        },
-        {
-            "image_prompt": "A flowing river through a forest, cinematic lighting",
-            "narration": "Nature flows with endless energy and grace.",
-        },
-        {
-            "image_prompt": "A starry night sky over a calm lake, dramatic",
-            "narration": "And when night falls, the universe reveals its wonders.",
-        },
+        {"image_prompt": "A serene mountain landscape at sunrise, photorealistic",
+         "narration": "In the mountains, every sunrise brings new possibilities."},
+        {"image_prompt": "A flowing river through a forest, cinematic lighting",
+         "narration": "Nature flows with endless energy and grace."},
+        {"image_prompt": "A starry night sky over a calm lake, dramatic",
+         "narration": "And when night falls, the universe reveals its wonders."},
     ]
 
-    # Initialize AI generators
     image_gen = TextToImage()
     video_gen = ImageToVideo()
     speech_gen = TextToSpeech()
 
     videos = []
     for scene in scenes:
-        # Generate image
         image = image_gen.generate_image(scene["image_prompt"])
-
-        # Animate image to video (4 seconds)
         video = video_gen.generate_video(image=image, fps=24)
-
-        # Resize to consistent dimensions using fluent API
-        video = video.resize(1920, 1080)
-
-        # Generate narration audio
+        video = Resize(width=1920, height=1080).apply(video)
         audio = speech_gen.generate_audio(scene["narration"])
+        videos.append(video.add_audio(audio))
 
-        # Add audio to video segment
-        video = video.add_audio(audio)
-        videos.append(video)
-
-    # Combine all segments with fade transitions
+    # Concatenate, with a 1s fade-in on each follow-on segment
     final = videos[0]
     for next_video in videos[1:]:
-        final = final.transition_to(next_video, FadeTransition(effect_time_seconds=1.0))
-
+        next_video = Fade(mode="in", duration=1.0,
+                          window=TimeRange(stop=1.0)).apply(next_video)
+        final = final + next_video
     return final
 
-# Run and save
+
 video = create_ai_video()
 video.save("ai_generated.mp4")
 ```
@@ -93,7 +78,11 @@ audio = speech_gen.generate_audio("Your narration text here")
 ### 4. Combine Segments
 
 ```python
-final = video1.transition_to(video2, FadeTransition(effect_time_seconds=1.0))
+from videopython.base import Fade
+from videopython.base.operation import TimeRange
+
+next_video = Fade(mode="in", duration=1.0, window=TimeRange(stop=1.0)).apply(next_video)
+final = final + next_video
 ```
 
 ## Tips

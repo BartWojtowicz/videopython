@@ -12,7 +12,6 @@ from .description import (
     SceneDescription,
 )
 from .effects import (
-    AudioEffect,
     Blur,
     ColorGrading,
     Effect,
@@ -27,8 +26,6 @@ from .effects import (
 from .exceptions import (
     AudioError,
     AudioLoadError,
-    IncompatibleVideoError,
-    InsufficientDurationError,
     OutOfBoundsError,
     TextRenderError,
     TransformError,
@@ -37,17 +34,7 @@ from .exceptions import (
     VideoMetadataError,
     VideoPythonError,
 )
-from .registry import (
-    OperationCategory,
-    OperationSpec,
-    ParamSpec,
-    get_operation_spec,
-    get_operation_specs,
-    get_specs_by_category,
-    get_specs_by_tag,
-    register,
-    spec_from_class,
-)
+from .operation import FilterCtx, OpCategory, Operation, TimeRange
 from .scene import SceneDetector
 from .text import (
     AnchorPoint,
@@ -64,15 +51,12 @@ from .transforms import (
     CutFrames,
     CutSeconds,
     FreezeFrame,
-    PictureInPicture,
     ResampleFPS,
     Resize,
     Reverse,
     SilenceRemoval,
     SpeedChange,
-    Transformation,
 )
-from .transitions import BlurTransition, FadeTransition, InstantTransition, Transition
 from .video import FrameIterator, Video, VideoMetadata
 
 __all__ = [
@@ -91,12 +75,15 @@ __all__ = [
     "AudioError",
     "AudioLoadError",
     "TransformError",
-    "InsufficientDurationError",
-    "IncompatibleVideoError",
     "TextRenderError",
     "OutOfBoundsError",
+    # Operation foundation
+    "Operation",
+    "Effect",
+    "TimeRange",
+    "OpCategory",
+    "FilterCtx",
     # Transforms
-    "Transformation",
     "CutFrames",
     "CutSeconds",
     "Resize",
@@ -104,18 +91,10 @@ __all__ = [
     "Crop",
     "CropMode",
     "SpeedChange",
-    "PictureInPicture",
     "Reverse",
     "FreezeFrame",
     "SilenceRemoval",
-    # Transitions
-    "Transition",
-    "InstantTransition",
-    "FadeTransition",
-    "BlurTransition",
     # Effects
-    "Effect",
-    "AudioEffect",
     "FullImageOverlay",
     "Blur",
     "Zoom",
@@ -146,14 +125,4 @@ __all__ = [
     "AudioEvent",
     "AudioClassification",
     "MotionInfo",
-    # Registry
-    "OperationCategory",
-    "OperationSpec",
-    "ParamSpec",
-    "get_operation_specs",
-    "get_operation_spec",
-    "get_specs_by_category",
-    "get_specs_by_tag",
-    "register",
-    "spec_from_class",
 ]

@@ -186,8 +186,7 @@ does not survive across shot boundaries. Two surfaces:
   This is the API the analyzer uses, and the one M6 lip-sync consumes.
 - `detect_and_track(frame, frame_index)` / `track_video(frames)` are
   the legacy single-subject smoothed-position APIs used by
-  `FaceTrackingCrop` and `SplitScreenComposite` (see
-  [AI Transforms](transforms.md)).
+  `FaceTrackingCrop` (see [AI Transforms](transforms.md)).
 
 ```python
 from videopython.ai import FaceTracker

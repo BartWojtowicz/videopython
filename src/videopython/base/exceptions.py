@@ -43,18 +43,6 @@ class TransformError(VideoPythonError):
     pass
 
 
-class InsufficientDurationError(TransformError):
-    """Raised when a video doesn't have enough duration for an operation."""
-
-    pass
-
-
-class IncompatibleVideoError(TransformError):
-    """Raised when videos have incompatible properties for merging."""
-
-    pass
-
-
 class TextRenderError(VideoPythonError):
     """Base exception for text rendering errors."""
 

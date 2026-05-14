@@ -1,6 +1,6 @@
 [project]
 name = "videopython"
-version = "0.30.0"
+version = "0.31.0"
 description = "Minimal video generation and processing library."
 authors = [
     { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
@@ -136,6 +136,7 @@ Documentation = "https://videopython.com"
 
 [tool.mypy]
 mypy_path = "src/stubs"
+plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
 module = [

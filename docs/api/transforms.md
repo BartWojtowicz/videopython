@@ -1,105 +1,121 @@
 # Transforms
 
-Transformations modify video frames (cutting, resizing, resampling).
+Transforms are `Operation` subclasses that produce a new `Video` from a
+single input video. They may change dimensions, fps, duration, or frame
+count. See [Operations](operations.md) for the base contract.
 
-## Fluent API
-
-Chain transformations directly on Video objects:
-
-```python
-from videopython.base import Video
-
-# Chain multiple transformations
-video = Video.from_path("input.mp4").cut(0, 10).resize(1280, 720).resample_fps(30)
-
-# Validate operations before executing (using metadata)
-output_meta = video.metadata.cut(0, 10).resize(1280, 720).resample_fps(30)
-print(f"Output will be: {output_meta}")
-```
-
-## Available Methods
-
-| Video Method | VideoMetadata Method | Description |
-|--------------|---------------------|-------------|
-| `video.cut(start, end)` | `meta.cut(start, end)` | Cut by time range (seconds) |
-| `video.cut_frames(start, end)` | `meta.cut_frames(start, end)` | Cut by frame range |
-| `video.resize(width, height)` | `meta.resize(width, height)` | Resize dimensions |
-| `video.crop(width, height)` | `meta.crop(width, height)` | Center crop |
-| `video.resample_fps(fps)` | `meta.resample_fps(fps)` | Change frame rate |
-| `video.transition_to(other, t)` | `meta.transition_to(other, time)` | Combine videos |
-| `video.ken_burns(start, end, easing)` | - | Pan-and-zoom effect |
-| `video.picture_in_picture(overlay, ...)` | - | Overlay video as PiP |
-| `Reverse().apply(video)` | - | Reverse playback order |
-| `FreezeFrame(t, d).apply(video)` | - | Hold a frame for a duration |
-| `SilenceRemoval().apply(video, transcription=t)` | - | Remove/speed up silent gaps |
-
-## Transformation (Base Class)
-
-::: videopython.base.Transformation
-
-## CutSeconds
-
-::: videopython.base.CutSeconds
-
-## CutFrames
-
-::: videopython.base.CutFrames
-
-## Resize
-
-::: videopython.base.Resize
-
-## ResampleFPS
-
-::: videopython.base.ResampleFPS
-
-## Crop
-
-Supports both pixel values and normalized coordinates (0-1):
+## Usage
 
 ```python
-from videopython.base import Video, Crop, CropMode
+from videopython.base import Video, Resize, Crop, CutSeconds
 
 video = Video.from_path("input.mp4")
+video = CutSeconds(start=0.0, end=10.0).apply(video)
+video = Crop(width=0.5, height=0.5).apply(video)        # 50% center crop
+video = Resize(width=1280, height=720).apply(video)
+video.save("output.mp4")
+```
 
-# Pixel values - crop to exact dimensions
-video.crop(640, 480)
+Inside a `VideoEdit` plan, transforms go in the `operations` list with
+their fields inline:
 
-# Normalized coordinates - crop to 50% of original size (centered)
-Crop(width=0.5, height=0.5).apply(video)
+```python
+plan = {
+    "segments": [{
+        "source": "input.mp4",
+        "start": 0,
+        "end": 10,
+        "operations": [
+            {"op": "crop", "width": 0.5, "height": 0.5},
+            {"op": "resize", "width": 1280, "height": 720},
+        ],
+    }]
+}
+```
 
-# Custom position - crop right half of video
+## Available Transforms
+
+| op | Class | Streamable | Notes |
+|---|---|---|---|
+| `cut_frames` | `CutFrames` | no | Cut by frame range |
+| `cut` | `CutSeconds` | no | Cut by time range |
+| `resize` | `Resize` | yes | Resize, optional aspect-preserving |
+| `resample_fps` | `ResampleFPS` | yes | Change frame rate |
+| `crop` | `Crop` | yes | Pixel or normalized 0–1 fractions |
+| `speed_change` | `SpeedChange` | no | Constant or ramping speed |
+| `reverse` | `Reverse` | no | Reverse playback |
+| `freeze_frame` | `FreezeFrame` | no | Hold a frame for a duration |
+| `silence_removal` | `SilenceRemoval` | no | Requires transcription context |
+
+## Crop Coordinates
+
+`Crop` accepts pixel ints or normalized 0–1 floats. Floats in `(0, 1]`
+are treated as fractions of source dimensions; everything else is
+interpreted as a pixel count.
+
+```python
+from videopython.base import Crop, CropMode
+
+Crop(width=640, height=480).apply(video)                              # pixels
+Crop(width=0.5, height=0.5).apply(video)                              # 50% center crop
 Crop(width=0.5, height=1.0, x=0.5, y=0.0, mode=CropMode.CUSTOM).apply(video)
 ```
 
+## Context-Dependent Transforms
+
+`SilenceRemoval` declares `requires = ("transcription",)`. Inside a
+`VideoEdit`, pass it via `context`; standalone, pass it directly to
+`apply`:
+
+```python
+edit.run(context={"transcription": my_transcription})
+# or
+SilenceRemoval().apply(video, transcription=my_transcription)
+```
+
+## API Reference
+
+### CutSeconds
+
+::: videopython.base.CutSeconds
+
+### CutFrames
+
+::: videopython.base.CutFrames
+
+### Resize
+
+::: videopython.base.Resize
+
+### ResampleFPS
+
+::: videopython.base.ResampleFPS
+
+### Crop
+
 ::: videopython.base.Crop
 
-## CropMode
+### CropMode
 
 ::: videopython.base.CropMode
 
-## SpeedChange
+### SpeedChange
 
 ::: videopython.base.SpeedChange
 
-## PictureInPicture
-
-::: videopython.base.PictureInPicture
-
-## Reverse
+### Reverse
 
 ::: videopython.base.Reverse
 
-## FreezeFrame
+### FreezeFrame
 
 ::: videopython.base.FreezeFrame
 
-## SilenceRemoval
-
-Removes or speeds up silent gaps between speech using word-level transcription timing. Requires transcription data passed via `VideoEdit.run(context={"transcription": ...})` or directly to `apply(video, transcription=...)`.
+### SilenceRemoval
 
 ::: videopython.base.SilenceRemoval
 
 ---
 
-For AI-powered transforms (face tracking, auto-framing), see [AI Transforms](ai/transforms.md).
+For AI-powered transforms (face tracking, auto-framing), see
+[AI Transforms](ai/transforms.md).

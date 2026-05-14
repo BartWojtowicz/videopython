@@ -1,11 +1,12 @@
 import numpy as np
 import pytest
+from PIL import Image
+from pydantic import ValidationError
 
 from tests.test_config import TEST_FONT_PATH
 from videopython.base.audio import Audio, AudioMetadata
 from videopython.base.description import BoundingBox
 from videopython.base.effects import (
-    AudioEffect,
     Blur,
     ColorGrading,
     Fade,
@@ -16,36 +17,50 @@ from videopython.base.effects import (
     VolumeAdjust,
     Zoom,
 )
+from videopython.base.operation import TimeRange
 from videopython.base.video import Video
 
 
-def test_full_image_overlay_rgba(black_frames_test_video):
+def _write_overlay(arr: np.ndarray, tmp_path) -> str:
+    """Persist an overlay array to a PNG and return the path for FullImageOverlay.source."""
+    path = tmp_path / "overlay.png"
+    if arr.shape[-1] == 3:
+        Image.fromarray(arr, mode="RGB").save(path)
+    else:
+        Image.fromarray(arr, mode="RGBA").save(path)
+    return str(path)
+
+
+def test_full_image_overlay_rgba(black_frames_test_video, tmp_path):
     overlay_shape = (*black_frames_test_video.frame_shape[:2], 4)  # RGBA
     overlay = 255 * np.ones(shape=overlay_shape, dtype=np.uint8)
     overlay[:, :, 3] = 127
+    source = _write_overlay(overlay, tmp_path)
 
     original_shape = black_frames_test_video.video_shape
-    overlayed_video = FullImageOverlay(overlay).apply(black_frames_test_video)
+    overlayed_video = FullImageOverlay(source=source).apply(black_frames_test_video)
 
     assert (overlayed_video.frames.flatten() == 127).all()
     assert overlayed_video.video_shape == original_shape
 
 
-def test_full_image_overlay_rgb(black_frames_test_video):
+def test_full_image_overlay_rgb(black_frames_test_video, tmp_path):
     overlay = 255 * np.ones(shape=black_frames_test_video.frame_shape, dtype=np.uint8)
+    source = _write_overlay(overlay, tmp_path)
     original_shape = black_frames_test_video.video_shape
     original_audio_length = len(black_frames_test_video.audio)
-    overlayed_video = FullImageOverlay(overlay, alpha=0.5).apply(black_frames_test_video)
+    overlayed_video = FullImageOverlay(source=source, alpha=0.5).apply(black_frames_test_video)
 
     assert (overlayed_video.frames.flatten() == 127).all()
     assert overlayed_video.video_shape == original_shape
     assert len(overlayed_video.audio) == original_audio_length
 
 
-def test_full_image_overlay_with_fade(black_frames_test_video):
+def test_full_image_overlay_with_fade(black_frames_test_video, tmp_path):
     overlay = 255 * np.ones(shape=black_frames_test_video.frame_shape, dtype=np.uint8)
+    source = _write_overlay(overlay, tmp_path)
     original_shape = black_frames_test_video.video_shape
-    overlayed_video = FullImageOverlay(overlay, alpha=0.5, fade_time=2.0).apply(black_frames_test_video)
+    overlayed_video = FullImageOverlay(source=source, alpha=0.5, fade_time=2.0).apply(black_frames_test_video)
 
     assert overlayed_video.video_shape == original_shape
 
@@ -61,237 +76,137 @@ def test_zoom_in_out(small_video):
     assert zoomed_out_video.metadata.frame_count == small_video.metadata.frame_count
 
 
-def test_effect_start_argument(small_video):
-    blur = Blur(mode="constant", iterations=10)
-    small_video_with_blur = blur.apply(small_video.copy(), start=6.0)
+def test_effect_window(small_video):
+    blur = Blur(mode="constant", iterations=10, window=TimeRange(start=6.0))
+    small_video_with_blur = blur.apply(small_video.copy())
     assert (small_video.frames[0] == small_video_with_blur.frames[0]).all()
     assert (small_video.frames[-1] != small_video_with_blur.frames[-1]).any()
 
 
 class TestColorGrading:
-    """Tests for ColorGrading effect."""
-
     def test_default_no_change(self, small_video):
-        """Test default parameters don't significantly change video."""
         original_shape = small_video.video_shape
-        effect = ColorGrading()
-        result = effect.apply(small_video)
-
-        # Default params should result in minimal change
+        result = ColorGrading().apply(small_video)
         assert result.video_shape == original_shape
 
     def test_brightness_increase(self, black_frames_test_video):
-        """Test brightness increase makes frames brighter."""
-        effect = ColorGrading(brightness=0.5)
-        result = effect.apply(black_frames_test_video)
-
-        # Black frames with brightness increase should be brighter
+        result = ColorGrading(brightness=0.5).apply(black_frames_test_video)
         assert result.frames.mean() > 0
 
     def test_saturation_zero_grayscale(self, small_video):
-        """Test zero saturation produces grayscale-like output."""
-        effect = ColorGrading(saturation=0.0)
-        result = effect.apply(small_video)
-
-        # Check that R, G, B channels are more similar (grayscale tendency)
-        for frame in result.frames[:5]:  # Check first few frames
+        result = ColorGrading(saturation=0.0).apply(small_video)
+        for frame in result.frames[:5]:
             r, g, b = frame[:, :, 0], frame[:, :, 1], frame[:, :, 2]
-            # In grayscale, channels should be very similar
             assert np.allclose(r, g, atol=5) or np.allclose(g, b, atol=5)
 
     def test_preserves_shape(self, small_video):
-        """Test that color grading preserves video dimensions."""
-        effect = ColorGrading(brightness=0.1, contrast=1.2, saturation=0.8)
-        result = effect.apply(small_video)
-
+        result = ColorGrading(brightness=0.1, contrast=1.2, saturation=0.8).apply(small_video)
         assert result.video_shape == small_video.video_shape
         assert result.frame_shape == small_video.frame_shape
 
     def test_invalid_params_raise(self):
-        """Test that invalid parameters raise errors."""
-        with pytest.raises(ValueError):
-            ColorGrading(brightness=2.0)  # > 1.0
+        with pytest.raises(ValidationError):
+            ColorGrading(brightness=2.0)
+        with pytest.raises(ValidationError):
+            ColorGrading(contrast=0.1)
+        with pytest.raises(ValidationError):
+            ColorGrading(saturation=-1.0)
+        with pytest.raises(ValidationError):
+            ColorGrading(temperature=2.0)
 
-        with pytest.raises(ValueError):
-            ColorGrading(contrast=0.1)  # < 0.5
-
-        with pytest.raises(ValueError):
-            ColorGrading(saturation=-1.0)  # < 0.0
-
-        with pytest.raises(ValueError):
-            ColorGrading(temperature=2.0)  # > 1.0
-
-    def test_partial_application(self, small_video):
-        """Test applying to only part of video."""
+    def test_windowed_application(self, small_video):
         original_first = small_video.frames[0].copy()
-        effect = ColorGrading(brightness=0.5)
-        result = effect.apply(small_video, start=5.0)  # Apply from 5 seconds
-
-        # First frame should be unchanged
+        result = ColorGrading(brightness=0.5, window=TimeRange(start=5.0)).apply(small_video.copy())
         assert np.array_equal(result.frames[0], original_first)
 
 
 class TestVignette:
-    """Tests for Vignette effect."""
-
     def test_vignette_darkens_edges(self, black_frames_test_video):
-        """Test that vignette darkens the edges relative to original."""
-        # Set all frames to uniform brightness for predictable testing
         black_frames_test_video.frames[:] = 200
-
         h, w = black_frames_test_video.frames[0].shape[:2]
-        original_corner = 200.0
-        original_center = 200.0
-
-        effect = Vignette(strength=0.8, radius=1.0)
-        result = effect.apply(black_frames_test_video)
-
+        result = Vignette(strength=0.8, radius=1.0).apply(black_frames_test_video)
         result_corner = float(result.frames[0][0, 0].mean())
         result_center = float(result.frames[0][h // 2, w // 2].mean())
-
-        # Corner should be darker (more reduction than center)
-        corner_reduction = original_corner - result_corner
-        center_reduction = original_center - result_center
-
-        # Vignette should darken corners more than center
-        assert corner_reduction > center_reduction
-        # Corner should be noticeably darker
         assert result_corner < result_center
 
     def test_preserves_shape(self, small_video):
-        """Test that vignette preserves video dimensions."""
-        effect = Vignette(strength=0.5)
-        result = effect.apply(small_video)
-
+        result = Vignette(strength=0.5).apply(small_video)
         assert result.video_shape == small_video.video_shape
 
     def test_zero_strength_minimal_change(self, small_video):
-        """Test that zero strength results in minimal change."""
         original_mean = small_video.frames.mean()
-        effect = Vignette(strength=0.0)
-        result = effect.apply(small_video)
-
-        # With zero strength, image should be nearly unchanged
+        result = Vignette(strength=0.0).apply(small_video.copy())
         assert abs(result.frames.mean() - original_mean) < 1
 
     def test_invalid_params_raise(self):
-        """Test that invalid parameters raise errors."""
-        with pytest.raises(ValueError):
-            Vignette(strength=2.0)  # > 1.0
+        with pytest.raises(ValidationError):
+            Vignette(strength=2.0)
+        with pytest.raises(ValidationError):
+            Vignette(strength=-0.5)
+        with pytest.raises(ValidationError):
+            Vignette(radius=0.1)
 
-        with pytest.raises(ValueError):
-            Vignette(strength=-0.5)  # < 0.0
-
-        with pytest.raises(ValueError):
-            Vignette(radius=0.1)  # < 0.5
-
-    def test_partial_application(self, small_video):
-        """Test applying to only part of video."""
+    def test_windowed_application(self, small_video):
         original_first = small_video.frames[0].copy()
-        effect = Vignette(strength=0.8)
-        result = effect.apply(small_video, start=5.0)
-
-        # First frame should be unchanged
+        result = Vignette(strength=0.8, window=TimeRange(start=5.0)).apply(small_video.copy())
         assert np.array_equal(result.frames[0], original_first)
 
 
 class TestKenBurns:
-    """Tests for KenBurns effect."""
-
     def test_preserves_shape(self, small_video):
-        """Test that Ken Burns preserves video dimensions."""
         start = BoundingBox(x=0.0, y=0.0, width=1.0, height=1.0)
         end = BoundingBox(x=0.25, y=0.25, width=0.5, height=0.5)
-        effect = KenBurns(start_region=start, end_region=end)
-        result = effect.apply(small_video)
-
+        result = KenBurns(start_region=start, end_region=end).apply(small_video)
         assert result.video_shape == small_video.video_shape
         assert result.frame_shape == small_video.frame_shape
 
     def test_zoom_in_effect(self, black_frames_test_video):
-        """Test zoom-in effect (full frame to smaller region)."""
-        # Set frames to gradient for testing
-        h, w = black_frames_test_video.frame_shape[:2]
         for i, frame in enumerate(black_frames_test_video.frames):
-            frame[:] = i * 2  # Different brightness per frame
-
+            frame[:] = i * 2
         start = BoundingBox(x=0.0, y=0.0, width=1.0, height=1.0)
         end = BoundingBox(x=0.25, y=0.25, width=0.5, height=0.5)
-        effect = KenBurns(start_region=start, end_region=end)
-        result = effect.apply(black_frames_test_video)
-
+        result = KenBurns(start_region=start, end_region=end).apply(black_frames_test_video)
         assert result.video_shape == black_frames_test_video.video_shape
 
     def test_zoom_out_effect(self, black_frames_test_video):
-        """Test zoom-out effect (smaller region to full frame)."""
         start = BoundingBox(x=0.25, y=0.25, width=0.5, height=0.5)
         end = BoundingBox(x=0.0, y=0.0, width=1.0, height=1.0)
-        effect = KenBurns(start_region=start, end_region=end)
-        result = effect.apply(black_frames_test_video)
-
+        result = KenBurns(start_region=start, end_region=end).apply(black_frames_test_video)
         assert result.video_shape == black_frames_test_video.video_shape
 
     def test_pan_effect(self, small_video):
-        """Test panning effect (same size, different position)."""
         start = BoundingBox(x=0.0, y=0.0, width=0.5, height=0.5)
         end = BoundingBox(x=0.5, y=0.5, width=0.5, height=0.5)
-        effect = KenBurns(start_region=start, end_region=end)
-        result = effect.apply(small_video)
-
+        result = KenBurns(start_region=start, end_region=end).apply(small_video)
         assert result.video_shape == small_video.video_shape
 
     def test_easing_options(self, black_frames_test_video):
-        """Test all easing options work."""
         start = BoundingBox(x=0.0, y=0.0, width=1.0, height=1.0)
         end = BoundingBox(x=0.25, y=0.25, width=0.5, height=0.5)
-
         for easing in ["linear", "ease_in", "ease_out", "ease_in_out"]:
-            effect = KenBurns(start_region=start, end_region=end, easing=easing)
-            result = effect.apply(black_frames_test_video.copy())
+            result = KenBurns(start_region=start, end_region=end, easing=easing).apply(black_frames_test_video.copy())
             assert result.video_shape == black_frames_test_video.video_shape
 
     def test_invalid_region_raises(self):
-        """Test that invalid regions raise errors."""
         valid = BoundingBox(x=0.0, y=0.0, width=0.5, height=0.5)
-
-        # Position out of bounds
-        with pytest.raises(ValueError):
-            KenBurns(
-                start_region=BoundingBox(x=-0.1, y=0.0, width=0.5, height=0.5),
-                end_region=valid,
-            )
-
-        # Region extends beyond bounds
-        with pytest.raises(ValueError):
-            KenBurns(
-                start_region=BoundingBox(x=0.8, y=0.0, width=0.5, height=0.5),
-                end_region=valid,
-            )
-
-        # Zero dimension
-        with pytest.raises(ValueError):
-            KenBurns(
-                start_region=BoundingBox(x=0.0, y=0.0, width=0.0, height=0.5),
-                end_region=valid,
-            )
+        with pytest.raises(ValidationError):
+            KenBurns(start_region=BoundingBox(x=-0.1, y=0.0, width=0.5, height=0.5), end_region=valid)
+        with pytest.raises(ValidationError):
+            KenBurns(start_region=BoundingBox(x=0.8, y=0.0, width=0.5, height=0.5), end_region=valid)
+        with pytest.raises(ValidationError):
+            KenBurns(start_region=BoundingBox(x=0.0, y=0.0, width=0.0, height=0.5), end_region=valid)
 
     def test_invalid_easing_raises(self):
-        """Test that invalid easing raises error."""
         start = BoundingBox(x=0.0, y=0.0, width=1.0, height=1.0)
         end = BoundingBox(x=0.25, y=0.25, width=0.5, height=0.5)
-
-        with pytest.raises(ValueError):
+        with pytest.raises(ValidationError):
             KenBurns(start_region=start, end_region=end, easing="invalid")
 
-    def test_partial_application(self, small_video):
-        """Test applying to only part of video."""
+    def test_windowed_application(self, small_video):
         original_first = small_video.frames[0].copy()
         start = BoundingBox(x=0.0, y=0.0, width=1.0, height=1.0)
         end = BoundingBox(x=0.25, y=0.25, width=0.5, height=0.5)
-        effect = KenBurns(start_region=start, end_region=end)
-        result = effect.apply(small_video, start=5.0)
-
-        # First frame should be unchanged
+        result = KenBurns(start_region=start, end_region=end, window=TimeRange(start=5.0)).apply(small_video.copy())
         assert np.array_equal(result.frames[0], original_first)
 
 
@@ -344,9 +259,9 @@ class TestFade:
         result = Fade(mode="in", duration=0.5).apply(video_1s)
         assert result.video_shape == original_shape
 
-    def test_partial_apply(self, video_1s):
+    def test_windowed_apply(self, video_1s):
         original_first = video_1s.frames[0].copy()
-        result = Fade(mode="out", duration=0.3).apply(video_1s, start=0.5)
+        result = Fade(mode="out", duration=0.3, window=TimeRange(start=0.5)).apply(video_1s.copy())
         assert np.array_equal(result.frames[0], original_first)
 
     def test_audio_fade_in(self, video_with_audio):
@@ -364,11 +279,11 @@ class TestFade:
             assert result.video_shape == video_1s.video_shape
 
     def test_invalid_mode_raises(self):
-        with pytest.raises(ValueError, match="mode"):
-            Fade(mode="invalid")
+        with pytest.raises(ValidationError):
+            Fade(mode="invalid")  # type: ignore[arg-type]
 
     def test_invalid_duration_raises(self):
-        with pytest.raises(ValueError, match="duration"):
+        with pytest.raises(ValidationError):
             Fade(mode="in", duration=0)
 
 
@@ -388,9 +303,9 @@ class TestVolumeAdjust:
         new_rms = np.sqrt(np.mean(result.audio.data**2))
         assert np.isclose(new_rms, original_rms * 0.5, atol=0.01)
 
-    def test_partial_apply(self, video_with_audio):
+    def test_windowed_apply(self, video_with_audio):
         original_start = video_with_audio.audio.data[:100].copy()
-        result = VolumeAdjust(volume=0.0).apply(video_with_audio, start=0.5)
+        result = VolumeAdjust(volume=0.0, window=TimeRange(start=0.5)).apply(video_with_audio)
         assert np.allclose(result.audio.data[:100], original_start)
 
     def test_ramp_duration(self, video_with_audio):
@@ -406,14 +321,13 @@ class TestVolumeAdjust:
         from videopython.base.effects import Effect
 
         assert isinstance(VolumeAdjust(), Effect)
-        assert isinstance(VolumeAdjust(), AudioEffect)
 
     def test_invalid_volume_raises(self):
-        with pytest.raises(ValueError, match="volume"):
+        with pytest.raises(ValidationError):
             VolumeAdjust(volume=-1.0)
 
     def test_invalid_ramp_raises(self):
-        with pytest.raises(ValueError, match="ramp_duration"):
+        with pytest.raises(ValidationError):
             VolumeAdjust(ramp_duration=-0.1)
 
     def test_silent_audio_passthrough(self, video_1s):
@@ -433,9 +347,9 @@ class TestTextOverlay:
         result = TextOverlay(text="Test", font_size=16).apply(video_1s)
         assert result.video_shape == original_shape
 
-    def test_partial_apply(self, video_1s):
+    def test_windowed_apply(self, video_1s):
         original_first = video_1s.frames[0].copy()
-        result = TextOverlay(text="Late", font_size=16).apply(video_1s, start=0.5)
+        result = TextOverlay(text="Late", font_size=16, window=TimeRange(start=0.5)).apply(video_1s.copy())
         assert np.array_equal(result.frames[0], original_first)
 
     def test_multiline_text(self, video_1s):
@@ -454,15 +368,15 @@ class TestTextOverlay:
             assert result.video_shape == video_1s.video_shape
 
     def test_empty_text_raises(self):
-        with pytest.raises(ValueError, match="text"):
+        with pytest.raises(ValidationError):
             TextOverlay(text="")
 
     def test_invalid_position_raises(self):
-        with pytest.raises(ValueError, match="position"):
+        with pytest.raises(ValidationError):
             TextOverlay(text="Hi", position=(1.5, 0.5))
 
     def test_invalid_font_size_raises(self):
-        with pytest.raises(ValueError, match="font_size"):
+        with pytest.raises(ValidationError):
             TextOverlay(text="Hi", font_size=0)
 
     def test_word_wrap(self):

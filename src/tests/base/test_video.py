@@ -116,13 +116,6 @@ def test_load_video_shape(video_path: str, original_metadata: VideoMetadata):
     assert video.frames.shape == tuple(original_metadata.get_video_shape())
 
 
-def test_videometadata_resize_round_to_even():
-    meta = VideoMetadata(height=540, width=302, fps=30, frame_count=30, total_seconds=1.0)
-    resized = meta.resize(width=1080)
-    assert resized.width == 1080
-    assert resized.height == 1932
-
-
 def test_save_and_load():
     test_video = Video.from_image(np.zeros((100, 100, 3), dtype=np.uint8), fps=24, length_seconds=5.0)
     with tempfile.TemporaryDirectory() as temp_dir:

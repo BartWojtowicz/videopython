@@ -18,13 +18,21 @@ Minimal, LLM-friendly Python library for programmatic video editing, processing,
 </div>
 
 ```python
-from videopython import Video
-from videopython.base import FadeTransition
+from videopython.editing import VideoEdit
 
-intro = Video.from_path("intro.mp4").resize(1080, 1920)
-clip = Video.from_path("raw.mp4").cut(10, 25).resize(1080, 1920).resample_fps(30)
-final = intro.transition_to(clip, FadeTransition(effect_time_seconds=0.5))
-final = final.add_audio_from_file("music.mp3")
+edit = VideoEdit.from_dict({
+    "segments": [
+        {"source": "intro.mp4", "start": 0, "end": 3,
+         "operations": [{"op": "resize", "width": 1080, "height": 1920}]},
+        {"source": "raw.mp4", "start": 10, "end": 25,
+         "operations": [
+             {"op": "resize", "width": 1080, "height": 1920},
+             {"op": "resample_fps", "fps": 30},
+             {"op": "fade", "mode": "in", "duration": 0.5},
+         ]},
+    ],
+})
+final = edit.run().add_audio_from_file("music.mp3")
 final.save("output.mp4")
 ```
 
@@ -34,7 +42,7 @@ final.save("output.mp4")
 
 ### Core Editing
 
-Cut, resize, crop, change speed, reverse, freeze frames, picture-in-picture. Combine clips with fade, blur, and instant transitions. Multicam editing for podcast-style recordings.
+Cut, resize, crop, change speed, reverse, freeze frames, silence removal. Multi-segment editing plans with automatic fps/resolution matching for concatenation.
 
 </div>
 

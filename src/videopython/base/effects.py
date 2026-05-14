@@ -1,25 +1,39 @@
+"""Effect Operations.
+
+An ``Effect`` is an ``Operation`` that preserves video shape and frame count.
+Subclasses override :meth:`Effect._apply` for in-memory execution and may
+additionally override :meth:`Effect.streaming_init` / :meth:`Effect.process_frame`
+for bounded-memory streaming via ``base/streaming.py``.
+
+Effects that need to modify audio (``Fade``, ``VolumeAdjust``) override
+:meth:`Effect.apply` directly so the audio splice can stay coherent with the
+window — the base ``Effect.apply`` only splices frames, restoring the original
+audio after ``_apply`` returns.
+"""
+
 from __future__ import annotations
 
 import logging
-from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, ClassVar, Literal
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+from pydantic import Field, PrivateAttr, model_validator
 from tqdm import tqdm
 
-from videopython.base.video import Video
+from videopython.base.description import BoundingBox
+from videopython.base.operation import Effect
 
 if TYPE_CHECKING:
     from videopython.base.audio import Audio
-    from videopython.base.description import BoundingBox
+    from videopython.base.video import Video
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "Effect",
-    "AudioEffect",
     "FullImageOverlay",
     "Blur",
     "Zoom",
@@ -32,238 +46,132 @@ __all__ = [
 ]
 
 
-def _resolve_time_range(start: float | None, stop: float | None, total_seconds: float) -> tuple[float, float]:
-    """Clamp and validate an effect time range against the video duration.
-
-    Returns resolved (start, stop) in seconds.
-    """
-    start_s = start if start is not None else 0
-    stop_s = stop if stop is not None else total_seconds
-    stop_s = min(stop_s, total_seconds)
-    start_s = min(start_s, total_seconds)
-    if start_s < 0:
-        raise ValueError(f"Effect start must be non-negative, got {start_s}!")
-    if stop_s < start_s:
-        raise ValueError(f"Effect stop ({stop_s}) must be >= start ({start_s})!")
-    return start_s, stop_s
-
-
-class Effect(ABC):
-    """Abstract class for effect on frames of video.
-
-    The effect must not change the number of frames and the shape of the frames.
-    """
-
-    supports_streaming: ClassVar[bool] = False
-
-    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
-        """Called once before streaming begins to precompute per-frame parameters.
-
-        Override in subclasses that need precomputation (e.g., per-frame alpha
-        arrays, sigma schedules, crop regions).
-        """
-
-    def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
-        """Process a single frame in streaming mode.
-
-        Args:
-            frame: Single RGB frame (H, W, 3) uint8.
-            frame_index: 0-based index within this effect's active range.
-
-        Returns:
-            Processed frame, same shape and dtype.
-        """
-        raise NotImplementedError(f"{type(self).__name__} does not support streaming")
-
-    def apply(self, video: Video, start: float | None = None, stop: float | None = None) -> Video:
-        """Apply the effect to a video, optionally within a time range.
-
-        Omit ``start`` to apply from the beginning, omit ``stop`` to apply until
-        the end.  Prefer omitting over passing explicit values when the intent is
-        full-range application -- this avoids floating-point mismatches with the
-        actual video duration.
-
-        Args:
-            video: Input video.
-            start: Start time in seconds. Omit to apply from the beginning.
-                Only set when the effect should begin partway through.
-            stop: Stop time in seconds. Omit to apply until the end.
-                Only set when the effect should end before the video does.
-        """
-        original_shape = video.video_shape
-
-        if start is None and stop is None:
-            # Full-range: apply directly without slicing or np.r_ reassembly.
-            video = self._apply(video)
-        else:
-            start_s, stop_s = _resolve_time_range(start, stop, video.total_seconds)
-            # Apply effect on video slice
-            effect_start_frame = round(start_s * video.fps)
-            effect_end_frame = round(stop_s * video.fps)
-            video_with_effect = self._apply(video[effect_start_frame:effect_end_frame])
-            old_audio = video.audio
-            video = Video.from_frames(
-                np.r_[
-                    "0,2",
-                    video.frames[:effect_start_frame],
-                    video_with_effect.frames,
-                    video.frames[effect_end_frame:],
-                ],
-                fps=video.fps,
-            )
-            video.audio = old_audio
-
-        # Check if dimensions didn't change
-        if video.video_shape != original_shape:
-            raise RuntimeError("The effect must not change the number of frames and the shape of the frames!")
-
-        return video
-
-    @abstractmethod
-    def _apply(self, video: Video) -> Video:
-        pass
-
-
 class FullImageOverlay(Effect):
     """Composites a full-frame image on top of every video frame.
 
     Useful for watermarks, logos, or static graphic overlays. Supports
-    transparency via RGBA images and an overall opacity control.
+    transparency via RGBA images and an overall opacity control. The overlay
+    is loaded just-in-time from ``source`` so the op stays JSON-serialisable.
     """
 
-    supports_streaming: ClassVar[bool] = True
+    op: Literal["full_image_overlay"] = "full_image_overlay"
+    streamable: ClassVar[bool] = True
 
-    def __init__(self, overlay_image: np.ndarray, alpha: float | None = None, fade_time: float = 0.0):
-        """Initialize image overlay effect.
+    source: Path = Field(
+        description=(
+            "Path to an RGB or RGBA image file. Loaded at apply time; "
+            "the image must match the video's width and height."
+        ),
+    )
+    alpha: float = Field(1.0, ge=0, le=1, description="Overall opacity. 0 = fully transparent, 1 = fully opaque.")
+    fade_time: float = Field(
+        0.0,
+        ge=0,
+        description="Seconds to fade the overlay in at the start and out at the end of its time range.",
+    )
 
-        Args:
-            overlay_image: RGB or RGBA image array. Must match the video's
-                width and height.
-            alpha: Overall opacity. 0 = fully transparent, 1 = fully opaque.
-                Defaults to 1.0.
-            fade_time: Seconds to fade the overlay in at the start and out
-                at the end of its time range.
-        """
-        if alpha is not None and not 0 <= alpha <= 1:
-            raise ValueError("Alpha must be in range [0, 1]!")
-        elif not (overlay_image.ndim == 3 and overlay_image.shape[-1] in [3, 4]):
-            raise ValueError("Only RGB and RGBA images are supported as an overlay!")
-        elif alpha is None:
-            alpha = 1.0
+    _overlay_rgba: np.ndarray | None = PrivateAttr(default=None)
+    _stream_total: int = PrivateAttr(default=0)
+    _stream_fade_frames: int = PrivateAttr(default=0)
 
-        if overlay_image.shape[-1] == 3:
-            overlay_image = np.dstack([overlay_image, np.full(overlay_image.shape[:2], 255, dtype=np.uint8)])
+    def _load_overlay(self) -> np.ndarray:
+        if self._overlay_rgba is not None:
+            return self._overlay_rgba
+        img = Image.open(self.source).convert("RGBA")
+        self._overlay_rgba = np.array(img, dtype=np.uint8)
+        return self._overlay_rgba
 
-        self.alpha = alpha
-        self.overlay = overlay_image.astype(np.uint8)
-        self.fade_time = fade_time
-
-    def _overlay(self, img: np.ndarray, alpha: float = 1.0) -> np.ndarray:
+    def _overlay_frame(self, img: np.ndarray, alpha: float = 1.0) -> np.ndarray:
+        overlay = self._load_overlay().copy()
+        overlay[:, :, 3] = (overlay[:, :, 3].astype(np.float32) * (self.alpha * alpha)).astype(np.uint8)
         img_pil = Image.fromarray(img)
-        overlay = self.overlay.copy()
-        overlay[:, :, 3] = overlay[:, :, 3] * (self.alpha * alpha)
         overlay_pil = Image.fromarray(overlay)
         img_pil.paste(overlay_pil, (0, 0), overlay_pil)
         return np.array(img_pil)
 
     def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+        self._load_overlay()
         self._stream_total = total_frames
         self._stream_fade_frames = round(self.fade_time * fps) if self.fade_time > 0 else 0
 
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
         if self._stream_fade_frames == 0:
-            return self._overlay(frame)
+            return self._overlay_frame(frame)
         dist_from_end = min(frame_index, self._stream_total - 1 - frame_index)
         fade_alpha = 1.0 if dist_from_end >= self._stream_fade_frames else dist_from_end / self._stream_fade_frames
-        return self._overlay(frame, fade_alpha)
+        return self._overlay_frame(frame, fade_alpha)
 
     def _apply(self, video: Video) -> Video:
-        if not video.frame_shape == self.overlay[:, :, :3].shape:
-            raise ValueError(
-                f"Mismatch of overlay shape `{self.overlay.shape}` with video shape: `{video.frame_shape}`!"
-            )
-        elif not (0 <= 2 * self.fade_time <= video.total_seconds):
+        overlay = self._load_overlay()
+        if video.frame_shape != overlay[:, :, :3].shape:
+            raise ValueError(f"Mismatch of overlay shape `{overlay.shape}` with video shape: `{video.frame_shape}`!")
+        if not (0 <= 2 * self.fade_time <= video.total_seconds):
             raise ValueError(f"Video is only {video.total_seconds}s long, but fade time is {self.fade_time}s!")
 
         logger.info("Overlaying video...")
-        if self.fade_time == 0:
-            for i in tqdm(range(len(video.frames)), desc="Overlaying frames"):
-                video.frames[i] = self._overlay(video.frames[i])
-        else:
-            num_video_frames = len(video.frames)
-            num_fade_frames = round(self.fade_time * video.fps)
-            for i in tqdm(range(num_video_frames), desc="Overlaying frames"):
-                frames_dist_from_end = min(i, num_video_frames - i)
-                fade_alpha = 1.0 if frames_dist_from_end >= num_fade_frames else frames_dist_from_end / num_fade_frames
-                video.frames[i] = self._overlay(video.frames[i], fade_alpha)
+        n = len(video.frames)
+        num_fade_frames = round(self.fade_time * video.fps) if self.fade_time > 0 else 0
+        for i in tqdm(range(n), desc="Overlaying frames"):
+            if num_fade_frames == 0:
+                video.frames[i] = self._overlay_frame(video.frames[i])
+            else:
+                dist_from_end = min(i, n - i)
+                fade_alpha = 1.0 if dist_from_end >= num_fade_frames else dist_from_end / num_fade_frames
+                video.frames[i] = self._overlay_frame(video.frames[i], fade_alpha)
         return video
 
 
 class Blur(Effect):
     """Applies Gaussian blur that can stay constant or ramp up/down over the clip."""
 
-    supports_streaming: ClassVar[bool] = True
+    op: Literal["blur_effect"] = "blur_effect"
+    streamable: ClassVar[bool] = True
 
-    def __init__(
-        self,
-        mode: Literal["constant", "ascending", "descending"],
-        iterations: int,
-        kernel_size: tuple[int, int] = (5, 5),
-    ):
-        """Initialize blur effect.
+    mode: Literal["constant", "ascending", "descending"] = Field(
+        description=(
+            '"constant" applies uniform blur, "ascending" ramps from sharp to blurry, '
+            '"descending" ramps from blurry to sharp.'
+        ),
+    )
+    iterations: int = Field(
+        ge=1,
+        description="Blur strength. Higher values produce a stronger blur (e.g. 5 for subtle, 50+ for heavy).",
+    )
+    kernel_size: tuple[int, int] = Field(
+        (5, 5),
+        description=(
+            "Gaussian kernel [width, height] in pixels. Must be odd numbers. Larger kernels spread the blur wider."
+        ),
+    )
 
-        Args:
-            mode: "constant" applies uniform blur, "ascending" ramps from sharp
-                to blurry, "descending" ramps from blurry to sharp.
-            iterations: Blur strength. Higher values produce a stronger blur
-                (e.g. 5 for subtle, 50+ for heavy).
-            kernel_size: Gaussian kernel [width, height] in pixels. Must be odd
-                numbers. Larger kernels spread the blur wider.
-        """
-        if iterations < 1:
-            raise ValueError("Iterations must be at least 1!")
-        self.mode = mode
-        self.iterations = iterations
-        self.kernel_size = kernel_size
+    _stream_sigmas: np.ndarray | None = PrivateAttr(default=None)
 
     def _blur_frame(self, frame: np.ndarray, sigma: float) -> np.ndarray:
-        """Apply Gaussian blur to a single frame.
-
-        Args:
-            frame: Frame to blur.
-            sigma: Gaussian sigma value.
-
-        Returns:
-            Blurred frame.
-        """
         return cv2.GaussianBlur(frame, self.kernel_size, sigma)
 
     def _compute_sigmas(self, n_frames: int) -> np.ndarray:
-        """Compute per-frame sigma values based on mode."""
         base_sigma = 0.3 * ((self.kernel_size[0] - 1) * 0.5 - 1) + 0.8
         max_sigma = base_sigma * np.sqrt(self.iterations)
 
         if self.mode == "constant":
             return np.full(n_frames, max_sigma)
-        elif self.mode == "ascending":
+        if self.mode == "ascending":
             ratios = np.linspace(1 / n_frames, 1.0, n_frames)
-        elif self.mode == "descending":
+        else:  # descending
             ratios = np.linspace(1.0, 1 / n_frames, n_frames)
-        else:
-            raise ValueError(f"Unknown mode: `{self.mode}`.")
         return base_sigma * np.sqrt(np.maximum(1, np.round(ratios * self.iterations)))
 
     def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
         self._stream_sigmas = self._compute_sigmas(total_frames)
 
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
+        assert self._stream_sigmas is not None
         idx = min(frame_index, len(self._stream_sigmas) - 1)
         return self._blur_frame(frame, self._stream_sigmas[idx])
 
     def _apply(self, video: Video) -> Video:
         n_frames = len(video.frames)
         sigmas = self._compute_sigmas(n_frames)
-
         logger.info(f"Applying {self.mode} blur...")
         for i in tqdm(range(n_frames), desc="Blurring"):
             video.frames[i] = self._blur_frame(video.frames[i], sigmas[i])
@@ -273,32 +181,35 @@ class Blur(Effect):
 class Zoom(Effect):
     """Progressively zooms into or out of the frame center over the clip duration."""
 
-    supports_streaming: ClassVar[bool] = True
+    op: Literal["zoom_effect"] = "zoom_effect"
+    streamable: ClassVar[bool] = True
 
-    def __init__(self, zoom_factor: float, mode: Literal["in", "out"]):
-        """Initialize zoom effect.
+    zoom_factor: float = Field(
+        gt=1,
+        description="How far to zoom. 1.5 is a subtle push, 2.0 is moderate, 3.0+ is dramatic. Must be greater than 1.",
+    )
+    mode: Literal["in", "out"] = Field(
+        description='"in" starts wide and pushes into the center, "out" starts tight and pulls back.',
+    )
 
-        Args:
-            zoom_factor: How far to zoom. 1.5 is a subtle push, 2.0 is
-                moderate, 3.0+ is dramatic. Must be greater than 1.
-            mode: "in" starts wide and pushes into the center,
-                "out" starts tight and pulls back.
-        """
-        if zoom_factor <= 1:
-            raise ValueError("Zoom factor must be greater than 1!")
-        self.zoom_factor = zoom_factor
-        self.mode = mode
+    _stream_crops: np.ndarray | None = PrivateAttr(default=None)
+    _stream_width: int = PrivateAttr(default=0)
+    _stream_height: int = PrivateAttr(default=0)
 
-    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
-        crop_w = np.linspace(width // self.zoom_factor, width, total_frames)
-        crop_h = np.linspace(height // self.zoom_factor, height, total_frames)
+    def _crop_sizes(self, n_frames: int, width: int, height: int) -> np.ndarray:
+        crop_w = np.linspace(width // self.zoom_factor, width, n_frames)
+        crop_h = np.linspace(height // self.zoom_factor, height, n_frames)
         if self.mode == "in":
             crop_w, crop_h = crop_w[::-1], crop_h[::-1]
-        self._stream_crops = np.stack([crop_w, crop_h], axis=1)
+        return np.stack([crop_w, crop_h], axis=1)
+
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+        self._stream_crops = self._crop_sizes(total_frames, width, height)
         self._stream_width = width
         self._stream_height = height
 
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
+        assert self._stream_crops is not None
         idx = min(frame_index, len(self._stream_crops) - 1)
         w, h = self._stream_crops[idx]
         width, height = self._stream_width, self._stream_height
@@ -311,93 +222,64 @@ class Zoom(Effect):
         n_frames = len(video.frames)
         width = video.metadata.width
         height = video.metadata.height
-        crop_sizes_w = np.linspace(width // self.zoom_factor, width, n_frames)
-        crop_sizes_h = np.linspace(height // self.zoom_factor, height, n_frames)
-
-        if self.mode == "in":
-            crop_sizes_w = crop_sizes_w[::-1]
-            crop_sizes_h = crop_sizes_h[::-1]
-        elif self.mode != "out":
-            raise ValueError(f"Unknown mode: `{self.mode}`.")
-
-        for i in tqdm(range(n_frames), desc="Zooming", total=n_frames):
-            w, h = crop_sizes_w[i], crop_sizes_h[i]
+        crops = self._crop_sizes(n_frames, width, height)
+        for i in tqdm(range(n_frames), desc="Zooming"):
+            w, h = crops[i]
             x = width / 2 - w / 2
             y = height / 2 - h / 2
-            cropped_frame = video.frames[i][round(y) : round(y + h), round(x) : round(x + w)]
-            video.frames[i] = cv2.resize(cropped_frame, (width, height))
+            cropped = video.frames[i][round(y) : round(y + h), round(x) : round(x + w)]
+            video.frames[i] = cv2.resize(cropped, (width, height))
         return video
 
 
 class ColorGrading(Effect):
     """Adjusts color properties: brightness, contrast, saturation, and temperature."""
 
-    supports_streaming: ClassVar[bool] = True
+    op: Literal["color_adjust"] = "color_adjust"
+    streamable: ClassVar[bool] = True
 
-    def __init__(
-        self,
-        brightness: float = 0.0,
-        contrast: float = 1.0,
-        saturation: float = 1.0,
-        temperature: float = 0.0,
-    ):
-        """Initialize color grading effect.
-
-        Args:
-            brightness: Shift brightness. -1.0 = much darker, 0 = unchanged,
-                1.0 = much brighter.
-            contrast: Scale contrast. 0.5 = flat/washed out, 1.0 = unchanged,
-                2.0 = high contrast.
-            saturation: Scale color intensity. 0.0 = grayscale, 1.0 = unchanged,
-                2.0 = vivid/oversaturated.
-            temperature: Shift color temperature. -1.0 = cool/blue tint,
-                0 = neutral, 1.0 = warm/orange tint.
-        """
-        if not -1.0 <= brightness <= 1.0:
-            raise ValueError("Brightness must be between -1.0 and 1.0!")
-        if not 0.5 <= contrast <= 2.0:
-            raise ValueError("Contrast must be between 0.5 and 2.0!")
-        if not 0.0 <= saturation <= 2.0:
-            raise ValueError("Saturation must be between 0.0 and 2.0!")
-        if not -1.0 <= temperature <= 1.0:
-            raise ValueError("Temperature must be between -1.0 and 1.0!")
-
-        self.brightness = brightness
-        self.contrast = contrast
-        self.saturation = saturation
-        self.temperature = temperature
+    brightness: float = Field(
+        0.0,
+        ge=-1.0,
+        le=1.0,
+        description="Shift brightness. -1.0 = much darker, 0 = unchanged, 1.0 = much brighter.",
+    )
+    contrast: float = Field(
+        1.0,
+        ge=0.5,
+        le=2.0,
+        description="Scale contrast. 0.5 = flat/washed out, 1.0 = unchanged, 2.0 = high contrast.",
+    )
+    saturation: float = Field(
+        1.0,
+        ge=0.0,
+        le=2.0,
+        description="Scale color intensity. 0.0 = grayscale, 1.0 = unchanged, 2.0 = vivid/oversaturated.",
+    )
+    temperature: float = Field(
+        0.0,
+        ge=-1.0,
+        le=1.0,
+        description="Shift color temperature. -1.0 = cool/blue tint, 0 = neutral, 1.0 = warm/orange tint.",
+    )
 
     def _grade_frame(self, frame: np.ndarray) -> np.ndarray:
-        """Apply color grading to a single frame."""
-        # Convert to float for processing
         img = frame.astype(np.float32) / 255.0
 
-        # Apply brightness
         if self.brightness != 0:
             img = img + self.brightness
-
-        # Apply contrast (around midpoint 0.5)
         if self.contrast != 1.0:
             img = (img - 0.5) * self.contrast + 0.5
-
-        # Apply saturation in HSV space
         if self.saturation != 1.0:
             hsv = cv2.cvtColor(np.clip(img, 0, 1).astype(np.float32), cv2.COLOR_RGB2HSV)
-            hsv[:, :, 1] = hsv[:, :, 1] * self.saturation
-            hsv[:, :, 1] = np.clip(hsv[:, :, 1], 0, 1)
+            hsv[:, :, 1] = np.clip(hsv[:, :, 1] * self.saturation, 0, 1)
             img = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB).astype(np.float32)
-
-        # Apply temperature (shift red/blue channels)
         if self.temperature != 0:
-            # Warm = more red/yellow, less blue
-            # Cool = more blue, less red/yellow
             temp_shift = self.temperature * 0.1
-            img[:, :, 0] = img[:, :, 0] + temp_shift  # Red
-            img[:, :, 2] = img[:, :, 2] - temp_shift  # Blue
+            img[:, :, 0] = img[:, :, 0] + temp_shift
+            img[:, :, 2] = img[:, :, 2] - temp_shift
 
-        # Clip and convert back to uint8
-        img = np.clip(img * 255, 0, 255).astype(np.uint8)
-        return img
+        return np.clip(img * 255, 0, 255).astype(np.uint8)
 
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
         return self._grade_frame(frame)
@@ -412,39 +294,34 @@ class ColorGrading(Effect):
 class Vignette(Effect):
     """Darkens the edges of the frame, drawing attention to the center."""
 
-    supports_streaming: ClassVar[bool] = True
+    op: Literal["vignette"] = "vignette"
+    streamable: ClassVar[bool] = True
 
-    def __init__(self, strength: float = 0.5, radius: float = 1.0):
-        """Initialize vignette effect.
+    strength: float = Field(
+        0.5,
+        ge=0.0,
+        le=1.0,
+        description="Edge darkness amount. 0.0 = no darkening, 0.5 = moderate, 1.0 = fully black edges.",
+    )
+    radius: float = Field(
+        1.0,
+        ge=0.5,
+        le=2.0,
+        description=(
+            "Size of the bright center area. Smaller values (0.5) create a tight spotlight, "
+            "larger values (2.0) keep more of the frame lit."
+        ),
+    )
 
-        Args:
-            strength: Edge darkness amount. 0.0 = no darkening, 0.5 = moderate,
-                1.0 = fully black edges.
-            radius: Size of the bright center area. Smaller values (0.5) create
-                a tight spotlight, larger values (2.0) keep more of the frame lit.
-        """
-        if not 0.0 <= strength <= 1.0:
-            raise ValueError("Strength must be between 0.0 and 1.0!")
-        if not 0.5 <= radius <= 2.0:
-            raise ValueError("Radius must be between 0.5 and 2.0!")
-
-        self.strength = strength
-        self.radius = radius
-        self._mask: np.ndarray | None = None
+    _mask: np.ndarray | None = PrivateAttr(default=None)
+    _stream_mask_3d: np.ndarray | None = PrivateAttr(default=None)
 
     def _create_mask(self, height: int, width: int) -> np.ndarray:
-        """Create vignette mask for given dimensions."""
-        # Create coordinate grids
         y = np.linspace(-1, 1, height)
         x = np.linspace(-1, 1, width)
         X, Y = np.meshgrid(x, y)
-
-        # Calculate distance from center
         distance = np.sqrt(X**2 + Y**2) / self.radius
-
-        # Create smooth falloff
         mask = 1.0 - np.clip(distance - 0.5, 0, 1) * 2 * self.strength
-
         return mask.astype(np.float32)
 
     def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
@@ -453,17 +330,14 @@ class Vignette(Effect):
         self._stream_mask_3d = self._mask[:, :, np.newaxis]
 
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
+        assert self._stream_mask_3d is not None
         return (frame.astype(np.float32) * self._stream_mask_3d).astype(np.uint8)
 
     def _apply(self, video: Video) -> Video:
         logger.info("Applying vignette effect...")
         height, width = video.frame_shape[:2]
-
-        # Create mask once for the video dimensions
         if self._mask is None or self._mask.shape != (height, width):
             self._mask = self._create_mask(height, width)
-
-        # Apply mask in batches to avoid allocating a full float32 copy of all frames
         mask_3d = self._mask[:, :, np.newaxis]
         batch_size = 64
         for start in range(0, len(video.frames), batch_size):
@@ -480,84 +354,55 @@ class KenBurns(Effect):
     across a scene.
     """
 
-    supports_streaming: ClassVar[bool] = True
+    op: Literal["ken_burns"] = "ken_burns"
+    streamable: ClassVar[bool] = True
 
-    def __init__(
-        self,
-        start_region: "BoundingBox",
-        end_region: "BoundingBox",
-        easing: Literal["linear", "ease_in", "ease_out", "ease_in_out"] = "linear",
-    ):
-        """Initialize Ken Burns effect.
+    start_region: BoundingBox = Field(
+        description="Starting crop region as a BoundingBox with normalized 0-1 coordinates."
+    )
+    end_region: BoundingBox = Field(description="Ending crop region as a BoundingBox with normalized 0-1 coordinates.")
+    easing: Literal["linear", "ease_in", "ease_out", "ease_in_out"] = Field(
+        "linear",
+        description=(
+            'Animation curve. "linear" moves at constant speed, "ease_in" starts slow, '
+            '"ease_out" ends slow, "ease_in_out" starts and ends slow.'
+        ),
+    )
 
-        Args:
-            start_region: Starting crop region as a BoundingBox with normalized
-                0-1 coordinates.
-            end_region: Ending crop region as a BoundingBox with normalized
-                0-1 coordinates.
-            easing: Animation curve. "linear" moves at constant speed,
-                "ease_in" starts slow, "ease_out" ends slow,
-                "ease_in_out" starts and ends slow.
-        """
-        from videopython.base.description import BoundingBox
+    _stream_regions: np.ndarray | None = PrivateAttr(default=None)
+    _stream_target_w: int = PrivateAttr(default=0)
+    _stream_target_h: int = PrivateAttr(default=0)
 
-        if not isinstance(start_region, BoundingBox) or not isinstance(end_region, BoundingBox):
-            raise TypeError("start_region and end_region must be BoundingBox instances!")
-
-        # Validate regions are within bounds
-        for name, region in [("start_region", start_region), ("end_region", end_region)]:
+    @model_validator(mode="after")
+    def _validate_regions(self) -> KenBurns:
+        for name, region in [("start_region", self.start_region), ("end_region", self.end_region)]:
             if not (0 <= region.x <= 1 and 0 <= region.y <= 1):
                 raise ValueError(f"{name} position must be in range [0, 1]!")
             if not (0 < region.width <= 1 and 0 < region.height <= 1):
                 raise ValueError(f"{name} dimensions must be in range (0, 1]!")
             if region.x + region.width > 1 or region.y + region.height > 1:
                 raise ValueError(f"{name} extends beyond image bounds!")
-
-        if easing not in ("linear", "ease_in", "ease_out", "ease_in_out"):
-            raise ValueError(f"Unknown easing function: {easing}!")
-
-        self.start_region = start_region
-        self.end_region = end_region
-        self.easing = easing
+        return self
 
     def _ease(self, t: float) -> float:
-        """Apply easing function to normalized time value.
-
-        Args:
-            t: Normalized time value in range [0, 1].
-
-        Returns:
-            Eased value in range [0, 1].
-        """
         if self.easing == "linear":
             return t
-        elif self.easing == "ease_in":
+        if self.easing == "ease_in":
             return t * t
-        elif self.easing == "ease_out":
+        if self.easing == "ease_out":
             return 1 - (1 - t) * (1 - t)
-        elif self.easing == "ease_in_out":
-            if t < 0.5:
-                return 2 * t * t
-            else:
-                return 1 - 2 * (1 - t) * (1 - t)
-        return t
+        # ease_in_out
+        if t < 0.5:
+            return 2 * t * t
+        return 1 - 2 * (1 - t) * (1 - t)
 
     def _crop_and_scale_frame(
-        self,
-        frame: np.ndarray,
-        x: int,
-        y: int,
-        crop_w: int,
-        crop_h: int,
-        target_w: int,
-        target_h: int,
+        self, frame: np.ndarray, x: int, y: int, crop_w: int, crop_h: int, target_w: int, target_h: int
     ) -> np.ndarray:
-        """Crop region from frame and scale to target size."""
         cropped = frame[y : y + crop_h, x : x + crop_w]
         return cv2.resize(cropped, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
 
     def _precompute_regions(self, n_frames: int, width: int, height: int) -> np.ndarray:
-        """Precompute (x, y, crop_w, crop_h) for each frame."""
         sx = int(self.start_region.x * width)
         sy = int(self.start_region.y * height)
         sw = int(self.start_region.width * width)
@@ -584,6 +429,7 @@ class KenBurns(Effect):
         self._stream_target_h = height
 
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
+        assert self._stream_regions is not None
         idx = min(frame_index, len(self._stream_regions) - 1)
         x, y, cw, ch = self._stream_regions[idx]
         return self._crop_and_scale_frame(frame, x, y, cw, ch, self._stream_target_w, self._stream_target_h)
@@ -591,167 +437,98 @@ class KenBurns(Effect):
     def _apply(self, video: Video) -> Video:
         n_frames = len(video.frames)
         height, width = video.frame_shape[:2]
-        target_h, target_w = height, width
-
-        # Convert normalized coordinates to pixel values
-        start_x = int(self.start_region.x * width)
-        start_y = int(self.start_region.y * height)
-        start_w = int(self.start_region.width * width)
-        start_h = int(self.start_region.height * height)
-
-        end_x = int(self.end_region.x * width)
-        end_y = int(self.end_region.y * height)
-        end_w = int(self.end_region.width * width)
-        end_h = int(self.end_region.height * height)
-
+        regions = self._precompute_regions(n_frames, width, height)
         logger.info("Applying Ken Burns effect...")
         for i in tqdm(range(n_frames), desc="Ken Burns"):
-            t = i / max(1, n_frames - 1)  # Normalized time [0, 1]
-            eased_t = self._ease(t)
-
-            # Interpolate region parameters
-            x = int(start_x + (end_x - start_x) * eased_t)
-            y = int(start_y + (end_y - start_y) * eased_t)
-            crop_w = int(start_w + (end_w - start_w) * eased_t)
-            crop_h = int(start_h + (end_h - start_h) * eased_t)
-
-            # Ensure crop region stays within bounds
-            x = max(0, min(x, width - crop_w))
-            y = max(0, min(y, height - crop_h))
-
-            video.frames[i] = self._crop_and_scale_frame(video.frames[i], x, y, crop_w, crop_h, target_w, target_h)
+            x, y, cw, ch = regions[i]
+            video.frames[i] = self._crop_and_scale_frame(video.frames[i], x, y, cw, ch, width, height)
         return video
 
 
 def _compute_curve(t: np.ndarray, curve: str) -> np.ndarray:
-    """Compute alpha values from normalized time array using the given curve type."""
     if curve == "sqrt":
         return np.sqrt(t)
-    elif curve == "exponential":
+    if curve == "exponential":
         return t * t
-    else:  # linear
-        return t
+    return t  # linear
 
 
 class Fade(Effect):
     """Fades video and audio to or from black."""
 
-    supports_streaming: ClassVar[bool] = True
+    op: Literal["fade"] = "fade"
+    streamable: ClassVar[bool] = True
 
-    def __init__(
-        self,
-        mode: Literal["in", "out", "in_out"],
-        duration: float = 1.0,
-        curve: Literal["sqrt", "linear", "exponential"] = "sqrt",
-    ):
-        """Initialize fade effect.
+    mode: Literal["in", "out", "in_out"] = Field(
+        description=('"in" fades from black at the start, "out" fades to black at the end, "in_out" does both.'),
+    )
+    duration: float = Field(1.0, gt=0, description="Length of each fade in seconds.")
+    curve: Literal["sqrt", "linear", "exponential"] = Field(
+        "sqrt",
+        description=(
+            'Brightness ramp shape. "sqrt" feels perceptually even (recommended), '
+            '"linear" is mathematically even, "exponential" starts slow and finishes fast.'
+        ),
+    )
 
-        Args:
-            mode: "in" fades from black at the start, "out" fades to black
-                at the end, "in_out" does both.
-            duration: Length of each fade in seconds.
-            curve: Brightness ramp shape. "sqrt" feels perceptually even
-                (recommended), "linear" is mathematically even, "exponential"
-                starts slow and finishes fast.
+    _stream_alpha: np.ndarray | None = PrivateAttr(default=None)
+
+    def _fade_envelope(self, length: int, rate: float) -> np.ndarray:
+        """Build the per-sample (or per-frame) alpha envelope for ``length`` ticks.
+
+        ``rate`` is fps for video frames or sample_rate for audio samples;
+        ``self.duration`` is converted to a tick count via ``rate`` and clipped
+        to ``length``. The ramp shape follows ``self.curve``.
         """
-        if mode not in ("in", "out", "in_out"):
-            raise ValueError(f"mode must be 'in', 'out', or 'in_out', got '{mode}'")
-        if duration <= 0:
-            raise ValueError(f"duration must be > 0, got {duration}")
-        self.mode = mode
-        self.duration = duration
-        self.curve = curve
-
-    def _compute_alpha(self, n_frames: int, fps: float) -> np.ndarray:
-        """Compute per-frame alpha values for the video fade."""
-        fade_frames = min(round(self.duration * fps), n_frames)
-        alpha = np.ones(n_frames, dtype=np.float32)
+        ramp = min(round(self.duration * rate), length)
+        alpha = np.ones(length, dtype=np.float32)
         if self.mode in ("in", "in_out"):
-            t = np.linspace(0, 1, fade_frames, dtype=np.float32)
-            alpha[:fade_frames] = _compute_curve(t, self.curve)
+            t = np.linspace(0, 1, ramp, dtype=np.float32)
+            alpha[:ramp] = _compute_curve(t, self.curve)
         if self.mode in ("out", "in_out"):
-            t = np.linspace(1, 0, fade_frames, dtype=np.float32)
-            alpha[-fade_frames:] = np.minimum(alpha[-fade_frames:], _compute_curve(t, self.curve))
+            t = np.linspace(1, 0, ramp, dtype=np.float32)
+            alpha[-ramp:] = np.minimum(alpha[-ramp:], _compute_curve(t, self.curve))
         return alpha
 
     def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
-        self._stream_alpha = self._compute_alpha(total_frames, fps)
+        self._stream_alpha = self._fade_envelope(total_frames, fps)
 
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
+        assert self._stream_alpha is not None
         idx = min(frame_index, len(self._stream_alpha) - 1)
         a = self._stream_alpha[idx]
         if a == 1.0:
             return frame
         return (frame.astype(np.float32) * a).astype(np.uint8)
 
-    def apply(self, video: Video, start: float | None = None, stop: float | None = None) -> Video:
-        """Apply fade effect to video and audio.
+    def apply(self, video: Video, **context: Any) -> Video:  # type: ignore[override]
+        start_s, stop_s = self._resolved_window(video.total_seconds)
+        start_f = round(start_s * video.fps)
+        end_f = round(stop_s * video.fps)
+        n_effect = end_f - start_f
+        alpha = self._fade_envelope(n_effect, video.fps)
 
-        Omit ``start`` to apply from the beginning, omit ``stop`` to apply
-        until the end. Prefer omitting over passing explicit values when
-        the intent is full-range application.
-
-        Args:
-            video: Input video.
-            start: Start time in seconds. Omit to apply from the beginning.
-                Only set when the effect should begin partway through.
-            stop: Stop time in seconds. Omit to apply until the end.
-                Only set when the effect should end before the video does.
-        """
-        original_shape = video.video_shape
-        start_s, stop_s = _resolve_time_range(start, stop, video.total_seconds)
-
-        effect_start_frame = round(start_s * video.fps)
-        effect_end_frame = round(stop_s * video.fps)
-        n_effect_frames = effect_end_frame - effect_start_frame
-
-        alpha = self._compute_alpha(n_effect_frames, video.fps)
-
-        # Apply to video frames in batches to avoid a full float32 copy
         batch_size = 64
-        for batch_start in range(0, n_effect_frames, batch_size):
-            batch_end = min(batch_start + batch_size, n_effect_frames)
+        for batch_start in range(0, n_effect, batch_size):
+            batch_end = min(batch_start + batch_size, n_effect)
             batch_alpha = alpha[batch_start:batch_end, np.newaxis, np.newaxis, np.newaxis]
-            # Skip batch if all alphas are 1.0 (no change needed)
             if np.all(batch_alpha == 1.0):
                 continue
-            abs_start = effect_start_frame + batch_start
-            abs_end = effect_start_frame + batch_end
+            abs_start = start_f + batch_start
+            abs_end = start_f + batch_end
             video.frames[abs_start:abs_end] = (video.frames[abs_start:abs_end].astype(np.float32) * batch_alpha).astype(
                 np.uint8
             )
 
-        # Verify shape invariant
-        if video.video_shape != original_shape:
-            raise RuntimeError("The effect must not change the number of frames and the shape of the frames!")
-
-        # Apply to audio
         if video.audio is not None and not video.audio.is_silent:
-            self.apply_audio(video.audio, start_s, stop_s)
-
+            self._apply_audio(video.audio, start_s, stop_s)
         return video
 
-    def apply_audio(self, audio: Audio, start_s: float, stop_s: float) -> None:
-        """Apply fade to audio data in-place.
-
-        Args:
-            audio: Audio object to modify.
-            start_s: Start time in seconds.
-            stop_s: Stop time in seconds.
-        """
+    def _apply_audio(self, audio: Audio, start_s: float, stop_s: float) -> None:
         sample_rate = audio.metadata.sample_rate
         audio_start = round(start_s * sample_rate)
         audio_end = min(round(stop_s * sample_rate), len(audio.data))
-        n_samples = audio_end - audio_start
-        fade_samples = min(round(self.duration * sample_rate), n_samples)
-
-        alpha = np.ones(n_samples, dtype=np.float32)
-        if self.mode in ("in", "in_out"):
-            t = np.linspace(0, 1, fade_samples, dtype=np.float32)
-            alpha[:fade_samples] = _compute_curve(t, self.curve)
-        if self.mode in ("out", "in_out"):
-            t = np.linspace(1, 0, fade_samples, dtype=np.float32)
-            alpha[-fade_samples:] = np.minimum(alpha[-fade_samples:], _compute_curve(t, self.curve))
+        alpha = self._fade_envelope(audio_end - audio_start, sample_rate)
 
         if audio.data.ndim == 1:
             audio.data[audio_start:audio_end] *= alpha
@@ -759,92 +536,47 @@ class Fade(Effect):
             audio.data[audio_start:audio_end] *= alpha[:, np.newaxis]
         np.clip(audio.data, -1.0, 1.0, out=audio.data)
 
-    def _apply(self, video: Video) -> Video:
-        raise NotImplementedError("Fade overrides apply() directly")
 
-
-class AudioEffect(Effect):
-    """Abstract base class for audio-only effects.
-
-    Inherits from Effect so isinstance checks in the execution engine pass
-    without modification. Overrides apply() to skip frame processing.
-    """
-
-    supports_streaming: ClassVar[bool] = True
-
-    def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
-        return frame  # Audio effects don't touch frames
-
-    def _apply(self, video: Video) -> Video:
-        raise NotImplementedError("AudioEffect does not process frames -- use _apply_audio()")
-
-    def apply(self, video: Video, start: float | None = None, stop: float | None = None) -> Video:
-        """Apply the audio effect to a video, optionally within a time range.
-
-        Omit ``start`` to apply from the beginning, omit ``stop`` to apply until
-        the end.  Prefer omitting over passing explicit values when the intent is
-        full-range application -- this avoids floating-point mismatches with the
-        actual video duration.
-
-        Args:
-            video: Input video.
-            start: Start time in seconds. Omit to apply from the beginning.
-                Only set when the effect should begin partway through.
-            stop: Stop time in seconds. Omit to apply until the end.
-                Only set when the effect should end before the video does.
-        """
-        start_s, stop_s = _resolve_time_range(start, stop, video.total_seconds)
-        video.audio = self._apply_audio(video.audio, start_s, stop_s, video.fps)
-        return video
-
-    @abstractmethod
-    def _apply_audio(self, audio, start: float, stop: float, fps: float):
-        pass
-
-
-class VolumeAdjust(AudioEffect):
+class VolumeAdjust(Effect):
     """Changes audio volume within a time range without affecting video frames."""
 
-    def __init__(self, volume: float = 1.0, ramp_duration: float = 0.0):
-        """Initialize volume adjustment effect.
+    op: Literal["volume_adjust"] = "volume_adjust"
+    streamable: ClassVar[bool] = True
 
-        Args:
-            volume: Volume multiplier. 0.0 = silence, 1.0 = original level,
-                2.0 = twice as loud (may clip).
-            ramp_duration: Seconds to smoothly ramp volume at the start and end
-                of the window, preventing audible clicks.
-        """
-        if volume < 0:
-            raise ValueError(f"volume must be >= 0, got {volume}")
-        if ramp_duration < 0:
-            raise ValueError(f"ramp_duration must be >= 0, got {ramp_duration}")
-        self.volume = volume
-        self.ramp_duration = ramp_duration
+    volume: float = Field(
+        1.0,
+        ge=0,
+        description="Volume multiplier. 0.0 = silence, 1.0 = original level, 2.0 = twice as loud (may clip).",
+    )
+    ramp_duration: float = Field(
+        0.0,
+        ge=0,
+        description="Seconds to smoothly ramp volume at the start and end of the window, preventing audible clicks.",
+    )
 
-    def _apply_audio(self, audio, start: float, stop: float, fps: float):
-        if audio is None or audio.is_silent:
-            return audio
+    def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
+        return frame
 
+    def apply(self, video: Video, **context: Any) -> Video:  # type: ignore[override]
+        start_s, stop_s = self._resolved_window(video.total_seconds)
+        if video.audio is not None and not video.audio.is_silent:
+            self._apply_audio(video.audio, start_s, stop_s)
+        return video
+
+    def _apply_audio(self, audio: Audio, start_s: float, stop_s: float) -> None:
         sample_rate = audio.metadata.sample_rate
-        start_sample = round(start * sample_rate)
-        end_sample = min(round(stop * sample_rate), len(audio.data))
+        start_sample = round(start_s * sample_rate)
+        end_sample = min(round(stop_s * sample_rate), len(audio.data))
         n_samples = end_sample - start_sample
-
-        # Build volume envelope
         envelope = np.full(n_samples, self.volume, dtype=np.float32)
 
         if self.ramp_duration > 0:
             ramp_samples = min(round(self.ramp_duration * sample_rate), n_samples // 2)
             if ramp_samples > 0:
-                # Ramp from 1.0 to target volume at start
                 t = np.linspace(0, 1, ramp_samples, dtype=np.float32)
-                ramp_in = 1.0 + (self.volume - 1.0) * np.sqrt(t)
-                envelope[:ramp_samples] = ramp_in
-
-                # Ramp from target volume back to 1.0 at end
+                envelope[:ramp_samples] = 1.0 + (self.volume - 1.0) * np.sqrt(t)
                 t = np.linspace(1, 0, ramp_samples, dtype=np.float32)
-                ramp_out = 1.0 + (self.volume - 1.0) * np.sqrt(t)
-                envelope[-ramp_samples:] = ramp_out
+                envelope[-ramp_samples:] = 1.0 + (self.volume - 1.0) * np.sqrt(t)
 
         if audio.data.ndim == 1:
             audio.data[start_sample:end_sample] *= envelope
@@ -852,61 +584,53 @@ class VolumeAdjust(AudioEffect):
             audio.data[start_sample:end_sample] *= envelope[:, np.newaxis]
         np.clip(audio.data, -1.0, 1.0, out=audio.data)
 
-        return audio
-
 
 class TextOverlay(Effect):
     """Draws text on video frames, with auto word-wrap and optional background box."""
 
-    supports_streaming: ClassVar[bool] = True
+    op: Literal["text_overlay"] = "text_overlay"
+    streamable: ClassVar[bool] = True
 
-    def __init__(
-        self,
-        text: str,
-        position: tuple[float, float] = (0.5, 0.9),
-        font_size: int = 48,
-        text_color: tuple[int, int, int] = (255, 255, 255),
-        background_color: tuple[int, int, int, int] | None = (0, 0, 0, 160),
-        background_padding: int = 12,
-        max_width: float = 0.8,
-        anchor: Literal["center", "top_left", "top_center", "bottom_center", "bottom_left", "bottom_right"] = "center",
-        font_filename: str | None = None,
-    ):
-        """Initialize text overlay effect.
+    text: str = Field(min_length=1, description=r"The string to display. Use \n for line breaks.")
+    position: tuple[float, float] = Field(
+        (0.5, 0.9),
+        description=(
+            "Where to place the text as normalized (x, y) coordinates. "
+            "(0, 0) = top-left corner, (1, 1) = bottom-right corner."
+        ),
+    )
+    font_size: int = Field(48, ge=1, description="Font size in pixels.")
+    text_color: tuple[int, int, int] = Field((255, 255, 255), description="Text color as [R, G, B], each 0-255.")
+    background_color: tuple[int, int, int, int] | None = Field(
+        (0, 0, 0, 160),
+        description="Background box color as [R, G, B, A] (0-255), or null to disable the background.",
+    )
+    background_padding: int = Field(12, ge=0, description="Padding in pixels between text and background edge.")
+    max_width: float = Field(
+        0.8,
+        gt=0.0,
+        le=1.0,
+        description=(
+            "Maximum text width as a fraction of frame width (0-1). Text longer than this wraps to the next line."
+        ),
+    )
+    anchor: Literal["center", "top_left", "top_center", "bottom_center", "bottom_left", "bottom_right"] = Field(
+        "center",
+        description="Which point of the text box sits at the position coordinate.",
+    )
+    font_filename: str | None = Field(None, description="Path to a .ttf font file, or None for the default font.")
 
-        Args:
-            text: The string to display. Use \\n for line breaks.
-            position: Where to place the text as normalized (x, y) coordinates.
-                (0, 0) = top-left corner, (1, 1) = bottom-right corner.
-            font_size: Font size in pixels.
-            text_color: Text color as [R, G, B], each 0-255.
-            background_color: Background box color as [R, G, B, A] (0-255),
-                or null to disable the background.
-            background_padding: Padding in pixels between text and background edge.
-            max_width: Maximum text width as a fraction of frame width (0-1).
-                Text longer than this wraps to the next line.
-            anchor: Which point of the text box sits at the position coordinate.
-            font_filename: Path to a .ttf font file, or None for the default font.
-        """
-        if not text:
-            raise ValueError("text must not be empty")
-        if not 0.0 <= position[0] <= 1.0 or not 0.0 <= position[1] <= 1.0:
+    _rendered: np.ndarray | None = PrivateAttr(default=None)
+    _stream_noop: bool = PrivateAttr(default=False)
+    _stream_alpha: np.ndarray | None = PrivateAttr(default=None)
+    _stream_rgb: np.ndarray | None = PrivateAttr(default=None)
+    _stream_dst: tuple[int, int, int, int] = PrivateAttr(default=(0, 0, 0, 0))
+
+    @model_validator(mode="after")
+    def _validate_position(self) -> TextOverlay:
+        if not (0.0 <= self.position[0] <= 1.0 and 0.0 <= self.position[1] <= 1.0):
             raise ValueError("position values must be in range [0, 1]")
-        if font_size < 1:
-            raise ValueError(f"font_size must be >= 1, got {font_size}")
-        if not 0.0 < max_width <= 1.0:
-            raise ValueError(f"max_width must be in range (0, 1], got {max_width}")
-
-        self.text = text
-        self.position = position
-        self.font_size = font_size
-        self.text_color = text_color
-        self.background_color = background_color
-        self.background_padding = background_padding
-        self.max_width = max_width
-        self.anchor = anchor
-        self.font_filename = font_filename
-        self._rendered: np.ndarray | None = None
+        return self
 
     def _get_font(self) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
         if self.font_filename:
@@ -917,7 +641,6 @@ class TextOverlay(Effect):
             return ImageFont.load_default()
 
     def _wrap_text(self, text: str, font: ImageFont.FreeTypeFont | ImageFont.ImageFont, max_px: int) -> str:
-        """Word-wrap text to fit within max_px width."""
         lines: list[str] = []
         for paragraph in text.split("\n"):
             words = paragraph.split()
@@ -937,12 +660,10 @@ class TextOverlay(Effect):
         return "\n".join(lines)
 
     def _render_text_image(self, frame_width: int, frame_height: int) -> np.ndarray:
-        """Render text to an RGBA numpy array sized for the given frame dimensions."""
         font = self._get_font()
         max_px = int(self.max_width * frame_width)
         wrapped = self._wrap_text(self.text, font, max_px)
 
-        # Measure text bounds
         temp_img = Image.new("RGBA", (1, 1))
         temp_draw = ImageDraw.Draw(temp_img)
         bbox = temp_draw.multiline_textbbox((0, 0), wrapped, font=font)
@@ -953,10 +674,8 @@ class TextOverlay(Effect):
         img_w = text_w + 2 * pad
         img_h = text_h + 2 * pad
 
-        # Create RGBA image
         if self.background_color is not None:
-            bg = self.background_color
-            img = Image.new("RGBA", (img_w, img_h), bg)
+            img = Image.new("RGBA", (img_w, img_h), self.background_color)
         else:
             img = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
 
@@ -966,23 +685,21 @@ class TextOverlay(Effect):
         return np.array(img, dtype=np.uint8)
 
     def _compute_position(self, frame_width: int, frame_height: int, img_w: int, img_h: int) -> tuple[int, int]:
-        """Compute top-left pixel position based on normalized position and anchor."""
         px = int(self.position[0] * frame_width)
         py = int(self.position[1] * frame_height)
 
         if self.anchor == "center":
             return px - img_w // 2, py - img_h // 2
-        elif self.anchor == "top_left":
+        if self.anchor == "top_left":
             return px, py
-        elif self.anchor == "top_center":
+        if self.anchor == "top_center":
             return px - img_w // 2, py
-        elif self.anchor == "bottom_center":
+        if self.anchor == "bottom_center":
             return px - img_w // 2, py - img_h
-        elif self.anchor == "bottom_left":
+        if self.anchor == "bottom_left":
             return px, py - img_h
-        elif self.anchor == "bottom_right":
-            return px - img_w, py - img_h
-        return px - img_w // 2, py - img_h // 2
+        # bottom_right
+        return px - img_w, py - img_h
 
     def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
         if self._rendered is None:
@@ -1007,6 +724,7 @@ class TextOverlay(Effect):
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
         if self._stream_noop:
             return frame
+        assert self._stream_alpha is not None and self._stream_rgb is not None
         dy, dx, ph, pw = self._stream_dst
         region = frame[dy : dy + ph, dx : dx + pw]
         blended = (
@@ -1017,7 +735,6 @@ class TextOverlay(Effect):
 
     def _apply(self, video: Video) -> Video:
         frame_h, frame_w = video.frame_shape[:2]
-
         if self._rendered is None:
             self._rendered = self._render_text_image(frame_w, frame_h)
 
@@ -1025,7 +742,6 @@ class TextOverlay(Effect):
         oh, ow = overlay_rgba.shape[:2]
         x, y = self._compute_position(frame_w, frame_h, ow, oh)
 
-        # Clamp to frame bounds
         src_x = max(0, -x)
         src_y = max(0, -y)
         dst_x = max(0, x)

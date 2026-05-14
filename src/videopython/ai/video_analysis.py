@@ -948,7 +948,9 @@ class VideoAnalyzer:
             return None
         if source_path is not None:
             return Video.from_path(str(source_path), start_second=start_second, end_second=end_second)
-        return _require_video(video).cut(start_second, end_second)
+        from videopython.base.transforms import CutSeconds
+
+        return CutSeconds(start=start_second, end=end_second).apply(_require_video(video))
 
     def _default_scene_boundaries(self, metadata: VideoMetadata) -> list[SceneBoundary]:
         if metadata.total_seconds <= 0 or metadata.frame_count <= 0:
