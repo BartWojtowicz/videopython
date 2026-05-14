@@ -101,10 +101,16 @@ class SegmentConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    source: Path
-    start: float = Field(ge=0)
-    end: float = Field(ge=0)
-    operations: list[OperationInput] = Field(default_factory=list)
+    source: Path = Field(description="Path to the source video file.")
+    start: float = Field(ge=0, description="Segment start time in seconds.")
+    end: float = Field(ge=0, description="Segment end time in seconds.")
+    operations: list[OperationInput] = Field(
+        default_factory=list,
+        description=(
+            "Ordered list of operations to run against this segment. "
+            "Each item is an Operation discriminated by its `op` field."
+        ),
+    )
 
     @model_validator(mode="after")
     def _validate_range(self) -> SegmentConfig:
@@ -144,10 +150,34 @@ class VideoEdit(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    segments: list[SegmentConfig] = Field(min_length=1)
-    post_operations: list[OperationInput] = Field(default_factory=list)
-    match_to_lowest_fps: bool = True
-    match_to_lowest_resolution: bool = True
+    segments: list[SegmentConfig] = Field(
+        min_length=1,
+        description=(
+            "Ordered list of segments. Each segment selects a time range from a "
+            "source video and applies its `operations` to it; results are "
+            "concatenated in order."
+        ),
+    )
+    post_operations: list[OperationInput] = Field(
+        default_factory=list,
+        description="Operations applied to the concatenated output after all segments are joined.",
+    )
+    match_to_lowest_fps: bool = Field(
+        True,
+        description=(
+            "When concatenating multiple segments with different fps, resample "
+            "all of them to the lowest source fps. If false, mismatched fps "
+            "raises during validation."
+        ),
+    )
+    match_to_lowest_resolution: bool = Field(
+        True,
+        description=(
+            "When concatenating multiple segments with different resolutions, "
+            "resize all of them to the lowest source resolution. If false, "
+            "mismatched dimensions raise during validation."
+        ),
+    )
 
     # ------------------------------------------------------------------ I/O
 
@@ -168,15 +198,31 @@ class VideoEdit(BaseModel):
 
     @classmethod
     def json_schema(cls) -> dict[str, Any]:
-        """LLM-facing schema: a discriminated union of operations per slot."""
+        """LLM-facing schema: a discriminated union of operations per slot.
+
+        Field descriptions are pulled from the corresponding Pydantic
+        ``Field(description=...)`` declarations on ``VideoEdit`` and
+        ``SegmentConfig`` so the hand-rolled schema stays in sync with the
+        models without needing to repeat the docstrings here.
+        """
         op_schema = Operation.json_schema()
+
+        def _desc(model: type[BaseModel], field_name: str) -> str:
+            return model.model_fields[field_name].description or ""
+
         segment_schema: dict[str, Any] = {
             "type": "object",
+            "description": SegmentConfig.__doc__,
             "properties": {
-                "source": {"type": "string", "description": "Source video path."},
-                "start": {"type": "number", "minimum": 0, "description": "Segment start time in seconds."},
-                "end": {"type": "number", "minimum": 0, "description": "Segment end time in seconds."},
-                "operations": {"type": "array", "items": op_schema, "default": []},
+                "source": {"type": "string", "description": _desc(SegmentConfig, "source")},
+                "start": {"type": "number", "minimum": 0, "description": _desc(SegmentConfig, "start")},
+                "end": {"type": "number", "minimum": 0, "description": _desc(SegmentConfig, "end")},
+                "operations": {
+                    "type": "array",
+                    "items": op_schema,
+                    "default": [],
+                    "description": _desc(SegmentConfig, "operations"),
+                },
             },
             "required": ["source", "start", "end"],
             "additionalProperties": False,
@@ -184,11 +230,30 @@ class VideoEdit(BaseModel):
         return {
             "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
+            "description": cls.__doc__,
             "properties": {
-                "segments": {"type": "array", "items": segment_schema, "minItems": 1},
-                "post_operations": {"type": "array", "items": op_schema, "default": []},
-                "match_to_lowest_fps": {"type": "boolean", "default": True},
-                "match_to_lowest_resolution": {"type": "boolean", "default": True},
+                "segments": {
+                    "type": "array",
+                    "items": segment_schema,
+                    "minItems": 1,
+                    "description": _desc(cls, "segments"),
+                },
+                "post_operations": {
+                    "type": "array",
+                    "items": op_schema,
+                    "default": [],
+                    "description": _desc(cls, "post_operations"),
+                },
+                "match_to_lowest_fps": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": _desc(cls, "match_to_lowest_fps"),
+                },
+                "match_to_lowest_resolution": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": _desc(cls, "match_to_lowest_resolution"),
+                },
             },
             "required": ["segments"],
             "additionalProperties": False,

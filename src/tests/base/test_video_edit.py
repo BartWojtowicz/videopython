@@ -176,6 +176,38 @@ class TestJsonSchema:
         for op_id in ("resize", "blur_effect", "fade", "reverse"):
             assert op_id in as_json, f"Operation {op_id!r} missing from schema"
 
+    def test_schema_has_descriptions_for_every_top_level_field(self):
+        """LLMs consume `description` for each field. Every slot must carry one."""
+        schema = VideoEdit.json_schema()
+        for name, prop in schema["properties"].items():
+            assert prop.get("description"), f"Top-level field {name!r} missing description"
+
+        seg = schema["properties"]["segments"]["items"]
+        for name, prop in seg["properties"].items():
+            assert prop.get("description"), f"Segment field {name!r} missing description"
+
+    def test_schema_op_class_and_field_descriptions_flow_through(self):
+        """Each op in the union must carry a class description plus per-field descriptions."""
+        schema = VideoEdit.json_schema()
+        op_schema = schema["properties"]["segments"]["items"]["properties"]["operations"]["items"]
+        defs = op_schema.get("$defs") or op_schema.get("definitions") or {}
+        assert defs, "Operation union schema missing $defs"
+
+        # Only entries with an `op` discriminator field are Operation subclasses;
+        # `$defs` also contains referenced models/enums (TimeRange, CropMode, ...)
+        # which don't need descriptions. Also skip the underscore-prefixed
+        # test-internal ops other modules register.
+        op_entries = {
+            name: s for name, s in defs.items() if "op" in s.get("properties", {}) and not name.startswith("_")
+        }
+        assert op_entries, "No Operation entries found in $defs"
+        for cls_name, cls_schema in op_entries.items():
+            assert cls_schema.get("description"), f"Op {cls_name!r} missing class description"
+            for fname, fprop in cls_schema["properties"].items():
+                if fname == "op":
+                    continue
+                assert fprop.get("description"), f"Op {cls_name!r} field {fname!r} missing description"
+
 
 # ----------------------------------------------------------------- execution
 
