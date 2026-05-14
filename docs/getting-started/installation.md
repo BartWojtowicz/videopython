@@ -30,7 +30,7 @@ uv add videopython
 
 ### With AI Features
 
-To use AI-powered generation, understanding, dubbing, and object swapping features:
+To use AI-powered generation, understanding, and dubbing features:
 
 ```bash
 pip install "videopython[ai]"

@@ -54,7 +54,6 @@ class FaceTrackingCrop(Transformation):
         vertical_offset: float = -0.1,
         framing_rule: Literal["offset", "center", "headroom", "thirds", "dynamic"] = "offset",
         headroom: float = 0.15,
-        lead_room: float = 0.1,
         smoothing: float = 0.8,
         max_speed: float | None = None,
         fallback: Literal["center", "last_position", "full_frame"] = "last_position",
@@ -77,7 +76,6 @@ class FaceTrackingCrop(Transformation):
                 - "thirds": Place face near the upper-third line.
                 - "dynamic": Currently same as "headroom".
             headroom: Headroom amount for framing rules that use it.
-            lead_room: Reserved for future motion/look-direction framing.
             smoothing: Position smoothing factor (0-1, higher = smoother).
             max_speed: Optional max camera movement per frame (normalized).
             fallback: Behavior when no face detected.
@@ -92,7 +90,6 @@ class FaceTrackingCrop(Transformation):
         self.vertical_offset = vertical_offset
         self.framing_rule = framing_rule
         self.headroom = headroom
-        self.lead_room = lead_room
         self.smoothing = smoothing
         self.max_speed = max_speed
         self.fallback = fallback
@@ -238,10 +235,15 @@ class FaceTrackingCrop(Transformation):
         current_position = (0.5, 0.5)
 
         framing_label = self.framing_rule if self.framing_rule != "offset" else "legacy-offset"
-        print(
-            "Face tracking crop: "
-            f"{w}x{h} -> {out_w}x{out_h} "
-            f"({self.target_aspect[0]}:{self.target_aspect[1]}, framing={framing_label})"
+        logger.info(
+            "Face tracking crop: %dx%d -> %dx%d (%d:%d, framing=%s)",
+            w,
+            h,
+            out_w,
+            out_h,
+            self.target_aspect[0],
+            self.target_aspect[1],
+            framing_label,
         )
 
         new_frames = []
@@ -448,7 +450,7 @@ class SplitScreenComposite(Transformation):
             for _ in range(len(cell_rects))
         ]
 
-        print(f"Creating {self.layout} split screen: {out_w}x{out_h}")
+        logger.info("Creating %s split screen: %dx%d", self.layout, out_w, out_h)
 
         new_frames = []
         for i in tqdm(range(n_frames), desc="Split screen composite"):

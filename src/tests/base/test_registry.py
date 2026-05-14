@@ -10,7 +10,6 @@ from typing import Any
 
 import pytest
 
-from videopython.base.combine import StackVideos
 from videopython.base.effects import Blur, FullImageOverlay, KenBurns
 from videopython.base.text.overlay import TranscriptionOverlay
 from videopython.base.transforms import CutSeconds, PictureInPicture
@@ -33,7 +32,6 @@ BASE_OPERATION_IDS = {
     "instant_transition",
     "fade_transition",
     "blur_transition",
-    "stack_videos",
     "add_subtitles",
     "reverse",
     "freeze_frame",
@@ -206,7 +204,7 @@ def test_tag_filtering_returns_matching_operations() -> None:
 
     dimensions_specs = registry.get_specs_by_tag("changes_dimensions")
 
-    assert {"resize", "crop", "stack_videos"}.issubset(set(dimensions_specs))
+    assert {"resize", "crop"}.issubset(set(dimensions_specs))
 
 
 def test_ai_ops_appear_only_after_import_videopython_ai() -> None:
@@ -229,7 +227,6 @@ def test_ai_ops_appear_only_after_import_videopython_ai() -> None:
         ("picture_in_picture", PictureInPicture, {"overlay"}),
         ("ken_burns", KenBurns, {"start_region", "end_region"}),
         ("full_image_overlay", FullImageOverlay, {"overlay_image"}),
-        ("stack_videos", StackVideos, set()),
     ],
 )
 def test_paramspec_count_matches_init_signature(

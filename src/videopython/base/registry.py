@@ -462,7 +462,6 @@ def _json_type_from_python_types(types: set[type[Any]]) -> str:
 
 
 def _register_base_operations() -> None:
-    from videopython.base.combine import StackVideos
     from videopython.base.effects import (
         Blur,
         ColorGrading,
@@ -787,14 +786,6 @@ def _register_base_operations() -> None:
 
     # -- Special --
 
-    register(
-        spec_from_class(
-            StackVideos,
-            op_id="stack_videos",
-            category=OperationCategory.SPECIAL,
-            tags={"multi_source_only", "changes_dimensions"},
-        )
-    )
     register(
         spec_from_class(
             TranscriptionOverlay,

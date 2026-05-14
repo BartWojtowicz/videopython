@@ -163,8 +163,7 @@ Klarna → "carna") on brand-monitoring inputs.
 dubber = VideoDubber(vocabulary=["Klarna", "Allegro", "InPost"])
 ```
 
-Changing the list invalidates the transcription cache (translation and TTS
-artifacts are unaffected). See [Brand-name vocabulary
+See [Brand-name vocabulary
 biasing](understanding.md#brand-name-vocabulary-biasing) for normalization
 rules and the token-budget guard.
 
@@ -199,46 +198,6 @@ text. Empty list under MarianTranslator.
 
 If neither backend covers the requested pair the auto resolver raises
 `UnsupportedLanguageError` (importable from `videopython.ai.dubbing`).
-
-### Resume Cache
-
-Long dubbing runs are restartable via `cache_dir`. When set, transcription,
-translated segments, and per-segment TTS WAVs are persisted under the directory
-and skipped on subsequent runs whose hash inputs match. Designed for resuming
-after a crash and for iterating on dub configuration without re-paying the
-transcription / translation cost each time.
-
-```python
-from videopython.ai.dubbing import VideoDubber, dub_cache_clear
-
-dubber = VideoDubber(cache_dir="./dub_cache")
-result = dubber.dub_file("movie.mp4", "movie_es.mp4", target_lang="es")
-
-# A second run with the same source + kwargs hits cache for every stage:
-dubber.dub_file("movie.mp4", "movie_es.mp4", target_lang="es")
-
-# Clear all cached artifacts when done.
-dub_cache_clear("./dub_cache")
-```
-
-Layout under `<cache_dir>` is keyed by source-audio sha256:
-
-```
-<cache_dir>/<src_hash>/
-    metadata.json              # schema version + hash inputs
-    transcription.json
-    translation_<lang_key>.json
-    tts/<seg_key>.wav
-```
-
-Cache keys are conservative — every kwarg that affects a stage's output is
-folded into the key. Whisper model, translator class, Whisper anti-hallucination
-flags, voice-sample sha256, and the Chatterbox `Expressiveness` knobs all
-invalidate independently. False misses are cheap; false hits would be bugs, so
-the design errs toward more re-computation.
-
-The cache grows unbounded; clear it with `dub_cache_clear(cache_dir)` or
-`dub_cache_clear(cache_dir, src_hash=...)` to drop a single source's artifacts.
 
 ### Output Options for `dub_file`
 
@@ -342,11 +301,7 @@ Three buckets, picked by-ear on `cam1_1min.mp4`:
 | `0.7×–1.3×` (normal) | Chatterbox default | Chatterbox default |
 | `> 1.3×` (dramatic) | `0.85` | `0.35` |
 
-The `Expressiveness` dataclass is exported from `videopython.ai.dubbing`. The
-three knobs are also folded into the TTS cache key, so re-runs after a knob
-change re-synthesize. Pre-0.28.3 cache entries miss on first hit and
-re-synthesize with the new values; old WAVs stay on disk until
-`dub_cache_clear`.
+The `Expressiveness` dataclass is exported from `videopython.ai.dubbing`.
 
 ### Supplying a Pre-Computed Transcription
 
@@ -479,15 +434,6 @@ heuristic returns `recommendation="reject"`. Carries the triggering
 `TranscriptQuality` as `error.quality` for caller introspection.
 
 ::: videopython.ai.dubbing.GarbageTranscriptError
-
-## DubCache
-
-Filesystem cache for dubbing pipeline artifacts. Most users only need
-`cache_dir=...` on `VideoDubber` plus `dub_cache_clear(cache_dir)`; `DubCache`
-is the lower-level handle for pre-warming, inspecting, or composing custom
-flows.
-
-::: videopython.ai.dubbing.DubCache
 
 ## UnsupportedLanguageError
 

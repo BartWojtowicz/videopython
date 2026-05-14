@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import tempfile
+import uuid
 import warnings
 from dataclasses import dataclass
 from fractions import Fraction
@@ -13,7 +14,6 @@ import numpy as np
 
 from videopython.base.audio import Audio
 from videopython.base.exceptions import AudioLoadError, VideoLoadError, VideoMetadataError
-from videopython.base.utils import generate_random_name
 
 if TYPE_CHECKING:
     from videopython.base.description import BoundingBox
@@ -1095,7 +1095,7 @@ class Video:
             )
 
         if filename is None:
-            filename = Path(generate_random_name(suffix=f".{format}"))
+            filename = Path(f"{uuid.uuid4()}.{format}")
         else:
             filename = Path(filename).with_suffix(f".{format}")
             filename.parent.mkdir(parents=True, exist_ok=True)

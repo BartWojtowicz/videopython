@@ -6,18 +6,21 @@ The main purpose of this file are 2 classes:
 2. `TranscriptionOverlay` class, which takes the `Transcription` and `Video` objects and overlays subtitles on `Video`.
 """
 
+import logging
 from enum import Enum
 from typing import TypeAlias
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+from tqdm import tqdm
 
 from videopython.base.exceptions import OutOfBoundsError
-from videopython.base.progress import log, progress_iter
 from videopython.base.text.transcription import Transcription, TranscriptionSegment
 from videopython.base.video import Video
 
 __all__ = ["TranscriptionOverlay", "ImageText", "TextAlign", "AnchorPoint"]
+
+logger = logging.getLogger(__name__)
 
 # Type aliases for clarity
 MarginType: TypeAlias = int | tuple[int, int, int, int]
@@ -1073,11 +1076,11 @@ class TranscriptionOverlay:
 
     def apply(self, video: Video, transcription: Transcription) -> Video:
         """Apply transcription overlay to video frames."""
-        log("Applying transcription overlay...")
+        logger.info("Applying transcription overlay...")
 
         new_frames = []
 
-        for frame_index, frame in enumerate(progress_iter(video.frames, desc="Transcription overlay")):
+        for frame_index, frame in enumerate(tqdm(video.frames, desc="Transcription overlay")):
             # Calculate timestamp for this frame
             timestamp = frame_index / video.fps
 

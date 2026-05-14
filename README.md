@@ -152,9 +152,8 @@ API docs: [Core](https://videopython.com/api/index/) | [Video](https://videopyth
 | **Video analysis** | `VideoAnalyzer` - full-pipeline analysis combining multiple AI capabilities |
 | **Transforms** | `FaceTrackingCrop`, `SplitScreenComposite` |
 | **Dubbing** | `VideoDubber` - voice cloning and revoicing with timing sync |
-| **Object swapping** | `ObjectSwapper` - detect, segment, and inpaint objects in video |
 
-API docs: [Generation](https://videopython.com/api/ai/generation/) | [Understanding](https://videopython.com/api/ai/understanding/) | [Transforms](https://videopython.com/api/ai/transforms/) | [Dubbing](https://videopython.com/api/ai/dubbing/) | [Object Swapping](https://videopython.com/api/ai/swapping/)
+API docs: [Generation](https://videopython.com/api/ai/generation/) | [Understanding](https://videopython.com/api/ai/understanding/) | [Transforms](https://videopython.com/api/ai/transforms/) | [Dubbing](https://videopython.com/api/ai/dubbing/)
 
 ## Examples
 

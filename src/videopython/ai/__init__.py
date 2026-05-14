@@ -1,7 +1,6 @@
 from videopython.ai import registry as _ai_registry  # noqa: F401
 
 from .generation import ImageToVideo, TextToImage, TextToMusic, TextToSpeech, TextToVideo
-from .swapping import ObjectSwapper
 from .transforms import FaceTrackingCrop, SplitScreenComposite
 from .understanding import (
     AudioClassifier,
@@ -28,8 +27,6 @@ __all__ = [
     # Transforms (AI-powered)
     "FaceTrackingCrop",
     "SplitScreenComposite",
-    # Swapping
-    "ObjectSwapper",
     # Video analysis
     "VideoAnalysis",
     "VideoAnalysisConfig",

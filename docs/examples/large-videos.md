@@ -187,19 +187,8 @@ result = dubber.dub_file(
 print(f"Translated {result.num_segments} segments")
 ```
 
-For runs that may need to resume after a crash, add a `cache_dir`. The
-pipeline persists transcription, translated segments, and per-segment TTS
-WAVs and skips stages whose hash inputs already match on a re-run:
-
-```python
-dubber = VideoDubber(low_memory=True, cache_dir="./dub_cache")
-dubber.dub_file("2_hour_movie.mp4", "dubbed.mp4", target_lang="es")
-# A second run with the same source + kwargs hits cache for every stage.
-```
-
 See [AI Dubbing](../api/ai/dubbing.md#memory-efficient-dubbing) for more on the
-`low_memory` flag and `dub_file()`, and
-[Resume Cache](../api/ai/dubbing.md#resume-cache) for cache-key semantics.
+`low_memory` flag and `dub_file()`.
 
 ## Method Comparison
 

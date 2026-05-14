@@ -140,7 +140,6 @@ Transformations and transitions typically have an empty apply schema (no extra a
 | `instant_transition` | `InstantTransition` | transition | `multi_source_only` |
 | `fade_transition` | `FadeTransition` | transition | `changes_duration`, `multi_source_only` |
 | `blur_transition` | `BlurTransition` | transition | `changes_duration`, `multi_source_only` |
-| `stack_videos` | `StackVideos` | special | `multi_source_only`, `changes_dimensions` |
 | `reverse` | `Reverse` | transformation | -- |
 | `freeze_frame` | `FreezeFrame` | transformation | `changes_duration` |
 | `silence_removal` | `SilenceRemoval` | transformation | `requires_transcript`, `changes_duration` |

@@ -213,7 +213,6 @@ class TestFaceTrackingCrop:
         assert crop.vertical_offset == -0.1
         assert crop.framing_rule == "offset"
         assert crop.headroom == 0.15
-        assert crop.lead_room == 0.1
         assert crop.smoothing == 0.8
         assert crop.max_speed is None
         assert crop.fallback == "last_position"
@@ -227,7 +226,6 @@ class TestFaceTrackingCrop:
             vertical_offset=0.0,
             framing_rule="headroom",
             headroom=0.2,
-            lead_room=0.05,
             smoothing=0.5,
             max_speed=0.1,
             fallback="center",
@@ -238,7 +236,6 @@ class TestFaceTrackingCrop:
         assert crop.vertical_offset == 0.0
         assert crop.framing_rule == "headroom"
         assert crop.headroom == 0.2
-        assert crop.lead_room == 0.05
         assert crop.smoothing == 0.5
         assert crop.max_speed == 0.1
         assert crop.fallback == "center"

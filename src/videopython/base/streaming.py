@@ -7,6 +7,7 @@ video length for streamable pipelines.
 
 from __future__ import annotations
 
+import logging
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
@@ -14,11 +15,13 @@ from pathlib import Path
 from typing import get_args
 
 import numpy as np
+from tqdm import tqdm
 
 from videopython.base.audio import Audio
 from videopython.base.effects import Effect
-from videopython.base.progress import log, progress_iter
 from videopython.base.video import ALLOWED_VIDEO_FORMATS, ALLOWED_VIDEO_PRESETS, FrameIterator
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -224,9 +227,9 @@ def stream_segment(
                 preset=preset,
                 crf=crf,
             ) as encoder:
-                log("Streaming frames...")
+                logger.info("Streaming frames...")
                 frame_count = 0
-                for _, frame in progress_iter(decoder, desc="Streaming", total=total_frames):
+                for _, frame in tqdm(decoder, desc="Streaming", total=total_frames):
                     for entry in plan.effect_schedule:
                         if entry.start_frame <= frame_count < entry.end_frame:
                             frame = entry.effect.process_frame(frame, frame_count - entry.start_frame)
@@ -235,7 +238,7 @@ def stream_segment(
                     frame_count += 1
 
         return output_path
-    except Exception:
+    except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError):
         if output_path.exists():
             output_path.unlink()
         raise
