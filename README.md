@@ -36,25 +36,31 @@ Python `>=3.10, <3.14`. AI features run locally - no cloud API keys required, bu
 
 ## Quick Start
 
-### Video editing
+### Imperative editing
+
+Every editing primitive is an `Operation` subclass — a Pydantic model
+whose fields ARE the JSON wire format. Apply one to a `Video`:
 
 ```python
-from videopython.base import Video, CutSeconds, Resize, ResampleFPS
+from videopython.base import Video, CutSeconds, Resize, Fade
 
-intro = Resize(width=1080, height=1920).apply(Video.from_path("intro.mp4"))
-clip = Video.from_path("raw.mp4")
-clip = CutSeconds(start=10, end=25).apply(clip)
-clip = Resize(width=1080, height=1920).apply(clip)
-clip = ResampleFPS(fps=30).apply(clip)
+video = Video.from_path("raw.mp4")
+video = CutSeconds(start=10, end=25).apply(video)
+video = Resize(width=1080, height=1920).apply(video)
+video = Fade(mode="in", duration=0.5).apply(video)
+video.save("output.mp4")
+```
 
-final = (intro + clip).add_audio_from_file("music.mp3")
-final.save("output.mp4")
+Concatenate clips with `+` (must share fps + dimensions):
+
+```python
+combined = video_a + video_b
 ```
 
 ### JSON editing plans
 
-Define multi-segment edits as JSON — perfect for LLM-driven workflows.
-`VideoEdit.json_schema()` returns a schema for plan generation/validation.
+Define multi-segment edits as JSON — the format LLM-driven workflows
+generate against. `VideoEdit.json_schema()` returns the schema:
 
 ```python
 from videopython.editing import VideoEdit
@@ -65,19 +71,22 @@ plan = {
         "start": 10.0,
         "end": 20.0,
         "operations": [
-            {"op": "resize", "height": 1280},
-            {"op": "speed_change", "speed": 1.25},
+            {"op": "resize", "width": 1080, "height": 1920},
+            {"op": "color_adjust", "saturation": 1.15, "contrast": 1.05},
             {"op": "fade", "mode": "in", "duration": 0.5,
-             "window": {"start": 0.0, "stop": 0.5}},
+             "window": {"stop": 0.5}},
         ],
     }],
 }
 
 edit = VideoEdit.from_dict(plan)
-edit.validate()   # dry-run via metadata (no frames loaded)
-final = edit.run()
-final.save("output.mp4")
+edit.validate()                  # dry-run via metadata, no frames loaded
+edit.run_to_file("output.mp4")   # stream to disk, ~constant memory
 ```
+
+`run_to_file()` pipes ffmpeg decode → per-frame effects → ffmpeg encode,
+so memory stays bounded even for hour-long sources. Use `edit.run()`
+instead if you want the result back in memory as a `Video`.
 
 ### AI generation
 
@@ -87,53 +96,63 @@ from videopython.base import Resize
 
 image = TextToImage().generate_image("A cinematic mountain sunrise")
 video = ImageToVideo().generate_video(image=image)
-video = Resize(width=1080, height=1920).apply(video)
 audio = TextToSpeech().generate_audio("Welcome to videopython.")
+
+video = Resize(width=1080, height=1920).apply(video)
 video.add_audio(audio).save("ai_video.mp4")
 ```
 
 ## LLM & AI Agent Integration
 
-videopython is designed to be controlled by LLMs. Every operation is a
-Pydantic `BaseModel` whose fields ARE the JSON wire format — schema,
-validation, and (de)serialisation come for free.
+The library is built for LLM-driven editing. Two surfaces matter:
 
-**Schema generation** - `VideoEdit.json_schema()` returns a complete JSON Schema
-including a discriminated union over every registered `Operation`. Pass it as a
-tool schema or structured-output format to any LLM API:
+**1. Plan schema for tool / structured-output calls.**
+`VideoEdit.json_schema()` returns a JSON Schema covering segments,
+`post_operations`, and a discriminated union over every registered
+`Operation`. Drop it into any LLM API:
 
 ```python
 from videopython.editing import VideoEdit
 
 schema = VideoEdit.json_schema()
-# Pass `schema` to your LLM as a function/tool definition or response format.
-# The LLM generates a plan dict, then:
-
-edit = VideoEdit.from_dict(plan)
-edit.validate()   # dry-run: checks sources, time ranges, params - no frames loaded
-final = edit.run()
-final.save("output.mp4")
+# Anthropic: tools=[{"name": "edit", "input_schema": schema}]
+# OpenAI:    tools=[{"type": "function",
+#                    "function": {"name": "edit", "parameters": schema}}]
 ```
 
-**Operation discovery** - the auto-registry lets an LLM (or your code) inspect
-every available operation, its parameters, and constraints:
+Validate the LLM's output without touching the filesystem, then run it:
+
+```python
+edit = VideoEdit.from_dict(plan)
+edit.validate()                  # catches bad ops, time ranges, fps mismatches
+edit.run_to_file("output.mp4")
+```
+
+**2. Operation discovery for agent loops.**
+Every registered op exposes its own Pydantic schema, so an agent can
+introspect what's available without hardcoded lists:
 
 ```python
 from videopython.base import Operation, OpCategory
 
-# All registered ops:
 for op_id, cls in Operation.registry().items():
     print(f"{op_id}: {(cls.__doc__ or '').splitlines()[0]}")
 
-# Per-op JSON Schema (standard Pydantic):
-schema = Operation.get("color_adjust").model_json_schema()
+schema = Operation.get("color_adjust").model_json_schema()  # per-op schema
 ```
 
-Every operation has LLM-optimized descriptions and rich constraints (`minimum`,
-`maximum`, `enum`, `exclusiveMinimum`, etc.) so models generate valid parameters
-on the first try.
+Field constraints (`minimum`, `maximum`, `enum`, `exclusiveMinimum`,
+nullability) flow through to the schema, so LLMs that support
+constrained generation produce valid parameters on the first try.
 
-Docs: [Editing Plans](https://videopython.com/api/editing/) | [Operations](https://videopython.com/api/operations/)
+For ops that need side-channel data (e.g. `silence_removal` and
+`add_subtitles` need a `Transcription`), pass it via `context`:
+
+```python
+edit.run(context={"transcription": my_transcription})
+```
+
+Docs: [Editing Plans](https://videopython.com/api/editing/) | [Operations](https://videopython.com/api/operations/) | [LLM Integration Guide](https://videopython.com/guides/llm-integration/)
 
 ## Features
 
@@ -145,7 +164,7 @@ Docs: [Editing Plans](https://videopython.com/api/editing/) | [Operations](https
 | **Operation foundation** | `Operation`, `Effect`, `TimeRange`, `OpCategory` - Pydantic base + auto-registry + discriminated-union schema |
 | **Editing plans** | `VideoEdit`, `SegmentConfig` - JSON/LLM-friendly multi-segment plans with JSON Schema generation, dry-run validation, and streaming `run_to_file` |
 | **Transforms** | Cut (time/frame), resize, crop, FPS resampling, speed change, reverse, freeze frame, silence removal |
-| **Effects** | Blur, zoom, color grading, vignette, Ken Burns, image overlay, fade, text overlay, volume adjust, transcription overlay |
+| **Effects** | Blur, zoom, color grading, vignette, Ken Burns, image overlay, fade, text overlay, volume adjust |
 | **Audio** | Load/save, overlay, concat, normalize, time-stretch, silence detection, segment classification |
 | **Text** | Transcription data classes, `TranscriptionOverlay` for subtitle rendering |
 | **Scene detection** | Histogram-based scene boundaries (`detect`, `detect_streaming`, `detect_parallel`) |
