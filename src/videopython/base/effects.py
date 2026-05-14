@@ -1,18 +1,21 @@
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, ClassVar, Literal
 
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+from tqdm import tqdm
 
-from videopython.base.progress import log, progress_iter
 from videopython.base.video import Video
 
 if TYPE_CHECKING:
     from videopython.base.audio import Audio
     from videopython.base.description import BoundingBox
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "Effect",
@@ -182,14 +185,14 @@ class FullImageOverlay(Effect):
         elif not (0 <= 2 * self.fade_time <= video.total_seconds):
             raise ValueError(f"Video is only {video.total_seconds}s long, but fade time is {self.fade_time}s!")
 
-        log("Overlaying video...")
+        logger.info("Overlaying video...")
         if self.fade_time == 0:
-            for i in progress_iter(range(len(video.frames)), desc="Overlaying frames"):
+            for i in tqdm(range(len(video.frames)), desc="Overlaying frames"):
                 video.frames[i] = self._overlay(video.frames[i])
         else:
             num_video_frames = len(video.frames)
             num_fade_frames = round(self.fade_time * video.fps)
-            for i in progress_iter(range(num_video_frames), desc="Overlaying frames"):
+            for i in tqdm(range(num_video_frames), desc="Overlaying frames"):
                 frames_dist_from_end = min(i, num_video_frames - i)
                 fade_alpha = 1.0 if frames_dist_from_end >= num_fade_frames else frames_dist_from_end / num_fade_frames
                 video.frames[i] = self._overlay(video.frames[i], fade_alpha)
@@ -261,8 +264,8 @@ class Blur(Effect):
         n_frames = len(video.frames)
         sigmas = self._compute_sigmas(n_frames)
 
-        log(f"Applying {self.mode} blur...")
-        for i in progress_iter(range(n_frames), desc="Blurring"):
+        logger.info(f"Applying {self.mode} blur...")
+        for i in tqdm(range(n_frames), desc="Blurring"):
             video.frames[i] = self._blur_frame(video.frames[i], sigmas[i])
         return video
 
@@ -317,7 +320,7 @@ class Zoom(Effect):
         elif self.mode != "out":
             raise ValueError(f"Unknown mode: `{self.mode}`.")
 
-        for i in progress_iter(range(n_frames), desc="Zooming", total=n_frames):
+        for i in tqdm(range(n_frames), desc="Zooming", total=n_frames):
             w, h = crop_sizes_w[i], crop_sizes_h[i]
             x = width / 2 - w / 2
             y = height / 2 - h / 2
@@ -400,8 +403,8 @@ class ColorGrading(Effect):
         return self._grade_frame(frame)
 
     def _apply(self, video: Video) -> Video:
-        log("Applying color grading...")
-        for i in progress_iter(range(len(video.frames)), desc="Color grading"):
+        logger.info("Applying color grading...")
+        for i in tqdm(range(len(video.frames)), desc="Color grading"):
             video.frames[i] = self._grade_frame(video.frames[i])
         return video
 
@@ -453,7 +456,7 @@ class Vignette(Effect):
         return (frame.astype(np.float32) * self._stream_mask_3d).astype(np.uint8)
 
     def _apply(self, video: Video) -> Video:
-        log("Applying vignette effect...")
+        logger.info("Applying vignette effect...")
         height, width = video.frame_shape[:2]
 
         # Create mask once for the video dimensions
@@ -601,8 +604,8 @@ class KenBurns(Effect):
         end_w = int(self.end_region.width * width)
         end_h = int(self.end_region.height * height)
 
-        log("Applying Ken Burns effect...")
-        for i in progress_iter(range(n_frames), desc="Ken Burns"):
+        logger.info("Applying Ken Burns effect...")
+        for i in tqdm(range(n_frames), desc="Ken Burns"):
             t = i / max(1, n_frames - 1)  # Normalized time [0, 1]
             eased_t = self._ease(t)
 
@@ -1037,8 +1040,8 @@ class TextOverlay(Effect):
         alpha = overlay_region[:, :, 3:4].astype(np.float32) / 255.0
         overlay_rgb = overlay_region[:, :, :3].astype(np.float32)
 
-        log("Applying text overlay...")
-        for frame in progress_iter(video.frames, desc="Text overlay"):
+        logger.info("Applying text overlay...")
+        for frame in tqdm(video.frames, desc="Text overlay"):
             region = frame[dst_y : dst_y + paste_h, dst_x : dst_x + paste_w]
             blended = (overlay_rgb * alpha + region.astype(np.float32) * (1.0 - alpha)).astype(np.uint8)
             frame[dst_y : dst_y + paste_h, dst_x : dst_x + paste_w] = blended

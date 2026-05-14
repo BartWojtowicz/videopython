@@ -1,5 +1,22 @@
 # Release Notes
 
+## 0.30.0
+
+### Removed
+
+- Removed a lot of unused/overcomplicated/dead code:
+- **Breaking:** `to_premiere_xml` (Premiere/FCP7 XML export). `videopython.editing.to_premiere_xml` and `videopython.editing.premiere_xml` deleted. Known correctness bug + unclear demand.
+- **Breaking:** `ObjectSwapper` and the `videopython.ai.swapping` subpackage (SAM2 + GroundingDINO + LaMa inpainter). `videopython.ai.ObjectSwapper` no longer re-exported. SAM2/GroundingDINO ride `transformers`; no `[ai]` extra change.
+- **Breaking:** `StackVideos` and `videopython.base.combine` deleted. `stack_videos` registry entry gone.
+- **Breaking:** Dub cache. `cache_dir` kwarg removed from `VideoDubber` and `LocalDubbingPipeline`. `DubCache` and `dub_cache_clear` no longer importable from `videopython.ai.dubbing`. Resume-after-crash is no longer supported.
+- **Breaking:** `videopython.base.progress` module deleted. `configure`, `set_verbose`, `set_progress` no longer re-exported from `videopython.base`. Call sites now use stdlib `logging` (configure via `logging.basicConfig`) and `tqdm` directly (suppress with `TQDM_DISABLE=1`); progress bars are now on by default.
+- Dead `lead_room` parameter on `FaceTrackingCrop`.
+
+### Changed
+
+- Narrowed 12 bare `except Exception:` clauses in `videopython.ai.video_analysis` and one in `videopython.base.streaming` to specific runtime exceptions so unexpected programming errors propagate.
+- Replaced stray `print()` calls in `FaceTrackingCrop` and `SplitScreenComposite` with `logger.info`.
+
 ## 0.29.1
 
 ### Added

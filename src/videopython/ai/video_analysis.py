@@ -559,7 +559,7 @@ class VideoAnalyzer:
             return AudioToText(**self.config.get_params(AUDIO_TO_TEXT)).transcribe(
                 Audio.from_path(source_path) if source_path is not None else _require_video(video)
             )
-        except Exception:
+        except (ImportError, OSError, RuntimeError, ValueError):
             logger.warning("AudioToText failed, skipping transcription", exc_info=True)
             return None
 
@@ -571,7 +571,7 @@ class VideoAnalyzer:
                 if source_path is not None
                 else scene_detector.detect(_require_video(video))
             )
-        except Exception:
+        except (ImportError, OSError, RuntimeError, ValueError):
             logger.warning("SemanticSceneDetector failed, using default scene boundaries", exc_info=True)
             return None
 
@@ -644,7 +644,7 @@ class VideoAnalyzer:
         else:
             try:
                 scene_vlm = SceneVLM(**self.config.get_params(SCENE_VLM)) if SCENE_VLM in enabled else None
-            except Exception:
+            except (ImportError, OSError, RuntimeError, ValueError):
                 logger.warning("Failed to initialize SceneVLM, skipping visual understanding", exc_info=True)
                 scene_vlm = None
 
@@ -652,7 +652,7 @@ class VideoAnalyzer:
             audio_classifier = (
                 AudioClassifier(**self.config.get_params(AUDIO_CLASSIFIER)) if AUDIO_CLASSIFIER in enabled else None
             )
-        except Exception:
+        except (ImportError, OSError, RuntimeError, ValueError):
             logger.warning("Failed to initialize AudioClassifier, skipping audio classification", exc_info=True)
             audio_classifier = None
 
@@ -660,7 +660,7 @@ class VideoAnalyzer:
         if FACE_TRACKER in enabled:
             try:
                 face_tracker = FaceTracker(**self.config.get_params(FACE_TRACKER))
-            except Exception:
+            except (ImportError, OSError, RuntimeError, ValueError):
                 logger.warning("Failed to initialize FaceTracker, skipping face tracks", exc_info=True)
                 face_tracker = None
 
@@ -668,7 +668,7 @@ class VideoAnalyzer:
         if audio_classifier is not None and source_path is not None:
             try:
                 path_audio = Audio.from_path(source_path)
-            except Exception:
+            except (OSError, RuntimeError, ValueError):
                 logger.warning(
                     "Failed to load audio from path, audio classification will use clip fallback", exc_info=True
                 )
@@ -686,7 +686,7 @@ class VideoAnalyzer:
                         metadata=metadata,
                         scenes=scenes,
                     )
-                except Exception:
+                except (IndexError, OSError, RuntimeError, ValueError):
                     logger.warning("Batched SceneVLM failed, skipping visual understanding", exc_info=True)
 
         samples: list[SceneAnalysisSample] = []
@@ -714,7 +714,7 @@ class VideoAnalyzer:
                                     start_second=scene.start,
                                     end_second=scene.end,
                                 )
-                            except Exception:
+                            except (OSError, RuntimeError, ValueError):
                                 scene_clip = None
                         sample.audio_classification = self._run_scene_audio_classification(
                             audio_classifier=audio_classifier,
@@ -723,7 +723,7 @@ class VideoAnalyzer:
                             scene_start=scene.start,
                             scene_end=scene.end,
                         )
-                    except Exception:
+                    except (OSError, RuntimeError, ValueError):
                         logger.warning(
                             "AudioClassifier failed for scene %d (%.1f-%.1fs)",
                             index,
@@ -741,7 +741,7 @@ class VideoAnalyzer:
                             metadata=metadata,
                             scene=scene,
                         )
-                    except Exception:
+                    except (IndexError, OSError, RuntimeError, ValueError):
                         logger.warning(
                             "FaceTracker failed for scene %d (%.1f-%.1fs)",
                             index,
@@ -867,7 +867,7 @@ class VideoAnalyzer:
             description: SceneDescription | None = None
             try:
                 description = scene_vlm.analyze_scene(deduped)
-            except Exception:
+            except (IndexError, OSError, RuntimeError, ValueError):
                 logger.warning(
                     "SceneVLM failed for scenes %d-%d (%.1f-%.1fs)",
                     group[0],
@@ -1044,7 +1044,7 @@ class VideoAnalyzer:
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
             payload = json.loads(result.stdout)
-        except Exception:
+        except (subprocess.CalledProcessError, json.JSONDecodeError, OSError):
             return {}
 
         tags: dict[str, str] = {}

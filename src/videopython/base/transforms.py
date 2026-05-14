@@ -1,18 +1,21 @@
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import TYPE_CHECKING, Literal
 
 import cv2
 import numpy as np
+from tqdm import tqdm
 
-from videopython.base.progress import log, progress_iter
 from videopython.base.video import Video, _round_dimension_to_even
 
 if TYPE_CHECKING:
     from videopython.base.audio import Audio
     from videopython.base.text.transcription import Transcription
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "Transformation",
@@ -141,7 +144,7 @@ class Resize(Transformation):
             new_width = _round_dimension_to_even(new_width)
             new_height = _round_dimension_to_even(new_height)
 
-        log(f"Resizing video to: {new_width}x{new_height}!")
+        logger.info(f"Resizing video to: {new_width}x{new_height}!")
         video.frames = np.asarray(
             [self._resize_frame(frame, new_width, new_height) for frame in video.frames],
             dtype=np.uint8,
@@ -171,7 +174,7 @@ class ResampleFPS(Transformation):
         target_frame_count = int(len(video.frames) * (self.fps / video.fps))
         new_frame_indices = np.linspace(0, len(video.frames) - 1, target_frame_count)
         new_frames = []
-        for i in progress_iter(range(len(new_frame_indices)), desc="Interpolating frames"):
+        for i in tqdm(range(len(new_frame_indices)), desc="Interpolating frames"):
             # Interpolate between the two nearest frames
             ratio = new_frame_indices[i] % 1
             new_frame = (1 - ratio) * video.frames[int(new_frame_indices[i])] + ratio * video.frames[
@@ -194,10 +197,10 @@ class ResampleFPS(Transformation):
         if video.fps == self.fps:
             return video
         elif video.fps > self.fps:
-            log(f"Downsampling video from {video.fps} to {self.fps} FPS.")
+            logger.info(f"Downsampling video from {video.fps} to {self.fps} FPS.")
             video = self._downsample(video)
         else:
-            log(f"Upsampling video from {video.fps} to {self.fps} FPS.")
+            logger.info(f"Upsampling video from {video.fps} to {self.fps} FPS.")
             video = self._upsample(video)
         if video.audio is not None:
             target_duration = len(video.frames) / video.fps
@@ -339,7 +342,7 @@ class SpeedChange(Transformation):
 
         if self.end_speed is None:
             # Constant speed change
-            log(f"Applying {self.speed}x speed change...")
+            logger.info(f"Applying {self.speed}x speed change...")
             new_frame_count = int(n_frames / self.speed)
 
             if new_frame_count == 0:
@@ -349,7 +352,7 @@ class SpeedChange(Transformation):
             source_indices = np.linspace(0, n_frames - 1, new_frame_count)
         else:
             # Speed ramp: smoothly transition from speed to end_speed
-            log(f"Applying speed ramp from {self.speed}x to {self.end_speed}x...")
+            logger.info(f"Applying speed ramp from {self.speed}x to {self.end_speed}x...")
 
             # Calculate frame positions with varying speed
             # Use cumulative sum of inverse speeds to get source positions
@@ -376,7 +379,7 @@ class SpeedChange(Transformation):
         if self.interpolate and (self.speed < 1.0 or (self.end_speed and self.end_speed < 1.0)):
             # Interpolate for smoother slow motion
             new_frames = []
-            for idx in progress_iter(source_indices, desc="Interpolating frames"):
+            for idx in tqdm(source_indices, desc="Interpolating frames"):
                 idx_low = int(idx)
                 idx_high = min(idx_low + 1, len(video.frames) - 1)
                 ratio = idx - idx_low
@@ -547,11 +550,11 @@ class PictureInPicture(Transformation):
         pos_y = max(0, min(pos_y, main_h - overlay_h))
 
         # Resize overlay frames once
-        log(f"Resizing overlay to {overlay_w}x{overlay_h}...")
+        logger.info(f"Resizing overlay to {overlay_w}x{overlay_h}...")
         resized_overlay_frames = np.asarray(
             [
                 cv2.resize(frame, (overlay_w, overlay_h), interpolation=cv2.INTER_AREA)
-                for frame in progress_iter(self.overlay.frames, desc="Resizing overlay")
+                for frame in tqdm(self.overlay.frames, desc="Resizing overlay")
             ],
             dtype=np.uint8,
         )
@@ -567,9 +570,9 @@ class PictureInPicture(Transformation):
                 dtype=np.uint8,
             )
 
-        log("Applying picture-in-picture...")
+        logger.info("Applying picture-in-picture...")
         new_frames = []
-        for i in progress_iter(range(n_main_frames), desc="Picture-in-picture"):
+        for i in tqdm(range(n_main_frames), desc="Picture-in-picture"):
             main_frame = video.frames[i].copy()
 
             # Get overlay frame (loop if overlay is shorter)

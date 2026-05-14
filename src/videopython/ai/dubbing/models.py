@@ -41,8 +41,7 @@ class Expressiveness:
     def as_kwargs(self) -> dict[str, float]:
         """Knobs as a dict, dropping ``None`` entries.
 
-        Suitable for ``**``-expansion into Chatterbox or
-        :meth:`DubCache.tts_key`.
+        Suitable for ``**``-expansion into Chatterbox.
         """
         return {
             name: value

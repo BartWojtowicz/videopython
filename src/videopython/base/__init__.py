@@ -37,7 +37,6 @@ from .exceptions import (
     VideoMetadataError,
     VideoPythonError,
 )
-from .progress import configure, set_progress, set_verbose
 from .registry import (
     OperationCategory,
     OperationSpec,
@@ -157,8 +156,4 @@ __all__ = [
     "get_specs_by_tag",
     "register",
     "spec_from_class",
-    # Configuration
-    "configure",
-    "set_verbose",
-    "set_progress",
 ]

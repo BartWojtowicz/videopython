@@ -1,6 +1,5 @@
 """Local video dubbing functionality."""
 
-from videopython.ai.dubbing.cache import DubCache, dub_cache_clear
 from videopython.ai.dubbing.dubber import VideoDubber
 from videopython.ai.dubbing.models import (
     DubbingResult,
@@ -26,7 +25,5 @@ __all__ = [
     "TranscriptQuality",
     "assess_transcript",
     "UnsupportedLanguageError",
-    "DubCache",
-    "dub_cache_clear",
     "Expressiveness",
 ]
