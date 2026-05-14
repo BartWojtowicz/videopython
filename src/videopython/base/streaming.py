@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import subprocess
 import tempfile
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import get_args
@@ -17,6 +18,8 @@ from typing import get_args
 import numpy as np
 from tqdm import tqdm
 
+from videopython.base import _ffmpeg
+from videopython.base._dimensions import require_even
 from videopython.base.audio import Audio
 from videopython.base.effects import Effect
 from videopython.base.video import ALLOWED_VIDEO_FORMATS, ALLOWED_VIDEO_PRESETS, FrameIterator
@@ -72,6 +75,7 @@ class FrameEncoder:
         self._format = format
         self._preset = preset
         self._crf = crf
+        self._stack: ExitStack | None = None
         self._process: subprocess.Popen | None = None
 
     def _build_command(self) -> list[str]:
@@ -121,18 +125,9 @@ class FrameEncoder:
         return cmd
 
     def __enter__(self) -> FrameEncoder:
-        if self._width % 2 != 0 or self._height % 2 != 0:
-            raise ValueError(
-                f"libx264 with yuv420p requires even dimensions, got {self._width}x{self._height}. "
-                "Resize or crop to even dimensions before encoding."
-            )
-        cmd = self._build_command()
-        self._process = subprocess.Popen(
-            cmd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-        )
+        require_even(self._width, self._height)
+        self._stack = ExitStack()
+        self._process = self._stack.enter_context(_ffmpeg.popen_encode(self._build_command()))
         return self
 
     def write_frame(self, frame: np.ndarray) -> None:
@@ -141,21 +136,13 @@ class FrameEncoder:
             raise RuntimeError("FrameEncoder not started -- use as context manager")
         self._process.stdin.write(frame.tobytes())
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:  # type: ignore[no-untyped-def]
-        if self._process is None:
-            return
-        try:
-            if self._process.stdin and not self._process.stdin.closed:
-                self._process.stdin.close()
-            stderr = self._process.stderr.read() if self._process.stderr else b""
-            returncode = self._process.wait(timeout=30)
-            if returncode != 0 and exc_type is None:
-                raise RuntimeError(f"FFmpeg encoder failed (code {returncode}): {stderr.decode(errors='ignore')}")
-        except subprocess.TimeoutExpired:
-            self._process.kill()
-            self._process.wait()
-        finally:
-            self._process = None
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool | None:  # type: ignore[no-untyped-def]
+        stack = self._stack
+        self._stack = None
+        self._process = None
+        if stack is None:
+            return None
+        return stack.__exit__(exc_type, exc_val, exc_tb)
 
 
 def stream_segment(
@@ -238,7 +225,7 @@ def stream_segment(
                     frame_count += 1
 
         return output_path
-    except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError):
+    except Exception:
         if output_path.exists():
             output_path.unlink()
         raise
@@ -259,25 +246,24 @@ def concat_files(segment_files: list[Path], output_path: Path) -> Path:
         list_path = Path(f.name)
 
     try:
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-f",
-            "concat",
-            "-safe",
-            "0",
-            "-i",
-            str(list_path),
-            "-c",
-            "copy",
-            str(output_path),
-        ]
-        result = subprocess.run(cmd, capture_output=True)
-        if result.returncode != 0:
-            raise RuntimeError(f"FFmpeg concat failed: {result.stderr.decode(errors='ignore')}")
+        _ffmpeg.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                str(list_path),
+                "-c",
+                "copy",
+                str(output_path),
+            ]
+        )
         return output_path
     finally:
         list_path.unlink(missing_ok=True)

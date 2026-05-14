@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-import json
 import subprocess
 import wave
 from dataclasses import dataclass
@@ -10,7 +9,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from videopython.base.exceptions import AudioLoadError
+from videopython.base import _ffmpeg
+from videopython.base.exceptions import AudioLoadError, FFmpegProbeError
 
 if TYPE_CHECKING:
     from videopython.base.audio.analysis import AudioLevels, AudioSegment, AudioSegmentType, SilentSegment
@@ -71,39 +71,21 @@ class Audio:
     @staticmethod
     def _get_ffmpeg_info(file_path: Path) -> dict:
         """Get audio metadata using ffprobe"""
-        cmd = [
-            "ffprobe",
-            "-v",
-            "quiet",
-            "-print_format",
-            "json",
-            "-show_format",
-            "-show_streams",
-            str(file_path),
-        ]
-
         try:
-            output = subprocess.check_output(cmd)
-            info = json.loads(output.decode())
+            info = _ffmpeg.probe(file_path)
+        except FFmpegProbeError as e:
+            raise AudioLoadError(f"Error getting audio info: {e}") from e
 
-            # Find the audio stream
-            audio_stream = None
-            for stream in info["streams"]:
-                if stream["codec_type"] == "audio":
-                    audio_stream = stream
-                    break
+        audio_stream = next((s for s in info["streams"] if s["codec_type"] == "audio"), None)
+        if audio_stream is None:
+            raise AudioLoadError("No audio stream found")
 
-            if audio_stream is None:
-                raise AudioLoadError("No audio stream found")
-
-            return {
-                "sample_rate": int(audio_stream["sample_rate"]),
-                "channels": int(audio_stream["channels"]),
-                "duration": float(info["format"]["duration"]),
-                "bit_depth": int(audio_stream.get("bits_per_sample", 16)),
-            }
-        except subprocess.CalledProcessError as e:
-            raise AudioLoadError(f"Error getting audio info: {e}")
+        return {
+            "sample_rate": int(audio_stream["sample_rate"]),
+            "channels": int(audio_stream["channels"]),
+            "duration": float(info["format"]["duration"]),
+            "bit_depth": int(audio_stream.get("bits_per_sample", 16)),
+        }
 
     @classmethod
     def create_silent(

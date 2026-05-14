@@ -53,7 +53,7 @@ class TestFrameIterator:
         iterator = FrameIterator(SMALL_VIDEO_PATH)
         with iterator as frames:
             next(iter(frames))
-        assert iterator._process is None
+        assert iterator._iter is None
 
     def test_start_second_offset(self):
         """Test that start_second skips frames correctly."""

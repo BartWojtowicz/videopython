@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-import subprocess
 import tempfile
 import uuid
 import warnings
@@ -12,8 +10,16 @@ from typing import Generator, Literal, get_args
 
 import numpy as np
 
+from videopython.base import _ffmpeg
+from videopython.base._dimensions import require_even
 from videopython.base.audio import Audio
-from videopython.base.exceptions import AudioLoadError, VideoLoadError, VideoMetadataError
+from videopython.base.exceptions import (
+    AudioLoadError,
+    FFmpegProbeError,
+    FFmpegRunError,
+    VideoLoadError,
+    VideoMetadataError,
+)
 
 __all__ = [
     "Video",
@@ -32,11 +38,6 @@ ALLOWED_VIDEO_PRESETS = Literal[
 # Used to pre-allocate frame array with safety margin for frame rate variations
 FRAME_BUFFER_MULTIPLIER = 1.1  # 10% buffer for frame rate estimation errors
 FRAME_BUFFER_PADDING = 10  # Additional fixed frame padding
-
-
-def _round_dimension_to_even(value: int | float) -> int:
-    """Round a dimension to the nearest even integer (minimum 2)."""
-    return max(2, int(round(float(value) / 2.0) * 2))
 
 
 @dataclass
@@ -66,28 +67,20 @@ class VideoMetadata:
     @staticmethod
     def _run_ffprobe(video_path: str | Path) -> dict:
         """Run ffprobe and return parsed JSON output."""
-        cmd = [
-            "ffprobe",
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=width,height,r_frame_rate,nb_frames",
-            "-show_entries",
-            "format=duration",
-            "-print_format",
-            "json",
-            str(video_path),
-        ]
-
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            return json.loads(result.stdout)
-        except subprocess.CalledProcessError as e:
-            raise VideoMetadataError(f"FFprobe error: {e.stderr}")
-        except json.JSONDecodeError as e:
-            raise VideoMetadataError(f"Error parsing FFprobe output: {e}")
+            return _ffmpeg.probe(
+                video_path,
+                extra_args=[
+                    "-select_streams",
+                    "v:0",
+                    "-show_entries",
+                    "stream=width,height,r_frame_rate,nb_frames",
+                    "-show_entries",
+                    "format=duration",
+                ],
+            )
+        except FFmpegProbeError as e:
+            raise VideoMetadataError(str(e)) from e
 
     @classmethod
     def from_path(cls, video_path: str | Path) -> VideoMetadata:
@@ -238,7 +231,7 @@ class FrameIterator:
         self.metadata = VideoMetadata.from_path(path)
         self.start_second = start_second if start_second is not None else 0.0
         self.end_second = end_second
-        self._process: subprocess.Popen | None = None
+        self._iter: Generator[tuple[int, np.ndarray], None, None] | None = None
 
         # Build -vf filter chain
         self._vf_filters = list(vf_filters) if vf_filters else []
@@ -287,52 +280,30 @@ class FrameIterator:
         Frame indices are absolute indices in the original video,
         accounting for any start_second offset.
         """
+        self._iter = self._iter_frames()
+        return self._iter
+
+    def _iter_frames(self) -> Generator[tuple[int, np.ndarray], None, None]:
         cmd = self._build_ffmpeg_command()
-
-        self._process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            bufsize=self._frame_size * 2,
-        )
-
-        # Calculate starting frame index based on start_second
-        start_frame = int(self.start_second * self.output_fps)
-        frame_idx = start_frame
-
-        try:
+        with _ffmpeg.popen_decode(cmd, bufsize=self._frame_size * 2) as proc:
+            frame_idx = int(self.start_second * self.output_fps)
             while True:
-                raw_frame = self._process.stdout.read(self._frame_size)  # type: ignore
+                raw_frame = proc.stdout.read(self._frame_size)  # type: ignore[union-attr]
                 if len(raw_frame) != self._frame_size:
                     break
-
-                frame = np.frombuffer(raw_frame, dtype=np.uint8).copy()
-                frame = frame.reshape(self.output_height, self.output_width, 3)
-
+                frame = (
+                    np.frombuffer(raw_frame, dtype=np.uint8).copy().reshape(self.output_height, self.output_width, 3)
+                )
                 yield frame_idx, frame
                 frame_idx += 1
-        finally:
-            self._cleanup()
-
-    def _cleanup(self) -> None:
-        """Clean up ffmpeg process."""
-        if self._process is not None:
-            if self._process.poll() is None:
-                self._process.terminate()
-                try:
-                    self._process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    self._process.kill()
-                    self._process.wait()
-            if self._process.stdout:
-                self._process.stdout.close()
-            self._process = None
 
     def __enter__(self) -> "FrameIterator":
         return self
 
     def __exit__(self, *args: object) -> None:
-        self._cleanup()
+        if self._iter is not None:
+            self._iter.close()
+            self._iter = None
 
 
 def extract_frames_at_indices(
@@ -388,40 +359,28 @@ def extract_frames_at_indices(
         "pipe:1",
     ]
 
-    process = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        bufsize=10**8,
-    )
-
     frame_size = metadata.width * metadata.height * 3
 
-    try:
+    with _ffmpeg.popen_decode(cmd, bufsize=10**8) as process:
         raw_data, _ = process.communicate()
 
-        actual_frames = len(raw_data) // frame_size
-        if actual_frames == 0:
-            return np.empty((0, metadata.height, metadata.width, 3), dtype=np.uint8)
+    actual_frames = len(raw_data) // frame_size
+    if actual_frames == 0:
+        return np.empty((0, metadata.height, metadata.width, 3), dtype=np.uint8)
 
-        # Truncate to complete frames only
-        raw_data = raw_data[: actual_frames * frame_size]
+    # Truncate to complete frames only
+    raw_data = raw_data[: actual_frames * frame_size]
 
-        frames = np.frombuffer(raw_data, dtype=np.uint8).copy()
-        frames = frames.reshape(-1, metadata.height, metadata.width, 3)
+    frames = np.frombuffer(raw_data, dtype=np.uint8).copy()
+    frames = frames.reshape(-1, metadata.height, metadata.width, 3)
 
-        # Reorder to match original frame_indices order if needed
-        if unique_sorted_indices != frame_indices:
-            index_map = {idx: i for i, idx in enumerate(unique_sorted_indices)}
-            reorder = [index_map[idx] for idx in frame_indices if idx in index_map]
-            frames = frames[reorder]
+    # Reorder to match original frame_indices order if needed
+    if unique_sorted_indices != frame_indices:
+        index_map = {idx: i for i, idx in enumerate(unique_sorted_indices)}
+        reorder = [index_map[idx] for idx in frame_indices if idx in index_map]
+        frames = frames[reorder]
 
-        return frames
-
-    finally:
-        if process.poll() is None:
-            process.terminate()
-            process.wait()
+    return frames
 
 
 def extract_frames_at_times(
@@ -546,14 +505,6 @@ class Video:
                 ]
             )
 
-            # Start FFmpeg process with stderr redirected to avoid deadlock
-            process = subprocess.Popen(
-                ffmpeg_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,  # Redirect stderr to avoid deadlock
-                bufsize=10**8,  # Use large buffer for efficient I/O
-            )
-
             # Calculate frame size in bytes
             frame_size = out_width * out_height * 3  # 3 bytes per pixel for RGB
 
@@ -574,58 +525,34 @@ class Video:
             frames = np.empty((estimated_frames, out_height, out_width, 3), dtype=np.uint8)
             frames_read = 0
 
-            try:
+            with _ffmpeg.popen_decode(ffmpeg_cmd, bufsize=10**8) as process:
                 while frames_read < estimated_frames:
-                    # Calculate remaining frames to read
                     remaining_frames = estimated_frames - frames_read
                     batch_size = min(read_batch_size, remaining_frames)
 
-                    # Read batch of data
-                    batch_data = process.stdout.read(frame_size * batch_size)  # type: ignore
-
+                    batch_data = process.stdout.read(frame_size * batch_size)  # type: ignore[union-attr]
                     if not batch_data:
                         break
 
-                    # Convert to numpy array
                     batch_frames = np.frombuffer(batch_data, dtype=np.uint8)
-
-                    # Calculate how many complete frames we got
                     complete_frames = len(batch_frames) // (out_height * out_width * 3)
-
                     if complete_frames == 0:
                         break
 
-                    # Only keep complete frames
                     complete_data = batch_frames[: complete_frames * out_height * out_width * 3]
                     batch_frames_array = complete_data.reshape(complete_frames, out_height, out_width, 3)
 
-                    # Check if we have room in pre-allocated array
                     if frames_read + complete_frames > estimated_frames:
-                        # Need to expand array - this should be rare with our buffer
+                        # Pre-allocation undershoot — rare with the buffer.
                         new_size = max(estimated_frames * 2, frames_read + complete_frames + 100)
                         new_frames = np.empty((new_size, out_height, out_width, 3), dtype=np.uint8)
                         new_frames[:frames_read] = frames[:frames_read]
                         frames = new_frames
                         estimated_frames = new_size
 
-                    # Store batch in pre-allocated array
                     end_idx = frames_read + complete_frames
                     frames[frames_read:end_idx] = batch_frames_array
                     frames_read += complete_frames
-
-            finally:
-                # Ensure process is properly terminated
-                if process.poll() is None:
-                    process.terminate()
-                    try:
-                        process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        process.wait()
-
-                # Clean up pipes
-                if process.stdout:
-                    process.stdout.close()
 
             # Check if FFmpeg had an error (non-zero return code)
             if process.returncode not in (0, None) and frames_read == 0:
@@ -645,7 +572,7 @@ class Video:
                     audio_start = start_second if start_second is not None else 0
                     audio_end = end_second if end_second is not None else audio.metadata.duration_seconds
                     audio = audio.slice(start_seconds=audio_start, end_seconds=audio_end)
-            except (AudioLoadError, FileNotFoundError, subprocess.CalledProcessError):
+            except (AudioLoadError, FileNotFoundError):
                 warnings.warn(f"No audio found for `{path}`, adding silent track.")
                 # Create silent audio based on actual frames read
                 segment_duration = frames_read / out_fps
@@ -655,8 +582,8 @@ class Video:
 
         except VideoMetadataError:
             raise
-        except subprocess.CalledProcessError as e:
-            raise VideoLoadError(f"FFmpeg failed: {e}")
+        except FFmpegRunError as e:
+            raise VideoLoadError(f"FFmpeg failed: {e}") from e
         except (OSError, IOError) as e:
             raise VideoLoadError(f"I/O error: {e}")
 
@@ -743,12 +670,7 @@ class Video:
             )
 
         frame_height, frame_width = self.frame_shape[:2]
-        if frame_width % 2 != 0 or frame_height % 2 != 0:
-            raise ValueError(
-                "Current save pipeline uses libx264 with yuv420p, which requires even frame dimensions. "
-                f"Got {frame_width}x{frame_height}. "
-                "Resize, crop, or pad to an even width and height before saving."
-            )
+        require_even(frame_width, frame_height)
 
         if filename is None:
             filename = Path(f"{uuid.uuid4()}.{format}")
@@ -808,43 +730,22 @@ class Video:
                 str(filename),
             ]
 
-            process = subprocess.Popen(
-                ffmpeg_command,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-            )
-
-            try:
-                if process.stdin is None:
-                    raise RuntimeError("Failed to open FFmpeg stdin pipe for video data")
-
+            with _ffmpeg.popen_encode(ffmpeg_command) as process:
                 frames = self.frames
                 if frames.dtype != np.uint8 or not frames.flags["C_CONTIGUOUS"]:
                     frames = np.ascontiguousarray(frames, dtype=np.uint8)
 
                 buffer = memoryview(frames)
                 try:
-                    process.stdin.write(buffer)
-                    process.stdin.close()
+                    process.stdin.write(buffer)  # type: ignore[union-attr]
                 except BrokenPipeError as e:
+                    # ffmpeg has already died; surface its stderr for diagnostics.
                     stderr = process.stderr.read() if process.stderr is not None else b""
-                    returncode = process.wait()
-                    raise RuntimeError(
-                        f"FFmpeg terminated while receiving video data (code {returncode}): "
-                        f"{stderr.decode(errors='ignore')}"
+                    raise FFmpegRunError(
+                        f"ffmpeg terminated while receiving video data: {stderr.decode(errors='replace')}"
                     ) from e
 
-                stderr = process.stderr.read() if process.stderr is not None else b""
-                returncode = process.wait()
-
-                if returncode != 0:
-                    raise RuntimeError(f"FFmpeg failed with code {returncode}: {stderr.decode(errors='ignore')}")
-
-                return filename
-            finally:
-                if process.poll() is None:
-                    process.kill()
+            return filename
 
     def add_audio(self, audio: Audio, overlay: bool = True) -> Video:
         """Add audio to video, returning a new Video instance.
