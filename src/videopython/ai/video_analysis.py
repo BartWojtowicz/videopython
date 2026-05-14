@@ -25,8 +25,8 @@ from videopython.ai.understanding import (
     SemanticSceneDetector,
 )
 from videopython.ai.understanding.faces import FaceTracker
+from videopython.audio import Audio
 from videopython.base import _ffmpeg
-from videopython.base.audio import Audio
 from videopython.base.description import (
     AudioClassification,
     AudioEvent,
@@ -35,7 +35,7 @@ from videopython.base.description import (
     SceneDescription,
 )
 from videopython.base.exceptions import FFmpegProbeError
-from videopython.base.text.transcription import Transcription
+from videopython.base.transcription import Transcription
 from videopython.base.video import Video, VideoMetadata, extract_frames_at_times
 
 __all__ = ["VideoAnalysis", "VideoAnalysisConfig", "VideoAnalyzer"]
@@ -949,7 +949,7 @@ class VideoAnalyzer:
             return None
         if source_path is not None:
             return Video.from_path(str(source_path), start_second=start_second, end_second=end_second)
-        from videopython.base.transforms import CutSeconds
+        from videopython.editing.transforms import CutSeconds
 
         return CutSeconds(start=start_second, end=end_second).apply(_require_video(video))
 

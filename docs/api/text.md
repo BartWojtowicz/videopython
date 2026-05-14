@@ -23,7 +23,8 @@ Classes for handling transcriptions and rendering text overlays on video.
 Render transcriptions as subtitles with word-level highlighting:
 
 ```python
-from videopython.base import Video, TranscriptionOverlay
+from videopython.base import Video
+from videopython.editing import TranscriptionOverlay
 
 video = Video.from_path("input.mp4")
 # transcription = ... (from AudioToText or manually created)
@@ -36,7 +37,7 @@ overlay = TranscriptionOverlay(
 video = overlay.apply(video, transcription)
 ```
 
-::: videopython.base.TranscriptionOverlay
+::: videopython.editing.TranscriptionOverlay
 
 ### ImageText
 

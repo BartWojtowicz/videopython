@@ -3,7 +3,7 @@
 Centralises the libx264+yuv420p even-dimension constraint and the
 two "round to even" calculations that previously lived (with subtly
 different semantics) in ``base/video.py``, ``ai/transforms.py``, and
-``base/transforms.py``.
+``editing/transforms.py``.
 """
 
 from __future__ import annotations

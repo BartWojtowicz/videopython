@@ -3,7 +3,7 @@
 An ``Effect`` is an ``Operation`` that preserves video shape and frame count.
 Subclasses override :meth:`Effect._apply` for in-memory execution and may
 additionally override :meth:`Effect.streaming_init` / :meth:`Effect.process_frame`
-for bounded-memory streaming via ``base/streaming.py``.
+for bounded-memory streaming via ``editing/streaming.py``.
 
 Effects that need to modify audio (``Fade``, ``VolumeAdjust``) override
 :meth:`Effect.apply` directly so the audio splice can stay coherent with the
@@ -24,10 +24,10 @@ from pydantic import Field, PrivateAttr, model_validator
 from tqdm import tqdm
 
 from videopython.base.description import BoundingBox
-from videopython.base.operation import Effect
+from videopython.editing.operation import Effect
 
 if TYPE_CHECKING:
-    from videopython.base.audio import Audio
+    from videopython.audio import Audio
     from videopython.base.video import Video
 
 logger = logging.getLogger(__name__)

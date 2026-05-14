@@ -3,8 +3,8 @@ import pytest
 from PIL import Image
 
 from tests.test_config import TEST_FONT_PATH
-from videopython.base.effects import FullImageOverlay
-from videopython.base.text.image_text import AnchorPoint, ImageText, TextAlign
+from videopython.base.image_text import AnchorPoint, ImageText, TextAlign
+from videopython.editing.effects import FullImageOverlay
 
 
 def test_text_is_rendered_correctly():

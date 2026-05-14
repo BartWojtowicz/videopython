@@ -1,4 +1,4 @@
-"""Tests for the Operation/Effect base machinery in base/operation.py.
+"""Tests for the Operation/Effect base machinery in editing/operation.py.
 
 Covers auto-registration, the discriminated-union JSON schema, ``TimeRange``
 validation, and the ``Effect.apply`` window/invariant logic. Per-op
@@ -13,14 +13,14 @@ import numpy as np
 import pytest
 from pydantic import Field, ValidationError
 
-from videopython.base.operation import (
+from videopython.base.video import Video
+from videopython.editing.operation import (
     Effect,
     FilterCtx,
     OpCategory,
     Operation,
     TimeRange,
 )
-from videopython.base.video import Video
 
 
 @pytest.fixture(autouse=True)

@@ -53,7 +53,7 @@ class TestAudioClassifier:
     @pytest.fixture
     def test_audio(self):
         """Load test audio file."""
-        from videopython.base.audio import Audio
+        from videopython.audio import Audio
 
         return Audio.from_path(TEST_AUDIO_PATH)
 
@@ -67,7 +67,7 @@ class TestAudioClassifier:
     @pytest.fixture
     def silent_audio(self):
         """Create silent audio."""
-        from videopython.base.audio import Audio, AudioMetadata
+        from videopython.audio import Audio, AudioMetadata
 
         # 1 second of silence at 16kHz (AST sample rate)
         silent_data = np.zeros(16000, dtype=np.float32)

@@ -7,7 +7,7 @@ Core audio class for loading, manipulating, analyzing, and saving audio files.
 The `Audio` class handles audio data with numpy arrays, supporting operations like slicing, concatenation, overlay mixing, resampling, analysis, and format conversion.
 
 ```python
-from videopython.base import Audio
+from videopython.audio import Audio
 
 # Load from file
 audio = Audio.from_path("music.mp3")
@@ -28,7 +28,7 @@ mixed = audio1.overlay(audio2, position=2.0)
 audio.save("output.wav")
 ```
 
-::: videopython.base.audio.Audio
+::: videopython.audio.Audio
 
 ## Audio Analysis
 
@@ -37,7 +37,7 @@ The `Audio` class includes methods for analyzing audio levels, detecting silence
 ### Level Analysis
 
 ```python
-from videopython.base import Audio
+from videopython.audio import Audio
 
 audio = Audio.from_path("audio.mp3")
 
@@ -57,7 +57,7 @@ for timestamp, levels in levels_over_time:
 ### Silence Detection
 
 ```python
-from videopython.base import Audio
+from videopython.audio import Audio
 
 audio = Audio.from_path("podcast.mp3")
 
@@ -76,7 +76,7 @@ for seg in silent_segments:
 Classify audio segments as speech, music, noise, or silence using heuristic analysis (no ML required).
 
 ```python
-from videopython.base import Audio
+from videopython.audio import Audio
 
 audio = Audio.from_path("mixed_content.mp3")
 
@@ -90,7 +90,7 @@ for seg in segments:
 ### Normalization
 
 ```python
-from videopython.base import Audio
+from videopython.audio import Audio
 
 audio = Audio.from_path("quiet_audio.mp3")
 
@@ -109,7 +109,7 @@ print(f"New peak: {normalized.get_levels().db_peak:.1f} dB")
 ### Volume Scaling
 
 ```python
-from videopython.base import Audio
+from videopython.audio import Audio
 
 audio = Audio.from_path("audio.mp3")
 
@@ -123,7 +123,7 @@ louder = audio.scale_volume(1.5)
 Pitch-preserving time stretching using ffmpeg's atempo filter.
 
 ```python
-from videopython.base import Audio
+from videopython.audio import Audio
 
 audio = Audio.from_path("audio.mp3")
 
@@ -142,7 +142,7 @@ very_fast = audio.time_stretch(4.0)
 Adjust audio to match a target duration by slicing or padding with silence.
 
 ```python
-from videopython.base import Audio
+from videopython.audio import Audio
 
 audio = Audio.from_path("audio.mp3")
 
@@ -158,31 +158,31 @@ fitted = audio.fit_to_duration(10.0)
 
 Stores metadata for audio files including sample rate, channels, duration, and frame count.
 
-::: videopython.base.audio.AudioMetadata
+::: videopython.audio.AudioMetadata
 
 ### AudioLevels
 
 Audio level measurements (RMS, peak, dB values).
 
-::: videopython.base.audio.AudioLevels
+::: videopython.audio.AudioLevels
 
 ### SilentSegment
 
 Represents a detected silent segment with timestamps.
 
-::: videopython.base.audio.SilentSegment
+::: videopython.audio.SilentSegment
 
 ### AudioSegment
 
 A classified segment of audio with type and confidence.
 
-::: videopython.base.audio.AudioSegment
+::: videopython.audio.AudioSegment
 
 ### AudioSegmentType
 
 Enum for audio segment classification: `SILENCE`, `SPEECH`, `MUSIC`, `NOISE`.
 
-::: videopython.base.audio.AudioSegmentType
+::: videopython.audio.AudioSegmentType
 
 ## Exceptions
 

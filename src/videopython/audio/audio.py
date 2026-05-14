@@ -13,7 +13,7 @@ from videopython.base import _ffmpeg
 from videopython.base.exceptions import AudioLoadError, FFmpegProbeError
 
 if TYPE_CHECKING:
-    from videopython.base.audio.analysis import AudioLevels, AudioSegment, AudioSegmentType, SilentSegment
+    from videopython.audio.analysis import AudioLevels, AudioSegment, AudioSegmentType, SilentSegment
 
 
 @dataclass
@@ -879,7 +879,7 @@ class Audio:
             >>> levels = audio.get_levels()
             >>> print(f"Peak: {levels.db_peak:.1f} dB")
         """
-        from videopython.base.audio.analysis import AudioLevels
+        from videopython.audio.analysis import AudioLevels
 
         segment = self.slice(start_seconds, end_seconds)
         data = segment.data.flatten() if segment.metadata.channels == 2 else segment.data
@@ -947,7 +947,7 @@ class Audio:
             >>> for seg in silent_segments:
             ...     print(f"Silence: {seg.start:.2f}s - {seg.end:.2f}s")
         """
-        from videopython.base.audio.analysis import SilentSegment
+        from videopython.audio.analysis import SilentSegment
 
         levels_over_time = self.get_levels_over_time(window_seconds=window_seconds, hop_seconds=window_seconds / 2)
 
@@ -1027,7 +1027,7 @@ class Audio:
             >>> for seg in segments:
             ...     print(f"{seg.start:.1f}-{seg.end:.1f}s: {seg.segment_type.value}")
         """
-        from videopython.base.audio.analysis import AudioSegment
+        from videopython.audio.analysis import AudioSegment
 
         hop_length = segment_length * (1 - overlap)
         segments = []
@@ -1064,7 +1064,7 @@ class Audio:
         Returns:
             Tuple of (AudioSegmentType, confidence)
         """
-        from videopython.base.audio.analysis import AudioSegmentType
+        from videopython.audio.analysis import AudioSegmentType
 
         data = segment.to_mono().data
 

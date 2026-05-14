@@ -5,7 +5,7 @@ on:
 
 jobs:
   base_tests:
-    name: Base tests (no AI) - Python ${{ matrix.python-version }}
+    name: Non-AI tests (base + audio + editing) - Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -23,8 +23,8 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
       - name: Install dependencies
         run: uv sync --python ${{ matrix.python-version }} --dev
-      - name: Run base tests
-        run: uv run pytest src/tests/base --cov=src/videopython/base --cov=src/videopython/editing --cov-report=term --cov-report=term-missing
+      - name: Run non-AI tests
+        run: uv run pytest --ignore=src/tests/ai --cov=src/videopython/base --cov=src/videopython/audio --cov=src/videopython/editing --cov-report=term --cov-report=term-missing
 
   ai_tests:
     name: AI tests (lightweight) - Python ${{ matrix.python-version }}

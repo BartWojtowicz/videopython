@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from videopython.base.audio import Audio, AudioMetadata
+from videopython.audio import Audio, AudioMetadata
 
 
 @dataclass

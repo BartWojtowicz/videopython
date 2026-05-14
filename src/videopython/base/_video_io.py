@@ -20,9 +20,9 @@ from typing import Literal, get_args
 
 import numpy as np
 
+from videopython.audio import Audio
 from videopython.base import _ffmpeg
 from videopython.base._dimensions import require_even
-from videopython.base.audio import Audio
 from videopython.base.exceptions import (
     AudioLoadError,
     FFmpegRunError,

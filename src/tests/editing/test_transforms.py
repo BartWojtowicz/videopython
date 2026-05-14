@@ -3,9 +3,10 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 
-from videopython.base.audio import Audio, AudioMetadata
-from videopython.base.text.transcription import Transcription, TranscriptionSegment, TranscriptionWord
-from videopython.base.transforms import (
+from videopython.audio import Audio, AudioMetadata
+from videopython.base.transcription import Transcription, TranscriptionSegment, TranscriptionWord
+from videopython.base.video import Video
+from videopython.editing.transforms import (
     Crop,
     CropMode,
     CutFrames,
@@ -17,7 +18,6 @@ from videopython.base.transforms import (
     SilenceRemoval,
     SpeedChange,
 )
-from videopython.base.video import Video
 
 
 @pytest.mark.parametrize("start, end", [(0, 100), (100, 101), (100, 120)])
@@ -230,7 +230,7 @@ class TestSpeedChangeAudio:
     @pytest.fixture
     def video_with_audio(self):
         """Create a video with non-silent audio for testing."""
-        from videopython.base.audio import Audio, AudioMetadata
+        from videopython.audio import Audio, AudioMetadata
 
         # Create video frames (1 second at 30fps)
         frames = np.full((30, 100, 150, 3), 128, dtype=np.uint8)

@@ -7,10 +7,10 @@ import numpy as np
 import pytest
 
 from tests.test_config import SMALL_VIDEO_PATH
-from videopython.base.effects import ColorGrading, Fade
-from videopython.base.streaming import EffectScheduleEntry, FrameEncoder, StreamingSegmentPlan, stream_segment
 from videopython.base.video import Video, VideoMetadata
 from videopython.editing import VideoEdit
+from videopython.editing.effects import ColorGrading, Fade
+from videopython.editing.streaming import EffectScheduleEntry, FrameEncoder, StreamingSegmentPlan, stream_segment
 
 
 @pytest.fixture

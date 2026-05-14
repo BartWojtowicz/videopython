@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
 
 from videopython.ai._device import log_device_initialization, release_device_memory, select_device
-from videopython.base.text.transcription import TranscriptionSegment
+from videopython.base.transcription import TranscriptionSegment
 
 # Imported under TYPE_CHECKING to avoid a circular dep through
 # videopython.ai.dubbing (the dubbing pipeline imports both

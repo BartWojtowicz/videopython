@@ -11,7 +11,7 @@ Take a video with speech, transcribe the audio using AI, and overlay synchronize
 ```python
 from videopython import Video
 from videopython.ai import AudioToText
-from videopython.base import TranscriptionOverlay
+from videopython.editing import TranscriptionOverlay
 
 def add_subtitles(input_path: str, output_path: str):
     # Load video

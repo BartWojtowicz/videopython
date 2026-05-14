@@ -6,9 +6,9 @@ import logging
 from typing import Any, Literal
 
 from videopython.ai._device import log_device_initialization, release_device_memory, select_device
-from videopython.base.audio import Audio
+from videopython.audio import Audio
 from videopython.base.description import AudioClassification, AudioEvent
-from videopython.base.text.transcription import Transcription, TranscriptionSegment, TranscriptionWord
+from videopython.base.transcription import Transcription, TranscriptionSegment, TranscriptionWord
 from videopython.base.video import Video
 
 logger = logging.getLogger(__name__)

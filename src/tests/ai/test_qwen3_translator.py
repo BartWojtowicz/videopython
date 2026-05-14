@@ -15,7 +15,7 @@ from videopython.ai.generation.qwen3 import (
     _parse_jsonl_response,
     _target_chars_for,
 )
-from videopython.base.text.transcription import TranscriptionSegment, TranscriptionWord
+from videopython.base.transcription import TranscriptionSegment, TranscriptionWord
 
 
 def _seg(

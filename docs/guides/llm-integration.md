@@ -99,7 +99,7 @@ edit.run().save("output.mp4")
 ## Discovering Operations
 
 ```python
-from videopython.base import Operation, OpCategory
+from videopython.editing import Operation, OpCategory
 
 # All registered ops
 for op_id, cls in Operation.registry().items():

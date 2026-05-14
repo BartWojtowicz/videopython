@@ -4,9 +4,10 @@ from PIL import Image
 from pydantic import ValidationError
 
 from tests.test_config import TEST_FONT_PATH
-from videopython.base.audio import Audio, AudioMetadata
+from videopython.audio import Audio, AudioMetadata
 from videopython.base.description import BoundingBox
-from videopython.base.effects import (
+from videopython.base.video import Video
+from videopython.editing.effects import (
     Blur,
     ColorGrading,
     Fade,
@@ -17,8 +18,7 @@ from videopython.base.effects import (
     VolumeAdjust,
     Zoom,
 )
-from videopython.base.operation import TimeRange
-from videopython.base.video import Video
+from videopython.editing.operation import TimeRange
 
 
 def _write_overlay(arr: np.ndarray, tmp_path) -> str:
@@ -318,7 +318,7 @@ class TestVolumeAdjust:
         assert np.array_equal(result.frames, original_frames)
 
     def test_isinstance_effect(self):
-        from videopython.base.effects import Effect
+        from videopython.editing.effects import Effect
 
         assert isinstance(VolumeAdjust(), Effect)
 

@@ -12,8 +12,8 @@ from tqdm import tqdm
 
 from videopython.ai.understanding.faces import FaceTracker
 from videopython.base._dimensions import floor_to_even
-from videopython.base.operation import OpCategory, Operation
 from videopython.base.video import Video
+from videopython.editing.operation import OpCategory, Operation
 
 logger = logging.getLogger(__name__)
 

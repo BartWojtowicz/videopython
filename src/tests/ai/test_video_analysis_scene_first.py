@@ -14,7 +14,7 @@ from videopython.base.description import (
     SceneBoundary,
     SceneDescription,
 )
-from videopython.base.text.transcription import Transcription, TranscriptionSegment
+from videopython.base.transcription import Transcription, TranscriptionSegment
 from videopython.base.video import Video
 
 

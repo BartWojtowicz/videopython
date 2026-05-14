@@ -22,8 +22,10 @@ __all__ = [
 class SceneBoundary:
     """Timing information for a detected scene.
 
-    A lightweight structure representing scene boundaries detected by SceneDetector.
-    This is a backbone type - higher-level scene analysis belongs in orchestration packages.
+    A lightweight structure representing scene boundaries returned by
+    scene detectors (e.g. ``videopython.ai.SemanticSceneDetector``). This
+    is a backbone type — higher-level scene analysis lives in orchestration
+    packages.
 
     Attributes:
         start: Scene start time in seconds

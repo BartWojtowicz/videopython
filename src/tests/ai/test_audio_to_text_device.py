@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 import videopython.ai.understanding.audio as audio_mod
-from videopython.base.audio import Audio, AudioMetadata
+from videopython.audio import Audio, AudioMetadata
 
 
 def test_audio_to_text_disables_mps_auto_selection(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -321,7 +321,7 @@ class TestAttachConfidenceByOverlap:
 
     @staticmethod
     def _seg(start: float, end: float, *, avg_logprob=None, no_speech_prob=None, compression_ratio=None):
-        from videopython.base.text.transcription import TranscriptionSegment
+        from videopython.base.transcription import TranscriptionSegment
 
         return TranscriptionSegment(
             start=start,

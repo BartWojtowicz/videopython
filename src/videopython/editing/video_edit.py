@@ -2,7 +2,7 @@
 
 `VideoEdit` is a thin Pydantic model: fields ARE the JSON wire format, validation
 and (de)serialization are handled by Pydantic. Each segment carries an ordered
-``operations`` list of :class:`videopython.base.operation.Operation` instances
+``operations`` list of :class:`videopython.editing.operation.Operation` instances
 resolved through the auto-registry on the ``op`` discriminator field.
 
 Wire format::
@@ -28,12 +28,12 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SerializeAsAny, model_validator
 
-from videopython.base.audio import Audio, AudioLoadError
-from videopython.base.effects import Effect, Fade, VolumeAdjust
-from videopython.base.operation import FilterCtx, Operation
-from videopython.base.streaming import EffectScheduleEntry, StreamingSegmentPlan, concat_files, stream_segment
-from videopython.base.transforms import CutSeconds
+from videopython.audio import Audio, AudioLoadError
 from videopython.base.video import ALLOWED_VIDEO_FORMATS, ALLOWED_VIDEO_PRESETS, Video, VideoMetadata
+from videopython.editing.effects import Effect, Fade, VolumeAdjust
+from videopython.editing.operation import FilterCtx, Operation
+from videopython.editing.streaming import EffectScheduleEntry, StreamingSegmentPlan, concat_files, stream_segment
+from videopython.editing.transforms import CutSeconds
 
 __all__ = [
     "SegmentConfig",

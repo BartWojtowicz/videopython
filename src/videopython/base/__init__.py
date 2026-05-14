@@ -1,4 +1,3 @@
-from .audio import Audio, AudioMetadata
 from .description import (
     AudioClassification,
     AudioEvent,
@@ -11,18 +10,6 @@ from .description import (
     SceneBoundary,
     SceneDescription,
 )
-from .effects import (
-    Blur,
-    ColorGrading,
-    Effect,
-    Fade,
-    FullImageOverlay,
-    KenBurns,
-    TextOverlay,
-    Vignette,
-    VolumeAdjust,
-    Zoom,
-)
 from .exceptions import (
     AudioError,
     AudioLoadError,
@@ -34,29 +21,8 @@ from .exceptions import (
     VideoMetadataError,
     VideoPythonError,
 )
-from .operation import FilterCtx, OpCategory, Operation, TimeRange
-from .scene import SceneDetector
-from .text import (
-    AnchorPoint,
-    ImageText,
-    TextAlign,
-    Transcription,
-    TranscriptionOverlay,
-    TranscriptionSegment,
-    TranscriptionWord,
-)
-from .transforms import (
-    Crop,
-    CropMode,
-    CutFrames,
-    CutSeconds,
-    FreezeFrame,
-    ResampleFPS,
-    Resize,
-    Reverse,
-    SilenceRemoval,
-    SpeedChange,
-)
+from .image_text import AnchorPoint, ImageText, TextAlign
+from .transcription import Transcription, TranscriptionSegment, TranscriptionWord
 from .video import FrameIterator, Video, VideoMetadata
 
 __all__ = [
@@ -64,9 +30,6 @@ __all__ = [
     "Video",
     "VideoMetadata",
     "FrameIterator",
-    # Audio
-    "Audio",
-    "AudioMetadata",
     # Exceptions
     "VideoPythonError",
     "VideoError",
@@ -77,46 +40,15 @@ __all__ = [
     "TransformError",
     "TextRenderError",
     "OutOfBoundsError",
-    # Operation foundation
-    "Operation",
-    "Effect",
-    "TimeRange",
-    "OpCategory",
-    "FilterCtx",
-    # Transforms
-    "CutFrames",
-    "CutSeconds",
-    "Resize",
-    "ResampleFPS",
-    "Crop",
-    "CropMode",
-    "SpeedChange",
-    "Reverse",
-    "FreezeFrame",
-    "SilenceRemoval",
-    # Effects
-    "FullImageOverlay",
-    "Blur",
-    "Zoom",
-    "ColorGrading",
-    "Vignette",
-    "KenBurns",
-    "Fade",
-    "VolumeAdjust",
-    "TextOverlay",
-    # Text & Transcription
-    "Transcription",
-    "TranscriptionSegment",
-    "TranscriptionWord",
-    "TranscriptionOverlay",
+    # Text rendering primitives
     "ImageText",
     "TextAlign",
     "AnchorPoint",
-    # Scene Detection
-    "SceneDetector",
-    "SceneBoundary",
-    "SceneDescription",
-    # Detection types
+    # Transcription data classes
+    "Transcription",
+    "TranscriptionSegment",
+    "TranscriptionWord",
+    # Detection / scene / motion result types (consumed by ai/, editing/)
     "BoundingBox",
     "DetectedObject",
     "DetectedFace",
@@ -125,4 +57,6 @@ __all__ = [
     "AudioEvent",
     "AudioClassification",
     "MotionInfo",
+    "SceneBoundary",
+    "SceneDescription",
 ]

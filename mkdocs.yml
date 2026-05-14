@@ -84,7 +84,6 @@ nav:
       - Core:
           - Video: api/core/video.md
           - Audio: api/core/audio.md
-          - Scene Detection: api/core/scene.md
       - Editing Plans: api/editing.md
       - Operations: api/operations.md
       - Transforms: api/transforms.md

@@ -18,11 +18,11 @@ from typing import get_args
 import numpy as np
 from tqdm import tqdm
 
+from videopython.audio import Audio
 from videopython.base import _ffmpeg
 from videopython.base._dimensions import require_even
-from videopython.base.audio import Audio
-from videopython.base.effects import Effect
 from videopython.base.video import ALLOWED_VIDEO_FORMATS, ALLOWED_VIDEO_PRESETS, FrameIterator
+from videopython.editing.effects import Effect
 
 logger = logging.getLogger(__name__)
 

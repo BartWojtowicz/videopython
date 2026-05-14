@@ -2,9 +2,9 @@ import numpy as np
 import pytest
 
 from tests.test_config import TEST_FONT_PATH
-from videopython.base.text.overlay import TranscriptionOverlay
-from videopython.base.text.transcription import Transcription, TranscriptionSegment, TranscriptionWord
+from videopython.base.transcription import Transcription, TranscriptionSegment, TranscriptionWord
 from videopython.base.video import Video
+from videopython.editing.transcription_overlay import TranscriptionOverlay
 
 
 @pytest.fixture(scope="session")

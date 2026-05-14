@@ -32,7 +32,8 @@ print(video.frame_shape)  # (height, width, channels)
 Every editing primitive is an `Operation`. Apply one to a `Video`:
 
 ```python
-from videopython.base import Video, CutSeconds, Resize, ResampleFPS
+from videopython.base import Video
+from videopython.editing import CutSeconds, Resize, ResampleFPS
 
 video = Video.from_path("input.mp4")
 video = CutSeconds(start=0, end=10).apply(video)

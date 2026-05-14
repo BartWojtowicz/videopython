@@ -11,7 +11,7 @@ import pytest
 from pydantic import ValidationError
 
 from tests.test_config import BIG_VIDEO_PATH, SMALL_VIDEO_METADATA, SMALL_VIDEO_PATH
-from videopython.base.text.transcription import Transcription, TranscriptionWord
+from videopython.base.transcription import Transcription, TranscriptionWord
 from videopython.base.video import Video, VideoMetadata
 from videopython.editing.video_edit import SegmentConfig, VideoEdit
 

@@ -3,7 +3,7 @@
 Every editing primitive in videopython is an `Operation` subclass — a
 Pydantic `BaseModel` whose fields ARE the JSON wire format. Subclasses
 auto-register via `__pydantic_init_subclass__`, so importing
-`videopython.base` (or `videopython.ai`) populates the registry. The
+`videopython.editing` (or `videopython.ai`) populates the registry. The
 registry is what `VideoEdit.json_schema()` uses to build the
 discriminated-union schema for LLM-driven plan generation.
 
@@ -13,7 +13,7 @@ discriminated-union schema for LLM-driven plan generation.
 from typing import ClassVar, Literal
 from pydantic import Field
 
-from videopython.base import Operation, OpCategory
+from videopython.editing import Operation, OpCategory
 from videopython.base.video import Video, VideoMetadata
 
 
@@ -84,7 +84,7 @@ directly.
 ## Registry API
 
 ```python
-from videopython.base import Operation
+from videopython.editing import Operation
 
 # Snapshot of {op_id: subclass} for every registered operation:
 Operation.registry()
@@ -102,7 +102,7 @@ inspecting the registry if you need `face_crop` and friends.
 ## Discovering Operations
 
 ```python
-from videopython.base import Operation, OpCategory
+from videopython.editing import Operation, OpCategory
 
 for op_id, cls in Operation.registry().items():
     print(f"{op_id}: {cls.__doc__.splitlines()[0]}")
@@ -117,7 +117,7 @@ Every subclass exposes `cls.model_json_schema()` (standard Pydantic),
 returning the JSON Schema for that specific op's fields:
 
 ```python
-from videopython.base import Operation
+from videopython.editing import Operation
 
 cls = Operation.get("blur_effect")
 schema = cls.model_json_schema()
@@ -173,20 +173,20 @@ field.
 
 ### Operation
 
-::: videopython.base.Operation
+::: videopython.editing.Operation
 
 ### Effect
 
-::: videopython.base.Effect
+::: videopython.editing.Effect
 
 ### TimeRange
 
-::: videopython.base.TimeRange
+::: videopython.editing.TimeRange
 
 ### OpCategory
 
-::: videopython.base.OpCategory
+::: videopython.editing.OpCategory
 
 ### FilterCtx
 
-::: videopython.base.FilterCtx
+::: videopython.editing.FilterCtx

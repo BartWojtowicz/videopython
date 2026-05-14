@@ -218,7 +218,7 @@ class VideoDubber:
             source transcription. The output video is written to ``output_path``.
         """
         from videopython.ai.dubbing.remux import replace_audio_stream_from_audio
-        from videopython.base.audio import Audio
+        from videopython.audio import Audio
 
         input_path = Path(input_path)
         output_path = Path(output_path)
@@ -292,7 +292,7 @@ class VideoDubber:
         video_duration = video.total_seconds
 
         if video_duration > speech_duration:
-            from videopython.base.transforms import CutSeconds
+            from videopython.editing.transforms import CutSeconds
 
             output_video = CutSeconds(start=0, end=speech_duration).apply(video)
         else:

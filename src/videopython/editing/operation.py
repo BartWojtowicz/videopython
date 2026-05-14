@@ -193,7 +193,7 @@ class Effect(Operation):
 
     Subclasses override :meth:`_apply` for in-memory execution and may
     additionally override :meth:`streaming_init` / :meth:`process_frame` for
-    bounded-memory streaming via ``base/streaming.py``. The base
+    bounded-memory streaming via ``editing/streaming.py``. The base
     :meth:`apply` resolves :attr:`window`, slices the video, runs
     ``_apply`` on the slice, splices the result back, and asserts the
     shape-preserving invariant.

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from videopython.ai._device import log_device_initialization, release_device_memory, select_device
-from videopython.base.audio import Audio, AudioMetadata
+from videopython.audio import Audio, AudioMetadata
 
 if TYPE_CHECKING:
     from pathlib import Path

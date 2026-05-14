@@ -2,7 +2,7 @@
 
 A transform is any Operation that produces a new ``Video`` from a single
 input video, free to change dimensions, fps, duration, or frame count.
-See ``base/operation.py`` for the ``Operation`` base.
+See ``editing/operation.py`` for the ``Operation`` base.
 """
 
 from __future__ import annotations
@@ -17,11 +17,11 @@ from pydantic import Field, model_validator
 from tqdm import tqdm
 
 from videopython.base._dimensions import floor_to_even, round_to_even
-from videopython.base.operation import FilterCtx, OpCategory, Operation
 from videopython.base.video import Video
+from videopython.editing.operation import FilterCtx, OpCategory, Operation
 
 if TYPE_CHECKING:
-    from videopython.base.text.transcription import Transcription
+    from videopython.base.transcription import Transcription
     from videopython.base.video import VideoMetadata
 
 logger = logging.getLogger(__name__)

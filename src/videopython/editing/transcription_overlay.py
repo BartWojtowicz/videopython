@@ -16,10 +16,10 @@ from PIL import Image
 from pydantic import Field, PrivateAttr
 from tqdm import tqdm
 
-from videopython.base.operation import Effect
-from videopython.base.text.image_text import AnchorPoint, ImageText, TextAlign
-from videopython.base.text.transcription import Transcription, TranscriptionSegment
+from videopython.base.image_text import AnchorPoint, ImageText, TextAlign
+from videopython.base.transcription import Transcription, TranscriptionSegment
 from videopython.base.video import Video
+from videopython.editing.operation import Effect
 
 __all__ = ["TranscriptionOverlay"]
 

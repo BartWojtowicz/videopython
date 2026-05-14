@@ -9,8 +9,8 @@ Generate images from text prompts, animate them into video segments, add AI-gene
 ## Full Example
 
 ```python
-from videopython.base import Resize, Fade
-from videopython.base.operation import TimeRange
+from videopython.editing import Resize, Fade
+from videopython.editing.operation import TimeRange
 from videopython.ai import TextToImage, ImageToVideo, TextToSpeech
 
 
@@ -78,8 +78,8 @@ audio = speech_gen.generate_audio("Your narration text here")
 ### 4. Combine Segments
 
 ```python
-from videopython.base import Fade
-from videopython.base.operation import TimeRange
+from videopython.editing import Fade
+from videopython.editing.operation import TimeRange
 
 next_video = Fade(mode="in", duration=1.0, window=TimeRange(stop=1.0)).apply(next_video)
 final = final + next_video
