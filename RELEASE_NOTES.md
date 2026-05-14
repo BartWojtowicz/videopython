@@ -1,5 +1,75 @@
 # Release Notes
 
+## 0.32.0
+
+Package layout refactor. `videopython.base` had grown into a 5.5k-LOC
+kitchen sink holding data containers, every editing primitive, audio,
+text rendering, and scene detection. This release splits it into four
+top-level subpackages with a clear dependency direction: `base` →
+nothing, `audio` → `base`, `editing` → `base` + `audio`, `ai` → all
+three.
+
+**This is a breaking release.** Import paths change and no
+backwards-compatibility shims are provided.
+
+### Breaking changes
+
+- **`videopython.base.audio` → `videopython.audio`.** Promoted to a
+  top-level subpackage. `Audio`, `AudioMetadata`, `AudioLevels`,
+  `SilentSegment`, `AudioSegment`, `AudioSegmentType` now live there.
+- **Editing primitives moved out of `videopython.base` into
+  `videopython.editing`.** `Operation`, `Effect`, `TimeRange`,
+  `OpCategory`, `FilterCtx`, all transforms (`CutSeconds`,
+  `CutFrames`, `Resize`, `ResampleFPS`, `Crop`, `SpeedChange`,
+  `Reverse`, `FreezeFrame`, `SilenceRemoval`), all effects (`Blur`,
+  `Zoom`, `ColorGrading`, `Vignette`, `KenBurns`, `FullImageOverlay`,
+  `Fade`, `VolumeAdjust`, `TextOverlay`), and `TranscriptionOverlay`
+  are imported from `videopython.editing`.
+- **`videopython.base.text` package removed.** `Transcription`,
+  `TranscriptionSegment`, `TranscriptionWord`, `ImageText`,
+  `TextAlign`, and `AnchorPoint` are now imported directly from
+  `videopython.base`. `TranscriptionOverlay` moves to
+  `videopython.editing` (it's an `Effect`).
+- **`videopython.base.SceneDetector` removed.** The histogram-based
+  detector duplicated `videopython.ai.SemanticSceneDetector` at lower
+  quality. Use `SemanticSceneDetector` instead. `SceneBoundary` (the
+  result dataclass) stays in `videopython.base`.
+
+### Migration
+
+```python
+# Before (0.31.x)
+from videopython.base import (
+    Audio, AudioMetadata,
+    Operation, Effect, TimeRange,
+    CutSeconds, Resize, Blur, Fade,
+    VideoEdit,
+)
+from videopython.base.text import Transcription, ImageText
+from videopython.base.scene import SceneDetector
+
+# After (0.32.0)
+from videopython.base import Transcription, ImageText
+from videopython.audio import Audio, AudioMetadata
+from videopython.editing import (
+    Operation, Effect, TimeRange,
+    CutSeconds, Resize, Blur, Fade,
+    VideoEdit,
+)
+from videopython.ai import SemanticSceneDetector  # replaces SceneDetector
+```
+
+### Internal
+
+- Tests mirror the new package tree: `src/tests/audio/`,
+  `src/tests/editing/`, `src/tests/base/`. The import-isolation check
+  is parametrized over `base`/`audio`/`editing` at
+  `src/tests/test_import_isolation.py`.
+- CI now runs `pytest --ignore=src/tests/ai` so the moved audio and
+  editing tests are exercised on every push.
+- README, full `docs/` tree, and every mkdocstrings directive point
+  at the new canonical homes.
+
 ## 0.31.3
 
 Internal refactor: `ImageText` (the PIL rendering primitive) moves
