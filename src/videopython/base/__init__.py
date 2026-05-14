@@ -1,31 +1,3 @@
-from videopython.audio import Audio, AudioMetadata
-from videopython.editing.effects import (
-    Blur,
-    ColorGrading,
-    Effect,
-    Fade,
-    FullImageOverlay,
-    KenBurns,
-    TextOverlay,
-    Vignette,
-    VolumeAdjust,
-    Zoom,
-)
-from videopython.editing.operation import FilterCtx, OpCategory, Operation, TimeRange
-from videopython.editing.transcription_overlay import TranscriptionOverlay
-from videopython.editing.transforms import (
-    Crop,
-    CropMode,
-    CutFrames,
-    CutSeconds,
-    FreezeFrame,
-    ResampleFPS,
-    Resize,
-    Reverse,
-    SilenceRemoval,
-    SpeedChange,
-)
-
 from .description import (
     AudioClassification,
     AudioEvent,
@@ -58,9 +30,6 @@ __all__ = [
     "Video",
     "VideoMetadata",
     "FrameIterator",
-    # Audio
-    "Audio",
-    "AudioMetadata",
     # Exceptions
     "VideoPythonError",
     "VideoError",
@@ -71,45 +40,15 @@ __all__ = [
     "TransformError",
     "TextRenderError",
     "OutOfBoundsError",
-    # Operation foundation
-    "Operation",
-    "Effect",
-    "TimeRange",
-    "OpCategory",
-    "FilterCtx",
-    # Transforms
-    "CutFrames",
-    "CutSeconds",
-    "Resize",
-    "ResampleFPS",
-    "Crop",
-    "CropMode",
-    "SpeedChange",
-    "Reverse",
-    "FreezeFrame",
-    "SilenceRemoval",
-    # Effects
-    "FullImageOverlay",
-    "Blur",
-    "Zoom",
-    "ColorGrading",
-    "Vignette",
-    "KenBurns",
-    "Fade",
-    "VolumeAdjust",
-    "TextOverlay",
-    # Text & Transcription
-    "Transcription",
-    "TranscriptionSegment",
-    "TranscriptionWord",
-    "TranscriptionOverlay",
+    # Text rendering primitives
     "ImageText",
     "TextAlign",
     "AnchorPoint",
-    # Scene Detection result types (detectors live in videopython.ai)
-    "SceneBoundary",
-    "SceneDescription",
-    # Detection types
+    # Transcription data classes
+    "Transcription",
+    "TranscriptionSegment",
+    "TranscriptionWord",
+    # Detection / scene / motion result types (consumed by ai/, editing/)
     "BoundingBox",
     "DetectedObject",
     "DetectedFace",
@@ -118,4 +57,6 @@ __all__ = [
     "AudioEvent",
     "AudioClassification",
     "MotionInfo",
+    "SceneBoundary",
+    "SceneDescription",
 ]
