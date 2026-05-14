@@ -1,25 +1,16 @@
 from __future__ import annotations
 
-import tempfile
-import uuid
-import warnings
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
-from typing import Generator, Literal, get_args
+from typing import Generator
 
 import numpy as np
 
-from videopython.base import _ffmpeg
-from videopython.base._dimensions import require_even
+from videopython.base import _ffmpeg, _video_io
+from videopython.base._video_io import ALLOWED_VIDEO_FORMATS, ALLOWED_VIDEO_PRESETS
 from videopython.base.audio import Audio
-from videopython.base.exceptions import (
-    AudioLoadError,
-    FFmpegProbeError,
-    FFmpegRunError,
-    VideoLoadError,
-    VideoMetadataError,
-)
+from videopython.base.exceptions import FFmpegProbeError, VideoMetadataError
 
 __all__ = [
     "Video",
@@ -27,17 +18,9 @@ __all__ = [
     "FrameIterator",
     "extract_frames_at_indices",
     "extract_frames_at_times",
+    "ALLOWED_VIDEO_FORMATS",
+    "ALLOWED_VIDEO_PRESETS",
 ]
-
-ALLOWED_VIDEO_FORMATS = Literal["mp4", "avi", "mov", "mkv", "webm"]
-ALLOWED_VIDEO_PRESETS = Literal[
-    "ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"
-]
-
-# Frame buffer constants for video loading
-# Used to pre-allocate frame array with safety margin for frame rate variations
-FRAME_BUFFER_MULTIPLIER = 1.1  # 10% buffer for frame rate estimation errors
-FRAME_BUFFER_PADDING = 10  # Additional fixed frame padding
 
 
 @dataclass
@@ -427,165 +410,16 @@ class Video:
         width: int | None = None,
         height: int | None = None,
     ) -> Video:
-        try:
-            # Get video metadata using VideoMetadata.from_path
-            metadata = VideoMetadata.from_path(path)
-
-            out_width = width if width is not None else metadata.width
-            out_height = height if height is not None else metadata.height
-            out_fps = fps if fps is not None else metadata.fps
-            total_duration = metadata.total_seconds
-
-            # Validate time bounds
-            if start_second is not None and start_second < 0:
-                raise ValueError("start_second must be non-negative")
-            if end_second is not None and end_second > total_duration:
-                raise ValueError(f"end_second ({end_second}) exceeds video duration ({total_duration})")
-            if start_second is not None and end_second is not None and start_second >= end_second:
-                raise ValueError("start_second must be less than end_second")
-
-            # Estimate memory usage and warn for large videos
-            segment_duration = total_duration
-            if start_second is not None and end_second is not None:
-                segment_duration = end_second - start_second
-            elif end_second is not None:
-                segment_duration = end_second
-            elif start_second is not None:
-                segment_duration = total_duration - start_second
-
-            estimated_frames = int(segment_duration * out_fps)
-            estimated_bytes = estimated_frames * out_height * out_width * 3
-            estimated_gb = estimated_bytes / (1024**3)
-            if estimated_gb > 10:
-                warnings.warn(
-                    f"Loading this video will use ~{estimated_gb:.1f}GB of RAM. "
-                    f"For large videos, consider using FrameIterator for memory-efficient streaming.",
-                    ResourceWarning,
-                    stacklevel=2,
-                )
-
-            # Build FFmpeg command with improved segment handling
-            ffmpeg_cmd = ["ffmpeg"]
-
-            # Add seek option BEFORE input for more efficient seeking
-            if start_second is not None:
-                ffmpeg_cmd.extend(["-ss", str(start_second)])
-
-            ffmpeg_cmd.extend(["-i", path])
-
-            # Add duration AFTER input for more precise timing
-            if end_second is not None and start_second is not None:
-                duration = end_second - start_second
-                ffmpeg_cmd.extend(["-t", str(duration)])
-            elif end_second is not None:
-                ffmpeg_cmd.extend(["-t", str(end_second)])
-
-            # Apply video filters for resize and fps resampling
-            vf_filters: list[str] = []
-            if width is not None or height is not None:
-                vf_filters.append(f"scale={out_width}:{out_height}")
-            if fps is not None and fps != metadata.fps:
-                vf_filters.append(f"fps={out_fps}")
-            if vf_filters:
-                ffmpeg_cmd.extend(["-vf", ",".join(vf_filters)])
-
-            # Output format settings - removed problematic -vsync 0
-            ffmpeg_cmd.extend(
-                [
-                    "-f",
-                    "rawvideo",
-                    "-pix_fmt",
-                    "rgb24",
-                    "-vcodec",
-                    "rawvideo",
-                    "-avoid_negative_ts",
-                    "make_zero",  # Handle timing issues
-                    "-y",
-                    "pipe:1",
-                ]
-            )
-
-            # Calculate frame size in bytes
-            frame_size = out_width * out_height * 3  # 3 bytes per pixel for RGB
-
-            # Estimate frame count for pre-allocation
-            if start_second is not None and end_second is not None:
-                estimated_duration = end_second - start_second
-            elif end_second is not None:
-                estimated_duration = end_second
-            elif start_second is not None:
-                estimated_duration = total_duration - start_second
-            else:
-                estimated_duration = total_duration
-
-            # Add buffer to handle frame rate variations and rounding
-            estimated_frames = int(estimated_duration * out_fps * FRAME_BUFFER_MULTIPLIER) + FRAME_BUFFER_PADDING
-
-            # Pre-allocate numpy array
-            frames = np.empty((estimated_frames, out_height, out_width, 3), dtype=np.uint8)
-            frames_read = 0
-
-            with _ffmpeg.popen_decode(ffmpeg_cmd, bufsize=10**8) as process:
-                while frames_read < estimated_frames:
-                    remaining_frames = estimated_frames - frames_read
-                    batch_size = min(read_batch_size, remaining_frames)
-
-                    batch_data = process.stdout.read(frame_size * batch_size)  # type: ignore[union-attr]
-                    if not batch_data:
-                        break
-
-                    batch_frames = np.frombuffer(batch_data, dtype=np.uint8)
-                    complete_frames = len(batch_frames) // (out_height * out_width * 3)
-                    if complete_frames == 0:
-                        break
-
-                    complete_data = batch_frames[: complete_frames * out_height * out_width * 3]
-                    batch_frames_array = complete_data.reshape(complete_frames, out_height, out_width, 3)
-
-                    if frames_read + complete_frames > estimated_frames:
-                        # Pre-allocation undershoot — rare with the buffer.
-                        new_size = max(estimated_frames * 2, frames_read + complete_frames + 100)
-                        new_frames = np.empty((new_size, out_height, out_width, 3), dtype=np.uint8)
-                        new_frames[:frames_read] = frames[:frames_read]
-                        frames = new_frames
-                        estimated_frames = new_size
-
-                    end_idx = frames_read + complete_frames
-                    frames[frames_read:end_idx] = batch_frames_array
-                    frames_read += complete_frames
-
-            # Check if FFmpeg had an error (non-zero return code)
-            if process.returncode not in (0, None) and frames_read == 0:
-                raise ValueError(f"FFmpeg failed to process video (return code: {process.returncode})")
-
-            if frames_read == 0:
-                raise ValueError("No frames were read from the video")
-
-            # Trim the pre-allocated array to actual frames read
-            frames = frames[:frames_read]  # type: ignore
-
-            # Load audio for the specified segment
-            try:
-                audio = Audio.from_path(path)
-                # Slice audio to match the video segment
-                if start_second is not None or end_second is not None:
-                    audio_start = start_second if start_second is not None else 0
-                    audio_end = end_second if end_second is not None else audio.metadata.duration_seconds
-                    audio = audio.slice(start_seconds=audio_start, end_seconds=audio_end)
-            except (AudioLoadError, FileNotFoundError):
-                warnings.warn(f"No audio found for `{path}`, adding silent track.")
-                # Create silent audio based on actual frames read
-                segment_duration = frames_read / out_fps
-                audio = Audio.create_silent(duration_seconds=round(segment_duration, 2), stereo=True, sample_rate=44100)
-
-            return cls(frames=frames, fps=out_fps, audio=audio)
-
-        except VideoMetadataError:
-            raise
-        except FFmpegRunError as e:
-            raise VideoLoadError(f"FFmpeg failed: {e}") from e
-        except (OSError, IOError) as e:
-            raise VideoLoadError(f"I/O error: {e}")
+        frames, out_fps, audio = _video_io.decode_video(
+            path,
+            read_batch_size=read_batch_size,
+            start_second=start_second,
+            end_second=end_second,
+            fps=fps,
+            width=width,
+            height=height,
+        )
+        return cls(frames=frames, fps=out_fps, audio=audio)
 
     @classmethod
     def from_frames(cls, frames: np.ndarray, fps: float) -> Video:
@@ -659,93 +493,16 @@ class Video:
         if not self.is_loaded():
             raise RuntimeError("Video is not loaded, cannot save!")
 
-        if format.lower() not in get_args(ALLOWED_VIDEO_FORMATS):
-            raise ValueError(
-                f"Unsupported format: {format}. Allowed formats are: {', '.join(get_args(ALLOWED_VIDEO_FORMATS))}"
-            )
-
-        if preset not in get_args(ALLOWED_VIDEO_PRESETS):
-            raise ValueError(
-                f"Unsupported preset: {preset}. Allowed presets are: {', '.join(get_args(ALLOWED_VIDEO_PRESETS))}"
-            )
-
-        frame_height, frame_width = self.frame_shape[:2]
-        require_even(frame_width, frame_height)
-
-        if filename is None:
-            filename = Path(f"{uuid.uuid4()}.{format}")
-        else:
-            filename = Path(filename).with_suffix(f".{format}")
-            filename.parent.mkdir(parents=True, exist_ok=True)
-
-        # Save audio to temporary WAV file
-        with tempfile.NamedTemporaryFile(suffix=".wav") as temp_audio:
-            self.audio.save(temp_audio.name, format="wav")
-
-            # Calculate exact duration
-            duration = len(self.frames) / self.fps
-
-            # Construct FFmpeg command (stream raw video via stdin)
-            ffmpeg_command = [
-                "ffmpeg",
-                "-y",
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                # Raw video input settings
-                "-f",
-                "rawvideo",
-                "-pixel_format",
-                "rgb24",
-                "-video_size",
-                f"{self.frame_shape[1]}x{self.frame_shape[0]}",
-                "-framerate",
-                str(self.fps),
-                "-i",
-                "pipe:0",
-                # Audio input
-                "-i",
-                temp_audio.name,
-                # Video encoding settings
-                "-c:v",
-                "libx264",
-                "-preset",
-                preset,
-                "-crf",
-                str(crf),
-                # Audio settings
-                "-c:a",
-                "aac",
-                "-b:a",
-                "192k",
-                # Output settings
-                "-pix_fmt",
-                "yuv420p",
-                "-movflags",
-                "+faststart",  # Enable fast start for web playback
-                "-t",
-                str(duration),
-                "-vsync",
-                "cfr",
-                str(filename),
-            ]
-
-            with _ffmpeg.popen_encode(ffmpeg_command) as process:
-                frames = self.frames
-                if frames.dtype != np.uint8 or not frames.flags["C_CONTIGUOUS"]:
-                    frames = np.ascontiguousarray(frames, dtype=np.uint8)
-
-                buffer = memoryview(frames)
-                try:
-                    process.stdin.write(buffer)  # type: ignore[union-attr]
-                except BrokenPipeError as e:
-                    # ffmpeg has already died; surface its stderr for diagnostics.
-                    stderr = process.stderr.read() if process.stderr is not None else b""
-                    raise FFmpegRunError(
-                        f"ffmpeg terminated while receiving video data: {stderr.decode(errors='replace')}"
-                    ) from e
-
-            return filename
+        return _video_io.encode_video(
+            self.frames,
+            self.fps,
+            self.audio,
+            self.frame_shape,
+            filename=filename,
+            format=format,
+            preset=preset,
+            crf=crf,
+        )
 
     def add_audio(self, audio: Audio, overlay: bool = True) -> Video:
         """Add audio to video, returning a new Video instance.
