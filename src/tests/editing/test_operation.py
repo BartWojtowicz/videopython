@@ -1,4 +1,4 @@
-"""Tests for the Operation/Effect base machinery in base/operation.py.
+"""Tests for the Operation/Effect base machinery in editing/operation.py.
 
 Covers auto-registration, the discriminated-union JSON schema, ``TimeRange``
 validation, and the ``Effect.apply`` window/invariant logic. Per-op

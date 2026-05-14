@@ -13,9 +13,13 @@ Source code of the project can be found under `src/` directory, along with separ
 
 ----
 
-The `videopython` library is divided into 2 separate high-level modules:
-* `videopython.base`: Contains base classes for handling videos and for basic video editing. There are no imports from `videopython.ai` within the `base` module, which allows users to install light-weight base dependencies to do simple video operations.
-* `videopython.ai`: Contains AI-powered functionalities for video generation. It has its own `ai` dependency group, which contains all dependencies required to run AI models.
+The `videopython` library is divided into four top-level subpackages:
+* `videopython.base`: Data containers and I/O primitives — `Video`, `VideoMetadata`, `FrameIterator`, `ImageText`, `Transcription`, and the shared result types (`BoundingBox`, `DetectedFace`, `SceneBoundary`, ...). No editing logic; no AI imports.
+* `videopython.audio`: `Audio` data container plus audio analysis (`AudioLevels`, `SilentSegment`, segment classification). Depends on `base`.
+* `videopython.editing`: All editing primitives (`Operation`, `Effect`, transforms, effects, `TranscriptionOverlay`) and the plan runner (`VideoEdit`, `SegmentConfig`). Depends on `base` and `audio`.
+* `videopython.ai`: AI-powered generation, understanding, dubbing, and AI-only transforms. Has its own `ai` extra with the model dependencies. Depends on `base`, `audio`, and optionally `editing`.
+
+Only `videopython.ai` requires the `[ai]` extra; the other three install with the default `pip install videopython` and contain no AI imports (enforced by `src/tests/test_import_isolation.py`).
 
 ## Running locally
 
@@ -26,14 +30,17 @@ uv sync --all-extras
 
 ### Running tests
 
-Tests are organized into two directories:
+Tests mirror the package tree:
 
-- `src/tests/base/` - Tests for `videopython.base` module (no AI dependencies)
-- `src/tests/ai/` - Tests for `videopython.ai` module (requires AI extras)
+- `src/tests/base/` - Tests for `videopython.base`
+- `src/tests/audio/` - Tests for `videopython.audio`
+- `src/tests/editing/` - Tests for `videopython.editing`
+- `src/tests/ai/` - Tests for `videopython.ai` (requires AI extras)
+- `src/tests/test_import_isolation.py` - Cross-subpackage check that `base`, `audio`, and `editing` import without pulling in any AI dependency
 
 ```bash
-# Base tests (runs in CI)
-uv run pytest src/tests/base
+# Non-AI tests (runs in CI)
+uv run pytest --ignore=src/tests/ai
 
 # AI tests - all (requires model downloads, run locally)
 uv run pytest src/tests/ai

@@ -2,7 +2,7 @@
 
 A transform is any Operation that produces a new ``Video`` from a single
 input video, free to change dimensions, fps, duration, or frame count.
-See ``base/operation.py`` for the ``Operation`` base.
+See ``editing/operation.py`` for the ``Operation`` base.
 """
 
 from __future__ import annotations

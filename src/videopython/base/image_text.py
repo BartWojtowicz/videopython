@@ -1,8 +1,9 @@
 """PIL-backed text rendering primitive.
 
 ``ImageText`` is a general-purpose text renderer used both by the
-``TranscriptionOverlay`` subtitle effect (``base/text/overlay.py``) and
-directly by AI image generation helpers (``ai/understanding/image.py``).
+``TranscriptionOverlay`` subtitle effect
+(``editing/transcription_overlay.py``) and directly by AI image
+generation helpers (``ai/understanding/image.py``).
 ``TextAlign`` and ``AnchorPoint`` are its argument enums.
 """
 
