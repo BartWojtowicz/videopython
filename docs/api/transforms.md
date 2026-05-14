@@ -7,7 +7,8 @@ count. See [Operations](operations.md) for the base contract.
 ## Usage
 
 ```python
-from videopython.base import Video, Resize, Crop, CutSeconds
+from videopython.base import Video
+from videopython.editing import Resize, Crop, CutSeconds
 
 video = Video.from_path("input.mp4")
 video = CutSeconds(start=0.0, end=10.0).apply(video)
@@ -54,7 +55,7 @@ are treated as fractions of source dimensions; everything else is
 interpreted as a pixel count.
 
 ```python
-from videopython.base import Crop, CropMode
+from videopython.editing import Crop, CropMode
 
 Crop(width=640, height=480).apply(video)                              # pixels
 Crop(width=0.5, height=0.5).apply(video)                              # 50% center crop
@@ -77,43 +78,43 @@ SilenceRemoval().apply(video, transcription=my_transcription)
 
 ### CutSeconds
 
-::: videopython.base.CutSeconds
+::: videopython.editing.CutSeconds
 
 ### CutFrames
 
-::: videopython.base.CutFrames
+::: videopython.editing.CutFrames
 
 ### Resize
 
-::: videopython.base.Resize
+::: videopython.editing.Resize
 
 ### ResampleFPS
 
-::: videopython.base.ResampleFPS
+::: videopython.editing.ResampleFPS
 
 ### Crop
 
-::: videopython.base.Crop
+::: videopython.editing.Crop
 
 ### CropMode
 
-::: videopython.base.CropMode
+::: videopython.editing.CropMode
 
 ### SpeedChange
 
-::: videopython.base.SpeedChange
+::: videopython.editing.SpeedChange
 
 ### Reverse
 
-::: videopython.base.Reverse
+::: videopython.editing.Reverse
 
 ### FreezeFrame
 
-::: videopython.base.FreezeFrame
+::: videopython.editing.FreezeFrame
 
 ### SilenceRemoval
 
-::: videopython.base.SilenceRemoval
+::: videopython.editing.SilenceRemoval
 
 ---
 

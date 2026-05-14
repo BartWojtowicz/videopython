@@ -9,8 +9,9 @@ Take a landscape video, extract a segment, convert to vertical 9:16 format, add 
 ## Full Example
 
 ```python
-from videopython.base import Video, CutSeconds, Resize, Crop, ResampleFPS, Fade
-from videopython.base.operation import TimeRange
+from videopython.base import Video
+from videopython.editing import CutSeconds, Resize, Crop, ResampleFPS, Fade
+from videopython.editing.operation import TimeRange
 import numpy as np
 
 # Load source video, then extract and standardize a 15s segment

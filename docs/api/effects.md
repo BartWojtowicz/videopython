@@ -8,8 +8,9 @@ limits the effect to a sub-range of the video. See
 ## Usage
 
 ```python
-from videopython.base import (
-    Video, Blur, Zoom, ColorGrading, Vignette, KenBurns, BoundingBox,
+from videopython.base import Video, BoundingBox
+from videopython.editing import (
+    Blur, Zoom, ColorGrading, Vignette, KenBurns,
     Fade, VolumeAdjust, TextOverlay, TimeRange,
 )
 
@@ -71,40 +72,40 @@ Every effect except `add_subtitles` is streamable (compatible with
 
 ### Effect
 
-::: videopython.base.Effect
+::: videopython.editing.Effect
 
 ### Blur
 
-::: videopython.base.Blur
+::: videopython.editing.Blur
 
 ### Zoom
 
-::: videopython.base.Zoom
+::: videopython.editing.Zoom
 
 ### FullImageOverlay
 
-::: videopython.base.FullImageOverlay
+::: videopython.editing.FullImageOverlay
 
 ### ColorGrading
 
-::: videopython.base.ColorGrading
+::: videopython.editing.ColorGrading
 
 ### Vignette
 
-::: videopython.base.Vignette
+::: videopython.editing.Vignette
 
 ### KenBurns
 
-::: videopython.base.KenBurns
+::: videopython.editing.KenBurns
 
 ### Fade
 
-::: videopython.base.Fade
+::: videopython.editing.Fade
 
 ### VolumeAdjust
 
-::: videopython.base.VolumeAdjust
+::: videopython.editing.VolumeAdjust
 
 ### TextOverlay
 
-::: videopython.base.TextOverlay
+::: videopython.editing.TextOverlay

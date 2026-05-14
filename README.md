@@ -42,7 +42,8 @@ Every editing primitive is an `Operation` subclass — a Pydantic model
 whose fields ARE the JSON wire format. Apply one to a `Video`:
 
 ```python
-from videopython.base import Video, CutSeconds, Resize, Fade
+from videopython.base import Video
+from videopython.editing import CutSeconds, Resize, Fade
 
 video = Video.from_path("raw.mp4")
 video = CutSeconds(start=10, end=25).apply(video)
@@ -92,7 +93,7 @@ instead if you want the result back in memory as a `Video`.
 
 ```python
 from videopython.ai import TextToImage, ImageToVideo, TextToSpeech
-from videopython.base import Resize
+from videopython.editing import Resize
 
 image = TextToImage().generate_image("A cinematic mountain sunrise")
 video = ImageToVideo().generate_video(image=image)
@@ -133,7 +134,7 @@ Every registered op exposes its own Pydantic schema, so an agent can
 introspect what's available without hardcoded lists:
 
 ```python
-from videopython.base import Operation, OpCategory
+from videopython.editing import Operation, OpCategory
 
 for op_id, cls in Operation.registry().items():
     print(f"{op_id}: {(cls.__doc__ or '').splitlines()[0]}")
@@ -156,17 +157,30 @@ Docs: [Editing Plans](https://videopython.com/api/editing/) | [Operations](https
 
 ## Features
 
-### `videopython.base` - core editing (no AI dependencies)
+### `videopython.base` - data containers + I/O (no AI dependencies)
 
 | Area | Highlights |
 |---|---|
 | **Video I/O** | `Video`, `VideoMetadata`, `FrameIterator` - load, save, inspect |
+| **Text rendering** | `ImageText` - generic PIL text-on-image primitive |
+| **Transcription** | `Transcription`, `TranscriptionSegment`, `TranscriptionWord` - data classes returned by transcription backends |
+| **Result types** | `BoundingBox`, `DetectedFace`, `FaceTrack`, `SceneBoundary`, `AudioEvent`, `MotionInfo`, ... - shared by editing and AI |
+
+### `videopython.audio` - audio data container
+
+| Area | Highlights |
+|---|---|
+| **Audio** | `Audio`, `AudioMetadata` - load/save, overlay, concat, normalize, time-stretch, silence detection, segment classification |
+
+### `videopython.editing` - editing primitives + plan runner
+
+| Area | Highlights |
+|---|---|
 | **Operation foundation** | `Operation`, `Effect`, `TimeRange`, `OpCategory` - Pydantic base + auto-registry + discriminated-union schema |
 | **Editing plans** | `VideoEdit`, `SegmentConfig` - JSON/LLM-friendly multi-segment plans with JSON Schema generation, dry-run validation, and streaming `run_to_file` |
 | **Transforms** | Cut (time/frame), resize, crop, FPS resampling, speed change, reverse, freeze frame, silence removal |
 | **Effects** | Blur, zoom, color grading, vignette, Ken Burns, image overlay, fade, text overlay, volume adjust |
-| **Audio** | Load/save, overlay, concat, normalize, time-stretch, silence detection, segment classification |
-| **Text** | Transcription data classes, `TranscriptionOverlay` for subtitle rendering |
+| **Subtitles** | `TranscriptionOverlay` - animated word-by-word subtitle rendering |
 
 API docs: [Core](https://videopython.com/api/index/) | [Video](https://videopython.com/api/core/video/) | [Audio](https://videopython.com/api/core/audio/) | [Editing Plans](https://videopython.com/api/editing/) | [Operations](https://videopython.com/api/operations/) | [Transforms](https://videopython.com/api/transforms/) | [Effects](https://videopython.com/api/effects/) | [Text](https://videopython.com/api/text/)
 

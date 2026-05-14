@@ -1,18 +1,26 @@
 # API Reference
 
-videopython is organized into two main modules:
+videopython is organized into four top-level subpackages. Everything outside `videopython.ai` is installable with the default `pip install videopython` — no ML dependencies required.
 
 ## `videopython.base`
 
-Core video and audio processing functionality with no AI dependencies:
+Data containers and I/O primitives:
 
-- [**Video**](core/video.md) - Core video class for loading, manipulating, and saving videos
-- [**Audio**](core/audio.md) - Core audio class for loading, manipulating, analyzing, and saving audio
+- [**Video**](core/video.md) - `Video`, `VideoMetadata`, `FrameIterator` - loading, saving, inspecting
+- [**Text & Transcription**](text.md) - `ImageText` rendering primitive and `Transcription` data classes
+
+## `videopython.audio`
+
+- [**Audio**](core/audio.md) - `Audio` data container; load/save, overlay, concat, normalize, time-stretch, silence detection, segment classification
+
+## `videopython.editing`
+
+Editing primitives and the plan runner:
+
 - [**Editing Plans (`VideoEdit`)**](editing.md) - Multi-segment editing plans with JSON parsing, validation, and schema generation
 - [**Operations**](operations.md) - The `Operation` Pydantic base, auto-registry, and discriminated-union schema
 - [**Transforms**](transforms.md) - Frame transformations (cut, resize, resample)
-- [**Effects**](effects.md) - Visual effects (blur, zoom, overlays)
-- [**Text & Transcription**](text.md) - Subtitle rendering and transcription data structures
+- [**Effects**](effects.md) - Visual effects (blur, zoom, overlays) — including `TranscriptionOverlay` for subtitles
 
 ## `videopython.ai`
 
@@ -33,16 +41,20 @@ from videopython import Video
 # Import specific classes from base
 from videopython.base import (
     Video,
+    Transcription,
+)
+from videopython.audio import (
     Audio,
     AudioMetadata,
+)
+from videopython.editing import (
     CutSeconds,
     Resize,
     Blur,
-    Transcription,
 )
 
 # Import Operation foundation
-from videopython.base import (
+from videopython.editing import (
     Operation,
     Effect,
     TimeRange,
