@@ -4,116 +4,66 @@ Create a vertical video clip optimized for TikTok, Instagram Reels, or YouTube S
 
 ## Goal
 
-Take a landscape video, extract a segment, convert to vertical 9:16 format, add an intro transition, and mix background audio.
+Take a landscape video, extract a segment, convert to vertical 9:16 format, add a fade-in, and mix background audio.
 
 ## Full Example
 
 ```python
-from videopython.base import Video, Crop, FadeTransition
+from videopython.base import Video, CutSeconds, Resize, Crop, ResampleFPS, Fade
+from videopython.base.operation import TimeRange
 import numpy as np
 
-# Load source video
+# Load source video, then extract and standardize a 15s segment
 video = Video.from_path("raw_footage.mp4")
+video = CutSeconds(start=30, end=45).apply(video)
+video = ResampleFPS(fps=30).apply(video)
 
-# Extract a 15-second segment and standardize using fluent API
-video = video.cut(30, 45).resample_fps(30)
-
-# Convert landscape to vertical (9:16)
-# First resize height, then crop width to center
+# Convert landscape to vertical (9:16):
+# scale to target height, then center-crop width
 height, width = video.frame_shape[:2]
 target_height = 1920
 target_width = 1080
+new_width = int(width * (target_height / height))
+video = Resize(width=new_width, height=target_height).apply(video)
+video = Crop(width=target_width, height=target_height).apply(video)  # center mode
 
-# Scale to target height, then center-crop width
-scale_factor = target_height / height
-new_width = int(width * scale_factor)
-video = video.resize(width=new_width, height=target_height)
+# Fade in over the first 0.5s
+video = Fade(mode="in", duration=0.5, window=TimeRange(stop=0.5)).apply(video)
 
-# Center crop to 9:16
-crop_x = (new_width - target_width) // 2
-video = Crop(x=crop_x, y=0, width=target_width, height=target_height).apply(video)
-
-# Create a title card from solid color
-title_frame = np.full((target_height, target_width, 3), [20, 20, 20], dtype=np.uint8)
-title_card = Video.from_image(title_frame, fps=30, length_seconds=2.0)
-
-# Combine with fade transition
-final = title_card.transition_to(video, FadeTransition(effect_time_seconds=0.5))
-
-# Add background music
-final = final.add_audio_from_file("upbeat_music.mp3")
-
-# Save
-final.save("social_clip.mp4")
+# Mix background music
+video = video.add_audio_from_file("upbeat_music.mp3")
+video.save("social_clip.mp4")
 ```
 
-## Step-by-Step Breakdown
+## Same Plan via `VideoEdit`
 
-### 1. Extract Segment
-
-```python
-# Chain transforms with fluent API
-video = video.cut(30, 45).resample_fps(30)
-
-# Validate the operations first (optional)
-meta = video.metadata.cut(30, 45).resample_fps(30)
-print(f"Output: {meta}")  # Check duration, fps
-```
-
-### 2. Convert to Vertical
-
-The key is to scale the video so the height matches your target, then crop the width:
-
-```python
-# Original: 1920x1080 (16:9)
-# Target: 1080x1920 (9:16)
-
-scale_factor = 1920 / 1080  # ~1.78
-new_width = int(1920 * 1.78)  # ~3413
-
-# After resize: 3413x1920
-# After crop: 1080x1920 (centered)
-```
-
-### 3. Add Intro Card
-
-```python
-title_frame = np.full((1920, 1080, 3), [20, 20, 20], dtype=np.uint8)
-title_card = Video.from_image(title_frame, fps=30, length_seconds=2.0)
-```
-
-### 4. Smooth Transition
-
-```python
-final = title_card.transition_to(video, FadeTransition(effect_time_seconds=0.5))
-```
-
-## Alternative: JSON Editing Plan (`VideoEdit`)
-
-For LLM-generated or UI-generated edits, use `VideoEdit` instead of manual orchestration:
+For LLM-generated or UI-generated edits, use `VideoEdit`:
 
 ```python
 from videopython.editing import VideoEdit
 
 plan = {
-    "segments": [
-        {"source": "raw_footage.mp4", "start": 30.0, "end": 45.0}
-    ],
-    "post_transforms": [
-        {"op": "resize", "args": {"height": 1920}}
-    ],
-    "post_effects": [
-        {"op": "color_adjust", "args": {"brightness": 0.05}}
-    ],
+    "segments": [{
+        "source": "raw_footage.mp4",
+        "start": 30.0,
+        "end": 45.0,
+        "operations": [
+            {"op": "resample_fps", "fps": 30},
+            {"op": "resize", "height": 1920},
+            {"op": "crop", "width": 1080, "height": 1920, "mode": "center"},
+            {"op": "fade", "mode": "in", "duration": 0.5,
+             "window": {"stop": 0.5}},
+        ],
+    }],
 }
 
 edit = VideoEdit.from_dict(plan)
-edit.validate()  # dry run using VideoMetadata
-final = edit.run()
+edit.validate()      # dry run using VideoMetadata
+final = edit.run().add_audio_from_file("upbeat_music.mp3")
 final.save("social_clip.mp4")
 ```
 
-If you need a parser-aligned JSON Schema for plan generation/validation:
+If you need a JSON Schema for plan generation/validation:
 
 ```python
 schema = VideoEdit.json_schema()

@@ -27,21 +27,17 @@ constant (~250 MB) regardless of video length.
 from videopython.editing import VideoEdit
 
 plan = {
-    "segments": [
-        {
-            "source": "2_hour_movie.mp4",
-            "start": 0,
-            "end": 7200,
-            "transforms": [
-                {"op": "resize", "args": {"width": 1920, "height": 1080}},
-            ],
-            "effects": [
-                {"op": "color_adjust", "args": {"saturation": 0, "contrast": 1.15}},
-                {"op": "fade", "args": {"mode": "in_out", "duration": 1.0}},
-                {"op": "volume_adjust", "args": {"volume": 1.5}},
-            ],
-        }
-    ],
+    "segments": [{
+        "source": "2_hour_movie.mp4",
+        "start": 0,
+        "end": 7200,
+        "operations": [
+            {"op": "resize", "width": 1920, "height": 1080},
+            {"op": "color_adjust", "saturation": 0, "contrast": 1.15},
+            {"op": "fade", "mode": "in_out", "duration": 1.0},
+            {"op": "volume_adjust", "volume": 1.5},
+        ],
+    }],
 }
 
 edit = VideoEdit.from_dict(plan)
@@ -53,8 +49,8 @@ When all operations are streamable, frames are never loaded into memory. If any 
 is not streamable (e.g. `reverse`, `speed_change`), the pipeline falls back to eager
 mode automatically.
 
-Check `VideoEdit.json_schema()` for `x-streamable: true` on each operation to see which
-ones support streaming.
+See the [Operations](../api/operations.md#registered-operations) table for the
+list of streamable ops. Inspect `Operation.get(op_id).streamable` programmatically.
 
 ## Solution: FrameIterator
 

@@ -29,50 +29,57 @@ print(video.frame_shape)  # (height, width, channels)
 
 ## Basic Transformations
 
+Every editing primitive is an `Operation`. Apply one to a `Video`:
+
 ```python
-from videopython.base import Video
+from videopython.base import Video, CutSeconds, Resize, ResampleFPS
 
 video = Video.from_path("input.mp4")
+video = CutSeconds(start=0, end=10).apply(video)
+video = Resize(width=1280, height=720).apply(video)
+video = ResampleFPS(fps=30).apply(video)
 
-# Chain transformations with fluent API
-video = video.cut(0, 10).resize(1280, 720).resample_fps(30)
+# Resize preserves aspect ratio when only one dimension is set:
+video = Resize(width=1280).apply(video)
+```
 
-# Or apply transforms one at a time
-video = Video.from_path("input.mp4")
-video = video.cut(1.5, 6.5)
-video = video.resize(width=1280)  # Height calculated to preserve aspect ratio
+For multi-step plans use `VideoEdit`, which also gives you a dry-run
+via `.validate()`:
 
-# Validate operations before executing (fast, metadata only)
-meta = Video.from_path("input.mp4").metadata
-output_meta = meta.cut(0, 10).resize(1280, 720)
-print(f"Output will be: {output_meta}")  # Check dimensions, duration, fps
+```python
+from videopython.editing import VideoEdit
+
+edit = VideoEdit.from_dict({
+    "segments": [{
+        "source": "input.mp4",
+        "start": 0,
+        "end": 10,
+        "operations": [
+            {"op": "resize", "width": 1280, "height": 720},
+            {"op": "resample_fps", "fps": 30},
+        ],
+    }]
+})
+print(edit.validate())   # predicted VideoMetadata, no frames loaded
+video = edit.run()
 ```
 
 ## Combining Videos
 
-!!! warning "Matching Dimensions"
-    Videos must have the same dimensions and FPS to be combined. Use `.resize()` and `.resample_fps()` first if needed.
+Concatenate two videos with `+`. They must share fps and dimensions —
+align them with `Resize` / `ResampleFPS` first.
 
 ```python
-from videopython.base import Video, FadeTransition, BlurTransition
+from videopython.base import Video
 
 video1 = Video.from_path("clip1.mp4")
 video2 = Video.from_path("clip2.mp4")
-
-# Simple concatenation (videos must have same dimensions and FPS)
 combined = video1 + video2
-
-# With fade transition (fluent API)
-combined = video1.transition_to(video2, FadeTransition(effect_time_seconds=1.5))
-
-# With blur transition
-combined = video1.transition_to(video2, BlurTransition(effect_time_seconds=1.0))
-
-# Validate transition compatibility first
-meta1 = video1.metadata
-meta2 = video2.metadata
-combined_meta = meta1.transition_to(meta2, effect_time=1.5)  # Raises if incompatible
 ```
+
+For multi-segment edits with auto-matching of fps/resolution, use
+`VideoEdit` (sets `match_to_lowest_fps` / `match_to_lowest_resolution`
+to `true` by default).
 
 ## Working with Audio
 

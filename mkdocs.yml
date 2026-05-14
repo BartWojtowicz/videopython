@@ -54,6 +54,14 @@ plugins:
             members_order: source
             show_signature_annotations: true
             separate_signature: true
+            # Pydantic `Operation` subclasses document their fields via
+            # Google `Args:` blocks; `__pydantic_init_subclass__` re-routes
+            # those onto `Field(description=...)`. Griffe flags them as
+            # "not in the function signature" because there is no explicit
+            # `__init__`. Suppress the noisy warnings.
+            docstring_options:
+              warn_unknown_params: false
+              warn_no_annotated_params: false
 
 markdown_extensions:
   - pymdownx.highlight:
@@ -86,9 +94,8 @@ nav:
           - Audio: api/core/audio.md
           - Scene Detection: api/core/scene.md
       - Editing Plans: api/editing.md
-      - Operation Registry: api/registry.md
+      - Operations: api/operations.md
       - Transforms: api/transforms.md
-      - Transitions: api/transitions.md
       - Effects: api/effects.md
       - Text & Transcription: api/text.md
       - AI Generation: api/ai/generation.md
