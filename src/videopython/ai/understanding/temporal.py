@@ -102,12 +102,7 @@ class SemanticSceneDetector:
             video.save(tmp.name)
             return self.detect_streaming(tmp.name)
 
-    def detect_streaming(
-        self,
-        path: str | Path,
-        start_second: float | None = None,
-        end_second: float | None = None,
-    ) -> list[SceneBoundary]:
+    def detect_streaming(self, path: str | Path) -> list[SceneBoundary]:
         """Detect scenes from a video file.
 
         Uses TransNetV2 with pretrained weights for accurate shot boundary
@@ -115,21 +110,10 @@ class SemanticSceneDetector:
 
         Args:
             path: Path to video file.
-            start_second: Optional start time for analysis (not yet supported).
-            end_second: Optional end time for analysis (not yet supported).
 
         Returns:
             List of SceneBoundary objects representing detected scenes.
         """
-        if start_second is not None or end_second is not None:
-            import warnings
-
-            warnings.warn(
-                "start_second and end_second are not yet supported by SemanticSceneDetector. Processing entire video.",
-                UserWarning,
-                stacklevel=2,
-            )
-
         self._load_model()
 
         # Use TransNetV2's detect_scenes which handles everything internally
