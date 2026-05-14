@@ -1,5 +1,50 @@
 # Release Notes
 
+## 0.31.1
+
+Internal refactor: ffmpeg/ffprobe subprocess plumbing and dimension
+math are now centralised in two new modules. No public API changes;
+behaviour is preserved aside from a few latent-bug fixes called out
+below.
+
+### Added
+
+- `videopython.base.exceptions.FFmpegError` with `FFmpegProbeError`
+  and `FFmpegRunError` subclasses. Existing public exceptions
+  (`VideoMetadataError`, `AudioLoadError`, `VideoLoadError`,
+  `RemuxError`) still wrap them at call sites — no external catch
+  blocks need to change.
+
+### Changed
+
+- All ffprobe invocations (`VideoMetadata`, `Audio`,
+  `VideoAnalyzer._extract_source_tags`) share one helper.
+- All blocking ffmpeg runs (`concat_files`,
+  `replace_audio_stream`, `replace_audio_stream_from_audio`) share
+  one helper that pipes optional stdin bytes.
+- All streaming ffmpeg decode/encode lifecycles (`FrameIterator`,
+  `extract_frames_at_indices`, `Video.from_path`, `FrameEncoder`,
+  `Video.save`) share `popen_decode` / `popen_encode` context
+  managers that own the `Popen` + terminate/kill cleanup.
+- `round_to_even` / `floor_to_even` replace three divergent
+  "round to even" helpers (`_round_dimension_to_even`, `_make_even`,
+  and an inline `(cw // 2) * 2`).
+- `Video.save` and `FrameEncoder` now raise `FFmpegRunError` instead
+  of `RuntimeError` on non-zero ffmpeg exit. `concat_files` likewise
+  raises `FFmpegRunError`.
+
+### Fixed
+
+- `FrameIterator` previously opened ffmpeg's stderr as a pipe but
+  never drained it, risking a buffer-fill deadlock on chatty input.
+  Stderr is now `DEVNULL`.
+- `extract_frames_at_indices`'s cleanup `wait()` had no timeout and
+  could hang indefinitely; cleanup now caps at 5s with a kill
+  fallback.
+- `FrameEncoder`'s post-stdin-close wait was capped at 30s, which
+  could prematurely kill long encodes. The cap is removed to match
+  `Video.save`'s unbounded wait.
+
 ## 0.31.0
 
 Operation Unification — single sweep, breaking. Every editing primitive
