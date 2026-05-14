@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import subprocess
 import tempfile
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import get_args
@@ -74,6 +75,7 @@ class FrameEncoder:
         self._format = format
         self._preset = preset
         self._crf = crf
+        self._stack: ExitStack | None = None
         self._process: subprocess.Popen | None = None
 
     def _build_command(self) -> list[str]:
@@ -124,13 +126,8 @@ class FrameEncoder:
 
     def __enter__(self) -> FrameEncoder:
         require_even(self._width, self._height)
-        cmd = self._build_command()
-        self._process = subprocess.Popen(
-            cmd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-        )
+        self._stack = ExitStack()
+        self._process = self._stack.enter_context(_ffmpeg.popen_encode(self._build_command()))
         return self
 
     def write_frame(self, frame: np.ndarray) -> None:
@@ -139,21 +136,13 @@ class FrameEncoder:
             raise RuntimeError("FrameEncoder not started -- use as context manager")
         self._process.stdin.write(frame.tobytes())
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:  # type: ignore[no-untyped-def]
-        if self._process is None:
-            return
-        try:
-            if self._process.stdin and not self._process.stdin.closed:
-                self._process.stdin.close()
-            stderr = self._process.stderr.read() if self._process.stderr else b""
-            returncode = self._process.wait(timeout=30)
-            if returncode != 0 and exc_type is None:
-                raise RuntimeError(f"FFmpeg encoder failed (code {returncode}): {stderr.decode(errors='ignore')}")
-        except subprocess.TimeoutExpired:
-            self._process.kill()
-            self._process.wait()
-        finally:
-            self._process = None
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool | None:  # type: ignore[no-untyped-def]
+        stack = self._stack
+        self._stack = None
+        self._process = None
+        if stack is None:
+            return None
+        return stack.__exit__(exc_type, exc_val, exc_tb)
 
 
 def stream_segment(
@@ -236,7 +225,7 @@ def stream_segment(
                     frame_count += 1
 
         return output_path
-    except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError):
+    except Exception:
         if output_path.exists():
             output_path.unlink()
         raise
