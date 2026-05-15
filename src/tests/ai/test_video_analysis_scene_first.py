@@ -143,12 +143,12 @@ def test_scene_analysis_sample_roundtrip_dict() -> None:
         ],
     )
 
-    restored = va.SceneAnalysisSample.from_dict(sample.to_dict())
+    restored = va.SceneAnalysisSample.model_validate(sample.model_dump())
     assert restored == sample
 
 
 def test_config_defaults_and_rejects_unknown_ids() -> None:
-    restored = va.VideoAnalysisConfig.from_dict({})
+    restored = va.VideoAnalysisConfig.model_validate({})
     assert restored.enabled_analyzers == set(va.ALL_ANALYZER_IDS)
 
     with pytest.raises(ValueError, match="Unknown analyzer ids"):
@@ -176,7 +176,7 @@ def test_scene_first_full_run_outputs_scene_payload(monkeypatch: pytest.MonkeyPa
     assert analysis.scenes.samples[0].audio_classification is not None
     assert analysis.scenes.samples[0].faces is not None
     assert not hasattr(analysis, "frames")
-    payload = analysis.to_dict()
+    payload = analysis.model_dump()
     assert "frames" not in payload
     assert "temporal" not in payload
 
@@ -239,7 +239,7 @@ def test_run_info_roundtrip_includes_stage_timings() -> None:
         stage_durations_seconds={"whisper": 1.5, "scene_detection": 0.3},
         total_duration_seconds=2.7,
     )
-    restored = va.AnalysisRunInfo.from_dict(info.to_dict())
+    restored = va.AnalysisRunInfo.model_validate(info.model_dump())
     assert restored == info
 
 
