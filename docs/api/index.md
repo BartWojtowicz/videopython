@@ -30,7 +30,7 @@ AI-powered generation and understanding (requires `[ai]` extra):
 - [**Understanding**](ai/understanding.md) - Transcribe audio, describe images, detect scenes
 - [**Video Analysis**](ai/video_analysis.md) - Aggregate serializable scene-first analysis across audio, visual, and temporal understanding
 - [**Dubbing**](ai/dubbing.md) - Dub videos into different languages or revoice with custom text
-- [**AI Transforms**](ai/transforms.md) - Face tracking crops, split-screen, and auto-framing
+- [**AI Transforms**](ai/transforms.md) - `FaceTrackingCrop` for face-aware reframing (headroom / thirds, bounded camera speed)
 
 ## Import Patterns
 

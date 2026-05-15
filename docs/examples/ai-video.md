@@ -31,7 +31,7 @@ def create_ai_video():
     videos = []
     for scene in scenes:
         image = image_gen.generate_image(scene["image_prompt"])
-        video = video_gen.generate_video(image=image, fps=24)
+        video = video_gen.generate_video(image=image)
         video = Resize(width=1920, height=1080).apply(video)
         audio = speech_gen.generate_audio(scene["narration"])
         videos.append(video.add_audio(audio))
@@ -61,8 +61,8 @@ image = image_gen.generate_image("A serene mountain landscape at sunrise")
 ### 2. Animate to Video
 
 ```python
-video_gen = ImageToVideo()  # Uses local CogVideoX1.5-5B-I2V
-video = video_gen.generate_video(image=image, fps=24)
+video_gen = ImageToVideo()  # Uses local CogVideoX1.5-5B-I2V (outputs at 16 fps)
+video = video_gen.generate_video(image=image)
 ```
 
 !!! note "Local Models"

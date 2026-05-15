@@ -77,8 +77,7 @@ analysis = VideoAnalyzer(config=config).analyze_path("brand_review.mp4")
 ```
 
 Recovers names Whisper *almost* heard correctly. It will not catch
-zero-prior names — that gap is what M2 (LLM correction pass) closes;
-see `ROADMAP.md`.
+zero-prior names; an LLM correction pass would close that gap.
 
 ### Per-segment confidence
 
@@ -183,7 +182,7 @@ does not survive across shot boundaries. Two surfaces:
 
 - `track_shot(frames, frame_indices)` returns a list of
   [`FaceTrack`](#facetrack) objects with stable ids within the shot.
-  This is the API the analyzer uses, and the one M6 lip-sync consumes.
+  This is the API the analyzer uses.
 - `detect_and_track(frame, frame_index)` / `track_video(frames)` are
   the legacy single-subject smoothed-position APIs used by
   `FaceTrackingCrop` (see [AI Transforms](transforms.md)).
