@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+from videopython.ai.dubbing import voice_sample
 from videopython.ai.dubbing.models import DubbingResult, SeparatedAudio, TranslatedSegment
 from videopython.ai.dubbing.timing import TimingSynchronizer
 from videopython.audio import Audio, AudioMetadata
@@ -638,7 +639,7 @@ class TestVoiceSampleQualityGating:
 
         transcription = self._fake_transcription([clipped, clean])
 
-        samples = pipeline._extract_voice_samples(vocal, None, transcription)
+        samples = voice_sample.extract(vocal, None, transcription)
 
         assert "speaker_0" in samples
         # The clean sample is in [3, 7). Its data starts at section value 0.5.
@@ -661,7 +662,7 @@ class TestVoiceSampleQualityGating:
 
         transcription = self._fake_transcription([seg_a, seg_b])
 
-        samples = pipeline._extract_voice_samples(vocal, background, transcription)
+        samples = voice_sample.extract(vocal, background, transcription)
 
         assert "speaker_0" in samples
         # Picked seg_b: its slice starts at vocal_b's value.
@@ -688,7 +689,7 @@ class TestVoiceSampleQualityGating:
         transcription = self._fake_transcription([a, b, c])
 
         with caplog.at_level(logging.WARNING, logger="videopython.ai.dubbing.pipeline"):
-            samples = pipeline._extract_voice_samples(vocal, None, transcription)
+            samples = voice_sample.extract(vocal, None, transcription)
 
         assert "speaker_0" in samples
         # Longest is b: starts at 3.0s. Sample length should be the full
@@ -712,7 +713,7 @@ class TestVoiceSampleQualityGating:
 
         transcription = self._fake_transcription([clipped, clean])
 
-        samples = pipeline._extract_voice_samples(vocal, None, transcription)
+        samples = voice_sample.extract(vocal, None, transcription)
 
         assert "speaker_0" in samples
         # Clean (peak 0.05) wins over clipped despite being quiet — bg check skipped.
@@ -736,7 +737,7 @@ class TestVoiceSampleQualityGating:
 
         transcription = self._fake_transcription([a, b, c])
 
-        samples = pipeline._extract_voice_samples(vocal, None, transcription)
+        samples = voice_sample.extract(vocal, None, transcription)
 
         chosen = samples["speaker_0"]
         # Chosen segment is b: peak 0.5.
@@ -1948,13 +1949,15 @@ class TestVoiceSampleCache:
         monkeypatch.setattr(audio_mod.Audio, "save", counting_save)
 
         # Make voice-sample extraction return one sample per speaker so the
-        # cache has something to encode. _extract_voice_samples relies on
+        # cache has something to encode. voice_sample.extract relies on
         # segment durations >= min_duration=3s, which our short fixture lacks;
         # short-circuit to a deterministic per-speaker map.
-        def fake_extract(self, vocal_audio, background_audio, transcription, min_duration=3.0, max_duration=10.0):
+        def fake_extract(vocal_audio, background_audio, transcription, min_duration=3.0, max_duration=10.0):
             return {"A": sample_audio, "B": sample_audio}
 
-        monkeypatch.setattr(LocalDubbingPipeline, "_extract_voice_samples", fake_extract)
+        from videopython.ai.dubbing import voice_sample as voice_sample_mod
+
+        monkeypatch.setattr(voice_sample_mod, "extract", fake_extract)
 
         def fake_init_translator(self, source_lang, target_lang):
             class FakeTranslator:
@@ -2528,43 +2531,43 @@ class TestPeakMatch:
         return Audio(data, metadata)
 
     def test_scales_to_match_reference_peak(self):
-        from videopython.ai.dubbing.pipeline import _peak_match
+        from videopython.ai.dubbing.loudness import peak_match
 
         target = self._make_audio(0.3)
         reference = self._make_audio(0.9)
 
-        out = _peak_match(target, reference)
+        out = peak_match(target, reference)
 
         assert abs(float(np.max(np.abs(out.data))) - 0.9) < 1e-5
         # Original target buffer must not be mutated.
         assert abs(float(np.max(np.abs(target.data))) - 0.3) < 1e-5
 
     def test_silent_target_is_returned_as_is(self):
-        from videopython.ai.dubbing.pipeline import _peak_match
+        from videopython.ai.dubbing.loudness import peak_match
 
         target = self._make_audio(0.0)
         reference = self._make_audio(0.5)
 
-        out = _peak_match(target, reference)
+        out = peak_match(target, reference)
         assert out is target
 
     def test_silent_reference_is_no_op(self):
-        from videopython.ai.dubbing.pipeline import _peak_match
+        from videopython.ai.dubbing.loudness import peak_match
 
         target = self._make_audio(0.4)
         reference = self._make_audio(0.0)
 
-        out = _peak_match(target, reference)
+        out = peak_match(target, reference)
         assert out is target
 
     def test_near_unit_scale_is_no_op(self):
         """Tiny scale factors skip allocation — keeps the common 'already matched' path cheap."""
-        from videopython.ai.dubbing.pipeline import _peak_match
+        from videopython.ai.dubbing.loudness import peak_match
 
         target = self._make_audio(0.5001)
         reference = self._make_audio(0.5)
 
-        out = _peak_match(target, reference)
+        out = peak_match(target, reference)
         assert out is target
 
 
@@ -2590,12 +2593,12 @@ class TestLoudnessMatch:
         """Quiet target + loud reference: post-match LUFS difference should be < 1 LU."""
         import pyloudnorm
 
-        from videopython.ai.dubbing.pipeline import _loudness_match
+        from videopython.ai.dubbing.loudness import loudness_match
 
         target = self._make_tone(0.1)  # quiet
         reference = self._make_tone(0.5)  # ~14 dB louder
 
-        out = _loudness_match(target, reference)
+        out = loudness_match(target, reference)
 
         meter_t = pyloudnorm.Meter(out.metadata.sample_rate)
         meter_r = pyloudnorm.Meter(reference.metadata.sample_rate)
@@ -2604,17 +2607,17 @@ class TestLoudnessMatch:
 
     def test_clamps_post_gain_peak_below_unity(self):
         """When LUFS gain would push past 1.0, output is clamped to 0.99."""
-        from videopython.ai.dubbing.pipeline import _loudness_match
+        from videopython.ai.dubbing.loudness import loudness_match
 
         target = self._make_tone(0.05)
         reference = self._make_tone(0.95)  # demands ~25 dB gain → would peak well past 1.0
 
-        out = _loudness_match(target, reference)
+        out = loudness_match(target, reference)
         assert float(np.max(np.abs(out.data))) <= 0.99 + 1e-6
 
     def test_short_clip_falls_back_to_peak_match(self, monkeypatch):
         """Below the 400 ms BS.1770 gating block, the helper must use peak match."""
-        from videopython.ai.dubbing import pipeline as pipeline_mod
+        from videopython.ai.dubbing import loudness as loudness_mod
 
         target = self._make_tone(0.3, duration=0.2)
         reference = self._make_tone(0.9, duration=0.2)
@@ -2629,14 +2632,14 @@ class TestLoudnessMatch:
 
         monkeypatch.setattr(pyloudnorm, "Meter", fail_if_called)
 
-        out = pipeline_mod._loudness_match(target, reference)
+        out = loudness_mod.loudness_match(target, reference)
         assert not called["meter"]
         # Peak-match path: target peak now matches reference peak.
         assert abs(float(np.max(np.abs(out.data))) - 0.9) < 1e-3
 
     def test_silent_target_returns_target_unchanged(self):
         """All-silent target: no usable loudness, fall through to peak-match no-op."""
-        from videopython.ai.dubbing.pipeline import _loudness_match
+        from videopython.ai.dubbing.loudness import loudness_match
 
         sample_rate = 24000
         frame_count = sample_rate
@@ -2652,7 +2655,7 @@ class TestLoudnessMatch:
         )
         reference = self._make_tone(0.5)
 
-        out = _loudness_match(silent, reference)
+        out = loudness_match(silent, reference)
         assert out is silent
 
 
@@ -3393,46 +3396,46 @@ class TestProsody:
         return Audio(data, metadata)
 
     def test_rms_matches_known_amplitude(self):
-        from videopython.ai.dubbing.pipeline import _rms
+        from videopython.ai.dubbing.expressiveness import rms
 
         audio = self._audio_with_amplitude(0.3)
-        assert _rms(audio.data) == pytest.approx(0.3, abs=1e-4)
+        assert rms(audio.data) == pytest.approx(0.3, abs=1e-4)
 
     def test_expressiveness_default_when_baseline_zero(self):
         from videopython.ai.dubbing import Expressiveness
-        from videopython.ai.dubbing.pipeline import _expressiveness_for
+        from videopython.ai.dubbing.expressiveness import expressiveness_for
 
         # Silent baseline → can't compute a ratio, must degrade safely.
-        result = _expressiveness_for(self._audio_with_amplitude(0.5), baseline_rms=0.0)
+        result = expressiveness_for(self._audio_with_amplitude(0.5), baseline_rms=0.0)
         assert result == Expressiveness()
 
     def test_expressiveness_default_when_segment_silent(self):
         from videopython.ai.dubbing import Expressiveness
-        from videopython.ai.dubbing.pipeline import _expressiveness_for
+        from videopython.ai.dubbing.expressiveness import expressiveness_for
 
-        result = _expressiveness_for(self._audio_with_amplitude(0.0), baseline_rms=0.5)
+        result = expressiveness_for(self._audio_with_amplitude(0.0), baseline_rms=0.5)
         assert result == Expressiveness()
 
     def test_expressiveness_calm_when_quiet(self):
-        from videopython.ai.dubbing.pipeline import _expressiveness_for
+        from videopython.ai.dubbing.expressiveness import expressiveness_for
 
         # ratio = 0.3 / 1.0 = 0.3 < CALM_RATIO_THRESHOLD (0.7) → calm
-        result = _expressiveness_for(self._audio_with_amplitude(0.3), baseline_rms=1.0)
+        result = expressiveness_for(self._audio_with_amplitude(0.3), baseline_rms=1.0)
         assert result.exaggeration == 0.3
         assert result.cfg_weight == 0.7
 
     def test_expressiveness_dramatic_when_loud(self):
-        from videopython.ai.dubbing.pipeline import _expressiveness_for
+        from videopython.ai.dubbing.expressiveness import expressiveness_for
 
         # ratio = 1.5 > DRAMATIC_RATIO_THRESHOLD (1.3) → dramatic
-        result = _expressiveness_for(self._audio_with_amplitude(1.5), baseline_rms=1.0)
+        result = expressiveness_for(self._audio_with_amplitude(1.5), baseline_rms=1.0)
         assert result.exaggeration == 0.85
         assert result.cfg_weight == 0.35
 
     def test_expressiveness_normal_in_band(self):
         from videopython.ai.dubbing import Expressiveness
-        from videopython.ai.dubbing.pipeline import _expressiveness_for
+        from videopython.ai.dubbing.expressiveness import expressiveness_for
 
         # ratio = 1.0 sits squarely in the normal band → no-knobs profile
-        result = _expressiveness_for(self._audio_with_amplitude(1.0), baseline_rms=1.0)
+        result = expressiveness_for(self._audio_with_amplitude(1.0), baseline_rms=1.0)
         assert result == Expressiveness()

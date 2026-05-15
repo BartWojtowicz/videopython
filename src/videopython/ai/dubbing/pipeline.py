@@ -7,9 +7,8 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
-import numpy as np
-
 from videopython.ai._device import select_device
+from videopython.ai.dubbing import expressiveness, loudness, voice_sample
 from videopython.ai.dubbing.models import DubbingResult, Expressiveness, RevoiceResult, SeparatedAudio, TimingSummary
 from videopython.ai.dubbing.quality import GarbageTranscriptError, assess_transcript
 from videopython.ai.dubbing.timing import TimingSynchronizer
@@ -27,129 +26,9 @@ if TYPE_CHECKING:
 
 
 TranslatorChoice = Literal["auto", "marian", "qwen3"]
-
-
-# BS.1770 integrated-loudness measurement requires at least 400 ms of audio
-# (one gating block). Below this, fall back to peak match — pyloudnorm
-# returns -inf or warns, neither of which gives a usable gain.
-_LUFS_MIN_DURATION_SECONDS = 0.4
-
-
-def _peak_match(target: Audio, reference: Audio) -> Audio:
-    """Scale ``target`` so its peak amplitude matches ``reference``.
-
-    Used as the fallback when LUFS measurement isn't viable (clip < 0.4s
-    or silent input). The new ``Audio`` shares no buffer with ``target``.
-    """
-    from videopython.audio import Audio as _Audio
-
-    target_peak = float(np.max(np.abs(target.data))) if target.data.size else 0.0
-    reference_peak = float(np.max(np.abs(reference.data))) if reference.data.size else 0.0
-
-    if target_peak <= 0.0 or reference_peak <= 0.0:
-        return target
-
-    scale = reference_peak / target_peak
-    if abs(scale - 1.0) < 1e-3:
-        return target
-
-    return _Audio(target.data * scale, target.metadata)
-
-
-def _loudness_match(target: Audio, reference: Audio) -> Audio:
-    """Scale ``target`` so its integrated loudness (BS.1770 / LUFS) matches ``reference``.
-
-    Demucs background normalization and the timing-assembler peak guard
-    each clamp at 1.0 instead of restoring perceived loudness, so a
-    dubbed mix lands perceptually "thinner" than the source even after
-    peak match. LUFS captures the ear-weighted envelope that peak ratio
-    misses on dialogue-heavy material.
-
-    Falls back to :func:`_peak_match` when either clip is shorter than
-    the BS.1770 gating block (400 ms) or when measurement returns -inf
-    (silent or near-silent gated content). After gain is applied, peaks
-    are clamped to 0.99 — BS.1770 has no peak ceiling and a sufficiently
-    quiet source can demand gain that would otherwise clip.
-    """
-    from videopython.audio import Audio as _Audio
-
-    target_dur = target.metadata.duration_seconds
-    ref_dur = reference.metadata.duration_seconds
-    if target_dur < _LUFS_MIN_DURATION_SECONDS or ref_dur < _LUFS_MIN_DURATION_SECONDS:
-        return _peak_match(target, reference)
-
-    if not target.data.size or not reference.data.size:
-        return target
-
-    import pyloudnorm
-
-    target_lufs = pyloudnorm.Meter(target.metadata.sample_rate).integrated_loudness(target.data)
-    reference_lufs = pyloudnorm.Meter(reference.metadata.sample_rate).integrated_loudness(reference.data)
-
-    # Either clip's gated content was below -70 LUFS (effectively silent
-    # under BS.1770). Gain would be undefined — fall back to peak match,
-    # which has its own silent-input no-op.
-    if not np.isfinite(target_lufs) or not np.isfinite(reference_lufs):
-        return _peak_match(target, reference)
-
-    gain_db = reference_lufs - target_lufs
-    if abs(gain_db) < 0.1:
-        return target
-    scale = float(10 ** (gain_db / 20.0))
-
-    scaled = target.data * scale
-    peak = float(np.max(np.abs(scaled)))
-    if peak > 0.99:
-        scaled = scaled * (0.99 / peak)
-
-    return _Audio(scaled, target.metadata)
-
-
 WhisperModel = Literal["tiny", "base", "small", "medium", "large", "turbo"]
 
 logger = logging.getLogger(__name__)
-
-# Voice-sample quality gating thresholds. Tuned conservatively to favor
-# accepting real-world dialogue over rejecting it; failures fall back to
-# the longest segment with a WARNING log so we can re-tune from production
-# data instead of guessing.
-PEAK_CLIP_THRESHOLD = 0.99
-MIN_VOCAL_BG_RMS_RATIO = 1.5
-VOICE_SAMPLE_TARGET_DURATION = 6.0
-
-# Prosody-conditioning thresholds. Source-segment RMS / whole-vocals RMS
-# below CALM lands in the calm bucket; above DRAMATIC in the dramatic
-# bucket; in between gets Chatterbox's defaults. Knob values picked
-# by-ear on cam1_1min.mp4 — see RELEASE_NOTES 0.29.0.
-CALM_RATIO_THRESHOLD = 0.7
-DRAMATIC_RATIO_THRESHOLD = 1.3
-_CALM = Expressiveness(exaggeration=0.3, cfg_weight=0.7)
-_DRAMATIC = Expressiveness(exaggeration=0.85, cfg_weight=0.35)
-
-
-def _rms(data: np.ndarray) -> float:
-    """RMS over samples; ``0.0`` for empty input. float64 reduction so a
-    long slice can't overflow the squared accumulator."""
-    if data.size == 0:
-        return 0.0
-    return float(np.sqrt(np.mean(np.square(data, dtype=np.float64))))
-
-
-def _expressiveness_for(source_slice: Audio, baseline_rms: float) -> Expressiveness:
-    """Map a source vocals slice to a Chatterbox expressiveness profile
-    by RMS ratio. Falls back to the no-knobs default for empty or silent
-    inputs."""
-    if baseline_rms <= 0.0:
-        return Expressiveness()
-    segment_rms = _rms(source_slice.data)
-    if segment_rms <= 0.0:
-        return Expressiveness()
-    ratio = segment_rms / baseline_rms
-    if ratio < CALM_RATIO_THRESHOLD:
-        return _CALM
-    if ratio > DRAMATIC_RATIO_THRESHOLD:
-        return _DRAMATIC
-    return Expressiveness()
 
 
 class LocalDubbingPipeline:
@@ -406,138 +285,28 @@ class LocalDubbingPipeline:
         """Initialize the timing synchronizer."""
         self._synchronizer = TimingSynchronizer()
 
-    def _extract_voice_samples(
+    def _finalise_audio(
         self,
-        vocal_audio: Any,
-        background_audio: Any | None,
-        transcription: Any,
-        min_duration: float = 3.0,
-        max_duration: float = 10.0,
-    ) -> dict[str, Any]:
-        """Extract a per-speaker voice sample with quality gating.
+        dubbed_speech: Audio,
+        source_audio: Audio,
+        background_audio: Audio | None,
+    ) -> Audio:
+        """Overlay onto background (if any) and loudness-match against source.
 
-        Picks the highest-scored segment per speaker after rejecting clipped
-        slices (peak >= ``PEAK_CLIP_THRESHOLD``) and slices where Demucs left
-        the background louder than the vocals
-        (``vocal_rms / bg_rms < MIN_VOCAL_BG_RMS_RATIO``). When the
-        background track isn't available (e.g. ``revoice`` after
-        ``low_memory`` dropped it), the RMS check is skipped silently.
-
-        Falls back to the longest available segment with a WARNING log when
-        every candidate is rejected, so the dub continues with the best
-        sample we have rather than silently dropping the speaker.
+        Shared finalisation tail between :meth:`process` and :meth:`revoice`.
+        Resamples the dubbed/generated speech to the background's sample
+        rate when they differ, overlays at position 0, then loudness-matches
+        the result against the original ``source_audio`` so the dub doesn't
+        land perceptually thinner than the input.
         """
-        from videopython.audio import Audio
-
-        voice_samples: dict[str, Audio] = {}
-
-        segments_by_speaker: dict[str, list[Any]] = {}
-        for segment in transcription.segments:
-            speaker = segment.speaker or "speaker_0"
-            if speaker not in segments_by_speaker:
-                segments_by_speaker[speaker] = []
-            segments_by_speaker[speaker].append(segment)
-
-        for speaker, segments in segments_by_speaker.items():
-            chosen, fallback_reason = self._pick_voice_segment(
-                speaker, segments, vocal_audio, background_audio, min_duration
-            )
-
-            if chosen is None:
-                logger.warning("No usable voice-sample segment for speaker %r (no candidates)", speaker)
-                continue
-
-            if fallback_reason is not None:
-                logger.warning(
-                    "Voice-sample quality fallback for speaker %r (%d candidates): %s — using longest segment",
-                    speaker,
-                    len(segments),
-                    fallback_reason,
-                )
-
-            start = chosen.start
-            end = min(chosen.end, start + max_duration)
-            sliced = vocal_audio.slice(start, end)
-            # Audio.slice returns a numpy view into the source. Copy so the
-            # short voice sample doesn't keep the full vocals array (~1.3 GB
-            # for 2h sources) alive across translate + TTS.
-            voice_samples[speaker] = Audio(sliced.data.copy(), sliced.metadata)
-
-        return voice_samples
-
-    def _pick_voice_segment(
-        self,
-        speaker: str,
-        segments: list[Any],
-        vocal_audio: Any,
-        background_audio: Any | None,
-        min_duration: float,
-    ) -> tuple[Any | None, str | None]:
-        """Score eligible segments and pick the best one for ``speaker``.
-
-        Returns ``(segment, fallback_reason)``. ``fallback_reason`` is None
-        when scoring picked a segment cleanly; non-None when every candidate
-        was rejected and the longest segment was used instead.
-        """
-        if not segments:
-            return None, None
-
-        eligible = [s for s in segments if (s.end - s.start) >= min_duration]
-
-        rejection_reasons: list[str] = []
-        scored: list[tuple[float, Any]] = []
-        for segment in eligible:
-            score, reason = self._score_voice_segment(segment, vocal_audio, background_audio)
-            if score is None:
-                rejection_reasons.append(reason or "rejected")
-            else:
-                scored.append((score, segment))
-
-        if scored:
-            scored.sort(key=lambda item: item[0], reverse=True)
-            return scored[0][1], None
-
-        # All eligible segments rejected (or none met the min duration).
-        # Fall back to the longest segment overall so the speaker still
-        # gets a clone reference.
-        longest = max(segments, key=lambda s: s.end - s.start)
-        if eligible:
-            reason = ", ".join(sorted(set(rejection_reasons)))
-        else:
-            reason = f"no segment >= {min_duration:.1f}s"
-        return longest, reason
-
-    def _score_voice_segment(
-        self,
-        segment: Any,
-        vocal_audio: Any,
-        background_audio: Any | None,
-    ) -> tuple[float | None, str | None]:
-        """Return ``(score, reason)`` for a candidate segment.
-
-        ``score`` is ``None`` when the segment is rejected; ``reason`` carries
-        the rejection cause so the fallback logger can summarize.
-        """
-        vocal_slice = vocal_audio.slice(segment.start, segment.end)
-        if vocal_slice.data.size == 0:
-            return None, "empty slice"
-
-        peak = float(np.max(np.abs(vocal_slice.data)))
-        if peak >= PEAK_CLIP_THRESHOLD:
-            return None, "clipped"
-
-        vocal_rms = float(np.sqrt(np.mean(vocal_slice.data**2)))
-
         if background_audio is not None:
-            bg_slice = background_audio.slice(segment.start, segment.end)
-            if bg_slice.data.size > 0:
-                bg_rms = float(np.sqrt(np.mean(bg_slice.data**2)))
-                if bg_rms > 0 and (vocal_rms / bg_rms) < MIN_VOCAL_BG_RMS_RATIO:
-                    return None, "background-dominated"
-
-        duration = segment.end - segment.start
-        duration_penalty = abs(duration - VOICE_SAMPLE_TARGET_DURATION)
-        return vocal_rms - 0.05 * duration_penalty, None
+            background_sr = background_audio.metadata.sample_rate
+            if dubbed_speech.metadata.sample_rate != background_sr:
+                dubbed_speech = dubbed_speech.resample(background_sr)
+            final_audio = background_audio.overlay(dubbed_speech, position=0.0)
+        else:
+            final_audio = dubbed_speech
+        return loudness.loudness_match(final_audio, source_audio)
 
     def process(
         self,
@@ -672,7 +441,7 @@ class LocalDubbingPipeline:
         voice_samples: dict[str, Audio] = {}
         if voice_clone:
             report_progress("Extracting voice samples", 0.25)
-            voice_samples = self._extract_voice_samples(vocal_audio, background_audio, transcription)
+            voice_samples = voice_sample.extract(vocal_audio, background_audio, transcription)
 
         report_progress("Translating text", 0.35)
         translated_segments, translation_failures = self._translate(
@@ -685,10 +454,10 @@ class LocalDubbingPipeline:
         # — transcription timestamps can drift past the buffer tail
         # (especially on synthetic test audio) and Audio.slice rejects
         # out-of-range ends past a 0.1s tolerance.
-        baseline_rms = _rms(vocal_audio.data)
+        baseline_rms = expressiveness.rms(vocal_audio.data)
         vocal_duration = vocal_audio.metadata.duration_seconds
         expressiveness_per_segment = [
-            _expressiveness_for(
+            expressiveness.expressiveness_for(
                 vocal_audio.slice(min(s.start, vocal_duration), min(s.end, vocal_duration)),
                 baseline_rms,
             )
@@ -759,23 +528,11 @@ class LocalDubbingPipeline:
         dubbed_speech = self._synchronizer.assemble_with_timing(synchronized_segments, start_times, total_duration)
         del synchronized_segments
 
-        if background_audio is not None:
-            background_sr = background_audio.metadata.sample_rate
-            if dubbed_speech.metadata.sample_rate != background_sr:
-                dubbed_speech = dubbed_speech.resample(background_sr)
-
-            final_audio = background_audio.overlay(dubbed_speech, position=0.0)
-            # Drop the local; in low_memory this releases the background
-            # buffer (~1.3 GB for 2h sources). In non-low_memory the same
-            # array is still held by separated_audio.background.
-            del background_audio
-        else:
-            final_audio = dubbed_speech
-
-        # Loudness-match against the source so the dub doesn't land
-        # perceptually thinner than the original. Done last so it captures
-        # both vocals+background mixes and speech-only outputs uniformly.
-        final_audio = _loudness_match(final_audio, source_audio)
+        final_audio = self._finalise_audio(dubbed_speech, source_audio, background_audio)
+        # Drop the local; in low_memory this releases the background
+        # buffer (~1.3 GB for 2h sources). In non-low_memory the same
+        # array is still held by separated_audio.background.
+        del background_audio
 
         report_progress("Complete", 1.0)
 
@@ -844,21 +601,21 @@ class LocalDubbingPipeline:
                 separated_audio = None
 
         report_progress("Extracting voice sample", 0.40)
-        voice_sample: Audio | None = None
+        chosen_sample: Audio | None = None
 
         if transcription.segments:
             # revoice doesn't track the background after the low_memory drop,
             # so quality gating degrades to "no RMS check" here. Clipping is
             # still rejected.
-            voice_samples = self._extract_voice_samples(vocal_audio, None, transcription)
+            voice_samples = voice_sample.extract(vocal_audio, None, transcription)
             if voice_samples:
-                voice_sample = next(iter(voice_samples.values()))
+                chosen_sample = next(iter(voice_samples.values()))
 
-        if voice_sample is None:
+        if chosen_sample is None:
             sample_duration = min(6.0, original_duration)
             sliced = vocal_audio.slice(0, sample_duration)
             # Copy so the short sample doesn't pin the full vocals array.
-            voice_sample = Audio(sliced.data.copy(), sliced.metadata)
+            chosen_sample = Audio(sliced.data.copy(), sliced.metadata)
 
         del vocal_audio
 
@@ -867,7 +624,7 @@ class LocalDubbingPipeline:
             self._init_tts(language="en")
             self._tts_language = "en"
 
-        generated_speech = self._tts.generate_audio(text, voice_sample=voice_sample)
+        generated_speech = self._tts.generate_audio(text, voice_sample=chosen_sample)
         speech_duration = generated_speech.metadata.duration_seconds
         self._maybe_unload("_tts")
 
@@ -875,9 +632,6 @@ class LocalDubbingPipeline:
 
         if background_audio is not None:
             background_sr = background_audio.metadata.sample_rate
-            if generated_speech.metadata.sample_rate != background_sr:
-                generated_speech = generated_speech.resample(background_sr)
-
             if background_audio.metadata.duration_seconds > speech_duration:
                 background_audio = background_audio.slice(0, speech_duration)
             elif background_audio.metadata.duration_seconds < speech_duration:
@@ -889,12 +643,8 @@ class LocalDubbingPipeline:
                 )
                 background_audio = background_audio.concat(silence)
 
-            final_audio = background_audio.overlay(generated_speech, position=0.0)
-            del background_audio
-        else:
-            final_audio = generated_speech
-
-        final_audio = _loudness_match(final_audio, source_audio)
+        final_audio = self._finalise_audio(generated_speech, source_audio, background_audio)
+        del background_audio
 
         report_progress("Complete", 1.0)
 
@@ -902,7 +652,7 @@ class LocalDubbingPipeline:
             revoiced_audio=final_audio,
             text=text,
             separated_audio=separated_audio,
-            voice_sample=voice_sample,
+            voice_sample=chosen_sample,
             original_duration=original_duration,
             speech_duration=speech_duration,
         )
