@@ -6,6 +6,13 @@ from typing import Any
 
 __all__ = ["Transcription", "TranscriptionSegment", "TranscriptionWord"]
 
+# Sentence-ending punctuation used by ``Transcription.capitalize_sentences``.
+_SENTENCE_TERMINATORS = (".", "!", "?", "…")
+
+# Trailing characters stripped before checking for a sentence terminator
+# (closing quotes/brackets and whitespace), so ``end."`` still ends a sentence.
+_TRAILING_WRAPPERS = "\"')]}»”’ "
+
 
 @dataclass
 class TranscriptionWord:
@@ -278,6 +285,92 @@ class Transcription:
             _flush(current_words)
 
         return Transcription(segments=standardized_segments, language=self.language)
+
+    def capitalize_sentences(self) -> Transcription:
+        """Return a new Transcription with sentence-start capitalization.
+
+        The first letter of the first spoken word and of every word that
+        follows sentence-ending punctuation (``.``, ``!``, ``?``, ``…``) is
+        upper-cased. Remaining characters are left untouched, so acronyms and
+        proper nouns from the source transcription are preserved. Timing,
+        speaker, and language are carried through unchanged.
+
+        Abbreviation detection is intentionally not attempted: a token like
+        ``"U.S."`` is treated as a sentence end. This heuristic is adequate
+        for burned-in subtitles and avoids a brittle abbreviation list.
+        """
+        capitalized_segments: list[TranscriptionSegment] = []
+        start_of_sentence = True
+
+        for segment in self.segments:
+            new_words: list[TranscriptionWord] = []
+            for word in segment.words:
+                token = word.word
+                if start_of_sentence:
+                    idx = next((i for i, ch in enumerate(token) if ch.isalpha()), None)
+                    if idx is not None:
+                        token = token[:idx] + token[idx].upper() + token[idx + 1 :]
+                        start_of_sentence = False
+                if token.rstrip(_TRAILING_WRAPPERS).endswith(_SENTENCE_TERMINATORS):
+                    start_of_sentence = True
+                new_words.append(TranscriptionWord(start=word.start, end=word.end, word=token, speaker=word.speaker))
+
+            capitalized_segments.append(
+                TranscriptionSegment(
+                    start=segment.start,
+                    end=segment.end,
+                    text=" ".join(w.word for w in new_words),
+                    words=new_words,
+                    speaker=segment.speaker,
+                    avg_logprob=segment.avg_logprob,
+                    no_speech_prob=segment.no_speech_prob,
+                    compression_ratio=segment.compression_ratio,
+                )
+            )
+
+        return Transcription(segments=capitalized_segments, language=self.language)
+
+    def chunk_segments(self, max_words: int) -> Transcription:
+        """Return a new Transcription splitting each segment into smaller cues.
+
+        Each segment is split into consecutive groups of at most ``max_words``
+        words, using that group's own first/last word timings. Unlike
+        :meth:`standardize_segments`, words are never merged across the
+        original segments, so silence gaps between segments are preserved and
+        subtitles do not linger over pauses. Speaker, confidence, and language
+        metadata are carried through unchanged.
+
+        Args:
+            max_words: Maximum number of words per output segment.
+
+        Raises:
+            ValueError: If ``max_words`` is not positive.
+        """
+        if max_words <= 0:
+            raise ValueError("max_words must be positive")
+
+        chunked_segments: list[TranscriptionSegment] = []
+        for segment in self.segments:
+            words = segment.words
+            if not words:
+                chunked_segments.append(segment)
+                continue
+            for i in range(0, len(words), max_words):
+                group = words[i : i + max_words]
+                chunked_segments.append(
+                    TranscriptionSegment(
+                        start=group[0].start,
+                        end=group[-1].end,
+                        text=" ".join(w.word for w in group),
+                        words=list(group),
+                        speaker=segment.speaker,
+                        avg_logprob=segment.avg_logprob,
+                        no_speech_prob=segment.no_speech_prob,
+                        compression_ratio=segment.compression_ratio,
+                    )
+                )
+
+        return Transcription(segments=chunked_segments, language=self.language)
 
     def slice(self, start: float, end: float) -> Transcription | None:
         """Return a new Transcription containing only words within the time range.

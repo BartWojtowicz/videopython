@@ -1,5 +1,34 @@
 # Release Notes
 
+## 0.33.4
+
+`TranscriptionOverlay` now normalizes subtitles by default: long
+transcription segments are split into short on-screen cues, and sentence
+starts are capitalized. This fixes burned-in subtitles that dumped a
+whole sentence on screen at once and rendered lowercase sentence starts
+from word-level speech-to-text.
+
+**Behavior change:** with default settings, rendered subtitle text now
+differs from the raw transcription (chunked to <= 5 words per cue,
+sentence-cased). Pass `max_words_per_cue=None` and `capitalize=False` to
+restore the previous verbatim rendering.
+
+### Changes
+
+- New `Transcription.capitalize_sentences()`: returns a new
+  Transcription with the first word and every word after `.`, `!`, `?`,
+  `…` capitalized. Existing caps (acronyms, proper nouns) are preserved;
+  timing/speaker/language are carried through. Abbreviations are not
+  special-cased.
+- New `Transcription.chunk_segments(max_words)`: splits each segment into
+  cues of at most `max_words` words **without merging across segments**,
+  so silence gaps are preserved and subtitles don't linger over pauses.
+  Distinct from `standardize_segments`, which flattens and re-groups all
+  words globally.
+- `TranscriptionOverlay` gains two fields: `max_words_per_cue` (default
+  `5`, `None` disables chunking) and `capitalize` (default `True`). They
+  are applied to the transcription at the start of `apply()`.
+
 ## 0.33.3
 
 `font_filename` is now optional on `TranscriptionOverlay` (it was
