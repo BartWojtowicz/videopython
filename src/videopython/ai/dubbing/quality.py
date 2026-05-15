@@ -20,8 +20,9 @@ from __future__ import annotations
 import re
 import statistics
 from collections import Counter
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
+
+from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
     from videopython.base.transcription import Transcription
@@ -48,8 +49,7 @@ def _normalize_phrase(text: str) -> str:
     return _WHITESPACE_RE.sub(" ", cleaned).strip()
 
 
-@dataclass
-class TranscriptQuality:
+class TranscriptQuality(BaseModel):
     """Quality assessment of a Whisper transcription.
 
     Attributes:
@@ -71,28 +71,7 @@ class TranscriptQuality:
     dominant_phrase_fraction: float
     median_avg_logprob: float | None
     speech_fraction: float
-    flags: list[str] = field(default_factory=list)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "recommendation": self.recommendation,
-            "dominant_phrase": self.dominant_phrase,
-            "dominant_phrase_fraction": self.dominant_phrase_fraction,
-            "median_avg_logprob": self.median_avg_logprob,
-            "speech_fraction": self.speech_fraction,
-            "flags": list(self.flags),
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> TranscriptQuality:
-        return cls(
-            recommendation=data["recommendation"],
-            dominant_phrase=data.get("dominant_phrase"),
-            dominant_phrase_fraction=data.get("dominant_phrase_fraction", 0.0),
-            median_avg_logprob=data.get("median_avg_logprob"),
-            speech_fraction=data.get("speech_fraction", 0.0),
-            flags=list(data.get("flags", [])),
-        )
+    flags: list[str] = Field(default_factory=list)
 
 
 class GarbageTranscriptError(RuntimeError):

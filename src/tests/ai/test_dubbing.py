@@ -500,7 +500,7 @@ class TestTimingSummary:
             max_truncation_seconds=0.7,
         )
 
-        restored = TimingSummary.from_dict(summary.to_dict())
+        restored = TimingSummary.model_validate(summary.model_dump())
         assert restored == summary
 
     def test_dubbing_result_carries_summary(self, sample_audio, sample_segment):
@@ -753,7 +753,7 @@ class TestVideoDubber:
 
         dubber = VideoDubber()
 
-        assert dubber.device is None
+        assert dubber.config.device is None
         assert dubber._local_pipeline is None
 
     def test_initialization_with_device(self):
@@ -762,7 +762,7 @@ class TestVideoDubber:
 
         dubber = VideoDubber(device="cpu")
 
-        assert dubber.device == "cpu"
+        assert dubber.config.device == "cpu"
 
     def test_get_supported_languages(self):
         """Test getting supported languages."""
@@ -1387,13 +1387,13 @@ class TestLocalDubbingPipelineLowMemory:
         from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
 
         pipeline = LocalDubbingPipeline()
-        assert pipeline.low_memory is False
+        assert pipeline.config.low_memory is False
 
     def test_low_memory_flag_stored(self):
         from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
 
         pipeline = LocalDubbingPipeline(low_memory=True)
-        assert pipeline.low_memory is True
+        assert pipeline.config.low_memory is True
 
     def test_maybe_unload_noop_when_low_memory_disabled(self):
         """With low_memory=False, _maybe_unload must not call unload()."""
@@ -1447,16 +1447,16 @@ class TestVideoDubberLowMemory:
         from videopython.ai.dubbing import VideoDubber
 
         dubber = VideoDubber()
-        assert dubber.low_memory is False
+        assert dubber.config.low_memory is False
 
     def test_low_memory_propagated_to_pipeline(self):
         from videopython.ai.dubbing import VideoDubber
 
         dubber = VideoDubber(low_memory=True)
-        assert dubber.low_memory is True
+        assert dubber.config.low_memory is True
 
         dubber._init_local_pipeline()
-        assert dubber._local_pipeline.low_memory is True
+        assert dubber._local_pipeline.config.low_memory is True
 
 
 class TestWhisperModelSelection:
@@ -1466,26 +1466,26 @@ class TestWhisperModelSelection:
         from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
 
         pipeline = LocalDubbingPipeline()
-        assert pipeline.whisper_model == "turbo"
+        assert pipeline.config.whisper_model == "turbo"
 
     def test_pipeline_whisper_model_stored(self):
         from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
 
         pipeline = LocalDubbingPipeline(whisper_model="turbo")
-        assert pipeline.whisper_model == "turbo"
+        assert pipeline.config.whisper_model == "turbo"
 
     def test_dubber_default_whisper_model(self):
         from videopython.ai.dubbing import VideoDubber
 
         dubber = VideoDubber()
-        assert dubber.whisper_model == "turbo"
+        assert dubber.config.whisper_model == "turbo"
 
     def test_dubber_whisper_model_propagated_to_pipeline(self):
         from videopython.ai.dubbing import VideoDubber
 
         dubber = VideoDubber(whisper_model="large")
         dubber._init_local_pipeline()
-        assert dubber._local_pipeline.whisper_model == "large"
+        assert dubber._local_pipeline.config.whisper_model == "large"
 
     def test_init_transcriber_uses_whisper_model(self, monkeypatch):
         """_init_transcriber must pass whisper_model to AudioToText."""
@@ -1524,14 +1524,14 @@ class TestAntiHallucinationKwargPlumbing:
 
         pipeline = LocalDubbingPipeline()
         for key, expected in self.EXPECTED_DEFAULTS.items():
-            assert getattr(pipeline, key) == expected
+            assert getattr(pipeline.config, key) == expected
 
     def test_dubber_defaults(self):
         from videopython.ai.dubbing import VideoDubber
 
         dubber = VideoDubber()
         for key, expected in self.EXPECTED_DEFAULTS.items():
-            assert getattr(dubber, key) == expected
+            assert getattr(dubber.config, key) == expected
 
     def test_dubber_propagates_to_pipeline(self):
         from videopython.ai.dubbing import VideoDubber
@@ -1543,9 +1543,9 @@ class TestAntiHallucinationKwargPlumbing:
         )
         dubber._init_local_pipeline()
 
-        assert dubber._local_pipeline.condition_on_previous_text is True
-        assert dubber._local_pipeline.no_speech_threshold == 0.85
-        assert dubber._local_pipeline.logprob_threshold == -0.5
+        assert dubber._local_pipeline.config.condition_on_previous_text is True
+        assert dubber._local_pipeline.config.no_speech_threshold == 0.85
+        assert dubber._local_pipeline.config.logprob_threshold == -0.5
 
     def test_pipeline_propagates_to_transcriber(self, monkeypatch):
         from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
@@ -1579,12 +1579,12 @@ class TestVocabularyKwargPlumbing:
     def test_dubber_default_is_none(self):
         from videopython.ai.dubbing import VideoDubber
 
-        assert VideoDubber().vocabulary is None
+        assert VideoDubber().config.vocabulary is None
 
     def test_pipeline_default_is_none(self):
         from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
 
-        assert LocalDubbingPipeline().vocabulary is None
+        assert LocalDubbingPipeline().config.vocabulary is None
 
     def test_dubber_propagates_to_pipeline(self):
         from videopython.ai.dubbing import VideoDubber
@@ -1592,7 +1592,7 @@ class TestVocabularyKwargPlumbing:
         dubber = VideoDubber(vocabulary=["Klarna", "Allegro"])
         dubber._init_local_pipeline()
 
-        assert dubber._local_pipeline.vocabulary == ["Klarna", "Allegro"]
+        assert dubber._local_pipeline.config.vocabulary == ["Klarna", "Allegro"]
 
     def test_pipeline_propagates_to_transcriber(self, monkeypatch):
         from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
@@ -2968,7 +2968,7 @@ class TestTranscriptQuality:
             flags=["dominant phrase 80%: 'thanks'"],
         )
 
-        restored = TranscriptQuality.from_dict(original.to_dict())
+        restored = TranscriptQuality.model_validate(original.model_dump())
         assert restored == original
 
     def test_garbage_error_attaches_quality(self):
@@ -3100,13 +3100,13 @@ class TestStrictQualityIntegration:
         dubber = VideoDubber(strict_quality=True)
         dubber._init_local_pipeline()
 
-        assert dubber._local_pipeline.strict_quality is True
+        assert dubber._local_pipeline.config.strict_quality is True
 
     def test_dubber_default_strict_quality_is_false(self):
         from videopython.ai.dubbing import VideoDubber
 
         dubber = VideoDubber()
-        assert dubber.strict_quality is False
+        assert dubber.config.strict_quality is False
 
 
 class TestTranslatorResolver:
@@ -3240,12 +3240,12 @@ class TestTranslatorResolver:
         dubber = VideoDubber(translator="qwen3")
         dubber._init_local_pipeline()
 
-        assert dubber._local_pipeline.translator == "qwen3"
+        assert dubber._local_pipeline.config.translator == "qwen3"
 
     def test_dubber_default_translator_is_auto(self):
         from videopython.ai.dubbing import VideoDubber
 
-        assert VideoDubber().translator == "auto"
+        assert VideoDubber().config.translator == "auto"
 
 
 class TestTranslationFailuresOnResult:

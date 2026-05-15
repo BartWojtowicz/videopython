@@ -5,10 +5,11 @@ from __future__ import annotations
 import logging
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Literal
+from typing import TYPE_CHECKING, Any, Callable
 
 from videopython.ai._device import select_device
 from videopython.ai.dubbing import expressiveness, loudness, voice_sample
+from videopython.ai.dubbing.config import DubbingConfig, TranslatorChoice, WhisperModel
 from videopython.ai.dubbing.models import DubbingResult, Expressiveness, RevoiceResult, SeparatedAudio, TimingSummary
 from videopython.ai.dubbing.quality import GarbageTranscriptError, assess_transcript
 from videopython.ai.dubbing.timing import TimingSynchronizer
@@ -25,8 +26,7 @@ if TYPE_CHECKING:
     from videopython.base.transcription import Transcription
 
 
-TranslatorChoice = Literal["auto", "marian", "qwen3"]
-WhisperModel = Literal["tiny", "base", "small", "medium", "large", "turbo"]
+__all__ = ["LocalDubbingPipeline", "TranslatorChoice", "WhisperModel"]
 
 logger = logging.getLogger(__name__)
 
@@ -40,34 +40,16 @@ class LocalDubbingPipeline:
     with <=12GB VRAM or hosts with <32GB RAM.
     """
 
-    def __init__(
-        self,
-        device: str | None = None,
-        low_memory: bool = False,
-        whisper_model: WhisperModel = "turbo",
-        condition_on_previous_text: bool = False,
-        no_speech_threshold: float = 0.6,
-        logprob_threshold: float | None = -1.0,
-        vocabulary: list[str] | None = None,
-        strict_quality: bool = False,
-        translator: TranslatorChoice = "auto",
-    ):
-        self.device = device
-        self.low_memory = low_memory
-        self.whisper_model = whisper_model
-        self.condition_on_previous_text = condition_on_previous_text
-        self.no_speech_threshold = no_speech_threshold
-        self.logprob_threshold = logprob_threshold
-        self.vocabulary = vocabulary
-        self.strict_quality = strict_quality
-        self.translator = translator
-        requested = device.lower() if isinstance(device, str) else "auto"
+    def __init__(self, config: DubbingConfig | None = None, **kwargs: Any):
+        # ``DubbingConfig`` consolidates the nine knobs that used to be
+        # constructor kwargs. Either ``config=`` or the flat kwargs are
+        # accepted (not both) so existing callers don't need to change.
+        if config is not None and kwargs:
+            raise TypeError("Pass either `config=` or knob kwargs, not both")
+        self.config = config or DubbingConfig(**kwargs)
         logger.info(
-            "LocalDubbingPipeline initialized with device=%s low_memory=%s whisper_model=%s translator=%s",
-            requested,
-            low_memory,
-            whisper_model,
-            translator,
+            "LocalDubbingPipeline initialized with %s",
+            " ".join(f"{k}={v}" for k, v in self.config.init_log_fields().items()),
         )
 
         self._transcriber: Any = None
@@ -85,7 +67,7 @@ class LocalDubbingPipeline:
         (e.g. caller supplied a pre-computed transcription so the transcriber
         was skipped).
         """
-        if not self.low_memory:
+        if not self.config.low_memory:
             return
         component = getattr(self, component_name, None)
         if component is None:
@@ -201,29 +183,29 @@ class LocalDubbingPipeline:
         from videopython.ai.understanding.audio import AudioToText
 
         self._transcriber = AudioToText(
-            model_name=self.whisper_model,
-            device=self.device,
+            model_name=self.config.whisper_model,
+            device=self.config.device,
             enable_diarization=enable_diarization,
-            condition_on_previous_text=self.condition_on_previous_text,
-            no_speech_threshold=self.no_speech_threshold,
-            logprob_threshold=self.logprob_threshold,
-            vocabulary=self.vocabulary,
+            condition_on_previous_text=self.config.condition_on_previous_text,
+            no_speech_threshold=self.config.no_speech_threshold,
+            logprob_threshold=self.config.logprob_threshold,
+            vocabulary=self.config.vocabulary,
         )
 
     def _init_translator(self, source_lang: str, target_lang: str) -> None:
         """Initialize the translation backend.
 
-        Resolves the configured ``self.translator`` choice into a concrete
+        Resolves the configured ``self.config.translator`` choice into a concrete
         backend. ``"auto"`` uses :meth:`_resolve_translator_auto`; explicit
         choices instantiate the named backend directly. Re-initialization
         is a no-op when ``self._translator`` is already a matching instance
         for the same language pair (handled at call sites via the existing
         ``self._translator is None`` gate).
         """
-        if self.translator == "marian":
-            self._translator = MarianTranslator(device=self.device)
-        elif self.translator == "qwen3":
-            self._translator = Qwen3Translator(device=self.device)
+        if self.config.translator == "marian":
+            self._translator = MarianTranslator(device=self.config.device)
+        elif self.config.translator == "qwen3":
+            self._translator = Qwen3Translator(device=self.config.device)
         else:  # "auto"
             self._translator = self._resolve_translator_auto(source_lang, target_lang)
 
@@ -235,7 +217,7 @@ class LocalDubbingPipeline:
         whenever it covers the language pair and only escalates to Qwen
         when a GPU is available or Marian doesn't cover the pair.
         """
-        device = select_device(self.device, mps_allowed=True)
+        device = select_device(self.config.device, mps_allowed=True)
         has_gpu = device in ("cuda", "mps")
 
         # 1. GPU + Qwen covers the pair → Qwen wins (best quality).
@@ -246,7 +228,7 @@ class LocalDubbingPipeline:
                 source_lang,
                 target_lang,
             )
-            return Qwen3Translator(device=self.device)
+            return Qwen3Translator(device=self.config.device)
 
         # 2. Marian covers the pair → Marian (fast).
         if MarianTranslator.has_model_for(source_lang, target_lang):
@@ -255,7 +237,7 @@ class LocalDubbingPipeline:
             else:
                 reason = f"device={device} (Qwen would be ~10-15x slower; pass translator='qwen3' to override)"
             logger.info("translator: auto-selected marian (%s)", reason)
-            return MarianTranslator(device=self.device)
+            return MarianTranslator(device=self.config.device)
 
         # 3. CPU + only Qwen covers it: warn loudly and use Qwen anyway.
         if Qwen3Translator.supports(source_lang, target_lang):
@@ -265,7 +247,7 @@ class LocalDubbingPipeline:
                 source_lang,
                 target_lang,
             )
-            return Qwen3Translator(device=self.device)
+            return Qwen3Translator(device=self.config.device)
 
         raise UnsupportedLanguageError(source_lang, target_lang)
 
@@ -273,13 +255,13 @@ class LocalDubbingPipeline:
         """Initialize the text-to-speech model."""
         from videopython.ai.generation.audio import TextToSpeech
 
-        self._tts = TextToSpeech(device=self.device, language=language)
+        self._tts = TextToSpeech(device=self.config.device, language=language)
 
     def _init_separator(self) -> None:
         """Initialize the audio separator."""
         from videopython.ai.understanding.separation import AudioSeparator
 
-        self._separator = AudioSeparator(device=self.device)
+        self._separator = AudioSeparator(device=self.config.device)
 
     def _init_synchronizer(self) -> None:
         """Initialize the timing synchronizer."""
@@ -392,7 +374,7 @@ class LocalDubbingPipeline:
         # running the rest of the pipeline; non-strict runs continue but
         # surface the assessment on DubbingResult.
         transcript_quality = assess_transcript(transcription, source_audio.metadata.duration_seconds)
-        if transcript_quality.recommendation == "reject" and self.strict_quality:
+        if transcript_quality.recommendation == "reject" and self.config.strict_quality:
             raise GarbageTranscriptError(
                 f"Refusing to dub: {', '.join(transcript_quality.flags)}",
                 transcript_quality,
@@ -435,7 +417,7 @@ class LocalDubbingPipeline:
             # and background can be released as soon as their last local
             # reference goes (after voice-sample extraction and final overlay
             # respectively). The result will report separated_audio=None.
-            if self.low_memory:
+            if self.config.low_memory:
                 separated_audio = None
 
         voice_samples: dict[str, Audio] = {}
@@ -597,7 +579,7 @@ class LocalDubbingPipeline:
             self._maybe_unload("_separator")
             vocal_audio = separated_audio.vocals
             background_audio = separated_audio.background
-            if self.low_memory:
+            if self.config.low_memory:
                 separated_audio = None
 
         report_progress("Extracting voice sample", 0.40)
