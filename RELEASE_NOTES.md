@@ -1,5 +1,24 @@
 # Release Notes
 
+## 0.33.3
+
+`font_filename` is now optional on `TranscriptionOverlay` (it was
+required). When omitted — or set to `None` — text renders with a bundled
+DejaVu Sans instead of raising. Backward compatible: existing code that
+passes an explicit path is unaffected.
+
+### Changes
+
+- New `videopython.base.fonts.load_font` resolver with a fixed chain:
+  explicit path -> bundled DejaVu Sans -> PIL's built-in font. It never
+  raises for a missing or unreadable font, so a bad path falls back
+  silently rather than failing the render.
+- `TextOverlay` and `TranscriptionOverlay` now share this resolver.
+  Previously `TextOverlay` relied on a system-installed `DejaVuSans.ttf`,
+  which was platform-dependent; the font is now bundled in the wheel.
+- DejaVu Sans (`DejaVuSans.ttf`) and its license are packaged into the
+  wheel and sdist. This adds ~740 KB to the installed package.
+
 ## 0.33.2
 
 Ten new streamable effects aimed at experimental / stylistic edits, all

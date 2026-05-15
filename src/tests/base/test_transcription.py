@@ -123,6 +123,20 @@ def test_transcription_overlay_frame_content_changes(dummy_video, dummy_transcri
     assert np.array_equal(frame_at_4s, original_frame_at_4s)
 
 
+def test_transcription_overlay_defaults_font_when_none(dummy_video, dummy_transcription):
+    """font_filename is optional: None renders with the bundled default font."""
+    overlay = TranscriptionOverlay(font_size=20)
+
+    assert overlay.font_filename is None
+
+    result_video = overlay.apply(video=dummy_video, transcription=dummy_transcription)
+
+    # Active segment (0.0-1.8): frame at 1s must be modified despite no font path.
+    assert not np.array_equal(result_video.frames[30], dummy_video.frames[30])
+    # Inactive region (~4s): frame unchanged.
+    assert np.array_equal(result_video.frames[120], dummy_video.frames[120])
+
+
 def test_transcription_with_offset(dummy_transcription):
     """Test that with_offset method correctly offsets all timings."""
     offset_time = 2.5

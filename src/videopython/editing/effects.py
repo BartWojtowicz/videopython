@@ -24,6 +24,7 @@ from pydantic import Field, PrivateAttr, model_validator
 from tqdm import tqdm
 
 from videopython.base.description import BoundingBox
+from videopython.base.fonts import load_font
 from videopython.editing.operation import Effect
 
 if TYPE_CHECKING:
@@ -643,12 +644,7 @@ class TextOverlay(Effect):
         return self
 
     def _get_font(self) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-        if self.font_filename:
-            return ImageFont.truetype(self.font_filename, self.font_size)
-        try:
-            return ImageFont.truetype("DejaVuSans.ttf", self.font_size)
-        except OSError:
-            return ImageFont.load_default()
+        return load_font(self.font_filename, self.font_size)
 
     def _wrap_text(self, text: str, font: ImageFont.FreeTypeFont | ImageFont.ImageFont, max_px: int) -> str:
         lines: list[str] = []

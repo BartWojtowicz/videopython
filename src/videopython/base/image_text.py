@@ -16,6 +16,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from videopython.base.exceptions import OutOfBoundsError
+from videopython.base.fonts import load_font
 
 __all__ = ["ImageText", "TextAlign", "AnchorPoint"]
 
@@ -106,7 +107,7 @@ class ImageText:
         # PIL uses (width, height), so we reverse for Image.new
         self.image = Image.new(mode, (image_size[1], image_size[0]), color=background)
         self._draw = ImageDraw.Draw(self.image)
-        self._font_cache: dict[tuple[str, int], ImageFont.FreeTypeFont] = {}  # Cache for font objects
+        self._font_cache: dict[tuple[str | None, int], ImageFont.FreeTypeFont | ImageFont.ImageFont] = {}
 
     @property
     def img_array(self) -> np.ndarray:
@@ -119,7 +120,7 @@ class ImageText:
             raise ValueError("Filename cannot be empty")
         self.image.save(filename)
 
-    def _fit_font_width(self, text: str, font: str, max_width: int) -> int:
+    def _fit_font_width(self, text: str, font: str | None, max_width: int) -> int:
         """
         Find the maximum font size where the text width is less than or equal to max_width.
 
@@ -150,7 +151,7 @@ class ImageText:
             raise ValueError(f"Max width {max_width} is too small for any font size!")
         return max_font_size
 
-    def _fit_font_height(self, text: str, font: str, max_height: int) -> int:
+    def _fit_font_height(self, text: str, font: str | None, max_height: int) -> int:
         """
         Find the maximum font size where the text height is less than or equal to max_height.
 
@@ -184,7 +185,7 @@ class ImageText:
     def _get_font_size(
         self,
         text: str,
-        font: str,
+        font: str | None,
         max_width: int | None = None,
         max_height: int | None = None,
     ) -> int:
@@ -333,7 +334,7 @@ class ImageText:
     def write_text(
         self,
         text: str,
-        font_filename: str,
+        font_filename: str | None,
         xy: PositionType,
         font_size: int | None = 11,
         font_border_size: int = 0,
@@ -367,9 +368,6 @@ class ImageText:
         """
         if not text:
             raise ValueError("Text cannot be empty")
-
-        if not font_filename:
-            raise ValueError("Font filename cannot be empty")
 
         if font_size is not None and font_size <= 0:
             raise ValueError("Font size must be positive")
@@ -405,12 +403,16 @@ class ImageText:
         self._draw.text((x, y), text, font=font, fill=color)
         return text_dimensions
 
-    def _get_font(self, font_filename: str, font_size: int) -> ImageFont.FreeTypeFont:
+    def _get_font(self, font_filename: str | None, font_size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
         """
         Get a font object, using cache if available.
 
+        Resolves via :func:`videopython.base.fonts.load_font`, so a missing,
+        unreadable, or ``None`` ``font_filename`` gracefully falls back to
+        the bundled default font instead of raising.
+
         Args:
-            font_filename: Path to the font file
+            font_filename: Path to the font file, or None for the default.
             font_size: Size of the font in points
 
         Returns:
@@ -418,13 +420,10 @@ class ImageText:
         """
         key = (font_filename, font_size)
         if key not in self._font_cache:
-            try:
-                self._font_cache[key] = ImageFont.truetype(font_filename, font_size)
-            except (OSError, IOError) as e:
-                raise ValueError(f"Error loading font '{font_filename}': {str(e)}")
+            self._font_cache[key] = load_font(font_filename, font_size)
         return self._font_cache[key]
 
-    def get_text_dimensions(self, font_filename: str, font_size: int, text: str) -> tuple[int, int]:
+    def get_text_dimensions(self, font_filename: str | None, font_size: int, text: str) -> tuple[int, int]:
         """
         Return dimensions (width, height) of the rendered text.
 
@@ -455,7 +454,11 @@ class ImageText:
             raise ValueError(f"Error measuring text: {str(e)}")
 
     def _get_font_baseline_offset(
-        self, base_font_filename: str, base_font_size: int, highlight_font_filename: str, highlight_font_size: int
+        self,
+        base_font_filename: str | None,
+        base_font_size: int,
+        highlight_font_filename: str | None,
+        highlight_font_size: int,
     ) -> int:
         """
         Calculate the vertical offset needed to align baselines of different fonts and sizes.
@@ -497,7 +500,7 @@ class ImageText:
     def _split_lines_by_width(
         self,
         text: str,
-        font_filename: str,
+        font_filename: str | None,
         font_size: int,
         box_width: int,
     ) -> list[str]:
@@ -566,7 +569,7 @@ class ImageText:
     def write_text_box(
         self,
         text: str,
-        font_filename: str,
+        font_filename: str | None,
         xy: PositionType,
         box_width: int | float | None = None,
         font_size: int = 11,
@@ -614,9 +617,6 @@ class ImageText:
         """
         if not text:
             raise ValueError("Text cannot be empty")
-
-        if not font_filename:
-            raise ValueError("Font filename cannot be empty")
 
         if font_size <= 0:
             raise ValueError("Font size must be positive")
@@ -831,7 +831,7 @@ class ImageText:
     def _write_line_with_highlight(
         self,
         line: str,
-        font_filename: str,
+        font_filename: str | None,
         font_size: int,
         font_border_size: int,
         text_color: RGBColor,
