@@ -47,16 +47,16 @@ transcriber = AudioToText()  # Local Whisper model
 transcription = transcriber.transcribe(video)
 ```
 
-The transcription includes word-level timestamps:
+The result is a `Transcription` carrying segments with word-level timestamps:
 
 ```python
-# transcription structure:
-# [
-#     {"word": "Hello", "start": 0.0, "end": 0.5},
-#     {"word": "world", "start": 0.6, "end": 1.0},
-#     ...
-# ]
+for segment in transcription.segments:
+    print(f"{segment.start:.2f}-{segment.end:.2f}: {segment.text}")
+    for word in segment.words:
+        print(f"  {word.word} ({word.start:.2f}-{word.end:.2f})")
 ```
+
+See [Text & Transcription](../api/text.md) for the full data classes.
 
 Model options:
 

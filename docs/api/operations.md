@@ -162,6 +162,16 @@ field.
 | `volume_adjust` | `VolumeAdjust` | effect | yes |
 | `text_overlay` | `TextOverlay` | effect | yes |
 | `add_subtitles` | `TranscriptionOverlay` | effect | no (requires `transcription`) |
+| `shake` | `Shake` | effect | yes |
+| `punch_in` | `PunchIn` | effect | yes |
+| `flash` | `Flash` | effect | yes |
+| `chromatic_aberration` | `ChromaticAberration` | effect | yes |
+| `glitch` | `Glitch` | effect | yes |
+| `film_grain` | `FilmGrain` | effect | yes |
+| `sharpen` | `Sharpen` | effect | yes |
+| `pixelate` | `Pixelate` | effect | yes |
+| `mirror_flip` | `MirrorFlip` | effect | yes |
+| `kaleidoscope` | `Kaleidoscope` | effect | yes |
 
 ### AI (require `import videopython.ai`)
 
