@@ -40,6 +40,26 @@ video = Fade(mode="out", duration=0.5).apply(video)
 video = VolumeAdjust(volume=0.0, window=TimeRange(stop=2.0)).apply(video)  # mute first 2s
 video = TextOverlay(text="Hello World", position=(0.5, 0.9),
                     font_size=48).apply(video)
+
+# YouTube / experimental effects:
+from videopython.editing import (
+    Shake, PunchIn, Flash, ChromaticAberration, Glitch,
+    FilmGrain, Sharpen, Pixelate, MirrorFlip, Kaleidoscope,
+)
+
+video = Shake(intensity_px=6, mode="rhythmic", frequency_hz=4).apply(video)
+video = PunchIn(zoom_factor=1.5, attack_frames=3, release_frames=0).apply(video)
+video = Flash(color=(255, 255, 255), peak_alpha=1.0,
+              attack_frames=2, decay_frames=4,
+              window=TimeRange(start=1.0, stop=1.3)).apply(video)
+video = ChromaticAberration(shift_px=4, mode="radial").apply(video)
+video = Glitch(intensity=0.4, slice_count=12, seed=42).apply(video)
+video = FilmGrain(intensity=0.08, monochrome=True).apply(video)
+video = Sharpen(amount=1.0, kernel_size=5).apply(video)
+video = Pixelate(block_size=24,
+                 region=BoundingBox(x=0.4, y=0.2, width=0.2, height=0.2)).apply(video)
+video = MirrorFlip(mode="mirror_left").apply(video)
+video = Kaleidoscope(segments=6).apply(video)
 ```
 
 Inside a `VideoEdit` plan, effects go in the segment's `operations`
@@ -67,6 +87,16 @@ Every effect except `add_subtitles` is streamable (compatible with
 | `volume_adjust` | `VolumeAdjust` | Audio-only effect |
 | `text_overlay` | `TextOverlay` | Rendered text on top of frames |
 | `add_subtitles` | `TranscriptionOverlay` | Requires `transcription` context |
+| `shake` | `Shake` | Per-frame jitter (random / rhythmic / decay) |
+| `punch_in` | `PunchIn` | Snap-zoom emphasis with optional release |
+| `flash` | `Flash` | Solid-color frame flash with attack/decay |
+| `chromatic_aberration` | `ChromaticAberration` | R/B channel split (horizontal / vertical / radial) |
+| `glitch` | `Glitch` | Random horizontal slice displacement + channel offsets |
+| `film_grain` | `FilmGrain` | Additive seeded noise (mono or RGB) |
+| `sharpen` | `Sharpen` | Unsharp-mask sharpening |
+| `pixelate` | `Pixelate` | Mosaic blocks, full frame or region |
+| `mirror_flip` | `MirrorFlip` | Flip or reflect one half onto the other |
+| `kaleidoscope` | `Kaleidoscope` | N-way radial mirror around the center |
 
 ## API Reference
 
@@ -109,3 +139,43 @@ Every effect except `add_subtitles` is streamable (compatible with
 ### TextOverlay
 
 ::: videopython.editing.TextOverlay
+
+### Shake
+
+::: videopython.editing.Shake
+
+### PunchIn
+
+::: videopython.editing.PunchIn
+
+### Flash
+
+::: videopython.editing.Flash
+
+### ChromaticAberration
+
+::: videopython.editing.ChromaticAberration
+
+### Glitch
+
+::: videopython.editing.Glitch
+
+### FilmGrain
+
+::: videopython.editing.FilmGrain
+
+### Sharpen
+
+::: videopython.editing.Sharpen
+
+### Pixelate
+
+::: videopython.editing.Pixelate
+
+### MirrorFlip
+
+::: videopython.editing.MirrorFlip
+
+### Kaleidoscope
+
+::: videopython.editing.Kaleidoscope

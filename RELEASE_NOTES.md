@@ -1,5 +1,40 @@
 # Release Notes
 
+## 0.33.2
+
+Ten new streamable effects aimed at experimental / stylistic edits, all
+extending `Effect` with `window` support and per-frame streaming via
+`process_frame`. Nothing breaking — purely additive registry entries.
+
+### New effects
+
+- `Shake` — per-frame jitter with `random` / `rhythmic` / `decay` modes.
+- `PunchIn` — snap-zoom emphasis with attack/release ramps; distinct
+  from the existing continuous `Zoom`.
+- `Flash` — solid-color frame flash with attack/decay alpha envelope.
+- `ChromaticAberration` — R/B channel split, `horizontal` / `vertical` /
+  `radial`.
+- `Glitch` — seeded horizontal slice displacement plus channel offsets.
+- `FilmGrain` — seeded Gaussian noise, luma-only or per-channel.
+- `Sharpen` — unsharp-mask sharpening with odd-kernel validation.
+- `Pixelate` — mosaic blocks, full frame or normalized `BoundingBox`
+  region (face-censor friendly).
+- `MirrorFlip` — full flip or half-mirror (`mirror_left`, `mirror_top`,
+  etc.).
+- `Kaleidoscope` — N-way radial mirror around the frame center, with
+  precomputed remap maps.
+
+### Other
+
+- Fixed a pre-existing test bug in `test_video_resize` that mutated the
+  session-scoped `small_video` fixture in place. The corruption
+  shadow-failed `test_image_text.py::test_overlaying_video_with_text`
+  whenever pytest collected `editing/` before `base/` (e.g. when only
+  passing those two paths). CI's default alphabetical order hid it.
+- Extended the local `cv2` type stubs with `warpAffine`, `addWeighted`,
+  `flip`, `remap`, `rotate`, and the `BORDER_*` / `ROTATE_*` constants
+  used by the new effects.
+
 ## 0.33.1
 
 Point-fix cleanup of the AI predictor classes. No new abstractions —

@@ -9,10 +9,20 @@ from videopython.base.description import BoundingBox
 from videopython.base.video import Video
 from videopython.editing.effects import (
     Blur,
+    ChromaticAberration,
     ColorGrading,
     Fade,
+    FilmGrain,
+    Flash,
     FullImageOverlay,
+    Glitch,
+    Kaleidoscope,
     KenBurns,
+    MirrorFlip,
+    Pixelate,
+    PunchIn,
+    Shake,
+    Sharpen,
     TextOverlay,
     Vignette,
     VolumeAdjust,
@@ -385,3 +395,309 @@ class TestTextOverlay:
         long_text = "This is a very long text that should definitely wrap to multiple lines"
         result = TextOverlay(text=long_text, font_size=16, max_width=0.5, font_filename=TEST_FONT_PATH).apply(video)
         assert result.frames.max() > 0
+
+
+@pytest.fixture
+def synthetic_color_video():
+    """1-second 24fps video with random per-frame content (deterministic)."""
+    rng = np.random.default_rng(42)
+    frames = rng.integers(0, 255, (24, 64, 64, 3), dtype=np.uint8)
+    return Video.from_frames(frames, fps=24)
+
+
+class TestShake:
+    def test_random_changes_frames(self, synthetic_color_video):
+        original = synthetic_color_video.frames.copy()
+        result = Shake(intensity_px=4.0, mode="random", seed=7).apply(synthetic_color_video.copy())
+        assert result.video_shape == synthetic_color_video.video_shape
+        assert not np.array_equal(result.frames, original)
+
+    def test_rhythmic_oscillates(self, synthetic_color_video):
+        result = Shake(intensity_px=4.0, mode="rhythmic", frequency_hz=4.0).apply(synthetic_color_video.copy())
+        assert result.video_shape == synthetic_color_video.video_shape
+
+    def test_decay_first_frame_changes_more_than_last(self):
+        rng = np.random.default_rng(0)
+        frames = rng.integers(0, 255, (30, 64, 64, 3), dtype=np.uint8)
+        video = Video.from_frames(frames, fps=30)
+        original = video.frames.copy()
+        result = Shake(intensity_px=8.0, mode="decay", seed=1).apply(video)
+        diff_first = np.abs(result.frames[0].astype(int) - original[0].astype(int)).mean()
+        diff_last = np.abs(result.frames[-1].astype(int) - original[-1].astype(int)).mean()
+        assert diff_first > diff_last
+
+    def test_seed_reproducible(self, synthetic_color_video):
+        a = Shake(intensity_px=4.0, mode="random", seed=42).apply(synthetic_color_video.copy())
+        b = Shake(intensity_px=4.0, mode="random", seed=42).apply(synthetic_color_video.copy())
+        assert np.array_equal(a.frames, b.frames)
+
+    def test_invalid_intensity_raises(self):
+        with pytest.raises(ValidationError):
+            Shake(intensity_px=0)
+
+
+class TestPunchIn:
+    def test_preserves_shape(self, synthetic_color_video):
+        result = PunchIn(zoom_factor=1.5, attack_frames=3).apply(synthetic_color_video)
+        assert result.video_shape == synthetic_color_video.video_shape
+
+    def test_attack_progression(self):
+        frames = np.tile(np.arange(64, dtype=np.uint8)[:, None], (1, 64))
+        frames = np.broadcast_to(frames[None, :, :, None], (12, 64, 64, 3)).copy()
+        video = Video.from_frames(frames, fps=12)
+        original = video.frames.copy()
+        result = PunchIn(zoom_factor=2.0, attack_frames=4).apply(video)
+        # First frame should be untouched (zoom 1.0), middle frame zoomed in
+        assert np.array_equal(result.frames[0], original[0])
+        assert not np.array_equal(result.frames[6], original[6])
+
+    def test_release_returns_toward_original(self):
+        frames = np.tile(np.arange(64, dtype=np.uint8)[:, None], (1, 64))
+        frames = np.broadcast_to(frames[None, :, :, None], (20, 64, 64, 3)).copy()
+        video = Video.from_frames(frames, fps=20)
+        original = video.frames.copy()
+        result = PunchIn(zoom_factor=2.0, attack_frames=3, release_frames=3).apply(video)
+        # Final frame should be (close to) the original because release ends at zoom=1.0
+        assert np.array_equal(result.frames[-1], original[-1])
+
+    def test_invalid_zoom_raises(self):
+        with pytest.raises(ValidationError):
+            PunchIn(zoom_factor=0.9)
+        with pytest.raises(ValidationError):
+            PunchIn(zoom_factor=1.5, attack_frames=-1)
+
+
+class TestFlash:
+    def test_peak_blends_toward_color(self):
+        frames = np.zeros((10, 32, 32, 3), dtype=np.uint8)
+        video = Video.from_frames(frames, fps=10)
+        result = Flash(color=(255, 255, 255), peak_alpha=1.0, attack_frames=2, decay_frames=2).apply(video)
+        # The frame right after attack should be (close to) fully white
+        assert result.frames[2].mean() > 240
+
+    def test_outside_attack_decay_unchanged(self):
+        frames = np.zeros((10, 32, 32, 3), dtype=np.uint8)
+        video = Video.from_frames(frames, fps=10)
+        result = Flash(color=(255, 0, 0), peak_alpha=1.0, attack_frames=2, decay_frames=2).apply(video)
+        # Frames after attack+decay should still be black
+        assert result.frames[-1].mean() == 0
+
+    def test_preserves_shape(self, synthetic_color_video):
+        result = Flash(peak_alpha=0.5).apply(synthetic_color_video)
+        assert result.video_shape == synthetic_color_video.video_shape
+
+    def test_invalid_alpha_raises(self):
+        with pytest.raises(ValidationError):
+            Flash(peak_alpha=0)
+        with pytest.raises(ValidationError):
+            Flash(peak_alpha=1.5)
+
+
+class TestChromaticAberration:
+    def test_horizontal_shifts_channels(self):
+        frames = np.zeros((4, 32, 32, 3), dtype=np.uint8)
+        frames[:, :, 15, :] = 200  # vertical line in the middle (all channels)
+        video = Video.from_frames(frames, fps=4)
+        result = ChromaticAberration(shift_px=3, mode="horizontal").apply(video)
+        # Red channel should be shifted right, blue shifted left
+        # So at column 18, red is bright; at column 12, blue is bright
+        assert result.frames[0, 16, 18, 0] > 100  # red shifted right
+        assert result.frames[0, 16, 12, 2] > 100  # blue shifted left
+
+    def test_radial_preserves_shape(self, synthetic_color_video):
+        result = ChromaticAberration(shift_px=4, mode="radial").apply(synthetic_color_video)
+        assert result.video_shape == synthetic_color_video.video_shape
+
+    def test_vertical_mode(self, synthetic_color_video):
+        result = ChromaticAberration(shift_px=4, mode="vertical").apply(synthetic_color_video)
+        assert result.video_shape == synthetic_color_video.video_shape
+
+    def test_invalid_shift_raises(self):
+        with pytest.raises(ValidationError):
+            ChromaticAberration(shift_px=0)
+
+
+class TestGlitch:
+    def test_changes_frames(self, synthetic_color_video):
+        original = synthetic_color_video.frames.copy()
+        result = Glitch(intensity=0.5, seed=1).apply(synthetic_color_video.copy())
+        assert not np.array_equal(result.frames, original)
+        assert result.video_shape == synthetic_color_video.video_shape
+
+    def test_seed_reproducible(self, synthetic_color_video):
+        a = Glitch(intensity=0.5, seed=99).apply(synthetic_color_video.copy())
+        b = Glitch(intensity=0.5, seed=99).apply(synthetic_color_video.copy())
+        assert np.array_equal(a.frames, b.frames)
+
+    def test_invalid_params_raise(self):
+        with pytest.raises(ValidationError):
+            Glitch(intensity=0)
+        with pytest.raises(ValidationError):
+            Glitch(intensity=1.5)
+        with pytest.raises(ValidationError):
+            Glitch(slice_count=0)
+
+
+class TestFilmGrain:
+    def test_grain_increases_variance(self):
+        frames = np.full((8, 64, 64, 3), 128, dtype=np.uint8)
+        video = Video.from_frames(frames, fps=8)
+        original_std = video.frames.std()
+        result = FilmGrain(intensity=0.1, seed=0).apply(video)
+        assert result.frames.std() > original_std
+
+    def test_monochrome_vs_color(self):
+        frames = np.full((4, 32, 32, 3), 128, dtype=np.uint8)
+        a = FilmGrain(intensity=0.1, monochrome=True, seed=0).apply(Video.from_frames(frames.copy(), fps=4))
+        b = FilmGrain(intensity=0.1, monochrome=False, seed=0).apply(Video.from_frames(frames.copy(), fps=4))
+        # Monochrome: per-pixel R==G==B; color: channels differ
+        mono_diff = np.abs(a.frames[..., 0].astype(int) - a.frames[..., 1].astype(int)).max()
+        color_diff = np.abs(b.frames[..., 0].astype(int) - b.frames[..., 1].astype(int)).max()
+        assert mono_diff == 0
+        assert color_diff > 0
+
+    def test_seed_reproducible(self):
+        frames = np.full((4, 32, 32, 3), 128, dtype=np.uint8)
+        a = FilmGrain(intensity=0.1, seed=42).apply(Video.from_frames(frames.copy(), fps=4))
+        b = FilmGrain(intensity=0.1, seed=42).apply(Video.from_frames(frames.copy(), fps=4))
+        assert np.array_equal(a.frames, b.frames)
+
+    def test_invalid_intensity_raises(self):
+        with pytest.raises(ValidationError):
+            FilmGrain(intensity=0)
+        with pytest.raises(ValidationError):
+            FilmGrain(intensity=2.0)
+
+
+class TestSharpen:
+    def test_preserves_shape(self, synthetic_color_video):
+        result = Sharpen(amount=1.0).apply(synthetic_color_video)
+        assert result.video_shape == synthetic_color_video.video_shape
+
+    def test_zero_amount_returns_unchanged(self, synthetic_color_video):
+        original = synthetic_color_video.frames.copy()
+        result = Sharpen(amount=0.0).apply(synthetic_color_video.copy())
+        assert np.array_equal(result.frames, original)
+
+    def test_sharpens_blurred_edge(self):
+        # A vertical edge: left half 0, right half 255.
+        frames = np.zeros((4, 32, 32, 3), dtype=np.uint8)
+        frames[:, :, 16:, :] = 255
+        # Blur it first
+        from videopython.editing.effects import Blur
+
+        blurred = Blur(mode="constant", iterations=10, kernel_size=(7, 7)).apply(
+            Video.from_frames(frames.copy(), fps=4)
+        )
+        sharpened = Sharpen(amount=2.0, kernel_size=5).apply(Video.from_frames(blurred.frames.copy(), fps=4))
+        # The edge transition should be steeper after sharpening
+        blurred_gradient = float(np.abs(np.diff(blurred.frames[0, 16, :, 0].astype(int))).max())
+        sharp_gradient = float(np.abs(np.diff(sharpened.frames[0, 16, :, 0].astype(int))).max())
+        assert sharp_gradient > blurred_gradient
+
+    def test_even_kernel_raises(self):
+        with pytest.raises(ValidationError):
+            Sharpen(amount=1.0, kernel_size=4)
+
+    def test_invalid_amount_raises(self):
+        with pytest.raises(ValidationError):
+            Sharpen(amount=-0.1)
+        with pytest.raises(ValidationError):
+            Sharpen(amount=5.0)
+
+
+class TestPixelate:
+    def test_full_frame_blocks_uniform(self):
+        rng = np.random.default_rng(0)
+        frames = rng.integers(0, 255, (4, 64, 64, 3), dtype=np.uint8)
+        video = Video.from_frames(frames, fps=4)
+        result = Pixelate(block_size=16).apply(video)
+        # Each 16x16 block should be uniform per-channel after nearest-neighbour upscale
+        block = result.frames[0, :16, :16]
+        for c in range(3):
+            assert block[..., c].std() < 1.0
+
+    def test_region_only_affects_region(self):
+        rng = np.random.default_rng(0)
+        frames = rng.integers(0, 255, (4, 64, 64, 3), dtype=np.uint8)
+        video = Video.from_frames(frames, fps=4)
+        original = video.frames.copy()
+        result = Pixelate(
+            block_size=8,
+            region=BoundingBox(x=0.5, y=0.5, width=0.5, height=0.5),
+        ).apply(video)
+        # Top-left corner outside the region should be unchanged
+        assert np.array_equal(result.frames[0, :16, :16], original[0, :16, :16])
+        # Bottom-right corner inside the region should differ
+        assert not np.array_equal(result.frames[0, 48:, 48:], original[0, 48:, 48:])
+
+    def test_invalid_block_size_raises(self):
+        with pytest.raises(ValidationError):
+            Pixelate(block_size=1)
+
+
+class TestMirrorFlip:
+    def test_horizontal_reverses_columns(self):
+        frames = np.tile(np.arange(64, dtype=np.uint8)[None, :], (64, 1))
+        frames = np.broadcast_to(frames[None, :, :, None], (4, 64, 64, 3)).copy()
+        original = frames.copy()
+        video = Video.from_frames(frames, fps=4)
+        result = MirrorFlip(mode="horizontal").apply(video)
+        # Column 0 should now equal what was column 63 in the original
+        assert np.array_equal(result.frames[0, :, 0], original[0, :, 63])
+
+    def test_vertical_reverses_rows(self):
+        frames = np.tile(np.arange(64, dtype=np.uint8)[:, None], (1, 64))
+        frames = np.broadcast_to(frames[None, :, :, None], (4, 64, 64, 3)).copy()
+        original = frames.copy()
+        video = Video.from_frames(frames, fps=4)
+        result = MirrorFlip(mode="vertical").apply(video)
+        assert np.array_equal(result.frames[0, 0, :], original[0, 63, :])
+
+    def test_mirror_left_makes_right_match_left(self):
+        rng = np.random.default_rng(0)
+        frames = rng.integers(0, 255, (2, 32, 32, 3), dtype=np.uint8)
+        video = Video.from_frames(frames, fps=2)
+        result = MirrorFlip(mode="mirror_left").apply(video)
+        left = result.frames[0, :, :16]
+        right = result.frames[0, :, 16:]
+        assert np.array_equal(left, right[:, ::-1])
+
+    def test_mirror_top_makes_bottom_match_top(self):
+        rng = np.random.default_rng(1)
+        frames = rng.integers(0, 255, (2, 32, 32, 3), dtype=np.uint8)
+        video = Video.from_frames(frames, fps=2)
+        result = MirrorFlip(mode="mirror_top").apply(video)
+        top = result.frames[0, :16, :]
+        bottom = result.frames[0, 16:, :]
+        assert np.array_equal(top, bottom[::-1, :])
+
+    def test_invalid_mode_raises(self):
+        with pytest.raises(ValidationError):
+            MirrorFlip(mode="diagonal")
+
+
+class TestKaleidoscope:
+    def test_preserves_shape(self, synthetic_color_video):
+        result = Kaleidoscope(segments=6).apply(synthetic_color_video)
+        assert result.video_shape == synthetic_color_video.video_shape
+
+    def test_has_mirror_symmetry(self):
+        rng = np.random.default_rng(0)
+        frames = rng.integers(0, 255, (2, 64, 64, 3), dtype=np.uint8)
+        video = Video.from_frames(frames, fps=2)
+        result = Kaleidoscope(segments=4).apply(video)
+        # With segments=4 and angle_offset=0, the fold-reflect mapping yields
+        # left-right and top-bottom mirror symmetry about the frame center.
+        flipped_h = result.frames[0, :, ::-1]
+        flipped_v = result.frames[0, ::-1, :]
+        mae_h = float(np.abs(result.frames[0].astype(int) - flipped_h.astype(int)).mean())
+        mae_v = float(np.abs(result.frames[0].astype(int) - flipped_v.astype(int)).mean())
+        assert mae_h < 5, f"Kaleidoscope output lacks horizontal mirror symmetry, MAE={mae_h}"
+        assert mae_v < 5, f"Kaleidoscope output lacks vertical mirror symmetry, MAE={mae_v}"
+
+    def test_segments_bounds(self):
+        with pytest.raises(ValidationError):
+            Kaleidoscope(segments=1)
+        with pytest.raises(ValidationError):
+            Kaleidoscope(segments=100)
