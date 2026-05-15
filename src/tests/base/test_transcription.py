@@ -410,6 +410,300 @@ def test_standardize_segments_no_speaker():
     assert result.segments[1].text == "foo bar"
 
 
+def _lc_words(*pairs: tuple[str, float, float]) -> list[TranscriptionWord]:
+    return [TranscriptionWord(start=s, end=e, word=w) for w, s, e in pairs]
+
+
+def test_capitalize_sentences_basic():
+    """First word is capitalized; mid-sentence words are left alone."""
+    seg = TranscriptionSegment(
+        start=0.0,
+        end=1.5,
+        text="hello world there",
+        words=_lc_words(("hello", 0.0, 0.5), ("world", 0.5, 1.0), ("there", 1.0, 1.5)),
+    )
+    result = Transcription(segments=[seg]).capitalize_sentences()
+
+    assert [w.word for w in result.segments[0].words] == ["Hello", "world", "there"]
+    assert result.segments[0].text == "Hello world there"
+
+
+def test_capitalize_sentences_after_terminators():
+    """Words following '.', '!' or '?' start new sentences and are capitalized."""
+    seg = TranscriptionSegment(
+        start=0.0,
+        end=3.0,
+        text="hi there. how are you? great! thanks",
+        words=_lc_words(
+            ("hi", 0.0, 0.3),
+            ("there.", 0.3, 0.6),
+            ("how", 0.6, 0.9),
+            ("are", 0.9, 1.2),
+            ("you?", 1.2, 1.5),
+            ("great!", 1.5, 1.8),
+            ("thanks", 1.8, 2.1),
+        ),
+    )
+    result = Transcription(segments=[seg]).capitalize_sentences()
+
+    # "you?" stays lowercase: it is mid-sentence ("How are you?"), only the
+    # word after a terminator starts a new sentence.
+    assert [w.word for w in result.segments[0].words] == [
+        "Hi",
+        "there.",
+        "How",
+        "are",
+        "you?",
+        "Great!",
+        "Thanks",
+    ]
+
+
+def test_capitalize_sentences_spans_segments():
+    """Sentence state carries across segment boundaries (no false capitalization)."""
+    seg1 = TranscriptionSegment(
+        start=0.0, end=1.0, text="this is", words=_lc_words(("this", 0.0, 0.5), ("is", 0.5, 1.0))
+    )
+    seg2 = TranscriptionSegment(
+        start=1.0, end=2.0, text="one sentence.", words=_lc_words(("one", 1.0, 1.5), ("sentence.", 1.5, 2.0))
+    )
+    seg3 = TranscriptionSegment(
+        start=2.0, end=3.0, text="next one", words=_lc_words(("next", 2.0, 2.5), ("one", 2.5, 3.0))
+    )
+    result = Transcription(segments=[seg1, seg2, seg3]).capitalize_sentences()
+
+    assert [w.word for w in result.segments[0].words] == ["This", "is"]
+    assert [w.word for w in result.segments[1].words] == ["one", "sentence."]
+    assert [w.word for w in result.segments[2].words] == ["Next", "one"]
+
+
+def test_capitalize_sentences_preserves_existing_caps():
+    """Acronyms and proper nouns are not lower-cased."""
+    seg = TranscriptionSegment(
+        start=0.0,
+        end=1.5,
+        text="the NASA team launched IT",
+        words=_lc_words(
+            ("the", 0.0, 0.3),
+            ("NASA", 0.3, 0.6),
+            ("team", 0.6, 0.9),
+            ("launched", 0.9, 1.2),
+            ("IT", 1.2, 1.5),
+        ),
+    )
+    result = Transcription(segments=[seg]).capitalize_sentences()
+
+    assert [w.word for w in result.segments[0].words] == ["The", "NASA", "team", "launched", "IT"]
+
+
+def test_capitalize_sentences_leading_non_alpha_token():
+    """A non-alphabetic token at a sentence start does not consume the capitalization."""
+    seg = TranscriptionSegment(
+        start=0.0,
+        end=1.5,
+        text='"..." really? — yes',
+        words=_lc_words(('"..."', 0.0, 0.3), ("really?", 0.3, 0.6), ("—", 0.6, 0.9), ("yes", 0.9, 1.2)),
+    )
+    result = Transcription(segments=[seg]).capitalize_sentences()
+
+    # First alphabetic token gets capitalized; "—" after "?" does not absorb it.
+    assert [w.word for w in result.segments[0].words] == ['"..."', "Really?", "—", "Yes"]
+
+
+def test_capitalize_sentences_trailing_wrappers():
+    """Closing quotes/brackets after a terminator still end the sentence."""
+    seg = TranscriptionSegment(
+        start=0.0,
+        end=1.5,
+        text='he said "go!" now',
+        words=_lc_words(("he", 0.0, 0.3), ("said", 0.3, 0.6), ('"go!"', 0.6, 0.9), ("now", 0.9, 1.2)),
+    )
+    result = Transcription(segments=[seg]).capitalize_sentences()
+
+    assert [w.word for w in result.segments[0].words] == ["He", "said", '"go!"', "Now"]
+
+
+def test_capitalize_sentences_preserves_timing_speaker_language():
+    """Timing, speaker, and language are carried through unchanged."""
+    seg = TranscriptionSegment(
+        start=0.0,
+        end=1.0,
+        text="hello world",
+        words=[
+            TranscriptionWord(start=0.0, end=0.5, word="hello", speaker="SPEAKER_00"),
+            TranscriptionWord(start=0.5, end=1.0, word="world", speaker="SPEAKER_00"),
+        ],
+        speaker="SPEAKER_00",
+    )
+    result = Transcription(segments=[seg], language="en").capitalize_sentences()
+
+    out = result.segments[0]
+    assert result.language == "en"
+    assert out.start == 0.0 and out.end == 1.0
+    assert out.speaker == "SPEAKER_00"
+    assert [(w.start, w.end, w.speaker) for w in out.words] == [
+        (0.0, 0.5, "SPEAKER_00"),
+        (0.5, 1.0, "SPEAKER_00"),
+    ]
+
+
+def test_capitalize_sentences_does_not_mutate_original():
+    """The source Transcription is left untouched (returns a new object)."""
+    seg = TranscriptionSegment(
+        start=0.0, end=1.0, text="hello world", words=_lc_words(("hello", 0.0, 0.5), ("world", 0.5, 1.0))
+    )
+    original = Transcription(segments=[seg])
+    original.capitalize_sentences()
+
+    assert original.segments[0].words[0].word == "hello"
+    assert original.segments[0].text == "hello world"
+
+
+def test_capitalize_sentences_empty():
+    """Empty transcription stays empty."""
+    result = Transcription(segments=[], language="fr").capitalize_sentences()
+    assert result.segments == []
+    assert result.language == "fr"
+
+
+def test_chunk_segments_splits_within_segment():
+    """A segment is split into <= max_words cues with group-local timings."""
+    seg = TranscriptionSegment(
+        start=0.0,
+        end=3.0,
+        text="one two three four five six",
+        words=_lc_words(
+            ("one", 0.0, 0.5),
+            ("two", 0.5, 1.0),
+            ("three", 1.0, 1.5),
+            ("four", 1.5, 2.0),
+            ("five", 2.0, 2.5),
+            ("six", 2.5, 3.0),
+        ),
+    )
+    result = Transcription(segments=[seg]).chunk_segments(max_words=4)
+
+    assert len(result.segments) == 2
+    assert [s.text for s in result.segments] == ["one two three four", "five six"]
+    assert (result.segments[0].start, result.segments[0].end) == (0.0, 2.0)
+    assert (result.segments[1].start, result.segments[1].end) == (2.0, 3.0)
+    assert all(len(s.words) <= 4 for s in result.segments)
+
+
+def test_chunk_segments_preserves_silence_gaps():
+    """Words are never merged across segments, so pauses are kept intact."""
+    seg1 = TranscriptionSegment(
+        start=0.0, end=1.0, text="hello world", words=_lc_words(("hello", 0.0, 0.5), ("world", 0.5, 1.0))
+    )
+    # 4s of silence before the next segment.
+    seg2 = TranscriptionSegment(
+        start=5.0, end=6.0, text="goodbye now", words=_lc_words(("goodbye", 5.0, 5.5), ("now", 5.5, 6.0))
+    )
+    result = Transcription(segments=[seg1, seg2]).chunk_segments(max_words=5)
+
+    # Both segments fit under the limit and stay separate -- no cue spans 1.0..5.0.
+    assert len(result.segments) == 2
+    assert (result.segments[0].start, result.segments[0].end) == (0.0, 1.0)
+    assert (result.segments[1].start, result.segments[1].end) == (5.0, 6.0)
+
+
+def test_chunk_segments_preserves_speaker_confidence_language():
+    """Speaker, confidence fields, and language are carried through."""
+    seg = TranscriptionSegment(
+        start=0.0,
+        end=1.0,
+        text="a b c",
+        words=[
+            TranscriptionWord(start=0.0, end=0.3, word="a", speaker="S0"),
+            TranscriptionWord(start=0.3, end=0.6, word="b", speaker="S0"),
+            TranscriptionWord(start=0.6, end=1.0, word="c", speaker="S0"),
+        ],
+        speaker="S0",
+        avg_logprob=-0.25,
+        no_speech_prob=0.01,
+        compression_ratio=1.4,
+    )
+    result = Transcription(segments=[seg], language="pl").chunk_segments(max_words=2)
+
+    assert result.language == "pl"
+    assert len(result.segments) == 2
+    for out in result.segments:
+        assert out.speaker == "S0"
+        assert out.avg_logprob == -0.25
+        assert out.no_speech_prob == 0.01
+        assert out.compression_ratio == 1.4
+        assert all(w.speaker == "S0" for w in out.words)
+
+
+def test_chunk_segments_invalid_max_words():
+    """Non-positive max_words is rejected."""
+    transcription = Transcription(
+        segments=[TranscriptionSegment(start=0.0, end=0.5, text="x", words=_lc_words(("x", 0.0, 0.5)))]
+    )
+    with pytest.raises(ValueError, match="max_words must be positive"):
+        transcription.chunk_segments(max_words=0)
+    with pytest.raises(ValueError, match="max_words must be positive"):
+        transcription.chunk_segments(max_words=-3)
+
+
+def test_chunk_segments_empty_and_no_mutation():
+    """Empty transcription stays empty; the source is not mutated."""
+    assert Transcription(segments=[], language="en").chunk_segments(max_words=3).segments == []
+
+    seg = TranscriptionSegment(
+        start=0.0, end=1.0, text="keep me", words=_lc_words(("keep", 0.0, 0.5), ("me", 0.5, 1.0))
+    )
+    original = Transcription(segments=[seg])
+    original.chunk_segments(max_words=1)
+    assert len(original.segments) == 1
+    assert original.segments[0].text == "keep me"
+
+
+def test_overlay_normalization_defaults():
+    """New overlay knobs default to sensible subtitle behavior."""
+    overlay = TranscriptionOverlay(font_filename=TEST_FONT_PATH)
+    assert overlay.max_words_per_cue == 5
+    assert overlay.capitalize is True
+
+
+def test_overlay_normalizes_long_lowercase_segment(dummy_video):
+    """A long lowercase single segment still renders end-to-end with defaults on."""
+    words = _lc_words(
+        ("the", 0.0, 0.2),
+        ("quick", 0.2, 0.4),
+        ("brown", 0.4, 0.6),
+        ("fox", 0.6, 0.8),
+        ("jumps", 0.8, 1.0),
+        ("over", 1.0, 1.2),
+        ("the", 1.2, 1.4),
+        ("lazy", 1.4, 1.6),
+        ("dog", 1.6, 1.8),
+    )
+    transcription = Transcription(
+        segments=[
+            TranscriptionSegment(start=0.0, end=1.8, text="the quick brown fox jumps over the lazy dog", words=words)
+        ]
+    )
+    overlay = TranscriptionOverlay(font_filename=TEST_FONT_PATH, font_size=20)
+
+    result_video = overlay.apply(video=dummy_video, transcription=transcription)
+
+    assert isinstance(result_video, Video)
+    # Active region (~1s) is modified; inactive region (~4s) is untouched.
+    assert not np.array_equal(result_video.frames[30], dummy_video.frames[30])
+    assert np.array_equal(result_video.frames[120], dummy_video.frames[120])
+
+
+def test_overlay_normalization_can_be_disabled(dummy_video, dummy_transcription):
+    """Disabling both knobs preserves source segmentation and casing without error."""
+    overlay = TranscriptionOverlay(font_filename=TEST_FONT_PATH, font_size=20, max_words_per_cue=None, capitalize=False)
+
+    result_video = overlay.apply(video=dummy_video, transcription=dummy_transcription)
+
+    assert isinstance(result_video, Video)
+    assert len(result_video.frames) == len(dummy_video.frames)
+
+
 def test_transcription_initialization_with_words():
     """Test Transcription initialization with words parameter for speaker diarization."""
     words = [

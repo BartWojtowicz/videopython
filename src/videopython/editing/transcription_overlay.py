@@ -78,6 +78,24 @@ class TranscriptionOverlay(Effect):
     highlight_bold_font: str | None = Field(
         None, description="Path to a bold .ttf font for the highlighted word, or None to use the regular font."
     )
+    max_words_per_cue: int | None = Field(
+        5,
+        ge=1,
+        description=(
+            "Maximum words shown on screen at once. Each transcription segment is re-chunked into "
+            "cues of at most this many words, without bridging the silence gaps between segments, so "
+            "subtitles stay readable and don't linger over pauses. None preserves the source "
+            "transcription's segmentation."
+        ),
+    )
+    capitalize: bool = Field(
+        True,
+        description=(
+            "Capitalize the first letter of each sentence (first word, and words after '.', '!', '?'). "
+            "Fixes lowercase sentence starts from word-level speech-to-text. Set False to render text "
+            "exactly as transcribed."
+        ),
+    )
 
     _overlay_cache: dict[tuple[str, int | None], np.ndarray] = PrivateAttr(default_factory=dict)
 
@@ -139,6 +157,11 @@ class TranscriptionOverlay(Effect):
                 "TranscriptionOverlay requires transcription data. "
                 "Pass it via VideoEdit.run(context={'transcription': ...}) or directly to apply()."
             )
+
+        if self.max_words_per_cue is not None:
+            transcription = transcription.chunk_segments(self.max_words_per_cue)
+        if self.capitalize:
+            transcription = transcription.capitalize_sentences()
 
         logger.info("Applying transcription overlay...")
         new_frames = []
