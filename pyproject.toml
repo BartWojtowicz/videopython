@@ -186,9 +186,11 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/videopython"]
+artifacts = ["src/videopython/base/fonts/*.ttf", "src/videopython/base/fonts/LICENSE_DEJAVU"]
 
 [tool.hatch.build.targets.sdist]
 include = ["src/videopython", "src/videopython/py.typed"]
+artifacts = ["src/videopython/base/fonts/*.ttf", "src/videopython/base/fonts/LICENSE_DEJAVU"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src/"]

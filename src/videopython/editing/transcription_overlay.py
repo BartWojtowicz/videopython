@@ -38,7 +38,10 @@ class TranscriptionOverlay(Effect):
     streamable: ClassVar[bool] = False
     requires: ClassVar[tuple[str, ...]] = ("transcription",)
 
-    font_filename: str = Field(description="Path to a .ttf font file for rendering subtitle text.")
+    font_filename: str | None = Field(
+        None,
+        description="Path to a .ttf font file for rendering subtitle text, or None for the bundled default font.",
+    )
     font_size: int = Field(40, ge=1, description="Base font size in pixels.")
     font_border_size: int = Field(
         2, ge=0, description="Outline thickness around each character in pixels. 0 = no outline."
