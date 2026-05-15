@@ -173,7 +173,7 @@ def decode_video(
         if frames_read == 0:
             raise ValueError("No frames were read from the video")
 
-        frames = frames[:frames_read]  # type: ignore
+        frames = frames[:frames_read]
 
         try:
             audio = Audio.from_path(path)

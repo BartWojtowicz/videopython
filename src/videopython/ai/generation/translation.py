@@ -170,7 +170,7 @@ class MarianTranslator:
         return f"Helsinki-NLP/opus-mt-{source_lang}-{target_lang}"
 
     def _init_local(self, source_lang: str, target_lang: str) -> None:
-        from transformers import MarianMTModel, MarianTokenizer  # type: ignore[attr-defined]
+        from transformers import MarianMTModel, MarianTokenizer
 
         model_name = self._get_local_model_name(source_lang, target_lang)
 

@@ -478,7 +478,7 @@ class SilenceRemoval(Operation):
             silences.append((prev_end, total_seconds))
         return silences
 
-    def apply(self, video: Video, transcription: Transcription | None = None) -> Video:  # type: ignore[override]
+    def apply(self, video: Video, transcription: Transcription | None = None) -> Video:
         if transcription is None:
             raise ValueError(
                 "SilenceRemoval requires transcription data. "
@@ -564,7 +564,7 @@ class SilenceRemoval(Operation):
             video.audio = video.audio.fit_to_duration(len(video.frames) / video.fps)
         return video
 
-    def predict_metadata(  # type: ignore[override]
+    def predict_metadata(
         self,
         meta: VideoMetadata,
         transcription: Transcription | None = None,

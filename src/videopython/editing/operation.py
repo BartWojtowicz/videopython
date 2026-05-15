@@ -169,9 +169,8 @@ class Operation(BaseModel):
 
         The runner passes pipeline-context values listed in ``cls.requires``
         as keyword arguments (e.g. ``transcription=...``). Subclasses that
-        declare ``requires`` should override with a wider signature -- e.g.
-        ``def apply(self, video, transcription=None) -> Video`` -- and add
-        ``# type: ignore[override]`` to mute the mypy LSP warning.
+        declare ``requires`` widen the signature accordingly -- e.g.
+        ``def apply(self, video, transcription=None) -> Video``.
         """
         raise NotImplementedError(f"{type(self).__name__}.apply not implemented")
 
@@ -206,7 +205,7 @@ class Effect(Operation):
         description="Time window for the effect in seconds. Omit to apply across the full duration.",
     )
 
-    def apply(self, video: Video, **context: Any) -> Video:  # type: ignore[override]
+    def apply(self, video: Video, **context: Any) -> Video:
         from videopython.base.video import Video as _Video
 
         original_shape = video.video_shape
@@ -232,7 +231,7 @@ class Effect(Operation):
             )
         return result
 
-    def predict_metadata(self, meta: VideoMetadata, **_context: Any) -> VideoMetadata:  # type: ignore[override]
+    def predict_metadata(self, meta: VideoMetadata, **_context: Any) -> VideoMetadata:
         """Effects preserve shape and frame count, so the prediction is identity.
 
         Accepts ``**_context`` so requires-aware effects (``TranscriptionOverlay``)
