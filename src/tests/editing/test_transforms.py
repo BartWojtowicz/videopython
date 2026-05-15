@@ -54,14 +54,16 @@ def test_cut_seconds(start, end, small_video):
 def test_video_resize(height, width, small_video):
     """Tests Video.resize."""
 
+    source = small_video.copy()
+    original_first_frame = source.frames[0].copy()
     resample = Resize(height=height, width=width)
-    video = resample.apply(small_video)
+    video = resample.apply(source)
 
     assert video.frames.shape[1:3] == (height, width)
     assert np.all(
         video.frames[0]
         == cv2.resize(
-            small_video.frames[0],
+            original_first_frame,
             (width, height),
             interpolation=cv2.INTER_AREA,
         )

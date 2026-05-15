@@ -43,6 +43,16 @@ __all__ = [
     "Fade",
     "VolumeAdjust",
     "TextOverlay",
+    "Shake",
+    "PunchIn",
+    "Flash",
+    "ChromaticAberration",
+    "Glitch",
+    "FilmGrain",
+    "Sharpen",
+    "Pixelate",
+    "MirrorFlip",
+    "Kaleidoscope",
 ]
 
 
@@ -762,4 +772,641 @@ class TextOverlay(Effect):
             blended = (overlay_rgb * alpha + region.astype(np.float32) * (1.0 - alpha)).astype(np.uint8)
             frame[dst_y : dst_y + paste_h, dst_x : dst_x + paste_w] = blended
 
+        return video
+
+
+class Shake(Effect):
+    """Per-frame camera shake: jitters every frame by a random or rhythmic offset.
+
+    The frame is translated by ``(dx, dy)`` and cropped back to the original
+    canvas, so the visible area shrinks slightly at the edges. Useful for
+    reaction emphasis, impact moments, or music-synced vibration.
+    """
+
+    op: Literal["shake"] = "shake"
+    streamable: ClassVar[bool] = True
+
+    intensity_px: float = Field(
+        gt=0,
+        description="Maximum displacement in pixels at peak intensity (e.g. 5 = subtle, 20 = heavy).",
+    )
+    mode: Literal["random", "rhythmic", "decay"] = Field(
+        "random",
+        description=(
+            '"random" jitters independently each frame, "rhythmic" oscillates as a sine wave, '
+            '"decay" starts at full intensity and fades to zero.'
+        ),
+    )
+    frequency_hz: float = Field(
+        8.0,
+        gt=0,
+        description='Oscillation frequency for "rhythmic" mode. Ignored for other modes.',
+    )
+    seed: int = Field(
+        0,
+        description='Seed for the random number generator (used in "random" mode). Same seed = reproducible.',
+    )
+
+    _stream_offsets: np.ndarray | None = PrivateAttr(default=None)
+
+    def _compute_offsets(self, n_frames: int, fps: float) -> np.ndarray:
+        offsets = np.zeros((n_frames, 2), dtype=np.float32)
+        if self.mode == "random":
+            rng = np.random.default_rng(self.seed)
+            offsets[:] = rng.uniform(-self.intensity_px, self.intensity_px, size=(n_frames, 2))
+        elif self.mode == "rhythmic":
+            t = np.arange(n_frames, dtype=np.float32) / max(fps, 1e-6)
+            phase = 2 * np.pi * self.frequency_hz * t
+            offsets[:, 0] = self.intensity_px * np.sin(phase)
+            offsets[:, 1] = self.intensity_px * np.cos(phase)
+        else:  # decay
+            rng = np.random.default_rng(self.seed)
+            envelope = np.linspace(1.0, 0.0, n_frames, dtype=np.float32)
+            jitter = rng.uniform(-1.0, 1.0, size=(n_frames, 2)).astype(np.float32)
+            offsets[:] = jitter * envelope[:, np.newaxis] * self.intensity_px
+        return offsets
+
+    def _shake_frame(self, frame: np.ndarray, dx: float, dy: float) -> np.ndarray:
+        h, w = frame.shape[:2]
+        M = np.array([[1.0, 0.0, dx], [0.0, 1.0, dy]], dtype=np.float32)
+        return cv2.warpAffine(frame, M, (w, h), borderMode=cv2.BORDER_REFLECT)
+
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+        self._stream_offsets = self._compute_offsets(total_frames, fps)
+
+    def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
+        assert self._stream_offsets is not None
+        idx = min(frame_index, len(self._stream_offsets) - 1)
+        dx, dy = self._stream_offsets[idx]
+        return self._shake_frame(frame, float(dx), float(dy))
+
+    def _apply(self, video: Video) -> Video:
+        offsets = self._compute_offsets(len(video.frames), video.fps)
+        for i in tqdm(range(len(video.frames)), desc="Shaking"):
+            dx, dy = offsets[i]
+            video.frames[i] = self._shake_frame(video.frames[i], float(dx), float(dy))
+        return video
+
+
+class PunchIn(Effect):
+    """Snap-zoom emphasis: rapidly zooms into the center, holds, optionally releases.
+
+    Different from ``Zoom`` (which ramps continuously over the whole clip).
+    ``PunchIn`` reaches the target zoom in ``attack_frames`` and stays there;
+    if ``release_frames > 0`` it eases back out at the end.
+    """
+
+    op: Literal["punch_in"] = "punch_in"
+    streamable: ClassVar[bool] = True
+
+    zoom_factor: float = Field(
+        gt=1.0,
+        description="Target zoom level. 1.2 is subtle emphasis, 1.5 is moderate, 2.0+ is dramatic.",
+    )
+    attack_frames: int = Field(
+        3,
+        ge=0,
+        description="Frames to reach full zoom from 1.0. 0 = instant snap, 3 = ~one beat at 30fps.",
+    )
+    release_frames: int = Field(
+        0,
+        ge=0,
+        description="Frames at the end to ease zoom back to 1.0. 0 = stays zoomed.",
+    )
+
+    _stream_zooms: np.ndarray | None = PrivateAttr(default=None)
+    _stream_width: int = PrivateAttr(default=0)
+    _stream_height: int = PrivateAttr(default=0)
+
+    def _zoom_envelope(self, n_frames: int) -> np.ndarray:
+        zooms = np.full(n_frames, self.zoom_factor, dtype=np.float32)
+        attack = min(self.attack_frames, n_frames)
+        if attack > 0:
+            t = np.linspace(0.0, 1.0, attack, dtype=np.float32)
+            ease = 1.0 - (1.0 - t) * (1.0 - t)  # ease_out
+            zooms[:attack] = 1.0 + (self.zoom_factor - 1.0) * ease
+        release = min(self.release_frames, n_frames - attack)
+        if release > 0:
+            t = np.linspace(1.0, 0.0, release, dtype=np.float32)
+            ease = 1.0 - (1.0 - t) * (1.0 - t)
+            zooms[-release:] = 1.0 + (self.zoom_factor - 1.0) * ease
+        return zooms
+
+    def _zoom_frame(self, frame: np.ndarray, zoom: float, width: int, height: int) -> np.ndarray:
+        if zoom <= 1.0 + 1e-6:
+            return frame
+        crop_w = max(1, int(width / zoom))
+        crop_h = max(1, int(height / zoom))
+        x = (width - crop_w) // 2
+        y = (height - crop_h) // 2
+        cropped = frame[y : y + crop_h, x : x + crop_w]
+        return cv2.resize(cropped, (width, height), interpolation=cv2.INTER_LINEAR)
+
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+        self._stream_zooms = self._zoom_envelope(total_frames)
+        self._stream_width = width
+        self._stream_height = height
+
+    def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
+        assert self._stream_zooms is not None
+        idx = min(frame_index, len(self._stream_zooms) - 1)
+        return self._zoom_frame(frame, float(self._stream_zooms[idx]), self._stream_width, self._stream_height)
+
+    def _apply(self, video: Video) -> Video:
+        n = len(video.frames)
+        height, width = video.frame_shape[:2]
+        zooms = self._zoom_envelope(n)
+        for i in tqdm(range(n), desc="Punching in"):
+            video.frames[i] = self._zoom_frame(video.frames[i], float(zooms[i]), width, height)
+        return video
+
+
+class Flash(Effect):
+    """Solid-color frame flash that fades in over ``attack_frames`` and out over ``decay_frames``.
+
+    Commonly used between hard cuts, on impact moments, or as a strobe. The
+    flash color is blended over the source using an alpha curve that peaks
+    at ``peak_alpha`` in the middle of the window.
+    """
+
+    op: Literal["flash"] = "flash"
+    streamable: ClassVar[bool] = True
+
+    color: tuple[int, int, int] = Field(
+        (255, 255, 255),
+        description="Flash color as [R, G, B] each 0-255. (255,255,255) is white, (0,0,0) is a blackout.",
+    )
+    peak_alpha: float = Field(
+        1.0,
+        gt=0.0,
+        le=1.0,
+        description="Maximum opacity of the flash. 1.0 fully replaces the frame at peak, 0.5 is a half-blend.",
+    )
+    attack_frames: int = Field(
+        2,
+        ge=0,
+        description="Frames to ramp from 0 alpha to peak. 0 = instant cut to color.",
+    )
+    decay_frames: int = Field(
+        4,
+        ge=0,
+        description="Frames to ramp from peak back to 0. 0 = abrupt end.",
+    )
+
+    _stream_alpha: np.ndarray | None = PrivateAttr(default=None)
+    _stream_color: np.ndarray | None = PrivateAttr(default=None)
+
+    def _alpha_envelope(self, n_frames: int) -> np.ndarray:
+        alpha = np.zeros(n_frames, dtype=np.float32)
+        attack = min(self.attack_frames, n_frames)
+        if attack > 0:
+            alpha[:attack] = np.linspace(0.0, self.peak_alpha, attack, dtype=np.float32)
+        else:
+            alpha[: max(1, attack)] = self.peak_alpha
+        decay = min(self.decay_frames, n_frames - attack)
+        if decay > 0:
+            alpha[attack : attack + decay] = np.linspace(self.peak_alpha, 0.0, decay, dtype=np.float32)
+        if attack + decay < n_frames:
+            alpha[attack + decay :] = 0.0
+        # If attack is 0 and decay is 0, hold peak for the whole window
+        if attack == 0 and decay == 0:
+            alpha[:] = self.peak_alpha
+        return alpha
+
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+        self._stream_alpha = self._alpha_envelope(total_frames)
+        self._stream_color = np.array(self.color, dtype=np.float32)
+
+    def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
+        assert self._stream_alpha is not None and self._stream_color is not None
+        idx = min(frame_index, len(self._stream_alpha) - 1)
+        a = float(self._stream_alpha[idx])
+        if a <= 0:
+            return frame
+        return (frame.astype(np.float32) * (1.0 - a) + self._stream_color * a).astype(np.uint8)
+
+    def _apply(self, video: Video) -> Video:
+        n = len(video.frames)
+        alpha = self._alpha_envelope(n)
+        color = np.array(self.color, dtype=np.float32)
+        for i in tqdm(range(n), desc="Flashing"):
+            a = float(alpha[i])
+            if a <= 0:
+                continue
+            video.frames[i] = (video.frames[i].astype(np.float32) * (1.0 - a) + color * a).astype(np.uint8)
+        return video
+
+
+class ChromaticAberration(Effect):
+    """Splits R and B channels by ``shift_px`` to mimic lens chromatic aberration.
+
+    A defining look of glitch / vaporwave / experimental edits. Use a small
+    shift (1-3 px) for a stylistic edge, larger (8+ px) for impact frames.
+    """
+
+    op: Literal["chromatic_aberration"] = "chromatic_aberration"
+    streamable: ClassVar[bool] = True
+
+    shift_px: int = Field(
+        gt=0,
+        description="Channel displacement in pixels. 2 is subtle, 6 is noticeable, 12+ is dramatic.",
+    )
+    mode: Literal["horizontal", "vertical", "radial"] = Field(
+        "horizontal",
+        description=(
+            '"horizontal" shifts R/B sideways, "vertical" shifts them up/down, '
+            '"radial" scales R outward and B inward from the center (lens-like).'
+        ),
+    )
+
+    _stream_maps: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None = PrivateAttr(default=None)
+
+    def _build_radial_maps(self, width: int, height: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        cx, cy = width / 2.0, height / 2.0
+        max_d = float(max(width, height))
+        scale_r = 1.0 - self.shift_px / max_d  # red sampled from slightly outward
+        scale_b = 1.0 + self.shift_px / max_d  # blue sampled from slightly inward
+        y, x = np.mgrid[0:height, 0:width].astype(np.float32)
+        r_map_x = (x - cx) * scale_r + cx
+        r_map_y = (y - cy) * scale_r + cy
+        b_map_x = (x - cx) * scale_b + cx
+        b_map_y = (y - cy) * scale_b + cy
+        return r_map_x, r_map_y, b_map_x, b_map_y
+
+    def _aberrate(self, frame: np.ndarray) -> np.ndarray:
+        h, w = frame.shape[:2]
+        out = frame.copy()
+        r = frame[:, :, 0]
+        b = frame[:, :, 2]
+        if self.mode == "horizontal":
+            M_r = np.array([[1.0, 0.0, float(self.shift_px)], [0.0, 1.0, 0.0]], dtype=np.float32)
+            M_b = np.array([[1.0, 0.0, float(-self.shift_px)], [0.0, 1.0, 0.0]], dtype=np.float32)
+            out[:, :, 0] = cv2.warpAffine(r, M_r, (w, h), borderMode=cv2.BORDER_REPLICATE)
+            out[:, :, 2] = cv2.warpAffine(b, M_b, (w, h), borderMode=cv2.BORDER_REPLICATE)
+        elif self.mode == "vertical":
+            M_r = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, float(self.shift_px)]], dtype=np.float32)
+            M_b = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, float(-self.shift_px)]], dtype=np.float32)
+            out[:, :, 0] = cv2.warpAffine(r, M_r, (w, h), borderMode=cv2.BORDER_REPLICATE)
+            out[:, :, 2] = cv2.warpAffine(b, M_b, (w, h), borderMode=cv2.BORDER_REPLICATE)
+        else:  # radial
+            if self._stream_maps is None:
+                self._stream_maps = self._build_radial_maps(w, h)
+            r_map_x, r_map_y, b_map_x, b_map_y = self._stream_maps
+            out[:, :, 0] = cv2.remap(r, r_map_x, r_map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+            out[:, :, 2] = cv2.remap(b, b_map_x, b_map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+        return out
+
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+        if self.mode == "radial":
+            self._stream_maps = self._build_radial_maps(width, height)
+
+    def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
+        return self._aberrate(frame)
+
+    def _apply(self, video: Video) -> Video:
+        h, w = video.frame_shape[:2]
+        if self.mode == "radial":
+            self._stream_maps = self._build_radial_maps(w, h)
+        for i in tqdm(range(len(video.frames)), desc="Chromatic aberration"):
+            video.frames[i] = self._aberrate(video.frames[i])
+        return video
+
+
+class Glitch(Effect):
+    """Random horizontal slice displacement + channel offsets for a digital-corruption look.
+
+    Each frame gets a fresh set of slices shuffled left/right plus a small R/B
+    channel shift. Deterministic given ``seed`` -- the same plan produces the
+    same glitch every run.
+    """
+
+    op: Literal["glitch"] = "glitch"
+    streamable: ClassVar[bool] = True
+
+    intensity: float = Field(
+        0.5,
+        gt=0.0,
+        le=1.0,
+        description="Overall glitch strength. 0.2 = subtle, 0.5 = moderate, 1.0 = chaotic.",
+    )
+    slice_count: int = Field(
+        12,
+        gt=0,
+        description="Number of horizontal slices displaced per frame. More slices = more granular corruption.",
+    )
+    channel_shift_px: int = Field(
+        4,
+        ge=0,
+        description="Pixels to shift R/B channels for the chromatic-aberration component. 0 disables it.",
+    )
+    seed: int = Field(0, description="Seed for the per-frame RNG. Same seed = reproducible glitch.")
+
+    def _glitch_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
+        h, w = frame.shape[:2]
+        rng = np.random.default_rng(self.seed + frame_index)
+        out = frame.copy()
+
+        max_shift = int(self.intensity * w * 0.15)
+        if max_shift > 0 and self.slice_count > 0:
+            edges = np.sort(rng.integers(0, h, size=self.slice_count + 1))
+            edges[0] = 0
+            edges[-1] = h
+            for i in range(self.slice_count):
+                y0, y1 = int(edges[i]), int(edges[i + 1])
+                if y1 <= y0:
+                    continue
+                shift = int(rng.integers(-max_shift, max_shift + 1))
+                if shift == 0:
+                    continue
+                out[y0:y1] = np.roll(out[y0:y1], shift, axis=1)
+
+        if self.channel_shift_px > 0:
+            s = int(self.channel_shift_px * self.intensity) or 1
+            out[:, :, 0] = np.roll(out[:, :, 0], s, axis=1)
+            out[:, :, 2] = np.roll(out[:, :, 2], -s, axis=1)
+
+        return out
+
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+        return None
+
+    def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
+        return self._glitch_frame(frame, frame_index)
+
+    def _apply(self, video: Video) -> Video:
+        for i in tqdm(range(len(video.frames)), desc="Glitching"):
+            video.frames[i] = self._glitch_frame(video.frames[i], i)
+        return video
+
+
+class FilmGrain(Effect):
+    """Additive Gaussian noise simulating film grain.
+
+    Seeded per-frame so renders are reproducible. ``monochrome=True`` keeps
+    the noise luma-only (cinematic), False adds independent RGB noise
+    (digital / 8-bit look).
+    """
+
+    op: Literal["film_grain"] = "film_grain"
+    streamable: ClassVar[bool] = True
+
+    intensity: float = Field(
+        0.1,
+        gt=0.0,
+        le=1.0,
+        description="Noise standard deviation as a fraction of full-scale. 0.05 subtle, 0.2 heavy.",
+    )
+    monochrome: bool = Field(
+        True,
+        description="True applies the same noise to all RGB channels (luma-only). False uses per-channel noise.",
+    )
+    seed: int = Field(0, description="Seed for the noise RNG. Same seed = same grain pattern.")
+
+    def _grain_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
+        rng = np.random.default_rng(self.seed + frame_index)
+        h, w = frame.shape[:2]
+        amp = self.intensity * 255.0
+        if self.monochrome:
+            noise = rng.standard_normal((h, w, 1), dtype=np.float32) * amp
+        else:
+            noise = rng.standard_normal((h, w, 3), dtype=np.float32) * amp
+        return np.clip(frame.astype(np.float32) + noise, 0, 255).astype(np.uint8)
+
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+        return None
+
+    def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
+        return self._grain_frame(frame, frame_index)
+
+    def _apply(self, video: Video) -> Video:
+        for i in tqdm(range(len(video.frames)), desc="Adding grain"):
+            video.frames[i] = self._grain_frame(video.frames[i], i)
+        return video
+
+
+class Sharpen(Effect):
+    """Unsharp-mask sharpening: blur the frame and subtract from itself with weight.
+
+    ``amount=0`` returns the original frame; higher values produce a crisper
+    look at the cost of edge halos.
+    """
+
+    op: Literal["sharpen"] = "sharpen"
+    streamable: ClassVar[bool] = True
+
+    amount: float = Field(
+        1.0,
+        ge=0.0,
+        le=3.0,
+        description="Sharpening strength. 0.5 is subtle, 1.0 moderate, 2.0+ aggressive (may cause halos).",
+    )
+    kernel_size: int = Field(
+        5,
+        ge=3,
+        description="Gaussian blur kernel size used to build the unsharp mask. Must be odd; larger = wider halos.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_kernel(self) -> Sharpen:
+        if self.kernel_size % 2 == 0:
+            raise ValueError(f"kernel_size must be odd, got {self.kernel_size}")
+        return self
+
+    def _sharpen_frame(self, frame: np.ndarray) -> np.ndarray:
+        if self.amount == 0:
+            return frame
+        blurred = cv2.GaussianBlur(frame, (self.kernel_size, self.kernel_size), 0)
+        sharpened = cv2.addWeighted(frame, 1.0 + self.amount, blurred, -self.amount, 0)
+        return sharpened
+
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+        return None
+
+    def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
+        return self._sharpen_frame(frame)
+
+    def _apply(self, video: Video) -> Video:
+        for i in tqdm(range(len(video.frames)), desc="Sharpening"):
+            video.frames[i] = self._sharpen_frame(video.frames[i])
+        return video
+
+
+class Pixelate(Effect):
+    """Mosaic blocks: downscale + nearest-neighbour upscale, optionally limited to a region.
+
+    Useful for face censoring (combine with ``BoundingBox`` from face
+    detection) or a stylistic 8-bit look.
+    """
+
+    op: Literal["pixelate"] = "pixelate"
+    streamable: ClassVar[bool] = True
+
+    block_size: int = Field(
+        gt=1,
+        description="Mosaic block size in pixels. 8 is coarse, 32 is censor-grade, 64 is heavy.",
+    )
+    region: BoundingBox | None = Field(
+        None,
+        description="Optional normalized region (0-1) to pixelate. None = full frame.",
+    )
+
+    _stream_region_px: tuple[int, int, int, int] | None = PrivateAttr(default=None)
+
+    def _resolve_region(self, width: int, height: int) -> tuple[int, int, int, int]:
+        if self.region is None:
+            return 0, 0, width, height
+        x = max(0, int(self.region.x * width))
+        y = max(0, int(self.region.y * height))
+        w = max(1, min(int(self.region.width * width), width - x))
+        h = max(1, min(int(self.region.height * height), height - y))
+        return x, y, w, h
+
+    def _pixelate_frame(self, frame: np.ndarray, region: tuple[int, int, int, int]) -> np.ndarray:
+        x, y, w, h = region
+        crop = frame[y : y + h, x : x + w]
+        small_w = max(1, w // self.block_size)
+        small_h = max(1, h // self.block_size)
+        small = cv2.resize(crop, (small_w, small_h), interpolation=cv2.INTER_LINEAR)
+        big = cv2.resize(small, (w, h), interpolation=cv2.INTER_NEAREST)
+        frame[y : y + h, x : x + w] = big
+        return frame
+
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+        self._stream_region_px = self._resolve_region(width, height)
+
+    def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
+        assert self._stream_region_px is not None
+        return self._pixelate_frame(frame, self._stream_region_px)
+
+    def _apply(self, video: Video) -> Video:
+        h, w = video.frame_shape[:2]
+        region = self._resolve_region(w, h)
+        for i in tqdm(range(len(video.frames)), desc="Pixelating"):
+            video.frames[i] = self._pixelate_frame(video.frames[i], region)
+        return video
+
+
+class MirrorFlip(Effect):
+    """Flip frames or reflect one half onto the other.
+
+    ``horizontal`` / ``vertical`` are plain mirror flips. The ``mirror_*``
+    modes reflect one half of the frame onto the opposite half, producing
+    a symmetric image with the chosen half preserved.
+    """
+
+    op: Literal["mirror_flip"] = "mirror_flip"
+    streamable: ClassVar[bool] = True
+
+    mode: Literal[
+        "horizontal",
+        "vertical",
+        "mirror_left",
+        "mirror_right",
+        "mirror_top",
+        "mirror_bottom",
+    ] = Field(
+        description=(
+            '"horizontal" / "vertical" flip the whole frame. '
+            '"mirror_left" reflects the left half onto the right (and analogously for the other mirror_ modes).'
+        ),
+    )
+
+    def _flip_frame(self, frame: np.ndarray) -> np.ndarray:
+        h, w = frame.shape[:2]
+        if self.mode == "horizontal":
+            return cv2.flip(frame, 1)
+        if self.mode == "vertical":
+            return cv2.flip(frame, 0)
+
+        out = frame.copy()
+        if self.mode == "mirror_left":
+            half = w // 2
+            out[:, w - half :] = out[:, :half][:, ::-1]
+        elif self.mode == "mirror_right":
+            half = w // 2
+            out[:, :half] = out[:, w - half :][:, ::-1]
+        elif self.mode == "mirror_top":
+            half = h // 2
+            out[h - half :, :] = out[:half, :][::-1, :]
+        else:  # mirror_bottom
+            half = h // 2
+            out[:half, :] = out[h - half :, :][::-1, :]
+        return out
+
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+        return None
+
+    def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
+        return self._flip_frame(frame)
+
+    def _apply(self, video: Video) -> Video:
+        for i in tqdm(range(len(video.frames)), desc="Mirroring"):
+            video.frames[i] = self._flip_frame(video.frames[i])
+        return video
+
+
+class Kaleidoscope(Effect):
+    """N-way radial mirror around the frame center.
+
+    Samples one wedge of the frame and reflects it ``segments`` times around
+    the center. The mapping is precomputed once per stream, so per-frame cost
+    is a single ``cv2.remap``.
+    """
+
+    op: Literal["kaleidoscope"] = "kaleidoscope"
+    streamable: ClassVar[bool] = True
+
+    segments: int = Field(
+        6,
+        ge=2,
+        le=24,
+        description="Number of mirror segments. 6 is a classic snowflake, 12 is dense, 2 is minimal.",
+    )
+    angle_offset: float = Field(
+        0.0,
+        description="Rotation of the kaleidoscope pattern in radians (e.g. pi/2 rotates by 90 degrees).",
+    )
+
+    _stream_map_x: np.ndarray | None = PrivateAttr(default=None)
+    _stream_map_y: np.ndarray | None = PrivateAttr(default=None)
+
+    def _build_maps(self, width: int, height: int) -> tuple[np.ndarray, np.ndarray]:
+        cx, cy = (width - 1) / 2.0, (height - 1) / 2.0
+        y, x = np.mgrid[0:height, 0:width].astype(np.float32)
+        dx = x - cx
+        dy = y - cy
+        r = np.sqrt(dx * dx + dy * dy)
+        theta = np.arctan2(dy, dx) - self.angle_offset
+
+        wedge = 2.0 * np.pi / self.segments
+        half_wedge = wedge * 0.5
+        theta_mod = np.mod(theta, wedge)
+        theta_folded = np.where(theta_mod > half_wedge, wedge - theta_mod, theta_mod)
+        theta_final = theta_folded + self.angle_offset
+
+        src_x = (cx + r * np.cos(theta_final)).astype(np.float32)
+        src_y = (cy + r * np.sin(theta_final)).astype(np.float32)
+        return src_x, src_y
+
+    def _kaleidoscope_frame(self, frame: np.ndarray) -> np.ndarray:
+        assert self._stream_map_x is not None and self._stream_map_y is not None
+        return cv2.remap(
+            frame,
+            self._stream_map_x,
+            self._stream_map_y,
+            cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_REFLECT,
+        )
+
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+        self._stream_map_x, self._stream_map_y = self._build_maps(width, height)
+
+    def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
+        return self._kaleidoscope_frame(frame)
+
+    def _apply(self, video: Video) -> Video:
+        h, w = video.frame_shape[:2]
+        self._stream_map_x, self._stream_map_y = self._build_maps(w, h)
+        for i in tqdm(range(len(video.frames)), desc="Kaleidoscope"):
+            video.frames[i] = self._kaleidoscope_frame(video.frames[i])
         return video

@@ -32,3 +32,15 @@ NORM_MINMAX: Final[int]
 
 # Image encoding parameters
 IMWRITE_JPEG_QUALITY: Final[int]
+
+# Border types
+BORDER_CONSTANT: Final[int]
+BORDER_REPLICATE: Final[int]
+BORDER_REFLECT: Final[int]
+BORDER_REFLECT_101: Final[int]
+BORDER_WRAP: Final[int]
+
+# Rotation codes
+ROTATE_90_CLOCKWISE: Final[int]
+ROTATE_180: Final[int]
+ROTATE_90_COUNTERCLOCKWISE: Final[int]

@@ -81,3 +81,40 @@ def imencode(
     img: npt.NDArray[_TImg],
     params: list[int] = ...,
 ) -> tuple[bool, npt.NDArray[np.uint8]]: ...
+def warpAffine(
+    src: npt.NDArray[_TImg],
+    M: npt.NDArray[np.float32 | np.float64],
+    dsize: _TSize,
+    dst: npt.NDArray[_TImg] = ...,
+    flags: int = ...,
+    borderMode: int = ...,
+    borderValue: float = ...,
+) -> npt.NDArray[_TImg]: ...
+def addWeighted(
+    src1: npt.NDArray[_TImg],
+    alpha: float,
+    src2: npt.NDArray[_TImg],
+    beta: float,
+    gamma: float,
+    dst: npt.NDArray[_TImg] = ...,
+    dtype: int = ...,
+) -> npt.NDArray[_TImg]: ...
+def flip(
+    src: npt.NDArray[_TImg],
+    flipCode: int,
+    dst: npt.NDArray[_TImg] = ...,
+) -> npt.NDArray[_TImg]: ...
+def remap(
+    src: npt.NDArray[_TImg],
+    map1: npt.NDArray[np.float32],
+    map2: npt.NDArray[np.float32],
+    interpolation: int,
+    dst: npt.NDArray[_TImg] = ...,
+    borderMode: int = ...,
+    borderValue: float = ...,
+) -> npt.NDArray[_TImg]: ...
+def rotate(
+    src: npt.NDArray[_TImg],
+    rotateCode: int,
+    dst: npt.NDArray[_TImg] = ...,
+) -> npt.NDArray[_TImg]: ...

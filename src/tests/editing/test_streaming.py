@@ -386,6 +386,48 @@ class TestStreamableEffects:
         result = self._run_effect({"op": "text_overlay", "text": "Test", "font_size": 24})
         assert result.frames.shape[0] > 0
 
+    def test_shake(self):
+        result = self._run_effect({"op": "shake", "intensity_px": 4.0, "mode": "random", "seed": 1})
+        assert result.frames.shape[0] > 0
+
+    def test_punch_in(self):
+        result = self._run_effect({"op": "punch_in", "zoom_factor": 1.5, "attack_frames": 3})
+        assert result.frames.shape[0] > 0
+
+    def test_flash(self):
+        result = self._run_effect(
+            {"op": "flash", "color": [255, 255, 255], "peak_alpha": 0.8, "attack_frames": 2, "decay_frames": 4}
+        )
+        assert result.frames.shape[0] > 0
+
+    def test_chromatic_aberration(self):
+        result = self._run_effect({"op": "chromatic_aberration", "shift_px": 4, "mode": "horizontal"})
+        assert result.frames.shape[0] > 0
+
+    def test_glitch(self):
+        result = self._run_effect({"op": "glitch", "intensity": 0.5, "seed": 7})
+        assert result.frames.shape[0] > 0
+
+    def test_film_grain(self):
+        result = self._run_effect({"op": "film_grain", "intensity": 0.1, "seed": 0})
+        assert result.frames.shape[0] > 0
+
+    def test_sharpen(self):
+        result = self._run_effect({"op": "sharpen", "amount": 1.0, "kernel_size": 5})
+        assert result.frames.shape[0] > 0
+
+    def test_pixelate(self):
+        result = self._run_effect({"op": "pixelate", "block_size": 16})
+        assert result.frames.shape[0] > 0
+
+    def test_mirror_flip(self):
+        result = self._run_effect({"op": "mirror_flip", "mode": "horizontal"})
+        assert result.frames.shape[0] > 0
+
+    def test_kaleidoscope(self):
+        result = self._run_effect({"op": "kaleidoscope", "segments": 6})
+        assert result.frames.shape[0] > 0
+
     def test_effect_with_window(self):
         """Effect with `window` should work in streaming."""
         plan = {
