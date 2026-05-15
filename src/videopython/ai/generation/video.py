@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from videopython.ai._device import log_device_initialization, select_device
+from videopython.ai._device import log_device_initialization, release_device_memory, select_device
 from videopython.base.video import Video
 
 if TYPE_CHECKING:
@@ -29,22 +29,21 @@ class TextToVideo:
     def __init__(self, device: str | None = None):
         self.device = device
         self._pipeline: Any = None
-        self._device: str | None = None
 
     def _init_local(self) -> None:
         from diffusers import CogVideoXPipeline
 
         requested_device = self.device
-        self._device, dtype = _get_torch_device_and_dtype(self.device)
+        device, dtype = _get_torch_device_and_dtype(self.device)
 
         model_name = "THUDM/CogVideoX1.5-5B"
         self._pipeline = CogVideoXPipeline.from_pretrained(model_name, torch_dtype=dtype)
-        self._pipeline.to(self._device)
-        self.device = self._device
+        self._pipeline.to(device)
+        self.device = device
         log_device_initialization(
             "TextToVideo",
             requested_device=requested_device,
-            resolved_device=self._device,
+            resolved_device=device,
         )
 
     def generate_video(
@@ -65,10 +64,15 @@ class TextToVideo:
             num_inference_steps=num_steps,
             num_frames=num_frames,
             guidance_scale=guidance_scale,
-            generator=torch.Generator(device=self._device).manual_seed(42),
+            generator=torch.Generator(device=self.device).manual_seed(42),
         ).frames[0]
         video_frames = np.asarray(video_frames, dtype=np.uint8)
         return Video.from_frames(video_frames, fps=16.0)
+
+    def unload(self) -> None:
+        """Release the diffusion pipeline so the next generate_video() re-initializes."""
+        self._pipeline = None
+        release_device_memory(self.device)
 
 
 class ImageToVideo:
@@ -77,22 +81,21 @@ class ImageToVideo:
     def __init__(self, device: str | None = None):
         self.device = device
         self._pipeline: Any = None
-        self._device: str | None = None
 
     def _init_local(self) -> None:
         from diffusers import CogVideoXImageToVideoPipeline
 
         requested_device = self.device
-        self._device, dtype = _get_torch_device_and_dtype(self.device)
+        device, dtype = _get_torch_device_and_dtype(self.device)
 
         model_name = "THUDM/CogVideoX1.5-5B-I2V"
         self._pipeline = CogVideoXImageToVideoPipeline.from_pretrained(model_name, torch_dtype=dtype)
-        self._pipeline.to(self._device)
-        self.device = self._device
+        self._pipeline.to(device)
+        self.device = device
         log_device_initialization(
             "ImageToVideo",
             requested_device=requested_device,
-            resolved_device=self._device,
+            resolved_device=device,
         )
 
     def generate_video(
@@ -115,7 +118,12 @@ class ImageToVideo:
             num_inference_steps=num_steps,
             num_frames=num_frames,
             guidance_scale=guidance_scale,
-            generator=torch.Generator(device=self._device).manual_seed(42),
+            generator=torch.Generator(device=self.device).manual_seed(42),
         ).frames[0]
         video_frames = np.asarray(video_frames, dtype=np.uint8)
         return Video.from_frames(video_frames, fps=16.0)
+
+    def unload(self) -> None:
+        """Release the diffusion pipeline so the next generate_video() re-initializes."""
+        self._pipeline = None
+        release_device_memory(self.device)

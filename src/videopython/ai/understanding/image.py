@@ -11,7 +11,7 @@ from typing import Any, Literal
 import numpy as np
 from PIL import Image
 
-from videopython.ai._device import log_device_initialization, select_device
+from videopython.ai._device import log_device_initialization, release_device_memory, select_device
 from videopython.base.description import SceneDescription
 
 logger = logging.getLogger(__name__)
@@ -190,16 +190,7 @@ class SceneVLM:
         """
         self._model = None
         self._processor = None
-        try:
-            import gc
-
-            import torch
-
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        except ImportError:
-            pass
+        release_device_memory(self.device)
 
     def _downscale_image(self, img: Image.Image) -> Image.Image:
         """Downscale image to fit within max_image_pixels budget, preserving aspect ratio."""
