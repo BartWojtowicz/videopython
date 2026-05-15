@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from videopython.ai._device import select_device
 from videopython.ai.dubbing import expressiveness, loudness, voice_sample
-from videopython.ai.dubbing.config import DubbingConfig, TranslatorChoice, WhisperModel
+from videopython.ai.dubbing.config import DubbingConfig
 from videopython.ai.dubbing.models import DubbingResult, Expressiveness, RevoiceResult, SeparatedAudio, TimingSummary
 from videopython.ai.dubbing.quality import GarbageTranscriptError, assess_transcript
 from videopython.ai.dubbing.timing import TimingSynchronizer
@@ -25,8 +25,6 @@ if TYPE_CHECKING:
     from videopython.audio import Audio
     from videopython.base.transcription import Transcription
 
-
-__all__ = ["LocalDubbingPipeline", "TranslatorChoice", "WhisperModel"]
 
 logger = logging.getLogger(__name__)
 

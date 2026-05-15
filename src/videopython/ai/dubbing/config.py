@@ -30,18 +30,13 @@ class DubbingConfig(BaseModel):
     strict_quality: bool = False
     translator: TranslatorChoice = "auto"
 
-    @property
-    def requested_device(self) -> str:
-        """Lowercased device string for log lines (``"auto"`` when unset)."""
-        return self.device.lower() if isinstance(self.device, str) else "auto"
-
     def init_log_fields(self) -> dict[str, object]:
         """Subset of fields surfaced in the init-log line.
 
         Hand-picked so log noise stays bounded as the config grows.
         """
         return {
-            "device": self.requested_device,
+            "device": self.device.lower() if isinstance(self.device, str) else "auto",
             "low_memory": self.low_memory,
             "whisper_model": self.whisper_model,
             "translator": self.translator,
