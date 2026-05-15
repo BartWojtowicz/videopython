@@ -2,60 +2,50 @@
 
 ## Project structure
 
-Source code of the project can be found under `src/` directory, along with separate directories for unit tests and mypy stubs.
 ```
 .
 └── src
-    ├── stubs # Contains stubs for mypy
-    ├── tests # Unit tests
+    ├── stubs       # mypy stubs for untyped third-party packages
+    ├── tests       # Unit tests (mirrors the package tree)
     └── videopython # Library code
 ```
 
-----
+The `videopython` library is split into four subpackages, layered by dependency:
 
-The `videopython` library is divided into four top-level subpackages:
-* `videopython.base`: Data containers and I/O primitives — `Video`, `VideoMetadata`, `FrameIterator`, `ImageText`, `Transcription`, and the shared result types (`BoundingBox`, `DetectedFace`, `SceneBoundary`, ...). No editing logic; no AI imports.
-* `videopython.audio`: `Audio` data container plus audio analysis (`AudioLevels`, `SilentSegment`, segment classification). Depends on `base`.
-* `videopython.editing`: All editing primitives (`Operation`, `Effect`, transforms, effects, `TranscriptionOverlay`) and the plan runner (`VideoEdit`, `SegmentConfig`). Depends on `base` and `audio`.
-* `videopython.ai`: AI-powered generation, understanding, dubbing, and AI-only transforms. Has its own `ai` extra with the model dependencies. Depends on `base`, `audio`, and optionally `editing`.
+* `videopython.base` — `Video`, I/O primitives, shared result types. No AI imports.
+* `videopython.audio` — `Audio` container and analysis. Depends on `base`.
+* `videopython.editing` — `Operation`/`Effect` foundation and the `VideoEdit` plan runner. Depends on `base` and `audio`.
+* `videopython.ai` — generation, understanding, dubbing, and AI-only transforms. Depends on `base`, `audio`, and optionally `editing`. Only this subpackage requires the `[ai]` extra.
 
-Only `videopython.ai` requires the `[ai]` extra; the other three install with the default `pip install videopython` and contain no AI imports (enforced by `src/tests/test_import_isolation.py`).
+The "no AI imports in `base`/`audio`/`editing`" invariant is enforced by `src/tests/test_import_isolation.py`.
 
 ## Running locally
 
-We are using [uv](https://docs.astral.sh/uv/) as project and package manager. Once you clone the repo and install uv locally, you can use it to sync the dependencies.
+We use [uv](https://docs.astral.sh/uv/) as project and package manager. Once you clone the repo and install uv:
+
 ```bash
 uv sync --all-extras
 ```
 
 ### Running tests
 
-Tests mirror the package tree:
-
-- `src/tests/base/` - Tests for `videopython.base`
-- `src/tests/audio/` - Tests for `videopython.audio`
-- `src/tests/editing/` - Tests for `videopython.editing`
-- `src/tests/ai/` - Tests for `videopython.ai` (requires AI extras)
-- `src/tests/test_import_isolation.py` - Cross-subpackage check that `base`, `audio`, and `editing` import without pulling in any AI dependency
-
 ```bash
 # Non-AI tests (runs in CI)
 uv run pytest --ignore=src/tests/ai
 
-# AI tests - all (requires model downloads, run locally)
-uv run pytest src/tests/ai
-
-# AI tests - lightweight only (runs in CI)
+# AI tests, lightweight only (runs in CI)
 uv run pytest src/tests/ai -m "not requires_model_download"
+
+# AI tests, full suite (downloads model weights, run locally)
+uv run pytest src/tests/ai
 ```
 
-### AI test markers
+Heavy tests are marked `@pytest.mark.requires_model_download` and skipped in CI. The rest of the AI suite stays fast by monkey-patching the model classes with lightweight fakes.
 
-Tests requiring models 100MB+ are marked with `@pytest.mark.requires_model_download` and excluded from CI. The bulk of the AI test surface relies on monkey-patched fakes (see `_FakeSceneVLM`, `_FakeFaceTracker`, etc. in `src/tests/ai/test_video_analysis_scene_first.py`) so it stays fast and CI-friendly.
+### Linting & type checking
 
-`requires_model_download` is configured in `pyproject.toml` under `[tool.pytest.ini_options].markers` and is respected by `conftest.py`.
+[Pre-commit](https://pre-commit.com/) runs [Ruff](https://docs.astral.sh/ruff/) and [mypy](https://github.com/python/mypy) locally and in CI.
 
-We use [pre-commit](https://pre-commit.com/) to run [Ruff](https://docs.astral.sh/ruff/) and [mypy](https://github.com/python/mypy) checks locally, and CI runs the same hooks.
 ```bash
 # Install git pre-commit hook
 uv run pre-commit install
@@ -63,17 +53,28 @@ uv run pre-commit install
 # Run all configured hooks manually
 uv run pre-commit run --all-files
 
-# (Optional) run tools directly
+# Or run tools directly
 uv run ruff format src
 uv run ruff check src
 uv run mypy src
+```
+
+mypy stubs for untyped third-party packages live in `src/stubs/`.
+
+### Docs
+
+The docs site (published at [videopython.com](https://videopython.com)) is built with [MkDocs Material](https://squidfunk.github.io/mkdocs-material/) from the `docs/` directory:
+
+```bash
+uv run mkdocs serve   # live preview at http://127.0.0.1:8000
+uv run mkdocs build   # render the static site to ./site
 ```
 
 ## Releasing
 
 To release a new version:
 1. Update `version` in `pyproject.toml`
-2. Add a new section in `RELEASE_NOTES.md` with matching version (e.g., `## 0.7.0`)
+2. Add a new section in `RELEASE_NOTES.md` with the matching version (e.g., `## 0.7.0`)
 3. Push to `main`
 
-CI will validate that versions match, run tests, create a GitHub release, and publish to PyPI.
+CI will validate that the versions match, run tests, create a GitHub release, and publish to PyPI.

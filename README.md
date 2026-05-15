@@ -12,61 +12,24 @@ Full documentation: [videopython.com](https://videopython.com)
 
 ## Installation
 
-### 1. Install FFmpeg
-
 ```bash
-# macOS
-brew install ffmpeg
-
-# Ubuntu / Debian
-sudo apt-get install ffmpeg
-
-# Windows (Chocolatey)
-choco install ffmpeg
-```
-
-### 2. Install videopython
-
-```bash
+# Install FFmpeg first (macOS: brew install ffmpeg | Debian: apt-get install ffmpeg)
 pip install videopython          # core video/audio editing
 pip install "videopython[ai]"    # + local AI features (GPU recommended)
 ```
 
-Python `>=3.10, <3.14`. AI features run locally - no cloud API keys required, but model weights are downloaded on first use.
+Python `>=3.10, <3.14`. AI features run locally — no cloud API keys required, but model weights are downloaded on first use.
 
 ## Quick Start
 
-### Imperative editing
-
-Every editing primitive is an `Operation` subclass — a Pydantic model
-whose fields ARE the JSON wire format. Apply one to a `Video`:
-
-```python
-from videopython.base import Video
-from videopython.editing import CutSeconds, Resize, Fade
-
-video = Video.from_path("raw.mp4")
-video = CutSeconds(start=10, end=25).apply(video)
-video = Resize(width=1080, height=1920).apply(video)
-video = Fade(mode="in", duration=0.5).apply(video)
-video.save("output.mp4")
-```
-
-Concatenate clips with `+` (must share fps + dimensions):
-
-```python
-combined = video_a + video_b
-```
-
 ### JSON editing plans
 
-Define multi-segment edits as JSON — the format LLM-driven workflows
-generate against. `VideoEdit.json_schema()` returns the schema:
+A `VideoEdit` is a multi-segment plan, defined as a dict (or JSON), validated and executed against the source files:
 
 ```python
 from videopython.editing import VideoEdit
 
-plan = {
+edit = VideoEdit.from_dict({
     "segments": [{
         "source": "raw.mp4",
         "start": 10.0,
@@ -74,128 +37,40 @@ plan = {
         "operations": [
             {"op": "resize", "width": 1080, "height": 1920},
             {"op": "color_adjust", "saturation": 1.15, "contrast": 1.05},
-            {"op": "fade", "mode": "in", "duration": 0.5,
-             "window": {"stop": 0.5}},
+            {"op": "fade", "mode": "in", "duration": 0.5},
         ],
     }],
-}
-
-edit = VideoEdit.from_dict(plan)
+})
 edit.validate()                  # dry-run via metadata, no frames loaded
-edit.run_to_file("output.mp4")   # stream to disk, ~constant memory
+edit.run_to_file("output.mp4")   # streams ffmpeg decode → effects → encode
 ```
 
-`run_to_file()` pipes ffmpeg decode → per-frame effects → ffmpeg encode,
-so memory stays bounded even for hour-long sources. Use `edit.run()`
-instead if you want the result back in memory as a `Video`.
+`run_to_file()` streams ffmpeg decode → per-frame effects → encode, so memory stays bounded even for hour-long sources. Use `edit.run()` to get a `Video` back in memory instead.
 
 ### AI generation
 
 ```python
 from videopython.ai import TextToImage, ImageToVideo, TextToSpeech
-from videopython.editing import Resize
 
 image = TextToImage().generate_image("A cinematic mountain sunrise")
 video = ImageToVideo().generate_video(image=image)
 audio = TextToSpeech().generate_audio("Welcome to videopython.")
-
-video = Resize(width=1080, height=1920).apply(video)
 video.add_audio(audio).save("ai_video.mp4")
 ```
 
 ## LLM & AI Agent Integration
 
-The library is built for LLM-driven editing. Two surfaces matter:
+Every operation is a Pydantic model whose fields ARE the JSON wire format. `VideoEdit.json_schema()` returns a JSON Schema with a discriminated union over every registered `Operation` — pass it straight to Anthropic tool use, OpenAI function calling, or any structured-output API. Then `edit.validate()` dry-runs the plan via metadata before any frames are loaded, so a failed LLM output can be fed back as an error and retried cheaply.
 
-**1. Plan schema for tool / structured-output calls.**
-`VideoEdit.json_schema()` returns a JSON Schema covering segments,
-`post_operations`, and a discriminated union over every registered
-`Operation`. Drop it into any LLM API:
-
-```python
-from videopython.editing import VideoEdit
-
-schema = VideoEdit.json_schema()
-# Anthropic: tools=[{"name": "edit", "input_schema": schema}]
-# OpenAI:    tools=[{"type": "function",
-#                    "function": {"name": "edit", "parameters": schema}}]
-```
-
-Validate the LLM's output without touching the filesystem, then run it:
-
-```python
-edit = VideoEdit.from_dict(plan)
-edit.validate()                  # catches bad ops, time ranges, fps mismatches
-edit.run_to_file("output.mp4")
-```
-
-**2. Operation discovery for agent loops.**
-Every registered op exposes its own Pydantic schema, so an agent can
-introspect what's available without hardcoded lists:
-
-```python
-from videopython.editing import Operation, OpCategory
-
-for op_id, cls in Operation.registry().items():
-    print(f"{op_id}: {(cls.__doc__ or '').splitlines()[0]}")
-
-schema = Operation.get("color_adjust").model_json_schema()  # per-op schema
-```
-
-Field constraints (`minimum`, `maximum`, `enum`, `exclusiveMinimum`,
-nullability) flow through to the schema, so LLMs that support
-constrained generation produce valid parameters on the first try.
-
-For ops that need side-channel data (e.g. `silence_removal` and
-`add_subtitles` need a `Transcription`), pass it via `context`:
-
-```python
-edit.run(context={"transcription": my_transcription})
-```
-
-Docs: [Editing Plans](https://videopython.com/api/editing/) | [Operations](https://videopython.com/api/operations/) | [LLM Integration Guide](https://videopython.com/guides/llm-integration/)
+See the [LLM Integration Guide](https://videopython.com/guides/llm-integration/) for end-to-end examples, validation error loops, and operation discovery patterns.
 
 ## Features
 
-### `videopython.base` - data containers + I/O (no AI dependencies)
-
-| Area | Highlights |
-|---|---|
-| **Video I/O** | `Video`, `VideoMetadata`, `FrameIterator` - load, save, inspect |
-| **Text rendering** | `ImageText` - generic PIL text-on-image primitive |
-| **Transcription** | `Transcription`, `TranscriptionSegment`, `TranscriptionWord` - data classes returned by transcription backends |
-| **Result types** | `BoundingBox`, `DetectedFace`, `FaceTrack`, `SceneBoundary`, `AudioEvent`, `MotionInfo`, ... - shared by editing and AI |
-
-### `videopython.audio` - audio data container
-
-| Area | Highlights |
-|---|---|
-| **Audio** | `Audio`, `AudioMetadata` - load/save, overlay, concat, normalize, time-stretch, silence detection, segment classification |
-
-### `videopython.editing` - editing primitives + plan runner
-
-| Area | Highlights |
-|---|---|
-| **Operation foundation** | `Operation`, `Effect`, `TimeRange`, `OpCategory` - Pydantic base + auto-registry + discriminated-union schema |
-| **Editing plans** | `VideoEdit`, `SegmentConfig` - JSON/LLM-friendly multi-segment plans with JSON Schema generation, dry-run validation, and streaming `run_to_file` |
-| **Transforms** | Cut (time/frame), resize, crop, FPS resampling, speed change, reverse, freeze frame, silence removal |
-| **Effects** | Blur, zoom, color grading, vignette, Ken Burns, image overlay, fade, text overlay, volume adjust |
-| **Subtitles** | `TranscriptionOverlay` - animated word-by-word subtitle rendering |
-
-API docs: [Core](https://videopython.com/api/index/) | [Video](https://videopython.com/api/core/video/) | [Audio](https://videopython.com/api/core/audio/) | [Editing Plans](https://videopython.com/api/editing/) | [Operations](https://videopython.com/api/operations/) | [Transforms](https://videopython.com/api/transforms/) | [Effects](https://videopython.com/api/effects/) | [Text](https://videopython.com/api/text/)
-
-### `videopython.ai` - local AI features (install with `[ai]`)
-
-| Area | Highlights |
-|---|---|
-| **Generation** | `TextToVideo`, `ImageToVideo`, `TextToImage`, `TextToSpeech`, `TextToMusic` |
-| **Understanding** | `AudioToText` (transcription), `AudioClassifier`, `SceneVLM` (structured visual scene description), `FaceTracker` (per-shot face tracks) |
-| **Scene detection** | `SemanticSceneDetector` (neural scene boundaries) |
-| **Video analysis** | `VideoAnalyzer` - full-pipeline analysis combining multiple AI capabilities |
-| **Transforms** | `FaceTrackingCrop` |
-| **Dubbing** | `VideoDubber` - voice cloning and revoicing with timing sync |
-
-API docs: [Generation](https://videopython.com/api/ai/generation/) | [Understanding](https://videopython.com/api/ai/understanding/) | [Transforms](https://videopython.com/api/ai/transforms/) | [Dubbing](https://videopython.com/api/ai/dubbing/)
+- **`videopython.base`** — `Video`, `VideoMetadata`, `FrameIterator`, `ImageText`, `Transcription`, and shared result types (`BoundingBox`, `FaceTrack`, `SceneBoundary`, ...). No AI dependencies.
+- **`videopython.audio`** — `Audio` with overlay, concat, normalize, time-stretch, silence detection, segment classification.
+- **`videopython.editing`** — `Operation`/`Effect` foundation, `VideoEdit` plan runner with JSON Schema + streaming execution. Transforms (cut, resize, crop, fps, speed, reverse, freeze, silence removal) and effects (blur, zoom, color grading, vignette, Ken Burns, fade, overlays, animated subtitles).
+- **`videopython.ai`** *(install with `[ai]`)* — generation (`TextToVideo`, `ImageToVideo`, `TextToImage`, `TextToSpeech`, `TextToMusic`), understanding (`AudioToText`, `AudioClassifier`, `SceneVLM`, `FaceTracker`, `SemanticSceneDetector`), `FaceTrackingCrop` transform, and the full-pipeline `VideoAnalyzer`.
+- **`videopython.ai.dubbing`** — `VideoDubber` for voice-cloned revoicing with timing sync.
 
 ## Examples
 
