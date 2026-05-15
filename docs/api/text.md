@@ -30,6 +30,8 @@ video = Video.from_path("input.mp4")
 # transcription = ... (from AudioToText or manually created)
 
 overlay = TranscriptionOverlay(
+    # font_filename is optional; omit it (or pass None) to use the
+    # bundled default font. Pass a path to use your own .ttf/.otf.
     font_filename="path/to/font.ttf",
     font_size=40,
     highlight_color=(76, 175, 80),
