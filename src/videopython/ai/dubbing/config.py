@@ -13,9 +13,46 @@ WhisperModel = Literal["tiny", "base", "small", "medium", "large", "turbo"]
 class DubbingConfig(BaseModel):
     """Knobs shared by :class:`VideoDubber` and :class:`LocalDubbingPipeline`.
 
-    Replaces the nine constructor kwargs that used to be duplicated across
-    ``VideoDubber.__init__``, ``LocalDubbingPipeline.__init__``, and their
-    init-log lines. Adding a knob is now one edit.
+    Accepted as either ``config=DubbingConfig(...)`` or flat kwargs on the
+    two constructors; the flat path builds a ``DubbingConfig`` internally.
+
+    Attributes:
+        device: Execution device (``cpu``, ``cuda``, ``mps``, or ``None`` for auto).
+        low_memory: When True, each pipeline stage (Whisper, Demucs, MarianMT,
+            Chatterbox TTS) is unloaded from memory after it runs, so only one
+            model is resident at a time. Trades per-run latency (~10-30s of
+            extra model loads) for a much lower memory ceiling. Recommended
+            for GPUs with <=12GB VRAM or hosts with <32GB RAM. Default False.
+        whisper_model: Whisper model size used for transcription. Larger
+            models give better accuracy at the cost of VRAM and latency. One
+            of ``tiny``, ``base``, ``small``, ``medium``, ``large``, ``turbo``.
+            Default ``turbo``.
+        condition_on_previous_text: Forwarded to ``AudioToText``. Defaults to
+            ``False`` (Whisper's own default is ``True``). With conditioning
+            on, a single hallucinated filler phrase cascades through the rest
+            of the file. See ``AudioToText`` for the full rationale.
+        no_speech_threshold: Forwarded to ``AudioToText``. Whisper's
+            no-speech gate; raise to drop more low-confidence windows.
+        logprob_threshold: Forwarded to ``AudioToText``. Whisper's average
+            log-probability gate.
+        vocabulary: Forwarded to ``AudioToText``. Optional list of brand
+            names, product names, or proper nouns to bias Whisper's
+            first-window decoder via ``initial_prompt``. Recovers
+            near-mishears (e.g. Klarna -> "carna") on brand-monitoring
+            inputs without new model deps.
+        strict_quality: When True, the pipeline raises
+            :class:`GarbageTranscriptError` before Demucs/translation/TTS
+            run if the transcript-quality heuristic returns ``"reject"``.
+            When False (default), low-quality transcripts are logged at
+            WARNING but processing continues. Either way the
+            :class:`TranscriptQuality` is exposed on ``DubbingResult`` for
+            inspection.
+        translator: Translation backend to use. ``"auto"`` (default) picks
+            Qwen3 on GPU, MarianMT on CPU; ``"marian"`` and ``"qwen3"`` force
+            the named backend regardless of device. See
+            :class:`videopython.ai.generation.qwen3.Qwen3Translator` for
+            tradeoffs (Qwen3 is slower on CPU but produces context-aware,
+            length-budgeted output).
     """
 
     model_config = ConfigDict(frozen=True)

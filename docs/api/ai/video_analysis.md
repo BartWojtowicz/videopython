@@ -6,11 +6,12 @@ Create a single, serializable, scene-first analysis object.
 
 `VideoAnalyzer` runs global passes (transcription + scene detection), then for each detected scene runs the scene-VLM, audio classifier, and per-shot face tracker.
 
-`VideoAnalysis` can be serialized with:
-
-- `to_dict()` / `from_dict()`
-- `to_json()` / `from_json()`
-- `save()` / `load()`
+`VideoAnalysis` is a Pydantic model, so all `BaseModel` serialization
+methods are available — `model_dump()`, `model_dump_json()`,
+`model_validate()`, `model_validate_json()`. For the common file-I/O
+case, the convenience wrappers `analysis.save(path)` and
+`VideoAnalysis.load(path)` go through `model_dump_json` /
+`model_validate_json` with UTF-8 + parent directory creation.
 
 The output is centered on `analysis.scenes.samples` (one payload per scene).
 

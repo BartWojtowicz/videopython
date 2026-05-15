@@ -355,6 +355,31 @@ re-transcription).
 
 ::: videopython.ai.dubbing.VideoDubber
 
+## DubbingConfig
+
+Knobs shared by `VideoDubber` and `LocalDubbingPipeline`. Accept either
+`config=DubbingConfig(...)` or pass the same knobs as flat kwargs — the
+constructor builds a `DubbingConfig` internally.
+
+```python
+from videopython.ai.dubbing import DubbingConfig, VideoDubber
+
+# Flat kwargs (recommended for ad-hoc calls)
+dubber = VideoDubber(device="cuda", low_memory=True, whisper_model="large")
+
+# Explicit config (recommended for reusable presets)
+config = DubbingConfig(
+    device="cuda",
+    low_memory=True,
+    whisper_model="large",
+    translator="qwen3",
+    vocabulary=["Klarna", "Allegro"],
+)
+dubber = VideoDubber(config=config)
+```
+
+::: videopython.ai.dubbing.DubbingConfig
+
 ## DubbingResult
 
 Result of a dubbing operation containing the dubbed audio and metadata.
