@@ -13,7 +13,7 @@ import json
 import subprocess
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator, Sequence
+from typing import Any, Iterator, Sequence
 
 from videopython.base.exceptions import FFmpegProbeError, FFmpegRunError
 
@@ -44,7 +44,7 @@ def run(cmd: Sequence[str], *, stdin: bytes | None = None) -> bytes:
     return result.stdout
 
 
-def probe(path: str | Path, *, extra_args: Sequence[str] | None = None) -> dict:
+def probe(path: str | Path, *, extra_args: Sequence[str] | None = None) -> dict[str, Any]:
     """Run ffprobe and return the parsed JSON payload.
 
     Args:
@@ -76,7 +76,7 @@ def probe(path: str | Path, *, extra_args: Sequence[str] | None = None) -> dict:
         raise FFmpegProbeError(f"Error parsing ffprobe output: {e}") from e
 
 
-def _terminate(proc: subprocess.Popen, *, timeout: float = 5) -> None:
+def _terminate(proc: subprocess.Popen[bytes], *, timeout: float = 5) -> None:
     """Terminate a still-running process, escalating to kill after ``timeout``."""
     if proc.poll() is None:
         proc.terminate()
@@ -88,7 +88,7 @@ def _terminate(proc: subprocess.Popen, *, timeout: float = 5) -> None:
 
 
 @contextmanager
-def popen_decode(cmd: Sequence[str], *, bufsize: int = -1) -> Iterator[subprocess.Popen]:
+def popen_decode(cmd: Sequence[str], *, bufsize: int = -1) -> Iterator[subprocess.Popen[bytes]]:
     """Context manager wrapping an ffmpeg decode process.
 
     Yields a Popen with ``stdout=PIPE`` and ``stderr=DEVNULL``. Callers
@@ -116,7 +116,7 @@ def popen_decode(cmd: Sequence[str], *, bufsize: int = -1) -> Iterator[subproces
 
 
 @contextmanager
-def popen_encode(cmd: Sequence[str]) -> Iterator[subprocess.Popen]:
+def popen_encode(cmd: Sequence[str]) -> Iterator[subprocess.Popen[bytes]]:
     """Context manager wrapping an ffmpeg encode process via stdin pipe.
 
     Yields a Popen with ``stdin=PIPE``, ``stdout=DEVNULL``, and

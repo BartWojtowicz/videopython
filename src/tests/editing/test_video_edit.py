@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import numpy as np
@@ -27,8 +28,8 @@ def _segment(
     source: str = SMALL_VIDEO_PATH,
     start: float = 0.0,
     end: float = 2.0,
-    operations: list[dict] | None = None,
-) -> dict:
+    operations: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     return {
         "source": source,
         "start": start,
@@ -64,7 +65,7 @@ class TestConstruction:
 
     def test_extra_segment_key_rejected(self):
         with pytest.raises(ValidationError, match="extra_forbidden|Extra inputs"):
-            SegmentConfig(source=Path("a.mp4"), start=0, end=1, weird=42)  # type: ignore[call-arg]
+            SegmentConfig(source=Path("a.mp4"), start=0, end=1, weird=42)
 
 
 # ----------------------------------------------------------- parsing / serialization

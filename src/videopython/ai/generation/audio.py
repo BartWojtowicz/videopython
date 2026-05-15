@@ -33,7 +33,7 @@ class TextToSpeech:
         self._model: Any = None
 
     def _init_local(self) -> None:
-        from chatterbox.mtl_tts import ChatterboxMultilingualTTS  # type: ignore[import-untyped]
+        from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 
         requested_device = self.device
         device = select_device(self.device, mps_allowed=False)

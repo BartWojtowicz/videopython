@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 __all__ = ["Transcription", "TranscriptionSegment", "TranscriptionWord"]
 
@@ -13,7 +14,7 @@ class TranscriptionWord:
     word: str
     speaker: str | None = None
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
             "start": self.start,
@@ -23,7 +24,7 @@ class TranscriptionWord:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> TranscriptionWord:
+    def from_dict(cls, data: dict[str, Any]) -> TranscriptionWord:
         """Create TranscriptionWord from dictionary."""
         return cls(
             start=data["start"],
@@ -44,7 +45,7 @@ class TranscriptionSegment:
     no_speech_prob: float | None = None
     compression_ratio: float | None = None
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
             "start": self.start,
@@ -58,7 +59,7 @@ class TranscriptionSegment:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> TranscriptionSegment:
+    def from_dict(cls, data: dict[str, Any]) -> TranscriptionSegment:
         """Create TranscriptionSegment from dictionary."""
         return cls(
             start=data["start"],
@@ -98,8 +99,9 @@ class Transcription:
             self.segments = segments
             self.speakers = {s.speaker for s in segments if s.speaker is not None}
         else:
-            self.segments = self._words_to_segments(words)  # type: ignore
-            self.speakers = {w.speaker for w in words if w.speaker is not None}  # type: ignore
+            assert words is not None
+            self.segments = self._words_to_segments(words)
+            self.speakers = {w.speaker for w in words if w.speaker is not None}
 
     @property
     def words(self) -> list[TranscriptionWord]:
@@ -410,7 +412,7 @@ class Transcription:
         """
         Path(path).write_text(self.to_srt(), encoding="utf-8")
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
             "segments": [s.to_dict() for s in self.segments],
@@ -418,7 +420,7 @@ class Transcription:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> Transcription:
+    def from_dict(cls, data: dict[str, Any]) -> Transcription:
         """Create Transcription from dictionary."""
         return cls(
             segments=[TranscriptionSegment.from_dict(s) for s in data["segments"]],

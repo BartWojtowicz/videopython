@@ -5,7 +5,7 @@ import subprocess
 import wave
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -69,7 +69,7 @@ class Audio:
         return bool(np.all(np.abs(self.data) < 1e-7))
 
     @staticmethod
-    def _get_ffmpeg_info(file_path: Path) -> dict:
+    def _get_ffmpeg_info(file_path: Path) -> dict[str, Any]:
         """Get audio metadata using ffprobe"""
         try:
             info = _ffmpeg.probe(file_path)
@@ -483,7 +483,7 @@ class Audio:
         if first.metadata.channels == 1:
             output = np.zeros(total_samples, dtype=np.float32)
         else:
-            output = np.zeros((total_samples, 2), dtype=np.float32)  # type: ignore
+            output = np.zeros((total_samples, 2), dtype=np.float32)
 
         # Copy non-crossfaded portions
         crossfade_start = len(first.data) - crossfade_samples
@@ -761,7 +761,7 @@ class Audio:
         if base.metadata.channels == 1:
             output = np.zeros(total_length, dtype=np.float32)
         else:
-            output = np.zeros((total_length, 2), dtype=np.float32)  # type: ignore
+            output = np.zeros((total_length, 2), dtype=np.float32)
 
         # Copy base audio
         output[: len(base.data)] = base.data

@@ -501,7 +501,7 @@ class Fade(Effect):
             return frame
         return (frame.astype(np.float32) * a).astype(np.uint8)
 
-    def apply(self, video: Video, **context: Any) -> Video:  # type: ignore[override]
+    def apply(self, video: Video, **context: Any) -> Video:
         start_s, stop_s = self._resolved_window(video.total_seconds)
         start_f = round(start_s * video.fps)
         end_f = round(stop_s * video.fps)
@@ -557,7 +557,7 @@ class VolumeAdjust(Effect):
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
         return frame
 
-    def apply(self, video: Video, **context: Any) -> Video:  # type: ignore[override]
+    def apply(self, video: Video, **context: Any) -> Video:
         start_s, stop_s = self._resolved_window(video.total_seconds)
         if video.audio is not None and not video.audio.is_silent:
             self._apply_audio(video.audio, start_s, stop_s)

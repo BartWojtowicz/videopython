@@ -137,6 +137,9 @@ Documentation = "https://videopython.com"
 [tool.mypy]
 mypy_path = "src/stubs"
 plugins = ["pydantic.mypy"]
+warn_unused_ignores = true
+warn_redundant_casts = true
+disallow_any_generics = true
 
 [[tool.mypy.overrides]]
 module = [

@@ -237,7 +237,7 @@ class FaceTracker:
 
     def _select_face(
         self,
-        faces: list,
+        faces: list[DetectedFace],
         frame_width: int,
         frame_height: int,
     ) -> tuple[float, float, float, float] | None:
@@ -251,29 +251,24 @@ class FaceTracker:
         Returns:
             Tuple of (center_x, center_y, width, height) in normalized coords, or None.
         """
-        if not faces:
+        faces_with_box = [(f, f.bounding_box) for f in faces if f.bounding_box is not None]
+        if not faces_with_box:
             return None
 
         if self.selection_strategy == "largest":
-            face = faces[0]
+            _, bbox = faces_with_box[0]
         elif self.selection_strategy == "centered":
             frame_center = (0.5, 0.5)
-            face = min(
-                faces,
-                key=lambda f: (
-                    (f.bounding_box.center[0] - frame_center[0]) ** 2
-                    + (f.bounding_box.center[1] - frame_center[1]) ** 2
-                ),
+            _, bbox = min(
+                faces_with_box,
+                key=lambda fb: ((fb[1].center[0] - frame_center[0]) ** 2 + (fb[1].center[1] - frame_center[1]) ** 2),
             )
         elif self.selection_strategy == "index":
-            if self.face_index < len(faces):
-                face = faces[self.face_index]
-            else:
-                face = faces[0]
+            idx = self.face_index if self.face_index < len(faces_with_box) else 0
+            _, bbox = faces_with_box[idx]
         else:
-            face = faces[0]
+            _, bbox = faces_with_box[0]
 
-        bbox = face.bounding_box
         return (bbox.center[0], bbox.center[1], bbox.width, bbox.height)
 
     def detect_and_track(
@@ -407,7 +402,7 @@ class FaceTracker:
 
         sampled_frames = [frames[i] for i in sample_indices]
 
-        sampled_detections: list[list] = []
+        sampled_detections: list[list[DetectedFace]] = []
         for batch_start in range(0, len(sampled_frames), self.batch_size):
             batch_end = min(batch_start + self.batch_size, len(sampled_frames))
             batch = sampled_frames[batch_start:batch_end]

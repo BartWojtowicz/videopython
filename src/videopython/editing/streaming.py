@@ -13,6 +13,7 @@ import tempfile
 from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import TracebackType
 from typing import get_args
 
 import numpy as np
@@ -76,7 +77,7 @@ class FrameEncoder:
         self._preset = preset
         self._crf = crf
         self._stack: ExitStack | None = None
-        self._process: subprocess.Popen | None = None
+        self._process: subprocess.Popen[bytes] | None = None
 
     def _build_command(self) -> list[str]:
         cmd = [
@@ -136,7 +137,12 @@ class FrameEncoder:
             raise RuntimeError("FrameEncoder not started -- use as context manager")
         self._process.stdin.write(frame.tobytes())
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> bool | None:  # type: ignore[no-untyped-def]
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> bool | None:
         stack = self._stack
         self._stack = None
         self._process = None

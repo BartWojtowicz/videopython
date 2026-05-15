@@ -1,10 +1,13 @@
 from .models import (
     ASTFeatureExtractor,
     ASTForAudioClassification,
+    AutoModelForImageTextToText,
     AutoProcessor,
     AutoTokenizer,
     BlipForConditionalGeneration,
     BlipProcessor,
+    MarianMTModel,
+    MarianTokenizer,
     MusicgenForConditionalGeneration,
     VitsModel,
 )
@@ -12,10 +15,13 @@ from .models import (
 __all__ = [
     "ASTFeatureExtractor",
     "ASTForAudioClassification",
+    "AutoModelForImageTextToText",
     "AutoProcessor",
     "AutoTokenizer",
     "BlipForConditionalGeneration",
     "BlipProcessor",
+    "MarianMTModel",
+    "MarianTokenizer",
     "MusicgenForConditionalGeneration",
     "VitsModel",
 ]

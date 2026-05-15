@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
-from typing import Generator
+from typing import Any, Generator
 
 import numpy as np
 
@@ -48,7 +48,7 @@ class VideoMetadata:
         return np.array((self.frame_count, self.height, self.width, 3))
 
     @staticmethod
-    def _run_ffprobe(video_path: str | Path) -> dict:
+    def _run_ffprobe(video_path: str | Path) -> dict[str, Any]:
         """Run ffprobe and return parsed JSON output."""
         try:
             return _ffmpeg.probe(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -49,7 +50,7 @@ class SceneBoundary:
         """Number of frames in this scene."""
         return self.end_frame - self.start_frame
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
             "start": self.start,
@@ -59,7 +60,7 @@ class SceneBoundary:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "SceneBoundary":
+    def from_dict(cls, data: dict[str, Any]) -> "SceneBoundary":
         """Create SceneBoundary from dictionary."""
         return cls(
             start=data["start"],
@@ -95,12 +96,12 @@ class BoundingBox(BaseModel):
         """Area of the bounding box (normalized)."""
         return self.width * self.height
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Backwards-compat alias for ``model_dump()``."""
         return self.model_dump()
 
     @classmethod
-    def from_dict(cls, data: dict) -> BoundingBox:
+    def from_dict(cls, data: dict[str, Any]) -> BoundingBox:
         """Backwards-compat alias for ``model_validate(data)``."""
         return cls.model_validate(data)
 
@@ -119,7 +120,7 @@ class DetectedObject:
     confidence: float
     bounding_box: BoundingBox | None = None
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
             "label": self.label,
@@ -128,7 +129,7 @@ class DetectedObject:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> DetectedObject:
+    def from_dict(cls, data: dict[str, Any]) -> DetectedObject:
         """Create DetectedObject from dictionary."""
         return cls(
             label=data["label"],
@@ -160,7 +161,7 @@ class DetectedFace:
         """Area of the face bounding box (normalized), or None if no bounding box."""
         return self.bounding_box.area if self.bounding_box else None
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
             "bounding_box": self.bounding_box.to_dict() if self.bounding_box else None,
@@ -168,7 +169,7 @@ class DetectedFace:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> DetectedFace:
+    def from_dict(cls, data: dict[str, Any]) -> DetectedFace:
         """Create DetectedFace from dictionary."""
         return cls(
             bounding_box=BoundingBox.from_dict(data["bounding_box"]) if data.get("bounding_box") else None,
@@ -190,7 +191,7 @@ class DetectedText:
     confidence: float
     bounding_box: BoundingBox | None = None
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
             "text": self.text,
@@ -199,7 +200,7 @@ class DetectedText:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "DetectedText":
+    def from_dict(cls, data: dict[str, Any]) -> "DetectedText":
         """Create DetectedText from dictionary."""
         return cls(
             text=data["text"],
@@ -229,7 +230,7 @@ class AudioEvent:
         """Duration of the audio event in seconds."""
         return self.end - self.start
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
             "start": self.start,
@@ -239,7 +240,7 @@ class AudioEvent:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> AudioEvent:
+    def from_dict(cls, data: dict[str, Any]) -> AudioEvent:
         """Create AudioEvent from dictionary."""
         return cls(
             start=data["start"],
@@ -261,7 +262,7 @@ class AudioClassification:
     events: list[AudioEvent]
     clip_predictions: dict[str, float] = field(default_factory=dict)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
             "events": [event.to_dict() for event in self.events],
@@ -269,7 +270,7 @@ class AudioClassification:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "AudioClassification":
+    def from_dict(cls, data: dict[str, Any]) -> "AudioClassification":
         """Create AudioClassification from dictionary."""
         return cls(
             events=[AudioEvent.from_dict(event) for event in data.get("events", [])],
@@ -306,7 +307,7 @@ class MotionInfo:
         """Check if this frame has significant motion."""
         return self.motion_type != "static"
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
             "motion_type": self.motion_type,
@@ -315,7 +316,7 @@ class MotionInfo:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> MotionInfo:
+    def from_dict(cls, data: dict[str, Any]) -> MotionInfo:
         """Create MotionInfo from dictionary."""
         return cls(
             motion_type=data["motion_type"],
@@ -344,7 +345,7 @@ class SceneDescription:
     subjects: list[str] = field(default_factory=list)
     shot_type: str | None = None
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "caption": self.caption,
             "subjects": list(self.subjects),
@@ -352,7 +353,7 @@ class SceneDescription:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "SceneDescription":
+    def from_dict(cls, data: dict[str, Any]) -> "SceneDescription":
         return cls(
             caption=str(data["caption"]),
             subjects=[str(s) for s in data.get("subjects", [])],
@@ -386,7 +387,7 @@ class FaceTrack:
         """Number of frames in this track."""
         return len(self.frame_indices)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "track_id": self.track_id,
             "frame_indices": list(self.frame_indices),
@@ -395,7 +396,7 @@ class FaceTrack:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "FaceTrack":
+    def from_dict(cls, data: dict[str, Any]) -> "FaceTrack":
         return cls(
             track_id=int(data["track_id"]),
             frame_indices=[int(i) for i in data.get("frame_indices", [])],

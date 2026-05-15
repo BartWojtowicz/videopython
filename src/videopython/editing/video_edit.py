@@ -69,7 +69,7 @@ def _apply_with_context(op: Operation, video: Video, context: dict[str, Any] | N
     """Apply ``op`` to ``video``, threading ``op.requires`` keys from ``context``."""
     if op.requires and context:
         kwargs = {k: context[k] for k in op.requires if k in context}
-        return op.apply(video, **kwargs)  # type: ignore[call-arg]
+        return op.apply(video, **kwargs)
     return op.apply(video)
 
 
@@ -81,7 +81,7 @@ def _predict_with_context(
     """Run ``op.predict_metadata``, threading requires-keys from ``context``."""
     if op.requires and context:
         kwargs = {k: context[k] for k in op.requires if k in context}
-        return op.predict_metadata(meta, **kwargs)  # type: ignore[call-arg]
+        return op.predict_metadata(meta, **kwargs)
     return op.predict_metadata(meta)
 
 

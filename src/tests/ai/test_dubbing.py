@@ -621,7 +621,7 @@ class TestVoiceSampleQualityGating:
         return LocalDubbingPipeline(device="cpu")
 
     @staticmethod
-    def _fake_transcription(segments: list):
+    def _fake_transcription(segments: list[TranscriptionSegment]):
         from videopython.base.transcription import Transcription
 
         return Transcription(segments=segments)

@@ -188,7 +188,7 @@ class AudioToText:
     def _init_diarization(self) -> None:
         """Initialize pyannote speaker diarization pipeline."""
         import torch
-        from pyannote.audio import Pipeline  # type: ignore[import-untyped]
+        from pyannote.audio import Pipeline
 
         self._diarization_pipeline = Pipeline.from_pretrained(self.PYANNOTE_DIARIZATION_MODEL)
         self._diarization_pipeline.to(torch.device(self.device))
@@ -214,7 +214,7 @@ class AudioToText:
         self._vad_model = None
         release_device_memory(self.device)
 
-    def _process_transcription_result(self, transcription_result: dict) -> Transcription:
+    def _process_transcription_result(self, transcription_result: dict[str, Any]) -> Transcription:
         """Process raw transcription result into a Transcription object."""
         transcription_segments = []
         for segment in transcription_result["segments"]:

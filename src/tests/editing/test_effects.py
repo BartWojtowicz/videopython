@@ -280,7 +280,7 @@ class TestFade:
 
     def test_invalid_mode_raises(self):
         with pytest.raises(ValidationError):
-            Fade(mode="invalid")  # type: ignore[arg-type]
+            Fade(mode="invalid")
 
     def test_invalid_duration_raises(self):
         with pytest.raises(ValidationError):
