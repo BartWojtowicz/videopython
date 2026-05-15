@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from videopython.ai._device import log_device_initialization, select_device
+from videopython.ai._device import log_device_initialization, release_device_memory, select_device
 from videopython.base.description import SceneBoundary
 
 if TYPE_CHECKING:
@@ -56,25 +56,31 @@ class SemanticSceneDetector:
 
         self.threshold = threshold
         self.min_scene_length = min_scene_length
-        self._device: str | None = device
+        self.device: str | None = device
         self._model: Any = None
 
-    def _load_model(self) -> None:
+    def _init_local(self) -> None:
         """Load the TransNetV2 model with pretrained weights."""
         if self._model is not None:
             return
 
         from transnetv2_pytorch import TransNetV2
 
-        requested_device = self._device
-        device = select_device(self._device, mps_allowed=True)
+        requested_device = self.device
+        device = select_device(self.device, mps_allowed=True)
         log_device_initialization(
             "SemanticSceneDetector",
             requested_device=requested_device,
             resolved_device=device,
         )
+        self.device = device
         self._model = TransNetV2(device=device)
         self._model.eval()
+
+    def unload(self) -> None:
+        """Release the TransNetV2 model so the next call re-initializes."""
+        self._model = None
+        release_device_memory(self.device)
 
     def detect(self, video: Video) -> list[SceneBoundary]:
         """Detect scenes in a video using ML-based boundary detection.
@@ -114,7 +120,7 @@ class SemanticSceneDetector:
         Returns:
             List of SceneBoundary objects representing detected scenes.
         """
-        self._load_model()
+        self._init_local()
 
         # Use TransNetV2's detect_scenes which handles everything internally
         raw_scenes = self._model.detect_scenes(str(path), threshold=self.threshold)

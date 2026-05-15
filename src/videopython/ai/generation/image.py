@@ -6,7 +6,7 @@ from typing import Any
 
 from PIL import Image
 
-from videopython.ai._device import log_device_initialization, select_device
+from videopython.ai._device import log_device_initialization, release_device_memory, select_device
 
 
 class TextToImage:
@@ -49,3 +49,8 @@ class TextToImage:
         if self._pipeline is None:
             self._init_local()
         return self._pipeline(prompt=prompt).images[0]
+
+    def unload(self) -> None:
+        """Release the diffusion pipeline so the next generate_image() re-initializes."""
+        self._pipeline = None
+        release_device_memory(self.device)

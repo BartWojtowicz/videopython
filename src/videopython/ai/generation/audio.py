@@ -32,7 +32,7 @@ class TextToSpeech:
         self.language = language
         self._model: Any = None
 
-    def _init_model(self) -> None:
+    def _init_local(self) -> None:
         from chatterbox.mtl_tts import ChatterboxMultilingualTTS  # type: ignore[import-untyped]
 
         requested_device = self.device
@@ -83,7 +83,7 @@ class TextToSpeech:
         import numpy as np
 
         if self._model is None:
-            self._init_model()
+            self._init_local()
 
         speaker_wav_path: Path | None = None
         cleanup_path = False
@@ -149,7 +149,6 @@ class TextToMusic:
         self.device = device
         self._processor: Any = None
         self._model: Any = None
-        self._device: str | None = None
 
     def _init_local(self) -> None:
         """Initialize local MusicGen model."""
@@ -160,17 +159,17 @@ class TextToMusic:
         os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
         requested_device = self.device
-        self._device = select_device(self.device, mps_allowed=True)
+        device = select_device(self.device, mps_allowed=True)
 
         model_name = "facebook/musicgen-small"
         self._processor = AutoProcessor.from_pretrained(model_name)
         self._model = MusicgenForConditionalGeneration.from_pretrained(model_name)
-        self._model.to(self._device)
-        self.device = self._device
+        self._model.to(device)
+        self.device = device
         log_device_initialization(
             "TextToMusic",
             requested_device=requested_device,
-            resolved_device=self._device,
+            resolved_device=device,
         )
 
     def generate_audio(self, text: str, max_new_tokens: int = 256) -> Audio:
@@ -179,7 +178,7 @@ class TextToMusic:
             self._init_local()
 
         inputs = self._processor(text=[text], padding=True, return_tensors="pt")
-        inputs = {k: v.to(self._device) if hasattr(v, "to") else v for k, v in inputs.items()}
+        inputs = {k: v.to(self.device) if hasattr(v, "to") else v for k, v in inputs.items()}
         audio_values = self._model.generate(**inputs, max_new_tokens=max_new_tokens)
         sampling_rate = self._model.config.audio_encoder.sampling_rate
 
@@ -193,3 +192,9 @@ class TextToMusic:
             frame_count=len(audio_data),
         )
         return Audio(audio_data, metadata)
+
+    def unload(self) -> None:
+        """Release the MusicGen model so the next generate_audio() re-initializes."""
+        self._model = None
+        self._processor = None
+        release_device_memory(self.device)

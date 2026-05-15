@@ -1,5 +1,34 @@
 # Release Notes
 
+## 0.33.1
+
+Point-fix cleanup of the AI predictor classes. No new abstractions —
+just removing six drifts the broader DESIGN.md §4 mixin was meant to
+unify, but at a fraction of the churn.
+
+### Changes
+
+- `TextToSpeech._init_model` renamed to `_init_local` for parity with
+  the other predictors.
+- `SemanticSceneDetector._load_model` renamed to `_init_local`, and
+  the `_device` field is now public `device` (matches every other
+  predictor in `ai/`).
+- `unload()` added to `AudioClassifier`, `TextToMusic`, `TextToImage`,
+  `TextToVideo`, `ImageToVideo`, `SemanticSceneDetector` (previously
+  missing — these leaked VRAM across pipeline stages in low-memory
+  dubbing).
+- `SceneVLM.unload` now goes through `release_device_memory` instead of
+  open-coding `gc.collect()` + `torch.cuda.empty_cache()`.
+- `TextToMusic`, `TextToVideo`, `ImageToVideo` no longer carry a
+  redundant `_device` field alongside `self.device`.
+- `MarianTranslator` device-init log line corrected from
+  `"TextTranslator"` (the old class name) to `"MarianTranslator"`.
+
+These renames are technically breaking for any external code that
+subclassed the predictors and overrode `_init_model` / `_load_model`,
+or read `SemanticSceneDetector._device` directly. All three surfaces
+were underscore-prefixed (internal).
+
 ## 0.33.0
 
 `videopython.ai` refactor. The 8.5k-LOC `ai/` subtree had two god

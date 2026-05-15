@@ -181,7 +181,7 @@ class MarianTranslator:
         self._model = MarianMTModel.from_pretrained(model_name).to(device)
         self.device = device
         log_device_initialization(
-            "TextTranslator",
+            "MarianTranslator",
             requested_device=requested_device,
             resolved_device=device,
         )

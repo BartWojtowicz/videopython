@@ -520,6 +520,15 @@ class AudioClassifier:
 
         self._labels = [self._model.config.id2label[i] for i in range(len(self._model.config.id2label))]
 
+    def unload(self) -> None:
+        """Release the AST model so the next classify() re-initializes.
+
+        Used by low-memory dubbing to free VRAM between pipeline stages.
+        """
+        self._model = None
+        self._processor = None
+        release_device_memory(self.device)
+
     def _merge_events(self, events: list[AudioEvent], gap_threshold: float = 0.5) -> list[AudioEvent]:
         """Merge consecutive events of the same class."""
         if not events:
