@@ -1,5 +1,6 @@
 """Local video dubbing functionality."""
 
+from videopython.ai.dubbing.config import DubbingConfig
 from videopython.ai.dubbing.dubber import VideoDubber
 from videopython.ai.dubbing.models import (
     DubbingResult,
@@ -15,6 +16,7 @@ from videopython.ai.generation.translation import UnsupportedLanguageError
 
 __all__ = [
     "VideoDubber",
+    "DubbingConfig",
     "DubbingResult",
     "RevoiceResult",
     "TranslatedSegment",

@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, PlainSerializer, model_validator
+
+from videopython.ai.dubbing.quality import TranscriptQuality
 from videopython.audio import Audio
 from videopython.base.transcription import Transcription, TranscriptionSegment
 
 if TYPE_CHECKING:
-    from videopython.ai.dubbing.quality import TranscriptQuality
     from videopython.ai.dubbing.timing import TimingAdjustment
 
 
@@ -19,11 +20,30 @@ if TYPE_CHECKING:
 CLEAN_SPEED_TOLERANCE = 0.01
 
 
-@dataclass(frozen=True)
-class Expressiveness:
+# TranscriptionSegment and Transcription still live in videopython.base as
+# plain dataclasses with hand-rolled to_dict/from_dict. Bridge them at
+# the field boundary so the dubbing cache wire format stays identical.
+def _validate_transcription_segment(value: Any) -> Any:
+    if value is None or isinstance(value, TranscriptionSegment):
+        return value
+    return TranscriptionSegment.from_dict(value)
+
+
+def _serialize_with_to_dict(value: Any) -> Any:
+    return value.to_dict() if value is not None else None
+
+
+_TranscriptionSegmentField = Annotated[
+    TranscriptionSegment,
+    BeforeValidator(_validate_transcription_segment),
+    PlainSerializer(_serialize_with_to_dict, return_type=dict, when_used="always"),
+]
+
+
+class Expressiveness(BaseModel):
     """Chatterbox ``generate()`` knobs derived from source-segment prosody.
 
-    ``None`` on any field means "let Chatterbox use its own default" —
+    ``None`` on any field means "let Chatterbox use its own default" --
     avoids pinning the dub against future Chatterbox default changes.
 
     Attributes:
@@ -33,6 +53,8 @@ class Expressiveness:
             ``0.5``; lower values (~``0.3``) slow pacing.
         temperature: Sampling temperature. Chatterbox default ``0.8``.
     """
+
+    model_config = ConfigDict(frozen=True)
 
     exaggeration: float | None = None
     cfg_weight: float | None = None
@@ -54,8 +76,7 @@ class Expressiveness:
         }
 
 
-@dataclass
-class TranslatedSegment:
+class TranslatedSegment(BaseModel):
     """A segment of translated text with timing information.
 
     Attributes:
@@ -68,7 +89,9 @@ class TranslatedSegment:
         end: End time in seconds.
     """
 
-    original_segment: TranscriptionSegment
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    original_segment: _TranscriptionSegmentField
     translated_text: str
     source_lang: str
     target_lang: str
@@ -76,13 +99,17 @@ class TranslatedSegment:
     start: float = 0.0
     end: float = 0.0
 
-    def __post_init__(self) -> None:
-        """Set timing from original segment if not provided."""
+    @model_validator(mode="after")
+    def _default_timing_from_segment(self) -> TranslatedSegment:
+        # ``start == end == 0.0`` is the dataclass-era sentinel for "use the
+        # original segment's timing." Preserved so legacy callers (and the
+        # dub cache wire format) keep working.
         if self.start == 0.0 and self.end == 0.0:
             self.start = self.original_segment.start
             self.end = self.original_segment.end
         if self.speaker is None:
             self.speaker = self.original_segment.speaker
+        return self
 
     @property
     def original_text(self) -> str:
@@ -94,34 +121,8 @@ class TranslatedSegment:
         """Duration of the segment in seconds."""
         return self.end - self.start
 
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for JSON serialization (used by the dub cache)."""
-        return {
-            "original_segment": self.original_segment.to_dict(),
-            "translated_text": self.translated_text,
-            "source_lang": self.source_lang,
-            "target_lang": self.target_lang,
-            "speaker": self.speaker,
-            "start": self.start,
-            "end": self.end,
-        }
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> TranslatedSegment:
-        """Reconstruct from a dict produced by :meth:`to_dict`."""
-        return cls(
-            original_segment=TranscriptionSegment.from_dict(data["original_segment"]),
-            translated_text=data["translated_text"],
-            source_lang=data["source_lang"],
-            target_lang=data["target_lang"],
-            speaker=data.get("speaker"),
-            start=data.get("start", 0.0),
-            end=data.get("end", 0.0),
-        )
-
-
-@dataclass
-class SeparatedAudio:
+class SeparatedAudio(BaseModel):
     """Audio separated into different components.
 
     Attributes:
@@ -131,6 +132,8 @@ class SeparatedAudio:
         effects: Isolated sound effects track (if available).
         original: The original unseparated audio.
     """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     vocals: Audio
     background: Audio
@@ -144,8 +147,7 @@ class SeparatedAudio:
         return self.music is not None and self.effects is not None
 
 
-@dataclass
-class TimingSummary:
+class TimingSummary(BaseModel):
     """Aggregate stats over per-segment timing adjustments.
 
     Surfaces how aggressively the timing synchronizer had to compress or
@@ -201,32 +203,8 @@ class TimingSummary:
             max_truncation_seconds=max_truncation,
         )
 
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for JSON serialization."""
-        return {
-            "total_segments": self.total_segments,
-            "clean_count": self.clean_count,
-            "stretched_count": self.stretched_count,
-            "truncated_count": self.truncated_count,
-            "mean_speed_factor": self.mean_speed_factor,
-            "max_truncation_seconds": self.max_truncation_seconds,
-        }
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> TimingSummary:
-        """Create TimingSummary from dictionary."""
-        return cls(
-            total_segments=data["total_segments"],
-            clean_count=data["clean_count"],
-            stretched_count=data["stretched_count"],
-            truncated_count=data["truncated_count"],
-            mean_speed_factor=data["mean_speed_factor"],
-            max_truncation_seconds=data["max_truncation_seconds"],
-        )
-
-
-@dataclass
-class DubbingResult:
+class DubbingResult(BaseModel):
     """Result of a video dubbing operation.
 
     Attributes:
@@ -247,16 +225,18 @@ class DubbingResult:
             no failure mode that drops segments).
     """
 
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     dubbed_audio: Audio
     translated_segments: list[TranslatedSegment]
     source_transcription: Transcription
     source_lang: str
     target_lang: str
     separated_audio: SeparatedAudio | None = None
-    voice_samples: dict[str, Audio] = field(default_factory=dict)
+    voice_samples: dict[str, Audio] = Field(default_factory=dict)
     timing_summary: TimingSummary | None = None
     transcript_quality: TranscriptQuality | None = None
-    translation_failures: list[int] = field(default_factory=list)
+    translation_failures: list[int] = Field(default_factory=list)
 
     @property
     def num_segments(self) -> int:
@@ -283,8 +263,7 @@ class DubbingResult:
         return segments_by_speaker
 
 
-@dataclass
-class RevoiceResult:
+class RevoiceResult(BaseModel):
     """Result of a voice replacement operation.
 
     Attributes:
@@ -295,6 +274,8 @@ class RevoiceResult:
         original_duration: Duration of the original audio.
         speech_duration: Duration of the generated speech.
     """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     revoiced_audio: Audio
     text: str

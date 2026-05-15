@@ -6,8 +6,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
+from videopython.ai.dubbing.config import DubbingConfig
 from videopython.ai.dubbing.models import DubbingResult, RevoiceResult
-from videopython.ai.dubbing.pipeline import TranslatorChoice, WhisperModel
 
 if TYPE_CHECKING:
     from videopython.base.video import Video
@@ -18,90 +18,26 @@ logger = logging.getLogger(__name__)
 class VideoDubber:
     """Dubs videos into different languages using the local pipeline.
 
-    Args:
-        device: Execution device (``cpu``, ``cuda``, ``mps``, or ``None`` for auto).
-        low_memory: When True, each pipeline stage (Whisper, Demucs, MarianMT,
-            Chatterbox TTS) is unloaded from memory after it runs, so only one
-            model is resident at a time. Trades per-run latency (~10-30s of
-            extra model loads) for a much lower memory ceiling. Recommended for
-            GPUs with <=12GB VRAM or hosts with <32GB RAM. Default False.
-        whisper_model: Whisper model size used for transcription. Larger models
-            give better accuracy at the cost of VRAM and latency. One of
-            ``tiny``, ``base``, ``small``, ``medium``, ``large``, ``turbo``.
-            Default ``turbo``.
-        condition_on_previous_text: Forwarded to ``AudioToText``. Defaults to
-            ``False`` (Whisper's own default is ``True``). With conditioning on,
-            a single hallucinated filler phrase cascades through the rest of
-            the file. See ``AudioToText`` for the full rationale.
-        no_speech_threshold: Forwarded to ``AudioToText``. Whisper's no-speech
-            gate; raise to drop more low-confidence windows.
-        logprob_threshold: Forwarded to ``AudioToText``. Whisper's average
-            log-probability gate.
-        vocabulary: Forwarded to ``AudioToText``. Optional list of brand
-            names, product names, or proper nouns to bias Whisper's first-
-            window decoder via ``initial_prompt``. Recovers near-mishears
-            (e.g. Klarna → "carna") on brand-monitoring inputs without new
-            model deps.
-        strict_quality: When True, the pipeline raises
-            :class:`GarbageTranscriptError` before Demucs/translation/TTS run
-            if the transcript-quality heuristic returns ``"reject"``. When
-            False (default), low-quality transcripts are logged at WARNING
-            but processing continues. Either way the
-            :class:`TranscriptQuality` is exposed on ``DubbingResult`` for
-            inspection.
-        translator: Translation backend to use. ``"auto"`` (default)
-            picks Qwen3 on GPU, MarianMT on CPU; ``"marian"`` and
-            ``"qwen3"`` force the named backend regardless of device.
-            See :class:`videopython.ai.generation.qwen3.Qwen3Translator`
-            for tradeoffs (Qwen3 is slower on CPU but produces
-            context-aware, length-budgeted output).
+    Accepts either a :class:`DubbingConfig` or the same knobs as flat kwargs
+    (``device``, ``low_memory``, ``whisper_model``, ``translator``, etc.) --
+    the flat path builds a ``DubbingConfig`` internally. See
+    :class:`DubbingConfig` for the full knob list and defaults.
     """
 
-    def __init__(
-        self,
-        device: str | None = None,
-        low_memory: bool = False,
-        whisper_model: WhisperModel = "turbo",
-        condition_on_previous_text: bool = False,
-        no_speech_threshold: float = 0.6,
-        logprob_threshold: float | None = -1.0,
-        vocabulary: list[str] | None = None,
-        strict_quality: bool = False,
-        translator: TranslatorChoice = "auto",
-    ):
-        self.device = device
-        self.low_memory = low_memory
-        self.whisper_model = whisper_model
-        self.condition_on_previous_text = condition_on_previous_text
-        self.no_speech_threshold = no_speech_threshold
-        self.logprob_threshold = logprob_threshold
-        self.vocabulary = vocabulary
-        self.strict_quality = strict_quality
-        self.translator = translator
+    def __init__(self, config: DubbingConfig | None = None, **kwargs: Any):
+        if config is not None and kwargs:
+            raise TypeError("Pass either `config=` or knob kwargs, not both")
+        self.config = config or DubbingConfig(**kwargs)
         self._local_pipeline: Any = None
-        requested = device.lower() if isinstance(device, str) else "auto"
         logger.info(
-            "VideoDubber initialized with device=%s low_memory=%s whisper_model=%s translator=%s",
-            requested,
-            low_memory,
-            whisper_model,
-            translator,
+            "VideoDubber initialized with %s",
+            " ".join(f"{k}={v}" for k, v in self.config.init_log_fields().items()),
         )
 
     def _init_local_pipeline(self) -> None:
         from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
 
-        self._local_pipeline = LocalDubbingPipeline(
-            device=self.device,
-            low_memory=self.low_memory,
-            whisper_model=self.whisper_model,
-            condition_on_previous_text=self.condition_on_previous_text,
-            no_speech_threshold=self.no_speech_threshold,
-            logprob_threshold=self.logprob_threshold,
-            vocabulary=self.vocabulary,
-            strict_quality=self.strict_quality,
-            translator=self.translator,
-        )
+        self._local_pipeline = LocalDubbingPipeline(config=self.config)
 
     def dub(
         self,

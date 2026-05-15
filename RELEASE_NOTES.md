@@ -1,5 +1,89 @@
 # Release Notes
 
+## 0.33.0
+
+`videopython.ai` refactor. The 8.5k-LOC `ai/` subtree had two god
+modules (`video_analysis.py` at 1181 LOC, `dubbing/pipeline.py` at
+908 LOC), nine analysis/dubbing dataclasses with hand-rolled
+`to_dict`/`from_dict`/`save`/`load` plumbing, and a nine-kwarg
+configuration block duplicated across `VideoDubber` and
+`LocalDubbingPipeline`. This release splits the god modules,
+Pydantic-izes the result models, and consolidates the dubbing knobs
+into a single `DubbingConfig`.
+
+**This is a breaking release on the dubbing/analysis result APIs.**
+The flat kwargs constructors on `VideoDubber` and
+`LocalDubbingPipeline` still work, so dubbing call sites don't need
+to change.
+
+### Breaking changes
+
+- **Hand-rolled `to_dict` / `from_dict` / `to_json` / `from_json`
+  removed from the analysis and dubbing result models.** Use
+  Pydantic's `model_dump` / `model_validate` /
+  `model_dump_json` / `model_validate_json` instead. Affected:
+  `GeoMetadata`, `VideoAnalysisSource`, `AnalysisRunInfo`,
+  `VideoAnalysisConfig`, `AudioAnalysisSection`,
+  `SceneAnalysisSample`, `SceneAnalysisSection`, `VideoAnalysis`,
+  `Expressiveness`, `TranslatedSegment`, `TimingSummary`,
+  `DubbingResult`, `RevoiceResult`, `TranscriptQuality`.
+  `VideoAnalysis.save()` / `VideoAnalysis.load()` are kept as
+  convenience file-I/O wrappers around `model_dump_json` /
+  `model_validate_json`.
+- **`videopython.ai.video_analysis` is now a package, not a module.**
+  All public re-exports (`VideoAnalysis`, `VideoAnalysisConfig`,
+  `VideoAnalyzer`, `SCENE_VLM`, `SEMANTIC_SCENE_DETECTOR`, etc.)
+  resolve unchanged. The private `_phash_dedup_frames` and
+  `_sample_timestamps` helpers move to
+  `videopython.ai.video_analysis.sampling` as `phash_dedup_frames`
+  and `sample_timestamps`.
+- **`videopython.ai.dubbing.pipeline` private helpers moved.**
+  `_peak_match` and `_loudness_match` are now
+  `videopython.ai.dubbing.loudness.peak_match` /
+  `loudness_match`. `_rms` and `_expressiveness_for` are now
+  `videopython.ai.dubbing.expressiveness.rms` /
+  `expressiveness_for`. The three private voice-sample methods on
+  `LocalDubbingPipeline` (`_extract_voice_samples`,
+  `_pick_voice_segment`, `_score_voice_segment`) become free
+  functions in `videopython.ai.dubbing.voice_sample` (`extract`,
+  `pick`, `score`).
+- **`VideoDubber.<knob>` and `LocalDubbingPipeline.<knob>`
+  attributes moved onto the new `DubbingConfig`.** Reads of
+  `dubber.device`, `dubber.low_memory`, `dubber.whisper_model`,
+  `dubber.strict_quality`, `dubber.translator`,
+  `dubber.condition_on_previous_text`, `dubber.no_speech_threshold`,
+  `dubber.logprob_threshold`, `dubber.vocabulary` now go through
+  `dubber.config.<knob>`. Same shape on
+  `LocalDubbingPipeline`. **Constructor calls are unchanged** —
+  `VideoDubber(device="cpu", low_memory=True, ...)` still works
+  and builds a `DubbingConfig` internally. Callers can also pass
+  `VideoDubber(config=DubbingConfig(...))` explicitly.
+
+### Internal
+
+- `ai/video_analysis/` is now four sibling modules: `models.py`
+  (Pydantic result models), `sampling.py` (frame-sampling profile
+  + `phash_dedup_frames` / `sample_timestamps`), `stages.py` (the
+  five stage runners + `record_stage` helpers as free functions of
+  `(config, source_path, video, ...)`), `analyzer.py`
+  (`VideoAnalyzer` orchestration only).
+- `dubbing/loudness.py`, `dubbing/expressiveness.py`, and
+  `dubbing/voice_sample.py` carry the extracted pure functions.
+  `LocalDubbingPipeline.process` and `.revoice` share a new
+  `_finalise_audio` helper that consolidates their duplicated
+  background/loudness-match tail.
+- `dubbing/config.py` adds `DubbingConfig` (Pydantic), carrying
+  the nine knobs that used to be duplicated across `VideoDubber`,
+  `LocalDubbingPipeline`, and their init-log lines. Adding a knob
+  now costs one edit.
+- Nested non-Pydantic types (`Transcription`, `SceneDescription`,
+  `AudioClassification`, `FaceTrack`, `TranscriptionSegment` from
+  `videopython.base`) interop with the new Pydantic models via
+  `Annotated[..., BeforeValidator, PlainSerializer]` field hooks
+  that delegate to their existing `to_dict` / `from_dict`. JSON
+  wire format is identical to 0.32.0 (verified by round-tripping a
+  pre-refactor `VideoAnalysis` JSON snapshot with zero key drift).
+
 ## 0.32.0
 
 Package layout refactor. `videopython.base` had grown into a 5.5k-LOC
