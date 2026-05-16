@@ -29,6 +29,7 @@ from typing import Annotated, Any
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SerializeAsAny, model_validator
 
 from videopython.audio import Audio, AudioLoadError
+from videopython.base.transcription import Transcription
 from videopython.base.video import ALLOWED_VIDEO_FORMATS, ALLOWED_VIDEO_PRESETS, Video, VideoMetadata
 from videopython.editing.effects import Effect, Fade, VolumeAdjust
 from videopython.editing.operation import FilterCtx, Operation
@@ -63,6 +64,45 @@ def _resolve_operation(value: Any) -> Operation:
 
 
 OperationInput = Annotated[SerializeAsAny[Operation], BeforeValidator(_resolve_operation)]
+
+
+def _segment_context(
+    context: dict[str, Any] | None,
+    start: float,
+    end: float,
+) -> dict[str, Any] | None:
+    """Re-base time-based context entries onto a cut segment's local timeline.
+
+    A cut segment is decoded 0-based -- its first frame is ``t=0`` -- but
+    context objects like :class:`Transcription` carry source-absolute
+    timestamps. Operations that consume them (e.g. ``add_subtitles``) look up
+    by segment-local time, so the transcription is sliced to ``[start, end)``
+    and shifted by ``-start``. Without this, subtitles on a segment cut from
+    the middle of a video render blank.
+
+    Slicing always runs (even for ``start == 0``) so words past ``end`` do not
+    bleed into the cue stream. When a segment contains no overlapping words the
+    ``transcription`` key is dropped rather than passed empty, so the consuming
+    operation raises its own clear "requires ..." error instead of silently
+    rendering nothing.
+
+    Scope: per-segment only. ``post_operations`` run on the assembled,
+    concatenated timeline and still receive the raw context; threading a
+    re-based transcription through a multi-segment concat is a known
+    limitation (single-segment plans are unaffected).
+    """
+    if not context:
+        return context
+    transcription = context.get("transcription")
+    if not isinstance(transcription, Transcription):
+        return context
+    rebased = dict(context)
+    sliced = transcription.slice(start, end)
+    if sliced is None:
+        del rebased["transcription"]
+    else:
+        rebased["transcription"] = sliced.offset(-start)
+    return rebased
 
 
 def _apply_with_context(op: Operation, video: Video, context: dict[str, Any] | None) -> Video:
@@ -139,9 +179,14 @@ class SegmentConfig(BaseModel):
         )
 
     def process(self, video: Video, context: dict[str, Any] | None = None) -> Video:
-        """Apply every operation in this segment to ``video`` in order."""
+        """Apply every operation in this segment to ``video`` in order.
+
+        Time-based context (e.g. ``transcription``) is re-based onto this
+        segment's 0-based local timeline before any operation sees it.
+        """
+        seg_context = _segment_context(context, self.start, self.end)
         for op in self.operations:
-            video = _apply_with_context(op, video, context)
+            video = _apply_with_context(op, video, seg_context)
         return video
 
 
@@ -325,10 +370,11 @@ class VideoEdit(BaseModel):
         meta: VideoMetadata,
         context: dict[str, Any] | None,
     ) -> VideoMetadata:
+        seg_context = _segment_context(context, segment.start, segment.end)
         for op in segment.operations:
             _validate_effect_window(op, meta.total_seconds)
             try:
-                meta = _predict_with_context(op, meta, context)
+                meta = _predict_with_context(op, meta, seg_context)
             except (ValueError, TypeError) as e:
                 raise ValueError(f"Segment {index}: metadata prediction failed for '{op.op}': {e}") from e
         return meta

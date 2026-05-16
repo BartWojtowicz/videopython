@@ -1,5 +1,39 @@
 # Release Notes
 
+## 0.33.5
+
+`VideoEdit` now re-bases time-based runtime context onto each segment's
+local timeline before its operations run. A cut segment is decoded
+0-based (its first frame is `t=0`), but a `Transcription` passed via
+`run(context=...)` / `validate(context=...)` carries source-absolute
+timestamps. Previously the raw transcription was threaded unchanged into
+every segment, so `add_subtitles` (and `silence_removal`) on a segment
+cut from the middle of a video saw timestamps that never matched the
+0-based frames: subtitles rendered **blank**. They are now sliced to the
+segment's `[start, end)` and shifted by `-start`, so any segment -- not
+just one starting at `t=0` -- gets correctly timed subtitles. Words
+outside the segment no longer bleed in, even when `start == 0`.
+
+**Scope / known limitation:** re-basing is per-segment only.
+`post_operations` run on the assembled, concatenated timeline and still
+receive the raw context; threading a re-based transcription through a
+multi-segment concat is not yet handled (single-segment plans are
+unaffected). When a segment contains no overlapping words the
+`transcription` key is dropped rather than passed empty, so the
+consuming operation raises its own clear "requires ..." error instead of
+silently rendering nothing -- request subtitles only on segments that
+contain speech.
+
+### Changes
+
+- `SegmentConfig.process` and `VideoEdit` metadata validation
+  (`_predict_segment`) now derive a per-segment context via the new
+  internal `_segment_context` helper (`Transcription.slice(start, end)`
+  then `.offset(-start)`). `run()` and `validate()` stay consistent.
+- No public API or wire-format change; behavior fix only. Plans that
+  previously produced blank subtitles on mid-video cuts now render them
+  correctly.
+
 ## 0.33.4
 
 `TranscriptionOverlay` now normalizes subtitles by default: long
