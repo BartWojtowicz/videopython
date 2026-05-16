@@ -24,7 +24,7 @@ import subprocess
 import tempfile
 import warnings
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SerializeAsAny, model_validator
 
@@ -63,6 +63,72 @@ def _resolve_operation(value: Any) -> Operation:
 
 
 OperationInput = Annotated[SerializeAsAny[Operation], BeforeValidator(_resolve_operation)]
+
+
+@runtime_checkable
+class SegmentRebaseable(Protocol):
+    """A runtime-context value carrying a source-absolute timeline.
+
+    Any context entry implementing both ``slice(start, end)`` and
+    ``offset(delta)`` -- e.g. :class:`videopython.base.transcription.Transcription`
+    -- is automatically re-based onto each segment's 0-based local timeline by
+    the runner, with no per-type wiring. Keying off structure rather than a
+    concrete class keeps the context mechanism generic for future time-based
+    context (beat maps, scene markers, ...) and avoids a layering dependency
+    from the editing layer onto every such type.
+    """
+
+    def slice(self, start: float, end: float) -> SegmentRebaseable | None: ...
+
+    def offset(self, delta: float) -> SegmentRebaseable: ...
+
+
+def _rebaseable_keys(context: dict[str, Any] | None) -> set[str]:
+    """Context keys whose value carries a re-baseable source-absolute timeline."""
+    if not context:
+        return set()
+    return {k for k, v in context.items() if isinstance(v, SegmentRebaseable)}
+
+
+def _segment_context(
+    context: dict[str, Any] | None,
+    start: float,
+    end: float,
+) -> dict[str, Any] | None:
+    """Re-base time-based context entries onto a cut segment's local timeline.
+
+    A cut segment is decoded 0-based -- its first frame is ``t=0`` -- but
+    context values may carry source-absolute timestamps. Every value
+    implementing :class:`SegmentRebaseable` (e.g. a ``Transcription``) is
+    sliced to ``[start, end)`` and shifted by ``-start`` so segment operations
+    (``add_subtitles``, ``silence_removal``) see segment-local time. Without
+    this, subtitles on a segment cut from the middle of a video render blank.
+    Values that don't implement the protocol pass through untouched.
+
+    Slicing always runs (even for ``start == 0``) so out-of-range entries do
+    not bleed in. When ``slice`` yields nothing the key is dropped rather than
+    passed empty, so the consuming operation raises its own clear "requires
+    ..." error instead of silently doing nothing.
+
+    Scope: per-segment only. ``post_operations`` run on the assembled,
+    concatenated timeline; re-basing time-based context across a multi-segment
+    concat is unsupported and rejected up front by
+    :meth:`VideoEdit._assert_post_ops_supported` (single-segment plans are
+    unaffected).
+    """
+    if not context:
+        return context
+    rebaseable = {k: v for k, v in context.items() if isinstance(v, SegmentRebaseable)}
+    if not rebaseable:
+        return context
+    rebased = dict(context)
+    for key, value in rebaseable.items():
+        sliced = value.slice(start, end)
+        if sliced is None:
+            del rebased[key]
+        else:
+            rebased[key] = sliced.offset(-start)
+    return rebased
 
 
 def _apply_with_context(op: Operation, video: Video, context: dict[str, Any] | None) -> Video:
@@ -139,9 +205,14 @@ class SegmentConfig(BaseModel):
         )
 
     def process(self, video: Video, context: dict[str, Any] | None = None) -> Video:
-        """Apply every operation in this segment to ``video`` in order."""
+        """Apply every operation in this segment to ``video`` in order.
+
+        Time-based context (e.g. ``transcription``) is re-based onto this
+        segment's 0-based local timeline before any operation sees it.
+        """
+        seg_context = _segment_context(context, self.start, self.end)
         for op in self.operations:
-            video = _apply_with_context(op, video, context)
+            video = _apply_with_context(op, video, seg_context)
         return video
 
 
@@ -288,11 +359,38 @@ class VideoEdit(BaseModel):
                 metas.append(source_metadata[key])
         return self._validate(metas, context)
 
+    def _assert_post_ops_supported(self, context: dict[str, Any] | None) -> None:
+        """Reject post_operations needing time-based context on a multi-segment plan.
+
+        ``post_operations`` run on the assembled, concatenated timeline. A
+        source-absolute context value (e.g. a ``Transcription``) cannot be
+        re-based across a multi-segment concat, and passing the raw value would
+        silently mis-time the op (subtitles/silence-removal against the wrong
+        timeline). Fail fast with an actionable message instead of producing a
+        wrong render. Single-segment plans are unaffected -- their concatenated
+        timeline is just the one segment's, handled by ``_segment_context``.
+        """
+        if len(self.segments) <= 1 or not self.post_operations:
+            return
+        rebaseable = _rebaseable_keys(context)
+        if not rebaseable:
+            return
+        for op in self.post_operations:
+            clash = sorted(set(op.requires) & rebaseable)
+            if clash:
+                raise ValueError(
+                    f"post_operation '{op.op}' requires time-based context {clash}, but the plan "
+                    f"has {len(self.segments)} segments. post_operations run on the concatenated "
+                    "timeline and time-based context is not re-based across a multi-segment concat. "
+                    f"Move '{op.op}' into a segment, or use a single-segment plan."
+                )
+
     def _validate(
         self,
         source_metas: list[VideoMetadata],
         context: dict[str, Any] | None,
     ) -> VideoMetadata:
+        self._assert_post_ops_supported(context)
         cut_metas: list[VideoMetadata] = []
         for i, (seg, meta) in enumerate(zip(self.segments, source_metas)):
             if seg.end > meta.total_seconds + 1e-3:
@@ -325,10 +423,11 @@ class VideoEdit(BaseModel):
         meta: VideoMetadata,
         context: dict[str, Any] | None,
     ) -> VideoMetadata:
+        seg_context = _segment_context(context, segment.start, segment.end)
         for op in segment.operations:
             _validate_effect_window(op, meta.total_seconds)
             try:
-                meta = _predict_with_context(op, meta, context)
+                meta = _predict_with_context(op, meta, seg_context)
             except (ValueError, TypeError) as e:
                 raise ValueError(f"Segment {index}: metadata prediction failed for '{op.op}': {e}") from e
         return meta
@@ -367,6 +466,7 @@ class VideoEdit(BaseModel):
 
     def run(self, context: dict[str, Any] | None = None) -> Video:
         """Execute the plan in memory and return the final ``Video``."""
+        self._assert_post_ops_supported(context)
         target_fps, target_w, target_h = self._matching_targets_from_disk()
         videos = [
             segment.process(segment.load(fps=target_fps, width=target_w, height=target_h), context)
@@ -393,6 +493,7 @@ class VideoEdit(BaseModel):
         isn't streamable. Memory usage is O(1) w.r.t. video length for fully
         streamable pipelines.
         """
+        self._assert_post_ops_supported(context)
         output_path = Path(output_path).with_suffix(f".{format}")
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -412,6 +513,11 @@ class VideoEdit(BaseModel):
             plan = plans[0]
             total_frames = round((plan.end_second - plan.start_second) * plan.output_fps)
             for op in self.post_operations:
+                if op.requires:
+                    # Same reason as the per-segment guard: no runtime context
+                    # in the streaming path. (Multi-segment + requires already
+                    # raised by _assert_post_ops_supported.)
+                    return self._run_to_file_eager(output_path, format, preset, crf, context)
                 if not isinstance(op, Effect) or not op.streamable:
                     return self._run_to_file_eager(output_path, format, preset, crf, context)
                 start_f, end_f = _effect_frame_range(op, plan.output_fps, total_frames)
@@ -477,6 +583,12 @@ class VideoEdit(BaseModel):
 
         effect_schedule: list[EffectScheduleEntry] = []
         for op in segment.operations:
+            if op.requires:
+                # Streaming schedules effects by frame range with no runtime
+                # context, so it can't supply -- let alone re-base onto the
+                # segment's local timeline -- anything an op `requires`. Defer
+                # to the eager path, where _segment_context handles re-basing.
+                return None
             if isinstance(op, Effect):
                 if not op.streamable:
                     return None

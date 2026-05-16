@@ -659,6 +659,59 @@ def test_chunk_segments_empty_and_no_mutation():
     assert original.segments[0].text == "keep me"
 
 
+def test_chunk_segments_empty_words_segment_is_fresh_copy():
+    """A words-less segment is passed through as a new object, not aliased."""
+    seg = TranscriptionSegment(start=0.0, end=1.0, text="(music)", words=[], speaker="S0")
+    src = Transcription(segments=[seg])
+    out = src.chunk_segments(max_words=3)
+
+    assert len(out.segments) == 1
+    assert out.segments[0] is not seg
+    assert out.segments[0].words is not seg.words
+    assert out.segments[0].text == "(music)" and out.segments[0].speaker == "S0"
+
+
+def test_segment_from_words_derives_span_and_carries_metadata():
+    """from_words derives start/end/text and passes confidence through."""
+    words = _lc_words(("a", 0.5, 1.0), ("b", 1.0, 2.0))
+    seg = TranscriptionSegment.from_words(
+        words, speaker="S0", avg_logprob=-0.3, no_speech_prob=0.02, compression_ratio=1.5
+    )
+
+    assert (seg.start, seg.end, seg.text) == (0.5, 2.0, "a b")
+    assert (seg.speaker, seg.avg_logprob, seg.no_speech_prob, seg.compression_ratio) == ("S0", -0.3, 0.02, 1.5)
+    # Word list is copied, not aliased.
+    assert seg.words == words and seg.words is not words
+
+
+def test_segment_from_words_defaults_metadata_to_none_and_rejects_empty():
+    seg = TranscriptionSegment.from_words(_lc_words(("x", 0.0, 0.1)))
+    assert seg.speaker is None
+    assert seg.avg_logprob is None and seg.no_speech_prob is None and seg.compression_ratio is None
+
+    with pytest.raises(ValueError, match="from_words requires a non-empty word list"):
+        TranscriptionSegment.from_words([])
+
+
+def test_offset_preserves_confidence_fields():
+    """Regression: a pure timing shift must not drop avg_logprob/etc."""
+    seg = TranscriptionSegment(
+        start=0.0,
+        end=1.0,
+        text="hi",
+        words=[TranscriptionWord(start=0.0, end=1.0, word="hi", speaker="S0")],
+        speaker="S0",
+        avg_logprob=-0.7,
+        no_speech_prob=0.05,
+        compression_ratio=1.8,
+    )
+    out = Transcription(segments=[seg], language="en").offset(2.0).segments[0]
+
+    assert (out.start, out.end) == (2.0, 3.0)
+    assert out.words[0].start == 2.0 and out.words[0].end == 3.0
+    assert (out.speaker, out.avg_logprob, out.no_speech_prob, out.compression_ratio) == ("S0", -0.7, 0.05, 1.8)
+
+
 def test_overlay_normalization_defaults():
     """New overlay knobs default to sensible subtitle behavior."""
     overlay = TranscriptionOverlay(font_filename=TEST_FONT_PATH)

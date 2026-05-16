@@ -1,5 +1,64 @@
 # Release Notes
 
+## 0.33.5
+
+`VideoEdit` now re-bases time-based runtime context onto each segment's
+local timeline before its operations run. A cut segment is decoded
+0-based (its first frame is `t=0`), but a `Transcription` passed via
+`run(context=...)` / `validate(context=...)` carries source-absolute
+timestamps. Previously the raw transcription was threaded unchanged into
+every segment, so `add_subtitles` (and `silence_removal`) on a segment
+cut from the middle of a video saw timestamps that never matched the
+0-based frames: subtitles rendered **blank**. They are now sliced to the
+segment's `[start, end)` and shifted by `-start`, so any segment -- not
+just one starting at `t=0` -- gets correctly timed subtitles. Words
+outside the segment no longer bleed in, even when `start == 0`.
+
+Re-basing is generic: any runtime-context value implementing
+`slice(start, end)` and `offset(delta)` (the new structural
+`SegmentRebaseable` protocol) is re-based, not just the concrete
+`Transcription` type -- keeping the context mechanism open to future
+time-based context and removing a layering dependency from the editing
+layer.
+
+**Scope:** re-basing is per-segment only. `post_operations` run on the
+assembled, concatenated timeline, which cannot be re-based across a
+multi-segment concat. A multi-segment plan with a `post_operation` that
+`requires` time-based context now **raises a clear error up front**
+(during `validate()` / `run()` / `run_to_file()`) instead of silently
+rendering against the wrong timeline; single-segment plans are
+unaffected. When a segment contains no overlapping words the
+`transcription` key is dropped rather than passed empty, so the
+consuming operation raises its own clear "requires ..." error instead of
+silently rendering nothing -- request subtitles only on segments that
+contain speech.
+
+### Changes
+
+- `SegmentConfig.process` and `VideoEdit` metadata validation
+  (`_predict_segment`) derive a per-segment context via the new internal
+  `_segment_context` helper (slice to `[start, end)` then `.offset(-start)`).
+  `run()` and `validate()` stay consistent.
+- New `SegmentRebaseable` protocol + `_segment_context` re-bases every
+  matching context value structurally; `VideoEdit` no longer imports or
+  type-checks `Transcription`.
+- New `VideoEdit._assert_post_ops_supported`, enforced by `validate()`,
+  `run()`, and `run_to_file()`: rejects a multi-segment plan whose
+  `post_operations` need time-based context.
+- Streaming path defers to the eager path for any operation that
+  `requires` runtime context (streaming schedules effects by frame range
+  with no context, so it cannot supply or re-base one) -- previously safe
+  only because such ops happen to be non-streamable; now explicit.
+- New `TranscriptionSegment.from_words(...)` centralizes segment
+  construction from a word group (used by `_words_to_segments`,
+  `standardize_segments`, `slice`, `chunk_segments`). Fixes a latent bug
+  where `Transcription.offset()` silently dropped the segment confidence
+  fields (`avg_logprob`, `no_speech_prob`, `compression_ratio`); a pure
+  timing shift now preserves them. `chunk_segments` no longer aliases a
+  words-less source segment into its output.
+- No public API or wire-format change. Plans that previously produced
+  blank subtitles on mid-video cuts now render them correctly.
+
 ## 0.33.4
 
 `TranscriptionOverlay` now normalizes subtitles by default: long
