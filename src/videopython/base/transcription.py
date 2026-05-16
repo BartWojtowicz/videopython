@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -79,6 +79,38 @@ class TranscriptionSegment:
             compression_ratio=data.get("compression_ratio"),
         )
 
+    @classmethod
+    def from_words(
+        cls,
+        words: list[TranscriptionWord],
+        *,
+        speaker: str | None = None,
+        avg_logprob: float | None = None,
+        no_speech_prob: float | None = None,
+        compression_ratio: float | None = None,
+    ) -> TranscriptionSegment:
+        """Build a segment spanning ``words``, deriving start/end/text from them.
+
+        ``words`` must be non-empty: ``start``/``end`` come from the first/last
+        word and ``text`` is the words joined by single spaces. Speaker and the
+        confidence fields are passed through so callers re-segmenting *within* a
+        known source segment can preserve them; callers regrouping words across
+        segments (where these are ambiguous) simply omit them, leaving ``None``.
+        The ``words`` list is copied, so the result never aliases the caller's.
+        """
+        if not words:
+            raise ValueError("from_words requires a non-empty word list")
+        return cls(
+            start=words[0].start,
+            end=words[-1].end,
+            text=" ".join(w.word for w in words),
+            words=list(words),
+            speaker=speaker,
+            avg_logprob=avg_logprob,
+            no_speech_prob=no_speech_prob,
+            compression_ratio=compression_ratio,
+        )
+
 
 class Transcription:
     def __init__(
@@ -124,39 +156,19 @@ class Transcription:
             return []
 
         current_speaker = words[0].speaker
-        current_words = []
-        segment_start = words[0].start
+        current_words: list[TranscriptionWord] = []
         segments = []
 
         for word in words:
             if current_speaker == word.speaker:
                 current_words.append(word)
             else:
-                segment_text = " ".join(w.word for w in current_words)
-                segments.append(
-                    TranscriptionSegment(
-                        start=segment_start,
-                        end=current_words[-1].end,
-                        text=segment_text.strip(),
-                        words=current_words.copy(),
-                        speaker=current_speaker,
-                    )
-                )
+                segments.append(TranscriptionSegment.from_words(current_words, speaker=current_speaker))
                 current_speaker = word.speaker
                 current_words = [word]
-                segment_start = word.start
 
         if current_words:
-            segment_text = " ".join(w.word for w in current_words)
-            segments.append(
-                TranscriptionSegment(
-                    start=segment_start,
-                    end=current_words[-1].end,
-                    text=segment_text.strip(),
-                    words=current_words.copy(),
-                    speaker=current_speaker,
-                )
-            )
+            segments.append(TranscriptionSegment.from_words(current_words, speaker=current_speaker))
 
         return segments
 
@@ -190,22 +202,14 @@ class Transcription:
         offset_segments = []
 
         for segment in self.segments:
-            offset_words = []
-            for word in segment.words:
-                offset_words.append(
-                    TranscriptionWord(
-                        start=word.start + time, end=word.end + time, word=word.word, speaker=word.speaker
-                    )
-                )
-
+            offset_words = [
+                TranscriptionWord(start=w.start + time, end=w.end + time, word=w.word, speaker=w.speaker)
+                for w in segment.words
+            ]
+            # ``replace`` carries text, speaker, and confidence fields through a
+            # pure timing shift unchanged -- only timestamps move.
             offset_segments.append(
-                TranscriptionSegment(
-                    start=segment.start + time,
-                    end=segment.end + time,
-                    text=segment.text,
-                    words=offset_words,
-                    speaker=segment.speaker,
-                )
+                replace(segment, start=segment.start + time, end=segment.end + time, words=offset_words)
             )
 
         return Transcription(segments=offset_segments, language=self.language)
@@ -245,16 +249,9 @@ class Transcription:
         def _flush(words: list[TranscriptionWord]) -> None:
             if not words:
                 return
-            segment_text = " ".join(w.word for w in words)
-            standardized_segments.append(
-                TranscriptionSegment(
-                    start=words[0].start,
-                    end=words[-1].end,
-                    text=segment_text,
-                    words=words.copy(),
-                    speaker=words[0].speaker,
-                )
-            )
+            # Words here are regrouped across original segments, so the source
+            # segments' confidence fields no longer apply -- left as None.
+            standardized_segments.append(TranscriptionSegment.from_words(words, speaker=words[0].speaker))
 
         if time is not None:
             current_words: list[TranscriptionWord] = []
@@ -315,18 +312,9 @@ class Transcription:
                     start_of_sentence = True
                 new_words.append(TranscriptionWord(start=word.start, end=word.end, word=token, speaker=word.speaker))
 
-            capitalized_segments.append(
-                TranscriptionSegment(
-                    start=segment.start,
-                    end=segment.end,
-                    text=" ".join(w.word for w in new_words),
-                    words=new_words,
-                    speaker=segment.speaker,
-                    avg_logprob=segment.avg_logprob,
-                    no_speech_prob=segment.no_speech_prob,
-                    compression_ratio=segment.compression_ratio,
-                )
-            )
+            # Casing-only rewrite: segment boundaries, speaker, and confidence
+            # are unchanged; only the tokens (and joined text) differ.
+            capitalized_segments.append(replace(segment, text=" ".join(w.word for w in new_words), words=new_words))
 
         return Transcription(segments=capitalized_segments, language=self.language)
 
@@ -353,16 +341,17 @@ class Transcription:
         for segment in self.segments:
             words = segment.words
             if not words:
-                chunked_segments.append(segment)
+                # Nothing to split; emit a fresh copy so the result never
+                # aliases the source segment.
+                chunked_segments.append(replace(segment, words=list(segment.words)))
                 continue
             for i in range(0, len(words), max_words):
                 group = words[i : i + max_words]
+                # Splitting *within* one source segment -- its confidence
+                # fields still apply, so carry them through.
                 chunked_segments.append(
-                    TranscriptionSegment(
-                        start=group[0].start,
-                        end=group[-1].end,
-                        text=" ".join(w.word for w in group),
-                        words=list(group),
+                    TranscriptionSegment.from_words(
+                        group,
                         speaker=segment.speaker,
                         avg_logprob=segment.avg_logprob,
                         no_speech_prob=segment.no_speech_prob,
@@ -409,34 +398,17 @@ class Transcription:
             if word.speaker == current_speaker:
                 current_words.append(word)
             else:
-                # Finish current segment
+                # Finish current segment (speaker is ambiguous across the
+                # original segments these words came from -- confidence omitted)
                 if current_words:
-                    segment_text = " ".join(w.word for w in current_words)
-                    sliced_segments.append(
-                        TranscriptionSegment(
-                            start=current_words[0].start,
-                            end=current_words[-1].end,
-                            text=segment_text,
-                            words=current_words.copy(),
-                            speaker=current_speaker,
-                        )
-                    )
+                    sliced_segments.append(TranscriptionSegment.from_words(current_words, speaker=current_speaker))
                 # Start new segment
                 current_speaker = word.speaker
                 current_words = [word]
 
         # Add final segment
         if current_words:
-            segment_text = " ".join(w.word for w in current_words)
-            sliced_segments.append(
-                TranscriptionSegment(
-                    start=current_words[0].start,
-                    end=current_words[-1].end,
-                    text=segment_text,
-                    words=current_words.copy(),
-                    speaker=current_speaker,
-                )
-            )
+            sliced_segments.append(TranscriptionSegment.from_words(current_words, speaker=current_speaker))
 
         return Transcription(segments=sliced_segments, language=self.language)
 

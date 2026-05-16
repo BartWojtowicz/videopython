@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from tests.test_config import BIG_VIDEO_PATH, SMALL_VIDEO_METADATA, SMALL_VIDEO_PATH
 from videopython.base.transcription import Transcription, TranscriptionWord
 from videopython.base.video import Video, VideoMetadata
+from videopython.editing.transforms import Resize
 from videopython.editing.video_edit import SegmentConfig, VideoEdit, _segment_context
 
 
@@ -690,6 +691,96 @@ class TestSegmentContextWiring:
 
         assert mid_meta.frame_count == base_meta.frame_count
         assert mid_meta.frame_count < round(10.0 * 24)
+
+
+class _FakeTimeline:
+    """Minimal SegmentRebaseable: not a Transcription, just slice + offset."""
+
+    def __init__(self, lo: float, hi: float) -> None:
+        self.lo, self.hi = lo, hi
+
+    def slice(self, start: float, end: float) -> _FakeTimeline | None:
+        lo, hi = max(self.lo, start), min(self.hi, end)
+        return _FakeTimeline(lo, hi) if lo < hi else None
+
+    def offset(self, delta: float) -> _FakeTimeline:
+        return _FakeTimeline(self.lo + delta, self.hi + delta)
+
+
+class TestGenericContextRebasing:
+    """_segment_context re-bases anything with slice+offset, not just Transcription."""
+
+    def test_duck_typed_value_is_rebased(self):
+        out = _segment_context({"clip": _FakeTimeline(12.0, 18.0), "k": 1}, 12.0, 16.0)
+        assert out is not None
+        clip = out["clip"]
+        assert isinstance(clip, _FakeTimeline)
+        assert (clip.lo, clip.hi) == (0.0, 4.0)
+        assert out["k"] == 1
+
+    def test_duck_typed_value_dropped_when_no_overlap(self):
+        out = _segment_context({"clip": _FakeTimeline(50.0, 60.0)}, 0.0, 5.0)
+        assert out == {}
+
+
+class TestStreamingRequiresGuard:
+    """An op that `requires` runtime context forces the eager path."""
+
+    def test_build_streaming_plan_returns_none_for_requires_op(self, monkeypatch):
+        plan = VideoEdit.from_dict(
+            {
+                "segments": [
+                    _segment(
+                        source=SMALL_VIDEO_PATH,
+                        start=0.0,
+                        end=1.0,
+                        operations=[{"op": "resize", "width": 64, "height": 64}],
+                    )
+                ]
+            }
+        )
+        seg = plan.segments[0]
+        # resize is streamable, so without the guard a plan is built.
+        assert plan._build_streaming_plan(seg, None, None, None) is not None
+        # Same streamable op, now declaring a context requirement -> eager.
+        monkeypatch.setattr(Resize, "requires", ("transcription",))
+        assert plan._build_streaming_plan(seg, None, None, None) is None
+
+
+class TestPostOpsGuard:
+    """Multi-segment plans reject post_operations that need time-based context."""
+
+    @staticmethod
+    def _plan(n_segments: int, post: list[dict[str, Any]]) -> VideoEdit:
+        segs = [_segment(source="fake.mp4", start=0.0, end=5.0) for _ in range(n_segments)]
+        return VideoEdit.from_dict({"segments": segs, "post_operations": post})
+
+    _META = VideoMetadata(height=100, width=100, fps=24, frame_count=240, total_seconds=10.0)
+
+    def test_multi_segment_post_op_requiring_context_raises_on_validate(self):
+        plan = self._plan(2, [{"op": "silence_removal"}])
+        tx = _make_transcription([(1.0, 2.0, "hello")])
+        with pytest.raises(ValueError, match="not re-based across a multi-segment concat"):
+            plan.validate_with_metadata(self._META, context={"transcription": tx})
+
+    def test_multi_segment_post_op_requiring_context_raises_on_run(self):
+        plan = self._plan(2, [{"op": "silence_removal"}])
+        tx = _make_transcription([(1.0, 2.0, "hello")])
+        # Guard fires before any disk access, so "fake.mp4" is never read.
+        with pytest.raises(ValueError, match="post_operation 'silence_removal' requires"):
+            plan.run(context={"transcription": tx})
+
+    def test_multi_segment_post_op_without_requires_is_allowed(self):
+        plan = self._plan(2, [{"op": "reverse"}])
+        tx = _make_transcription([(1.0, 2.0, "hello")])
+        # reverse has no `requires`; the transcription is irrelevant to it.
+        plan.validate_with_metadata(self._META, context={"transcription": tx})
+
+    def test_single_segment_post_op_requiring_context_is_allowed(self):
+        plan = self._plan(1, [{"op": "silence_removal"}])
+        tx = _make_transcription([(1.0, 2.0, "hello")])
+        # Single-segment concat == the one segment's timeline: documented-supported.
+        plan.validate_with_metadata(self._META, context={"transcription": tx})
 
 
 # ---------------------------------------------------------------- metadata chain
