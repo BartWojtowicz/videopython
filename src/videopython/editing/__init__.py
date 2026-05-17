@@ -21,7 +21,7 @@ from .effects import (
     Zoom,
 )
 from .operation import FilterCtx, OpCategory, Operation, TimeRange
-from .transcription_overlay import TranscriptionOverlay
+from .transcription_overlay import SubtitleRegion, SubtitleStyle, TranscriptionOverlay
 from .transforms import (
     Crop,
     CropMode,
@@ -65,6 +65,8 @@ __all__ = [
     "VolumeAdjust",
     "TextOverlay",
     "TranscriptionOverlay",
+    "SubtitleStyle",
+    "SubtitleRegion",
     "Shake",
     "PunchIn",
     "Flash",

@@ -1,5 +1,6 @@
 """Tests for AI-powered transforms (face tracking)."""
 
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -9,7 +10,7 @@ from videopython.ai.transforms import (
     FaceTracker,
     FaceTrackingCrop,
 )
-from videopython.base.video import Video
+from videopython.base.video import Video, VideoMetadata
 
 
 class MockBoundingBox:
@@ -294,6 +295,36 @@ class TestFaceTrackingCrop:
         out_h, out_w = result.frame_shape[:2]
         assert abs(out_w / out_h - 9 / 16) < 0.01
 
+    @pytest.mark.parametrize(
+        "src_w, src_h, aspect",
+        [
+            (1920, 1080, (9, 16)),
+            (1920, 1080, (1, 1)),
+            (1280, 720, (4, 5)),
+            (1080, 1920, (16, 9)),
+        ],
+    )
+    @patch("videopython.ai.transforms.FaceTracker")
+    def test_predict_metadata_matches_apply(self, mock_tracker_class, src_w, src_h, aspect):
+        """Closes the validate/run gap precondition: the dry-run dimensions
+        must equal what apply() actually produces (was identity = a lie)."""
+        mock_tracker = MagicMock()
+        mock_tracker.detect_and_track.return_value = (0.5, 0.5, 0.1, 0.15)
+        mock_tracker_class.return_value = mock_tracker
+
+        crop = FaceTrackingCrop(target_aspect=aspect)
+        video = Video.from_frames(np.zeros((4, src_h, src_w, 3), dtype=np.uint8), fps=30)
+        applied = crop.apply(video)
+
+        meta = VideoMetadata(height=src_h, width=src_w, fps=30, frame_count=4, total_seconds=4 / 30)
+        predicted = crop.predict_metadata(meta)
+
+        assert (predicted.width, predicted.height) == (applied.frame_shape[1], applied.frame_shape[0])
+        # Identity for everything except dimensions.
+        assert predicted.fps == meta.fps
+        assert predicted.frame_count == meta.frame_count
+        assert predicted.total_seconds == meta.total_seconds
+
     @patch("videopython.ai.transforms.FaceTracker")
     def test_apply_with_fallback_center(self, mock_tracker_class):
         """Test fallback to center when no face detected."""
@@ -537,3 +568,54 @@ class TestGPUFaceTracking:
         call_kwargs = mock_tracker_class.call_args[1]
         assert call_kwargs["backend"] == "gpu"
         assert call_kwargs["sample_rate"] == 5
+
+
+class TestFaceCropSubtitleValidateGap:
+    """Step 0 + Step 2 together, for the exact scenario in TODO.md.
+
+    Importing ``videopython.ai.transforms`` (top of this file) registers the
+    ``face_crop`` op, so a plan combining it with ``add_subtitles`` can be
+    dry-run. Lives here, not in the editing suite, to keep that suite free of
+    the optional ``[ai]`` extra.
+    """
+
+    @staticmethod
+    def _plan(ops: list[dict[str, Any]]) -> dict[str, Any]:
+        return {"segments": [{"source": "fake.mp4", "start": 0.0, "end": 2.0, "operations": ops}]}
+
+    @staticmethod
+    def _transcription():
+        from videopython.base.transcription import Transcription, TranscriptionSegment, TranscriptionWord
+
+        words = [
+            TranscriptionWord(start=s, end=e, word=w)
+            for s, e, w in [(0.0, 0.4, "Hello"), (0.4, 0.8, "there"), (0.8, 1.2, "world")]
+        ]
+        return Transcription(segments=[TranscriptionSegment.from_words(words)])
+
+    def test_validate_measures_subtitles_against_post_crop_frame(self):
+        """Without Step 0, face_crop was identity and validate() measured
+        against 1920x1080; the overflow only surfaced mid-render. Now the
+        cropped frame is predicted, so an un-fittable cue fails fast and the
+        error names the post-crop dimensions."""
+        from videopython.editing.video_edit import VideoEdit
+
+        plan = self._plan(
+            [
+                {"op": "face_crop", "target_aspect": [9, 16]},
+                {"op": "add_subtitles", "font_size": 300, "min_font_scale": 0.5},
+            ]
+        )
+        source = VideoMetadata(height=240, width=320, fps=30, frame_count=60, total_seconds=2.0)
+        with pytest.raises(ValueError, match="add_subtitles.*cannot fit") as exc:
+            VideoEdit.from_dict(plan).validate_with_metadata(source, context={"transcription": self._transcription()})
+        # 320x240 cropped to 9:16 -> 134x240 (not the 320x240 source).
+        assert "134x240 frame" in str(exc.value)
+
+    def test_reasonable_plan_passes_and_reports_cropped_dims(self):
+        from videopython.editing.video_edit import VideoEdit
+
+        plan = self._plan([{"op": "face_crop", "target_aspect": [9, 16]}, {"op": "add_subtitles"}])
+        source = VideoMetadata(height=1080, width=1920, fps=30, frame_count=60, total_seconds=2.0)
+        out = VideoEdit.from_dict(plan).validate_with_metadata(source, context={"transcription": self._transcription()})
+        assert (out.width, out.height) == (606, 1080)

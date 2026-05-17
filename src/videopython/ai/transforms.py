@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from videopython.ai.understanding.faces import FaceTracker
 from videopython.base._dimensions import floor_to_even
-from videopython.base.video import Video
+from videopython.base.video import Video, VideoMetadata
 from videopython.editing.operation import OpCategory, Operation
 
 logger = logging.getLogger(__name__)
@@ -76,6 +76,28 @@ class FaceTrackingCrop(Operation):
         # "dynamic" — placeholder until motion/look-direction framing is implemented.
         return (face_cx, face_cy - self.headroom)
 
+    def _resolved_output_dims(self, w: int, h: int) -> tuple[int, int]:
+        """Output ``(width, height)`` after the crop + resize.
+
+        Every frame is resized to this size regardless of the per-frame face
+        position, so it is a pure function of the input dimensions and
+        ``target_aspect``. Single source of truth shared by :meth:`apply` and
+        :meth:`predict_metadata` (mirrors ``Resize._resolve_dims`` /
+        ``Crop._resolve_box``), so the dry-run cannot disagree with the render.
+        """
+        target_ratio = self.target_aspect[0] / self.target_aspect[1]
+        if target_ratio < w / h:
+            out_h = floor_to_even(h)
+            out_w = floor_to_even(int(out_h * target_ratio))
+        else:
+            out_w = floor_to_even(w)
+            out_h = floor_to_even(int(out_w / target_ratio))
+        return out_w, out_h
+
+    def predict_metadata(self, meta: VideoMetadata) -> VideoMetadata:
+        out_w, out_h = self._resolved_output_dims(meta.width, meta.height)
+        return meta.with_dimensions(out_w, out_h)
+
     def _clamp_speed(self, current: tuple[float, float], target: tuple[float, float]) -> tuple[float, float]:
         if self.max_speed is None:
             return target
@@ -135,13 +157,7 @@ class FaceTrackingCrop(Operation):
         )
 
         h, w = video.frame_shape[:2]
-        target_ratio = self.target_aspect[0] / self.target_aspect[1]
-        if target_ratio < w / h:
-            out_h = floor_to_even(h)
-            out_w = floor_to_even(int(out_h * target_ratio))
-        else:
-            out_w = floor_to_even(w)
-            out_h = floor_to_even(int(out_w / target_ratio))
+        out_w, out_h = self._resolved_output_dims(w, h)
 
         default_x = (w - out_w) // 2
         default_y = (h - out_h) // 2
