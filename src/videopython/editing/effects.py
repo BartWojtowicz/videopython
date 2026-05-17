@@ -14,6 +14,7 @@ audio after ``_apply`` returns.
 from __future__ import annotations
 
 import logging
+from io import BytesIO
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
@@ -783,6 +784,13 @@ class ImageOverlay(Effect):
     JSON-serialisable. Off-frame or oversized placement clips to a partial
     paste or a no-op -- the same contract as :class:`TextOverlay`, never an
     error; only an unreadable ``source`` is rejected (in ``predict_metadata``).
+
+    ``source`` may be a raster image (PNG/JPEG/WebP) or an SVG (detected by the
+    ``.svg`` extension). An SVG is rasterised by ``resvg`` *at the exact target
+    pixel width* -- crisp at any frame size, not a blurry upscale of a
+    fixed-size bitmap -- with a transparent background and no remote-resource
+    fetching (the local path only; no SSRF). SVGs containing text depend on the
+    fonts available at render time.
     """
 
     op: Literal["image_overlay"] = "image_overlay"
@@ -790,7 +798,9 @@ class ImageOverlay(Effect):
 
     source: Path = Field(
         description=(
-            "Path to an RGB or RGBA image file (PNG/JPEG/WebP). Loaded at apply time; kept JSON-serialisable as a path."
+            "Path to an image file: a raster RGB/RGBA image (PNG/JPEG/WebP) or "
+            "an SVG (`.svg`, rasterised at the target resolution). Loaded at "
+            "apply time; kept JSON-serialisable as a path."
         ),
     )
     scale: float = Field(
@@ -821,6 +831,7 @@ class ImageOverlay(Effect):
     )
 
     _overlay_rgba: np.ndarray | None = PrivateAttr(default=None)
+    _svg_cache: dict[int, np.ndarray] = PrivateAttr(default_factory=dict)
     _stream_noop: bool = PrivateAttr(default=False)
     _stream_alpha: np.ndarray | None = PrivateAttr(default=None)
     _stream_rgb: np.ndarray | None = PrivateAttr(default=None)
@@ -832,6 +843,9 @@ class ImageOverlay(Effect):
             raise ValueError("position values must be in range [0, 1]")
         return self
 
+    def _is_svg(self) -> bool:
+        return self.source.suffix.lower() == ".svg"
+
     def predict_metadata(self, meta: VideoMetadata, **_context: Any) -> VideoMetadata:
         """Reject only a missing/unreadable ``source`` (see :meth:`Operation.predict_metadata`).
 
@@ -840,16 +854,35 @@ class ImageOverlay(Effect):
         at ``validate()`` time, symmetric with ``TranscriptionOverlay``.
         Geometry (oversized / off-frame) is deliberately *not* checked here: it
         clips to a valid no-op like :class:`TextOverlay`, so rejecting it would
-        break that contract and the parity with the op this is modeled on.
-        ``verify()`` is a cheap header check (no full decode), so ``validate()``
-        stays frame-free.
+        break that contract and the parity with the op this is modeled on. Both
+        checks are cheap (a header ``verify()`` / a 1px SVG parse, no full
+        decode), so ``validate()`` stays frame-free.
         """
         try:
-            with Image.open(self.source) as im:
-                im.verify()
-        except OSError as exc:
+            if self._is_svg():
+                import resvg_py
+
+                resvg_py.svg_to_bytes(svg_path=str(self.source), width=1)
+            else:
+                with Image.open(self.source) as im:
+                    im.verify()
+        except (OSError, ValueError) as exc:
             raise ValueError(f"image_overlay source {str(self.source)!r} is not a readable image: {exc}") from exc
         return meta
+
+    def _rasterize_svg(self, target_w: int) -> np.ndarray:
+        cached = self._svg_cache.get(target_w)
+        if cached is not None:
+            return cached
+        # Lazy import: only when an SVG source is actually used. resvg renders
+        # at the exact target width (height proportional to the viewBox) with a
+        # transparent background and never fetches remote resources.
+        import resvg_py
+
+        png = resvg_py.svg_to_bytes(svg_path=str(self.source), width=target_w)
+        arr = np.array(Image.open(BytesIO(bytes(png))).convert("RGBA"), dtype=np.uint8)
+        self._svg_cache[target_w] = arr
+        return arr
 
     def _load_overlay(self) -> np.ndarray:
         if self._overlay_rgba is not None:
@@ -878,9 +911,13 @@ class ImageOverlay(Effect):
         return px - img_w, py - img_h
 
     def _resized_overlay(self, frame_w: int) -> np.ndarray:
+        target_w = max(1, round(self.scale * frame_w))
+        if self._is_svg():
+            # Rasterise the vector at the target size (crisp) rather than
+            # upscaling a fixed bitmap. resvg derives height from the viewBox.
+            return self._rasterize_svg(target_w)
         overlay = self._load_overlay()
         src_h, src_w = overlay.shape[:2]
-        target_w = max(1, round(self.scale * frame_w))
         target_h = max(1, round(target_w * src_h / src_w))
         if (target_w, target_h) == (src_w, src_h):
             return overlay

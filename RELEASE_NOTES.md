@@ -8,10 +8,22 @@ overlay for logos / watermarks / brand marks. Unlike `full_image_overlay`
 so one config is resolution-independent across 1080p / 4k / vertical /
 square; `position`/`anchor` reuse `TextOverlay`'s geometry and off-frame
 placement clips to a no-op (never an error). Streams via the `run_to_file`
-fast path with eager/streamed parity. `predict_metadata` rejects only a
-missing/unreadable `source` at `validate()` time -- geometry that `run()`
-can clip is not rejected. This codifies the `predict_metadata` contract
-(reject iff `run()` would fail) in the `Operation` docstring.
+fast path with eager/streamed parity.
+
+`source` may be a raster image or an **SVG** (detected by the `.svg`
+extension), rasterised by `resvg` *at the exact target pixel width* -- crisp
+at any frame size, not an upscaled bitmap -- with a transparent background
+and no remote-resource fetching (local path only; no SSRF). `predict_metadata`
+rejects only a missing/unreadable `source` at `validate()` time (a cheap
+header / 1px-SVG parse) -- geometry that `run()` can clip is not rejected.
+This codifies the `predict_metadata` contract (reject iff `run()` would fail)
+in the `Operation` docstring.
+
+**Breaking:** minimum Python is now **3.11** (was 3.10). `resvg-py` is the
+SVG rasteriser and ships no 3.10/macOS wheel; rather than break `pip install`
+on that slice or hide SVG behind an extra, the floor moves to 3.11 (3.10 is
+near security-EOL). `resvg-py` is a core dependency (1.7 MB, self-contained,
+no system libraries).
 
 ## 0.34.1
 

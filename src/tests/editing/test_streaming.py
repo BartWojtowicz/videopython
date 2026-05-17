@@ -203,6 +203,44 @@ class TestVideoEditRunToFile:
             out_path.unlink(missing_ok=True)
             logo_path.unlink(missing_ok=True)
 
+    def test_svg_overlay_streaming_matches_eager(self):
+        """SVG ImageOverlay must produce the same pixels eager and streamed."""
+        with tempfile.NamedTemporaryFile(suffix=".svg", delete=False, mode="w") as f:
+            f.write(
+                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 60" width="120" '
+                'height="60"><rect width="120" height="60" fill="rgb(0,200,120)"/></svg>'
+            )
+            svg_path = Path(f.name)
+        plan_dict = {
+            "segments": [
+                {
+                    "source": SMALL_VIDEO_PATH,
+                    "start": 0,
+                    "end": 2.0,
+                    "operations": [
+                        {"op": "image_overlay", "source": str(svg_path), "scale": 0.25, "anchor": "bottom_right"},
+                    ],
+                }
+            ],
+        }
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
+            out_path = Path(f.name)
+        try:
+            eager_video = VideoEdit.from_dict(plan_dict).run()
+            VideoEdit.from_dict(plan_dict).run_to_file(out_path)
+            streamed_video = Video.from_path(str(out_path))
+
+            assert abs(len(eager_video.frames) - len(streamed_video.frames)) <= 1
+            min_frames = min(len(eager_video.frames), len(streamed_video.frames))
+            mid = min_frames // 2
+            eager_frame = eager_video.frames[mid].astype(np.float32)
+            stream_frame = streamed_video.frames[mid].astype(np.float32)
+            mae = np.abs(eager_frame - stream_frame).mean()
+            assert mae < 15, f"Mean absolute error too high: {mae}"
+        finally:
+            out_path.unlink(missing_ok=True)
+            svg_path.unlink(missing_ok=True)
+
     def test_volume_adjust_streaming(self):
         """Audio-only effects should work in streaming mode."""
         plan = {

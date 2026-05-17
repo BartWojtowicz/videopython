@@ -277,6 +277,28 @@ class TestExecution:
         assert result.frame_shape[1] == meta.width
         assert (result.frames[0][:, :, 2] == 255).any()
 
+    def test_run_with_svg_overlay(self, tmp_path):
+        svg = tmp_path / "logo.svg"
+        svg.write_text(
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 40" width="100" '
+            'height="40"><rect width="100" height="40" fill="rgb(0,200,120)"/></svg>'
+        )
+        plan = {
+            "segments": [
+                _segment(
+                    start=0.0,
+                    end=2.0,
+                    operations=[{"op": "image_overlay", "source": str(svg), "scale": 0.2, "anchor": "bottom_right"}],
+                )
+            ]
+        }
+        edit = VideoEdit.from_dict(plan)
+        meta = edit.validate()
+        result = edit.run()
+        assert result.frame_shape[0] == meta.height
+        assert result.frame_shape[1] == meta.width
+        assert (result.frames[0][:, :, 1] > 150).any()  # the green logo is composited
+
 
 # ----------------------------------------------------------------- validation
 

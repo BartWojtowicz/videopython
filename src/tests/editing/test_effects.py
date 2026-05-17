@@ -499,6 +499,57 @@ class TestImageOverlay:
         meta = VideoMetadata(height=100, width=100, fps=10, frame_count=10, total_seconds=1.0)
         assert ImageOverlay(source=src, scale=1.0).predict_metadata(meta) == meta
 
+    # --- SVG sources (rasterised at the target resolution via resvg) ---
+
+    def _write_svg(self, tmp_path, body, name="logo.svg"):
+        p = tmp_path / name
+        p.write_text(
+            f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 40" width="100" height="40">{body}</svg>'
+        )
+        return str(p)
+
+    def test_svg_rasterized_at_target_resolution(self, tmp_path):
+        src = self._write_svg(tmp_path, '<rect width="100" height="40" fill="rgb(0,128,255)"/>')
+        video = Video.from_frames(np.zeros((2, 120, 200, 3), dtype=np.uint8), fps=10)
+        f = ImageOverlay(source=src, scale=0.5, anchor="top_left", position=(0.0, 0.0)).apply(video).frames[0]
+        # Width is exactly the target box (0.5 * 200) and the fill is the exact
+        # SVG color -> rendered at target, not an upscaled/blurred bitmap.
+        assert int((f[:, :, 2] == 255).any(axis=0).sum()) == 100
+        assert (f[0:16, 0:100] == np.array([0, 128, 255], dtype=np.uint8)).all()
+
+    def test_svg_resolution_independence(self, tmp_path):
+        src = self._write_svg(tmp_path, '<rect width="100" height="40" fill="rgb(0,128,255)"/>')
+        small = Video.from_frames(np.zeros((2, 120, 200, 3), dtype=np.uint8), fps=10)
+        large = Video.from_frames(np.zeros((2, 240, 400, 3), dtype=np.uint8), fps=10)
+        rs = ImageOverlay(source=src, scale=0.25, anchor="top_left", position=(0.0, 0.0)).apply(small)
+        rl = ImageOverlay(source=src, scale=0.25, anchor="top_left", position=(0.0, 0.0)).apply(large)
+        assert int((rs.frames[0][:, :, 2] == 255).any(axis=0).sum()) == 50  # 0.25 * 200
+        assert int((rl.frames[0][:, :, 2] == 255).any(axis=0).sum()) == 100  # 0.25 * 400
+
+    def test_svg_transparent_background(self, tmp_path):
+        src = self._write_svg(tmp_path, '<circle cx="50" cy="20" r="18" fill="red"/>', name="dot.svg")
+        video = Video.from_frames(np.full((2, 80, 80, 3), 90, dtype=np.uint8), fps=10)
+        f = ImageOverlay(source=src, scale=1.0, anchor="top_left", position=(0.0, 0.0)).apply(video).frames[0]
+        assert np.array_equal(f[0, 0], [90, 90, 90])  # corner outside the dot: transparent -> untouched
+        assert f[:, :, 0].max() > 150  # the red dot is composited
+
+    def test_svg_predict_metadata_accepts_valid(self, tmp_path):
+        src = self._write_svg(tmp_path, '<rect width="100" height="40" fill="blue"/>')
+        meta = VideoMetadata(height=50, width=50, fps=10, frame_count=5, total_seconds=0.5)
+        assert ImageOverlay(source=src).predict_metadata(meta) == meta
+
+    def test_svg_predict_metadata_rejects_malformed(self, tmp_path):
+        bad = tmp_path / "broken.svg"
+        bad.write_text("<svg>oops")
+        meta = VideoMetadata(height=50, width=50, fps=10, frame_count=5, total_seconds=0.5)
+        with pytest.raises(ValueError, match="not a readable image"):
+            ImageOverlay(source=str(bad)).predict_metadata(meta)
+
+    def test_predict_metadata_rejects_missing_svg(self):
+        meta = VideoMetadata(height=50, width=50, fps=10, frame_count=5, total_seconds=0.5)
+        with pytest.raises(ValueError, match="not a readable image"):
+            ImageOverlay(source="/no/such/logo.svg").predict_metadata(meta)
+
 
 @pytest.fixture
 def synthetic_color_video():
