@@ -21,14 +21,12 @@ def add_subtitles(input_path: str, output_path: str):
     transcriber = AudioToText()
     transcription = transcriber.transcribe(video)
 
-    # Apply subtitle overlay
+    # Apply subtitle overlay. Geometry is resolution-independent by
+    # default, so the same overlay works at any output resolution.
     overlay = TranscriptionOverlay(
-        font_filename="/path/to/font.ttf",
-        font_size=48,
-        text_color=(255, 255, 255),
-        highlight_color=(255, 200, 0),
-        position=(0.5, 0.85),  # centered, near bottom
-        margin=100,
+        style="boxed",      # color/border/background/highlight preset
+        region="bottom",    # top | center | bottom
+        font_scale=0.055,   # fraction of frame height (auto-scales)
     )
     video = overlay.apply(video, transcription)
 
@@ -69,23 +67,29 @@ Model options:
 
 ```python
 overlay = TranscriptionOverlay(
-    font_filename="/path/to/font.ttf",  # Required: path to a .ttf font file
-    font_size=48,                        # Text size in pixels
-    text_color=(255, 255, 255),          # White text (RGB)
-    highlight_color=(255, 200, 0),       # Yellow highlight for current word
-    position=(0.5, 0.85),               # Relative position (x, y) -- 0.0 to 1.0
-    box_width=0.6,                       # Text box width as fraction of video width
-    margin=100,                          # Distance from edge in pixels
+    style="boxed",       # boxed | outline | clean | karaoke
+    region="bottom",     # top | center | bottom
+    font_scale=0.055,    # font height as a fraction of frame height
+    font_filename=None,  # optional: path to a .ttf, or None for the bundled font
 )
 ```
 
-Key parameters:
+Key parameters (the recommended, resolution-independent surface):
 
-- `font_filename` -- **Required.** Path to a TrueType font file (`.ttf`).
-- `position` -- Tuple of `(x, y)` as relative (0.0-1.0) or absolute pixel values. `(0.5, 0.85)` places text centered, near the bottom.
-- `text_color` / `highlight_color` -- RGB tuples for normal and highlighted words.
-- `box_width` -- Width of the subtitle box (relative or absolute).
-- `background_color` -- RGBA tuple for background behind text, or `None` for no background. Default: `(0, 0, 0, 100)`.
+- `style` -- A named look bundling text/highlight colors, border, and background so you express intent instead of a dozen numbers. `boxed` reproduces the historical defaults.
+- `region` -- Which vertical safe-area band the box sits in: `top`, `center`, or `bottom`.
+- `font_scale` -- Base font height as a fraction of frame height. Because it is relative, the same plan renders correctly whether the output is 480p or 4K, and an upstream `face_crop`/`resize` cannot make it overflow. It auto-shrinks toward `min_font_scale` if a cue would still not fit.
+- `font_filename` -- Path to a TrueType font, or `None` for the bundled default.
+
+!!! note "Advanced overrides"
+    The absolute fields (`font_size`, `text_color`, `highlight_color`,
+    `background_color`, `position`, `anchor`, `box_width`, `margin`, ...)
+    still exist as optional overrides for back-compat: leave them unset to
+    derive from `style`/`region`/`font_scale`, or set one to pin it. Prefer
+    *not* setting `font_size` -- an absolute size chosen without knowing the
+    final (post-transform) frame is exactly what used to overflow at render
+    time. With the relative surface, `VideoEdit.validate()` also rejects an
+    un-fittable plan up front instead of crashing mid-render.
 
 ### 3. Apply Overlay
 
@@ -100,25 +104,14 @@ The overlay renders each word at its exact timestamp, highlighting the current w
 ### Styling Options
 
 ```python
-# Minimal white subtitles near the bottom
-overlay = TranscriptionOverlay(
-    font_filename="/path/to/font.ttf",
-    font_size=36,
-    text_color=(255, 255, 255),
-    highlight_color=(255, 255, 255),  # No highlight distinction
-    position=(0.5, 0.85),
-    margin=80,
-)
+# Minimal outlined subtitles near the bottom (no background box)
+overlay = TranscriptionOverlay(style="clean", region="bottom")
 
-# Bold yellow subtitles centered on screen
-overlay = TranscriptionOverlay(
-    font_filename="/path/to/font.ttf",
-    font_size=64,
-    text_color=(255, 255, 0),
-    highlight_color=(255, 50, 50),
-    position=(0.5, 0.5),
-    margin=0,
-)
+# Bigger karaoke-style subtitles centered for short-form vertical video
+overlay = TranscriptionOverlay(style="karaoke", region="center", font_scale=0.07)
+
+# Need a specific look? Override individual fields on top of a preset:
+overlay = TranscriptionOverlay(style="outline", text_color=(255, 255, 0))
 ```
 
 ### Processing Long Videos
@@ -134,7 +127,7 @@ video = Video.from_path("long_video.mp4", start_second=0, end_second=300)
 
 ## Tips
 
-- **Font Size**: Use 36-48px for 1080p, 48-64px for 4K. Larger is better for mobile viewing.
-- **Contrast**: White text on a semi-transparent background works on most backgrounds (the default `background_color` handles this).
-- **Position**: `(0.5, 0.85)` is standard for bottom subtitles. `(0.5, 0.5)` works for short-form vertical videos.
+- **Font size**: Prefer `font_scale` over absolute `font_size`. ~0.05-0.06 reads well across resolutions; bump toward 0.07-0.08 for mobile/short-form. It auto-scales, so you never re-tune it per output size.
+- **Contrast**: The `boxed`/`karaoke` presets put text on a semi-transparent box that works on most backgrounds; `outline`/`clean` rely on a border instead.
+- **Position**: `region="bottom"` is standard; `region="center"` suits short-form vertical video.
 - **Languages**: Whisper supports 90+ languages. The API auto-detects language by default.

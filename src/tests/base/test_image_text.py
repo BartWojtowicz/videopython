@@ -3,7 +3,8 @@ import pytest
 from PIL import Image
 
 from tests.test_config import TEST_FONT_PATH
-from videopython.base.image_text import AnchorPoint, ImageText, TextAlign
+from videopython.base.exceptions import OutOfBoundsError
+from videopython.base.image_text import AnchorPoint, ImageText, TextAlign, TextBoxRect
 from videopython.editing.effects import FullImageOverlay
 
 
@@ -505,3 +506,73 @@ def test_text_highlighting_first_and_last_word():
     img_array2 = my_overlay2.img_array
     yellow_pixels2 = np.sum(img_array2[:, :, 0:3] == [255, 255, 0], axis=2) == 3
     assert np.any(yellow_pixels2), "Last word highlighting failed"
+
+
+class TestMeasureTextBox:
+    """`measure_text_box` is the single source of truth for box geometry.
+
+    `write_text_box` measures then renders-or-raises, so the measurement and
+    the render can never disagree about whether text fits.
+    """
+
+    def test_pure_does_not_draw(self):
+        img = ImageText(image_size=(400, 600), background=(0, 0, 0, 255))
+        before = img.img_array.copy()
+        rect = img.measure_text_box("hello world", TEST_FONT_PATH, xy=(0, 0), font_size=20)
+        assert isinstance(rect, TextBoxRect)
+        assert np.array_equal(img.img_array, before), "measure_text_box must not mutate the image"
+
+    def test_fits_true_for_small_text(self):
+        img = ImageText(image_size=(400, 600))
+        rect = img.measure_text_box("hello", TEST_FONT_PATH, xy=(0.5, 0.5), font_size=20, anchor=AnchorPoint.CENTER)
+        assert rect.fits
+        assert rect.height > 0
+        assert rect.x >= 0 and rect.y >= 0
+
+    def test_fits_false_when_font_too_big(self):
+        img = ImageText(image_size=(80, 120))
+        rect = img.measure_text_box("the quick brown fox jumps", TEST_FONT_PATH, xy=(0, 0), box_width=110, font_size=90)
+        assert rect.fits is False
+
+    def test_parity_with_write_text_box_raise(self):
+        """`fits is False` iff `write_text_box` raises `OutOfBoundsError`."""
+        for image_size, font_size, box_width in [
+            ((400, 600), 20, 300),  # fits
+            ((60, 90), 80, 80),  # overflow
+            ((300, 300), 40, 250),  # fits
+        ]:
+            text = "alpha beta gamma delta epsilon"
+            measured = ImageText(image_size=image_size).measure_text_box(
+                text, TEST_FONT_PATH, xy=(0, 0), box_width=box_width, font_size=font_size
+            )
+            renderer = ImageText(image_size=image_size)
+            raised = False
+            try:
+                renderer.write_text_box(text, TEST_FONT_PATH, xy=(0, 0), box_width=box_width, font_size=font_size)
+            except OutOfBoundsError:
+                raised = True
+            assert raised == (not measured.fits), (image_size, font_size, box_width)
+
+    def test_whitespace_only_is_degenerate_and_not_raised(self):
+        img = ImageText(image_size=(200, 300))
+        rect = img.measure_text_box("   ", TEST_FONT_PATH, xy=(7, 9), font_size=20)
+        assert rect.height == 0
+        assert rect.fits is True
+        assert rect.lines == ()
+        # write_text_box must short-circuit (return position) rather than raise.
+        assert img.write_text_box("   ", TEST_FONT_PATH, xy=(7, 9), font_size=20) == (7, 9)
+
+    def test_box_width_fraction_resolves_against_margin(self):
+        img = ImageText(image_size=(400, 1000))
+        rect = img.measure_text_box("hi", TEST_FONT_PATH, xy=(0, 0), box_width=0.5, font_size=20, margin=50)
+        # available width = 1000 - 50 - 50 = 900; 0.5 fraction -> 450 px
+        assert rect.width == 450
+
+    def test_invalid_inputs_raise_valueerror(self):
+        img = ImageText(image_size=(200, 300))
+        with pytest.raises(ValueError, match="Text cannot be empty"):
+            img.measure_text_box("", TEST_FONT_PATH, xy=(0, 0), font_size=20)
+        with pytest.raises(ValueError, match="Font size must be positive"):
+            img.measure_text_box("x", TEST_FONT_PATH, xy=(0, 0), font_size=0)
+        with pytest.raises(ValueError, match="Box width must be positive"):
+            img.measure_text_box("x", TEST_FONT_PATH, xy=(0, 0), box_width=-5, font_size=20)

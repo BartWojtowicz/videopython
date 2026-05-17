@@ -1,5 +1,17 @@
 # Release Notes
 
+## 0.34.0
+
+`TranscriptionOverlay` subtitles are now resolution-independent: size and
+place them with `style`/`region`/`font_scale` (fractions of the frame),
+not absolute pixels. This closes the validate/run fit gap — `add_subtitles`
+no longer crashes mid-render with `OutOfBoundsError`; un-fittable plans
+fail fast in `VideoEdit.validate()` (also fixed: `face_crop` now predicts
+its real output size). Legacy absolute fields still work as overrides.
+
+**Breaking:** a bare `TranscriptionOverlay()` renders larger and
+bottom-aligned; pin `font_size=40, position=(0.5, 0.7)` to restore.
+
 ## 0.33.5
 
 `VideoEdit` now re-bases time-based runtime context onto each segment's

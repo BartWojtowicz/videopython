@@ -9,6 +9,7 @@ generation helpers (``ai/understanding/image.py``).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import Enum
 from typing import TypeAlias
 
@@ -18,7 +19,7 @@ from PIL import Image, ImageDraw, ImageFont
 from videopython.base.exceptions import OutOfBoundsError
 from videopython.base.fonts import load_font
 
-__all__ = ["ImageText", "TextAlign", "AnchorPoint"]
+__all__ = ["ImageText", "TextAlign", "AnchorPoint", "TextBoxRect"]
 
 # Type aliases for clarity
 MarginType: TypeAlias = int | tuple[int, int, int, int]
@@ -77,6 +78,32 @@ class AnchorPoint(str, Enum):
     @classmethod
     def bottom_anchors(cls) -> tuple["AnchorPoint", ...]:
         return (cls.BOTTOM_LEFT, cls.BOTTOM_CENTER, cls.BOTTOM_RIGHT)
+
+
+@dataclass(frozen=True)
+class TextBoxRect:
+    """Resolved geometry of a wrapped text box, without rendering it.
+
+    Returned by :meth:`ImageText.measure_text_box` — the single source of
+    truth for box measure/wrap/anchor/bounds, shared by the renderer
+    (:meth:`ImageText.write_text_box`) and dry-run validators so they can
+    never disagree on whether text fits.
+
+    For a non-degenerate box ``(x, y)`` is the anchor-adjusted top-left
+    corner and ``width``/``height`` span the wrapped lines. For a degenerate
+    box (whitespace-only text → no renderable lines) ``height == 0``,
+    ``(x, y)`` is the *unadjusted* insertion point, and ``fits`` is ``True``;
+    callers short-circuit such boxes (nothing to draw). ``width`` mirrors the
+    resolved ``box_width`` and may be a float when an absolute >1 value was
+    passed, matching legacy behaviour.
+    """
+
+    x: float
+    y: float
+    width: int | float
+    height: int
+    fits: bool
+    lines: tuple[str, ...]
 
 
 class ImageText:
@@ -566,6 +593,86 @@ class ImageText:
         lines = [" ".join(line) for line in split_lines]
         return lines
 
+    def measure_text_box(
+        self,
+        text: str,
+        font_filename: str | None,
+        xy: PositionType,
+        box_width: int | float | None = None,
+        font_size: int = 11,
+        anchor: AnchorPoint = AnchorPoint.TOP_LEFT,
+        margin: MarginType = 0,
+    ) -> TextBoxRect:
+        """Measure where a wrapped text box would land, without drawing it.
+
+        Pure: resolves margins/box-width/position, wraps the text, applies the
+        anchor, and bounds-checks against the image — the exact math
+        :meth:`write_text_box` used to do inline. Highlighting and per-line
+        alignment (``place``) do not change the box envelope, so they are not
+        parameters here; this intentionally preserves the pre-existing
+        behaviour that an enlarged highlighted word is *not* accounted for in
+        the fit check.
+
+        Returns:
+            A :class:`TextBoxRect`. ``fits`` is ``False`` when the box would
+            fall outside the image bounds (the condition that makes
+            :meth:`write_text_box` raise :class:`OutOfBoundsError`).
+
+        Raises:
+            ValueError: If ``text`` is empty, ``font_size`` is not positive,
+                or an absolute ``box_width`` is not positive.
+        """
+        if not text:
+            raise ValueError("Text cannot be empty")
+
+        if font_size <= 0:
+            raise ValueError("Font size must be positive")
+
+        # Process margins to determine available area
+        margin_top, margin_right, margin_bottom, margin_left = self._process_margin(margin)
+        available_width = self.image_size[1] - margin_left - margin_right
+        available_height = self.image_size[0] - margin_top - margin_bottom
+
+        # Handle relative box width
+        if box_width is None:
+            box_width = available_width
+        elif isinstance(box_width, float) and 0 < box_width <= 1:
+            box_width = int(available_width * box_width)
+        elif isinstance(box_width, int) and box_width <= 0:
+            raise ValueError("Box width must be positive")
+
+        # Calculate initial position based on margin and anchor before splitting text
+        x_pos, y_pos = self._convert_position(xy, margin_top, margin_left, available_width, available_height)
+
+        # Split text into lines that fit within box_width
+        lines = self._split_lines_by_width(text, font_filename, font_size, int(box_width))
+
+        # Calculate total height of all lines
+        lines_height = sum(self.get_text_dimensions(font_filename, font_size, line)[1] for line in lines)
+        if lines_height == 0:
+            # No renderable lines (e.g. whitespace-only text); position is the
+            # unadjusted insertion point and the box trivially "fits".
+            return TextBoxRect(x=x_pos, y=y_pos, width=box_width, height=0, fits=True, lines=tuple(lines))
+
+        # Final position calculation based on anchor point
+        if anchor in AnchorPoint.center_anchors():
+            x_pos -= box_width // 2
+        elif anchor in AnchorPoint.right_anchors():
+            x_pos -= box_width
+
+        if anchor in AnchorPoint.middle_anchors():
+            y_pos -= lines_height // 2
+        elif anchor in AnchorPoint.bottom_anchors():
+            y_pos -= lines_height
+
+        fits = not (
+            x_pos < 0
+            or y_pos < 0
+            or x_pos + box_width > self.image_size[1]
+            or y_pos + lines_height > self.image_size[0]
+        )
+        return TextBoxRect(x=x_pos, y=y_pos, width=box_width, height=lines_height, fits=fits, lines=tuple(lines))
+
     def write_text_box(
         self,
         text: str,
@@ -643,49 +750,24 @@ class ImageText:
         if highlight_word_index is not None and highlight_color is None:
             highlight_color = text_color
 
-        # Process margins to determine available area
-        margin_top, margin_right, margin_bottom, margin_left = self._process_margin(margin)
-        available_width = self.image_size[1] - margin_left - margin_right
-        available_height = self.image_size[0] - margin_top - margin_bottom
-
-        # Handle relative box width
-        if box_width is None:
-            box_width = available_width
-        elif isinstance(box_width, float) and 0 < box_width <= 1:
-            box_width = int(available_width * box_width)
-        elif isinstance(box_width, int) and box_width <= 0:
-            raise ValueError("Box width must be positive")
-
-        # Calculate initial position based on margin and anchor before splitting text
-        x_pos, y_pos = self._convert_position(xy, margin_top, margin_left, available_width, available_height)
-
-        # Split text into lines that fit within box_width
-        lines = self._split_lines_by_width(text, font_filename, font_size, int(box_width))
-
-        # Calculate total height of all lines
-        lines_height = sum([self.get_text_dimensions(font_filename, font_size, line)[1] for line in lines])
-        if lines_height == 0:
-            # If we have no valid lines or zero height, return the position
-            return (int(x_pos), int(y_pos))
-
-        # Final position calculation based on anchor point
-        if anchor in AnchorPoint.center_anchors():
-            x_pos -= box_width // 2
-        elif anchor in AnchorPoint.right_anchors():
-            x_pos -= box_width
-
-        if anchor in AnchorPoint.middle_anchors():
-            y_pos -= lines_height // 2
-        elif anchor in AnchorPoint.bottom_anchors():
-            y_pos -= lines_height
-
-        # Verify box will fit within bounds
-        if (
-            x_pos < 0
-            or y_pos < 0
-            or x_pos + box_width > self.image_size[1]
-            or y_pos + lines_height > self.image_size[0]
-        ):
+        # Measure (single source of truth for box geometry), then render.
+        rect = self.measure_text_box(
+            text=text,
+            font_filename=font_filename,
+            xy=xy,
+            box_width=box_width,
+            font_size=font_size,
+            anchor=anchor,
+            margin=margin,
+        )
+        lines = list(rect.lines)
+        if rect.height == 0:
+            # No renderable lines (e.g. whitespace-only text); nothing to draw.
+            return (int(rect.x), int(rect.y))
+        box_width = rect.width
+        x_pos, y_pos = rect.x, rect.y
+        lines_height = rect.height
+        if not rect.fits:
             raise OutOfBoundsError(
                 f"Text box with size ({box_width}x{lines_height}) at position ({x_pos}, {y_pos}) is out of bounds!"
             )
