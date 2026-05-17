@@ -99,8 +99,14 @@ class TextBoxRect:
 
     ``content_width`` is the widest a rendered line actually gets -- worst
     case over the animated highlight when ``highlight_size_multiplier > 1``.
-    ``fits`` stays box-vs-image (legacy contract); a caller that must keep the
-    *content* inside the box (subtitles) checks ``content_width`` itself.
+
+    There are two independent notions of "fitting" here. ``fits`` is
+    box-vs-image *only* -- the legacy contract that gates
+    :meth:`write_text_box`'s ``OutOfBoundsError`` -- and does **not** imply
+    the content fits the box: legacy callers intentionally overflow the box
+    while staying inside the image. A caller that needs the content inside
+    the box (subtitles, where the box is frame-clamped) must additionally
+    check ``content_width <= width`` itself.
     """
 
     x: float
@@ -110,6 +116,26 @@ class TextBoxRect:
     fits: bool
     lines: tuple[str, ...]
     content_width: int = 0
+
+
+@dataclass(frozen=True)
+class _WordPlacement:
+    """One word's resolved font/size and pixel offset within a highlighted line.
+
+    ``dx``/``dy`` are offsets from the line's left/top. Produced once by
+    :meth:`ImageText._layout_highlighted_line` and consumed by both the
+    measurer and the renderer, so the box reserved by ``measure_text_box``
+    and the pixels drawn by ``write_text_box`` cannot disagree.
+    """
+
+    word: str
+    font_filename: str | None
+    font_size: int
+    width: int
+    height: int
+    dx: int
+    dy: int
+    is_highlighted: bool
 
 
 class ImageText:
@@ -671,22 +697,20 @@ class ImageText:
         lines = self._split_lines_by_width(text, font_filename, font_size, int(box_width))
 
         # Per-line extent. With an animated highlight any word may be the
-        # enlarged one over the cue's lifetime, so each line contributes its
-        # widest/tallest possible variant. ``_highlighted_line_size`` keeps
-        # this in lockstep with the renderer (single source of truth).
+        # enlarged one over the cue's lifetime, so each line contributes the
+        # widest/tallest variant it could ever render as.
+        # ``_highlighted_line_max_extent`` derives that envelope from the same
+        # per-word geometry the renderer uses (single source of truth).
         hl_mult = max(1.0, highlight_size_multiplier)
         content_width = 0
         lines_height = 0
         for line in lines:
-            base_w, base_h = self.get_text_dimensions(font_filename, font_size, line)
-            line_w, line_h = base_w, base_h
             if hl_mult > 1.0:
-                for k in range(len(line.split())):
-                    hw, hh = self._highlighted_line_size(
-                        line, font_filename, font_size, k, hl_mult, highlight_bold_font
-                    )
-                    line_w = max(line_w, hw)
-                    line_h = max(line_h, hh)
+                line_w, line_h = self._highlighted_line_max_extent(
+                    line, font_filename, font_size, hl_mult, highlight_bold_font
+                )
+            else:
+                line_w, line_h = self.get_text_dimensions(font_filename, font_size, line)
             content_width = max(content_width, line_w)
             lines_height += line_h
         if lines_height == 0:
@@ -964,6 +988,76 @@ class ImageText:
 
         return (int(x_pos + box_width), int(current_text_height))
 
+    def _highlight_font(
+        self,
+        font_filename: str | None,
+        font_size: int,
+        highlight_size_multiplier: float,
+        highlight_bold_font: str | None,
+    ) -> tuple[str | None, int, int, int]:
+        """Resolve the enlarged-word basics once.
+
+        Returns ``(font_file, font_size, baseline_offset, space_width)`` -- the
+        single definition of the highlight constants, shared by the per-word
+        layout (render / exact-size path) and the worst-case extent (measure
+        path) so those paths cannot drift apart on the fundamentals.
+        """
+        hl_font_size = int(font_size * highlight_size_multiplier)
+        hl_font_file = highlight_bold_font if highlight_bold_font is not None else font_filename
+        baseline_offset = self._get_font_baseline_offset(font_filename, font_size, hl_font_file, hl_font_size)
+        space_width = self.get_text_dimensions(font_filename, font_size, " ")[0]
+        return hl_font_file, hl_font_size, baseline_offset, space_width
+
+    def _layout_highlighted_line(
+        self,
+        line: str,
+        font_filename: str | None,
+        font_size: int,
+        highlight_word_local_index: int,
+        highlight_size_multiplier: float,
+        highlight_bold_font: str | None,
+    ) -> list[_WordPlacement]:
+        """Per-word placement for ``line`` with one word enlarged.
+
+        The single source of truth for the highlighted-line advance (enlarged
+        font size, bold-font swap, base-size inter-word space, baseline
+        offset). Both :meth:`_highlighted_line_size` (measuring the line that
+        actually owns the highlight) and :meth:`_write_line_with_highlight`
+        (rendering it) consume this list, so the reserved box and the drawn
+        pixels agree by construction.
+
+        Reached only for the line that owns the highlighted word, so
+        ``highlight_word_local_index`` is in range; degenerate inputs are
+        handled by the callers' own guards.
+        """
+        words = line.split()
+        hl_font_file, hl_font_size, baseline_offset, space_width = self._highlight_font(
+            font_filename, font_size, highlight_size_multiplier, highlight_bold_font
+        )
+        placements: list[_WordPlacement] = []
+        dx = 0
+        for i, word in enumerate(words):
+            is_hl = i == highlight_word_local_index
+            wf = hl_font_file if is_hl else font_filename
+            ws = hl_font_size if is_hl else font_size
+            w, h = self.get_text_dimensions(wf, ws, word)
+            placements.append(
+                _WordPlacement(
+                    word=word,
+                    font_filename=wf,
+                    font_size=ws,
+                    width=w,
+                    height=h,
+                    dx=dx,
+                    dy=baseline_offset if is_hl else 0,
+                    is_highlighted=is_hl,
+                )
+            )
+            dx += w
+            if i < len(words) - 1:
+                dx += space_width
+        return placements
+
     def _highlighted_line_size(
         self,
         line: str,
@@ -973,43 +1067,68 @@ class ImageText:
         highlight_size_multiplier: float,
         highlight_bold_font: str | None,
     ) -> tuple[int, int]:
-        """Rendered (width, height) of ``line`` with one word enlarged.
+        """Rendered (width, height) of ``line`` with one *specific* word enlarged.
 
-        Mirrors :meth:`_write_line_with_highlight`'s per-word advance exactly
-        (same enlarged font size, same per-word measuring, same base-size
-        inter-word space, same baseline offset), so measurement and rendering
-        agree by construction -- the single source of truth for a highlighted
-        line's extent. ``highlight_word_local_index`` out of range yields the
-        plain (un-highlighted) line size.
+        A reduction of the shared :meth:`_layout_highlighted_line`, so it is
+        exact w.r.t. the renderer by construction. Used to position/advance
+        the line that owns the highlighted word. ``highlight_word_local_index``
+        out of range falls back to the plain line size -- exactly what the
+        renderer's own guard ends up drawing.
         """
         words = line.split()
         if not words:
             return (0, 0)
         if not (0 <= highlight_word_local_index < len(words)):
             return self.get_text_dimensions(font_filename, font_size, line)
-
-        highlight_font_size = int(font_size * highlight_size_multiplier)
-        highlight_font_file = highlight_bold_font if highlight_bold_font is not None else font_filename
-        baseline_offset = self._get_font_baseline_offset(
-            font_filename, font_size, highlight_font_file, highlight_font_size
+        placements = self._layout_highlighted_line(
+            line, font_filename, font_size, highlight_word_local_index, highlight_size_multiplier, highlight_bold_font
         )
-        space_width = self.get_text_dimensions(font_filename, font_size, " ")[0]
+        width = max(p.dx + p.width for p in placements)
+        # ``min(0, ...)`` / ``max(0, ...)`` stay defensive for a *shrinking*
+        # highlight (multiplier < 1 -> negative baseline offset, the word
+        # rides above the line). The subtitle measure path clamps the
+        # multiplier to >= 1 so there ``top`` is always 0, but
+        # ``write_text_box`` forwards the raw multiplier, so keep the floor.
+        top = min([0, *(p.dy for p in placements)])
+        bottom = max([0, *(p.dy + p.height for p in placements)])
+        return (width, bottom - top)
 
-        total_width = 0
-        top = 0
-        bottom = 0
-        for i, word in enumerate(words):
-            is_hl = i == highlight_word_local_index
-            wf = highlight_font_file if is_hl else font_filename
-            ws = highlight_font_size if is_hl else font_size
-            w, h = self.get_text_dimensions(wf, ws, word)
-            total_width += w
-            if i < len(words) - 1:
-                total_width += space_width
-            word_top = baseline_offset if is_hl else 0
-            top = min(top, word_top)
-            bottom = max(bottom, word_top + h)
-        return (total_width, bottom - top)
+    def _highlighted_line_max_extent(
+        self,
+        line: str,
+        font_filename: str | None,
+        font_size: int,
+        highlight_size_multiplier: float,
+        highlight_bold_font: str | None,
+    ) -> tuple[int, int]:
+        """Worst-case (width, height) over *any* word being the enlarged one.
+
+        Equal to ``max`` of :meth:`_highlighted_line_size` across every word
+        position -- the envelope an animated highlight needs -- but in a
+        single O(words) pass instead of O(words^2): only *which* word is
+        enlarged varies, so the base metrics are shared and the extremes are
+        closed-form. Uses the same :meth:`_highlight_font` constants as the
+        layout, so this envelope can never under-reserve what the renderer
+        draws (it over-reserves only in the safe direction).
+        """
+        words = line.split()
+        if not words:
+            return self.get_text_dimensions(font_filename, font_size, line)
+        hl_font_file, hl_font_size, baseline_offset, space_width = self._highlight_font(
+            font_filename, font_size, highlight_size_multiplier, highlight_bold_font
+        )
+        base = [self.get_text_dimensions(font_filename, font_size, w) for w in words]
+        enlarged = [self.get_text_dimensions(hl_font_file, hl_font_size, w) for w in words]
+        # width_k = (sum of base widths + spaces) - base_w[k] + enlarged_w[k];
+        # the worst k just maximizes the (enlarged - base) swap.
+        base_total = sum(w for w, _ in base) + space_width * (len(words) - 1)
+        width = base_total + max(ew - bw for (bw, _), (ew, _) in zip(base, enlarged))
+        # Non-highlighted words sit at dy=0, the enlarged one at
+        # dy=baseline_offset; the worst line is the tallest base word vs. the
+        # tallest enlarged word lifted by the baseline offset.
+        top = min(0, baseline_offset)
+        bottom = max([0, *(h for _, h in base), baseline_offset + max(h for _, h in enlarged)])
+        return (width, bottom - top)
 
     def _write_line_with_highlight(
         self,
@@ -1026,7 +1145,11 @@ class ImageText:
         y_top: int,
     ) -> None:
         """
-        Write a line of text with one word highlighted using word-by-word rendering with baseline alignment.
+        Write a line of text with one word highlighted, word-by-word with baseline alignment.
+
+        Draws the placements from the shared :meth:`_layout_highlighted_line`,
+        so every pixel lands exactly where :meth:`measure_text_box` reserved
+        room for it (measurement and rendering use the same geometry).
 
         Args:
             line: The text line to render
@@ -1041,57 +1164,21 @@ class ImageText:
             x_left: Left x position for the line
             y_top: Top y position for the line
         """
-        # Split line into words
         words = line.split()
         if highlight_word_local_index >= len(words):
-            return  # Safety check
+            return  # Safety check: nothing to draw (matches the measure fallback)
 
-        # Calculate highlighted font size and determine font files
-        highlight_font_size = int(font_size * highlight_size_multiplier)
-        highlight_font_file = highlight_bold_font if highlight_bold_font is not None else font_filename
-
-        # Calculate baseline offset for highlighted words (using the appropriate font files)
-        baseline_offset = self._get_font_baseline_offset(
-            font_filename, font_size, highlight_font_file, highlight_font_size
-        )
-
-        # Render words one by one with proper spacing
-        current_x = x_left
-
-        for i, word in enumerate(words):
-            # Determine if this is the highlighted word
-            is_highlighted = i == highlight_word_local_index
-
-            # Choose font file, size, and color based on highlighting
-            word_font_file = highlight_font_file if is_highlighted else font_filename
-            word_font_size = highlight_font_size if is_highlighted else font_size
-            word_color = highlight_color if is_highlighted else text_color
-
-            # Calculate y position with baseline alignment
-            word_y = y_top
-            if is_highlighted:
-                word_y += baseline_offset
-
-            # Render the word
+        for p in self._layout_highlighted_line(
+            line, font_filename, font_size, highlight_word_local_index, highlight_size_multiplier, highlight_bold_font
+        ):
             self.write_text(
-                text=word,
-                font_filename=word_font_file,
-                xy=(current_x, word_y),
-                font_size=word_font_size,
+                text=p.word,
+                font_filename=p.font_filename,
+                xy=(x_left + p.dx, y_top + p.dy),
+                font_size=p.font_size,
                 font_border_size=font_border_size,
-                color=word_color,
+                color=highlight_color if p.is_highlighted else text_color,
             )
-
-            # Calculate the width of this word for spacing
-            word_width = self.get_text_dimensions(word_font_file, word_font_size, word)[0]
-
-            # Update current_x for next word (add word width plus space)
-            current_x += word_width
-
-            # Add space between words (except after the last word)
-            if i < len(words) - 1:
-                space_width = self.get_text_dimensions(font_filename, font_size, " ")[0]
-                current_x += space_width
 
     def _find_smallest_bounding_rect(self, mask: np.ndarray) -> tuple[int, int, int, int]:
         """
