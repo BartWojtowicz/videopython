@@ -576,3 +576,79 @@ class TestMeasureTextBox:
             img.measure_text_box("x", TEST_FONT_PATH, xy=(0, 0), font_size=0)
         with pytest.raises(ValueError, match="Box width must be positive"):
             img.measure_text_box("x", TEST_FONT_PATH, xy=(0, 0), box_width=-5, font_size=20)
+
+
+class TestHighlightAwareMeasure:
+    """`measure_text_box` is worst-case for an animated highlight: a word may
+    be enlarged at render, so measurement reserves room and the renderer
+    positions the highlighted line by its true extent. Closes the 0.34.0 gap
+    where an enlarged word raised `OutOfBoundsError` mid-render."""
+
+    _TEXT = "alpha bravo charlie delta echo foxtrot golf hotel"
+
+    def test_default_multiplier_is_byte_identical_to_base(self):
+        img = ImageText(image_size=(400, 600))
+        base = img.measure_text_box(self._TEXT, TEST_FONT_PATH, xy=(0, 0), box_width=300, font_size=24)
+        same = img.measure_text_box(
+            self._TEXT, TEST_FONT_PATH, xy=(0, 0), box_width=300, font_size=24, highlight_size_multiplier=1.0
+        )
+        assert (same.lines, same.height, same.width, same.fits) == (base.lines, base.height, base.width, base.fits)
+
+    def test_multiplier_reserves_more_space(self):
+        img = ImageText(image_size=(400, 600))
+        base = img.measure_text_box(self._TEXT, TEST_FONT_PATH, xy=(0, 0), box_width=300, font_size=24)
+        hl = img.measure_text_box(
+            self._TEXT, TEST_FONT_PATH, xy=(0, 0), box_width=300, font_size=24, highlight_size_multiplier=1.5
+        )
+        # Narrower wrap (more lines) and/or taller -- never less than base.
+        assert len(hl.lines) >= len(base.lines)
+        assert hl.height >= base.height
+        assert (len(hl.lines), hl.height) != (len(base.lines), base.height)
+
+    @pytest.mark.parametrize("mult", [1.2, 1.5, 2.0])
+    @pytest.mark.parametrize("place", [TextAlign.LEFT, TextAlign.CENTER, TextAlign.RIGHT])
+    def test_measure_gate_implies_render_never_raises(self, mult, place):
+        """The contract the subtitle layer relies on: when the worst-case
+        highlighted content fits the box (``content_width <= box_width``) and
+        the box fits the image (``fits``), ``write_text_box`` never raises --
+        for every highlighted word and every alignment. (A box too small for
+        the enlarged content is the higher layer's job to shrink/reject; raw
+        callers may still legitimately overflow there.)"""
+        image_size = (300, 900)
+        box_width = 700
+        font_size = 26
+        measured = ImageText(image_size=image_size).measure_text_box(
+            self._TEXT,
+            TEST_FONT_PATH,
+            xy=(0.5, 0.5),
+            box_width=box_width,
+            font_size=font_size,
+            anchor=AnchorPoint.CENTER,
+            highlight_size_multiplier=mult,
+        )
+        assert measured.fits and measured.content_width <= box_width, "test setup must satisfy the gate"
+        for k in range(len(self._TEXT.split())):
+            ImageText(image_size=image_size).write_text_box(
+                self._TEXT,
+                TEST_FONT_PATH,
+                xy=(0.5, 0.5),
+                box_width=box_width,
+                font_size=font_size,
+                place=place,
+                anchor=AnchorPoint.CENTER,
+                highlight_word_index=k,
+                highlight_size_multiplier=mult,
+            )  # must not raise
+
+    def test_base_fit_but_enlarged_overflow_is_detected_by_measure(self):
+        """A box that fits the base text but not the worst-case enlarged text
+        must flip `fits` to False (so the higher layer shrinks/rejects rather
+        than crashing mid-render)."""
+        img = ImageText(image_size=(70, 600))  # only ~one base line of height
+        text = "alpha bravo charlie"
+        base = img.measure_text_box(text, TEST_FONT_PATH, xy=(0, 0), box_width=560, font_size=40)
+        enlarged = img.measure_text_box(
+            text, TEST_FONT_PATH, xy=(0, 0), box_width=560, font_size=40, highlight_size_multiplier=2.0
+        )
+        assert base.fits and not enlarged.fits  # taller enlarged line overflows the short frame
+        assert enlarged.content_width > base.content_width  # and the worst-case line is wider

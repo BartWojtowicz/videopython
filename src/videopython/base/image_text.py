@@ -96,6 +96,11 @@ class TextBoxRect:
     callers short-circuit such boxes (nothing to draw). ``width`` mirrors the
     resolved ``box_width`` and may be a float when an absolute >1 value was
     passed, matching legacy behaviour.
+
+    ``content_width`` is the widest a rendered line actually gets -- worst
+    case over the animated highlight when ``highlight_size_multiplier > 1``.
+    ``fits`` stays box-vs-image (legacy contract); a caller that must keep the
+    *content* inside the box (subtitles) checks ``content_width`` itself.
     """
 
     x: float
@@ -104,6 +109,7 @@ class TextBoxRect:
     height: int
     fits: bool
     lines: tuple[str, ...]
+    content_width: int = 0
 
 
 class ImageText:
@@ -614,16 +620,22 @@ class ImageText:
         font_size: int = 11,
         anchor: AnchorPoint = AnchorPoint.TOP_LEFT,
         margin: MarginType = 0,
+        highlight_size_multiplier: float = 1.0,
+        highlight_bold_font: str | None = None,
     ) -> TextBoxRect:
         """Measure where a wrapped text box would land, without drawing it.
 
         Pure: resolves margins/box-width/position, wraps the text, applies the
         anchor, and bounds-checks against the image — the exact math
-        :meth:`write_text_box` used to do inline. Highlighting and per-line
-        alignment (``place``) do not change the box envelope, so they are not
-        parameters here; this intentionally preserves the pre-existing
-        behaviour that an enlarged highlighted word is *not* accounted for in
-        the fit check.
+        :meth:`write_text_box` used to do inline.
+
+        ``highlight_size_multiplier > 1`` makes the measurement worst-case for
+        an *animated* highlight (any word may be the enlarged one over the
+        cue's lifetime): wrapping reserves room so even an enlarged word keeps
+        its line within ``box_width``, and ``height`` uses each line's tallest
+        possible highlighted variant. With the default ``1.0`` the result is
+        byte-identical to the plain base-font measurement, so existing callers
+        and ``place`` (alignment) are unaffected.
 
         Returns:
             A :class:`TextBoxRect`. ``fits`` is ``False`` when the box would
@@ -655,15 +667,34 @@ class ImageText:
         # Calculate initial position based on margin and anchor before splitting text
         x_pos, y_pos = self._convert_position(xy, margin_top, margin_left, available_width, available_height)
 
-        # Split text into lines that fit within box_width
+        # Wrap at the real box width (same as the renderer).
         lines = self._split_lines_by_width(text, font_filename, font_size, int(box_width))
 
-        # Calculate total height of all lines
-        lines_height = sum(self.get_text_dimensions(font_filename, font_size, line)[1] for line in lines)
+        # Per-line extent. With an animated highlight any word may be the
+        # enlarged one over the cue's lifetime, so each line contributes its
+        # widest/tallest possible variant. ``_highlighted_line_size`` keeps
+        # this in lockstep with the renderer (single source of truth).
+        hl_mult = max(1.0, highlight_size_multiplier)
+        content_width = 0
+        lines_height = 0
+        for line in lines:
+            base_w, base_h = self.get_text_dimensions(font_filename, font_size, line)
+            line_w, line_h = base_w, base_h
+            if hl_mult > 1.0:
+                for k in range(len(line.split())):
+                    hw, hh = self._highlighted_line_size(
+                        line, font_filename, font_size, k, hl_mult, highlight_bold_font
+                    )
+                    line_w = max(line_w, hw)
+                    line_h = max(line_h, hh)
+            content_width = max(content_width, line_w)
+            lines_height += line_h
         if lines_height == 0:
             # No renderable lines (e.g. whitespace-only text); position is the
             # unadjusted insertion point and the box trivially "fits".
-            return TextBoxRect(x=x_pos, y=y_pos, width=box_width, height=0, fits=True, lines=tuple(lines))
+            return TextBoxRect(
+                x=x_pos, y=y_pos, width=box_width, height=0, fits=True, lines=tuple(lines), content_width=0
+            )
 
         # Final position calculation based on anchor point
         if anchor in AnchorPoint.center_anchors():
@@ -682,7 +713,15 @@ class ImageText:
             or x_pos + box_width > self.image_size[1]
             or y_pos + lines_height > self.image_size[0]
         )
-        return TextBoxRect(x=x_pos, y=y_pos, width=box_width, height=lines_height, fits=fits, lines=tuple(lines))
+        return TextBoxRect(
+            x=x_pos,
+            y=y_pos,
+            width=box_width,
+            height=lines_height,
+            fits=fits,
+            lines=tuple(lines),
+            content_width=content_width,
+        )
 
     def write_text_box(
         self,
@@ -761,7 +800,11 @@ class ImageText:
         if highlight_word_index is not None and highlight_color is None:
             highlight_color = text_color
 
-        # Measure (single source of truth for box geometry), then render.
+        # Measure (single source of truth for box geometry), then render. When
+        # a word will be highlighted, measure worst-case so the box reserves
+        # room for the enlarged word -- otherwise stay byte-identical to the
+        # plain base-font measurement.
+        measure_mult = highlight_size_multiplier if highlight_word_index is not None else 1.0
         rect = self.measure_text_box(
             text=text,
             font_filename=font_filename,
@@ -770,6 +813,8 @@ class ImageText:
             font_size=font_size,
             anchor=anchor,
             margin=margin,
+            highlight_size_multiplier=measure_mult,
+            highlight_bold_font=highlight_bold_font,
         )
         lines = list(rect.lines)
         if rect.height == 0:
@@ -783,56 +828,53 @@ class ImageText:
                 f"Text box with size ({box_width}x{lines_height}) at position ({x_pos}, {y_pos}) is out of bounds!"
             )
 
-        # Write lines
+        # Write lines. The line that holds the highlighted word is positioned
+        # and advanced by its *true* (enlarged) extent via the shared
+        # ``_highlighted_line_size`` -- the same numbers ``measure_text_box``
+        # reserved -- so an enlarged word can never push the line out of the
+        # box (hence out of the frame) regardless of alignment.
         current_text_height = y_pos
         word_index_offset = 0  # Track global word index across lines
         for line in lines:
-            line_dimensions = self.get_text_dimensions(font_filename, font_size, line)
+            line_words = line.split()
+            hl_local_index = -1
+            if highlight_word_index is not None:
+                line_end_word_index = word_index_offset + len(line_words) - 1
+                if word_index_offset <= highlight_word_index <= line_end_word_index:
+                    hl_local_index = highlight_word_index - word_index_offset
 
-            # Calculate horizontal position based on alignment
+            if hl_local_index >= 0:
+                line_w, line_h = self._highlighted_line_size(
+                    line, font_filename, font_size, hl_local_index, highlight_size_multiplier, highlight_bold_font
+                )
+            else:
+                line_w, line_h = self.get_text_dimensions(font_filename, font_size, line)
+
+            # Calculate horizontal position based on alignment (true line width)
             if place == TextAlign.LEFT:
                 x_left = x_pos
             elif place == TextAlign.RIGHT:
-                x_left = x_pos + box_width - line_dimensions[0]
+                x_left = x_pos + box_width - line_w
             elif place == TextAlign.CENTER:
-                x_left = int(x_pos + ((box_width - line_dimensions[0]) / 2))
+                x_left = int(x_pos + ((box_width - line_w) / 2))
             else:
                 valid_places = [e.value for e in TextAlign]
                 raise ValueError(f"Place '{place}' is not supported. Must be one of: {', '.join(valid_places)}")
 
-            # Check if highlighting is needed for this line
-            if highlight_word_index is not None:
-                line_words = line.split()
-                line_start_word_index = word_index_offset
-                line_end_word_index = word_index_offset + len(line_words) - 1
-
-                # Check if the highlighted word is in this line
-                if line_start_word_index <= highlight_word_index <= line_end_word_index:
-                    self._write_line_with_highlight(
-                        line=line,
-                        font_filename=font_filename,
-                        font_size=font_size,
-                        font_border_size=font_border_size,
-                        text_color=text_color,
-                        highlight_color=highlight_color or (255, 255, 255),
-                        highlight_size_multiplier=highlight_size_multiplier,
-                        highlight_word_local_index=highlight_word_index - line_start_word_index,
-                        highlight_bold_font=highlight_bold_font,
-                        x_left=int(x_left),
-                        y_top=int(current_text_height),
-                    )
-                else:
-                    # Write normal line without highlighting
-                    self.write_text(
-                        text=line,
-                        font_filename=font_filename,
-                        xy=(x_left, current_text_height),
-                        font_size=font_size,
-                        font_border_size=font_border_size,
-                        color=text_color,
-                    )
-
-                word_index_offset += len(line_words)
+            if hl_local_index >= 0:
+                self._write_line_with_highlight(
+                    line=line,
+                    font_filename=font_filename,
+                    font_size=font_size,
+                    font_border_size=font_border_size,
+                    text_color=text_color,
+                    highlight_color=highlight_color or (255, 255, 255),
+                    highlight_size_multiplier=highlight_size_multiplier,
+                    highlight_word_local_index=hl_local_index,
+                    highlight_bold_font=highlight_bold_font,
+                    x_left=int(x_left),
+                    y_top=int(current_text_height),
+                )
             else:
                 # Write normal line without highlighting
                 self.write_text(
@@ -844,8 +886,9 @@ class ImageText:
                     color=text_color,
                 )
 
-            # Increment vertical position for next line
-            current_text_height += line_dimensions[1]
+            word_index_offset += len(line_words)
+            # Increment vertical position for next line (true line height)
+            current_text_height += line_h
 
         # Add background color for the text if specified
         if background_color is not None:
@@ -920,6 +963,53 @@ class ImageText:
             self.image = Image.fromarray(img)
 
         return (int(x_pos + box_width), int(current_text_height))
+
+    def _highlighted_line_size(
+        self,
+        line: str,
+        font_filename: str | None,
+        font_size: int,
+        highlight_word_local_index: int,
+        highlight_size_multiplier: float,
+        highlight_bold_font: str | None,
+    ) -> tuple[int, int]:
+        """Rendered (width, height) of ``line`` with one word enlarged.
+
+        Mirrors :meth:`_write_line_with_highlight`'s per-word advance exactly
+        (same enlarged font size, same per-word measuring, same base-size
+        inter-word space, same baseline offset), so measurement and rendering
+        agree by construction -- the single source of truth for a highlighted
+        line's extent. ``highlight_word_local_index`` out of range yields the
+        plain (un-highlighted) line size.
+        """
+        words = line.split()
+        if not words:
+            return (0, 0)
+        if not (0 <= highlight_word_local_index < len(words)):
+            return self.get_text_dimensions(font_filename, font_size, line)
+
+        highlight_font_size = int(font_size * highlight_size_multiplier)
+        highlight_font_file = highlight_bold_font if highlight_bold_font is not None else font_filename
+        baseline_offset = self._get_font_baseline_offset(
+            font_filename, font_size, highlight_font_file, highlight_font_size
+        )
+        space_width = self.get_text_dimensions(font_filename, font_size, " ")[0]
+
+        total_width = 0
+        top = 0
+        bottom = 0
+        for i, word in enumerate(words):
+            is_hl = i == highlight_word_local_index
+            wf = highlight_font_file if is_hl else font_filename
+            ws = highlight_font_size if is_hl else font_size
+            w, h = self.get_text_dimensions(wf, ws, word)
+            total_width += w
+            if i < len(words) - 1:
+                total_width += space_width
+            word_top = baseline_offset if is_hl else 0
+            top = min(top, word_top)
+            bottom = max(bottom, word_top + h)
+        return (total_width, bottom - top)
 
     def _write_line_with_highlight(
         self,

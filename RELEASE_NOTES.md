@@ -1,5 +1,18 @@
 # Release Notes
 
+## 0.34.1
+
+Fixes a parity hole in the 0.34.0 subtitle fit check: `add_subtitles`
+enlarges the spoken word by `highlight_size_multiplier` at draw time, but
+measurement sized everything at the base font, so a cue that "fit" could
+still raise `OutOfBoundsError` mid-render once a word lit up.
+`measure_text_box` is now highlight-aware (worst-case over every word via a
+shared `_highlighted_line_size`), the renderer positions the highlighted
+line by its true extent, and `TranscriptionOverlay` also requires the
+worst-case line to fit the box -- so an overflowing cue is auto-shrunk or
+rejected in `predict_metadata`/`validate()`, never crashed in `run()`.
+Non-highlight callers are byte-identical (multiplier `1.0` default).
+
 ## 0.34.0
 
 `TranscriptionOverlay` subtitles are now resolution-independent: size and
