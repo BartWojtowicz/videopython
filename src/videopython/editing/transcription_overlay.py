@@ -320,6 +320,11 @@ class TranscriptionOverlay(Effect):
         the fit search and the renderer, so they never diverge. Margin math
         comes from ``ImageText.available_region`` (one source of truth with
         ``measure_text_box``).
+
+        The highlight multiplier is threaded in so the measurement is
+        worst-case for the animated word enlargement: a cue that fits at base
+        size but overflows once a word is highlighted is rejected here (and
+        auto-shrunk by ``_resolve_layout``) instead of crashing mid-render.
         """
         rect = img_text.measure_text_box(
             text=text,
@@ -329,13 +334,19 @@ class TranscriptionOverlay(Effect):
             font_size=font_px,
             anchor=cfg.anchor,
             margin=cfg.margin,
+            highlight_size_multiplier=cfg.style.highlight_size_multiplier,
+            highlight_bold_font=self.highlight_bold_font,
         )
         if rect.height == 0:
             return None
         box_w = int(rect.width)
         box_h = rect.height
         left, top, avail_w, avail_h = img_text.available_region(cfg.margin)
-        fits = box_w <= avail_w and box_h <= avail_h
+        # The box must fit the drawable area, AND the worst-case rendered line
+        # (incl. the enlarged highlighted word, or an unbreakable long word)
+        # must fit the box -- else the centered line spills off-frame at draw
+        # time. Failing this shrinks the font in ``_resolve_layout``.
+        fits = box_w <= avail_w and box_h <= avail_h and rect.content_width <= box_w
         x = min(max(int(round(rect.x)), left), left + avail_w - box_w)
         y = min(max(int(round(rect.y)), top), top + avail_h - box_h)
         return _CueBox(x=x, y=y, box_w=box_w, height=box_h, fits=fits)

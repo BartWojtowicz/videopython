@@ -185,3 +185,68 @@ class TestValidateRunGapClosed:
         edit.validate_with_metadata(SMALL_VIDEO_METADATA, context=context)
         result = edit.run(context=context)
         assert result.video_shape[1:3] == (SMALL_VIDEO_METADATA.height, SMALL_VIDEO_METADATA.width)
+
+
+class TestHighlightEnlargementParity:
+    """Regression for the 0.34.0 gap: the animated highlight enlarges a word
+    at draw time (`highlight_size_multiplier`), which was never measured, so a
+    cue that fit at base size crashed mid-render once a word lit up."""
+
+    # A long single word that wraps near the box edge at base size; once
+    # enlarged it would spill the line off-frame if measurement ignored it.
+    _LONG = [
+        (0.0, 0.5, "Extraordinarily"),
+        (0.5, 1.0, "unconstitutional"),
+        (1.0, 1.5, "internationalization"),
+        (1.5, 2.0, "responsibilities"),
+    ]
+
+    def _video(self, w: int, h: int, secs: float = 2.0, fps: int = 5) -> Video:
+        return Video.from_frames(np.zeros((int(secs * fps), h, w, 3), dtype=np.uint8), fps=fps)
+
+    def test_karaoke_cue_does_not_crash_and_matches_predict(self):
+        """Real repro shape: a karaoke cue on a small (post-crop-like) frame.
+        apply() must not raise OutOfBoundsError, and predict_metadata must
+        agree (parity) -- either both fit or both reject."""
+        op = TranscriptionOverlay(style=SubtitleStyle.KARAOKE)
+        tx = _tx(self._LONG)
+        w, h = 404, 720  # 1280x720 cropped 9:16, the reported case
+        meta = VideoMetadata(height=h, width=w, fps=5, frame_count=10, total_seconds=2.0)
+
+        predict_ok = True
+        try:
+            op.predict_metadata(meta, transcription=tx)
+        except ValueError:
+            predict_ok = False
+
+        if predict_ok:
+            result = op.apply(self._video(w, h), transcription=tx)  # must not raise
+            assert result.video_shape[1:3] == (h, w)
+            assert (result.frames != 0).any()
+        else:
+            with pytest.raises(ValueError):
+                op.apply(self._video(w, h), transcription=tx)
+
+    def test_multiplier_is_accounted_for_in_layout(self):
+        """The enlargement reserves room: a cue near the wrap boundary resolves
+        to a font no larger with a real multiplier than with 1.0, and strictly
+        smaller for an aggressive multiplier."""
+        tx = _tx(self._LONG)
+        w, h = 480, 360
+        base = TranscriptionOverlay(highlight_size_multiplier=1.0)._resolve_layout(w, h, tx)
+        karaoke = TranscriptionOverlay(style=SubtitleStyle.KARAOKE)._resolve_layout(w, h, tx)
+        big = TranscriptionOverlay(highlight_size_multiplier=2.5)._resolve_layout(w, h, tx)
+        assert karaoke.font_px <= base.font_px
+        assert big.font_px < base.font_px
+
+    def test_no_crash_across_every_highlighted_word(self):
+        """Every word becomes the highlighted (enlarged) one over a fitting
+        cue's lifetime; predict says fits and none of those frames raise."""
+        op = TranscriptionOverlay(style=SubtitleStyle.KARAOKE)
+        tx = _tx(_WORDS)  # ordinary words: fits after auto-shrink
+        w, h = 360, 640
+        meta = VideoMetadata(height=h, width=w, fps=10, frame_count=20, total_seconds=2.0)
+        op.predict_metadata(meta, transcription=tx)  # gate says fits (must not raise)
+        result = op.apply(self._video(w, h, fps=10), transcription=tx)  # exercises each word
+        assert result.video_shape[1:3] == (h, w)
+        assert (result.frames != 0).any()
