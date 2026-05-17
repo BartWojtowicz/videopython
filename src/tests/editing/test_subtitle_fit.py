@@ -57,9 +57,9 @@ class TestStylePresetsBackCompat:
         assert sp.background_color is None
 
     def test_region_maps_to_position(self):
-        assert TranscriptionOverlay(region=SubtitleRegion.TOP)._eff_position() == (0.5, 0.18)
-        assert TranscriptionOverlay(region=SubtitleRegion.BOTTOM)._eff_position() == (0.5, 0.82)
-        assert TranscriptionOverlay(position=(0.1, 0.2))._eff_position() == (0.1, 0.2)
+        assert TranscriptionOverlay(region=SubtitleRegion.TOP)._resolve_config().position == (0.5, 0.18)
+        assert TranscriptionOverlay(region=SubtitleRegion.BOTTOM)._resolve_config().position == (0.5, 0.82)
+        assert TranscriptionOverlay(position=(0.1, 0.2))._resolve_config().position == (0.1, 0.2)
 
 
 class TestResolutionIndependence:

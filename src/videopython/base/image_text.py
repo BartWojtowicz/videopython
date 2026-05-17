@@ -593,6 +593,18 @@ class ImageText:
         lines = [" ".join(line) for line in split_lines]
         return lines
 
+    def available_region(self, margin: MarginType = 0) -> tuple[int, int, int, int]:
+        """The drawable area inside ``margin`` as ``(left, top, width, height)``.
+
+        Single source of truth for margin-inset geometry: used by
+        :meth:`measure_text_box` and by callers that need to clamp a box
+        within the margins without re-deriving the margin math.
+        """
+        margin_top, margin_right, margin_bottom, margin_left = self._process_margin(margin)
+        available_width = self.image_size[1] - margin_left - margin_right
+        available_height = self.image_size[0] - margin_top - margin_bottom
+        return margin_left, margin_top, available_width, available_height
+
     def measure_text_box(
         self,
         text: str,
@@ -628,10 +640,9 @@ class ImageText:
         if font_size <= 0:
             raise ValueError("Font size must be positive")
 
-        # Process margins to determine available area
-        margin_top, margin_right, margin_bottom, margin_left = self._process_margin(margin)
-        available_width = self.image_size[1] - margin_left - margin_right
-        available_height = self.image_size[0] - margin_top - margin_bottom
+        # Process margins to determine available area (shared with callers
+        # that clamp boxes inside the margins -- see ``available_region``).
+        margin_left, margin_top, available_width, available_height = self.available_region(margin)
 
         # Handle relative box width
         if box_width is None:

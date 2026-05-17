@@ -34,7 +34,7 @@ from typing import Any, ClassVar, Literal
 
 import numpy as np
 from PIL import Image
-from pydantic import Field, PrivateAttr
+from pydantic import Field
 from tqdm import tqdm
 
 from videopython.base.image_text import AnchorPoint, ImageText, TextAlign
@@ -116,16 +116,34 @@ class _CueBox:
 
 
 @dataclass(frozen=True)
+class _ResolvedConfig:
+    """Every override-or-preset field resolved to a concrete value once.
+
+    Deterministic from the model fields, so the dry-run and the render
+    derive identical geometry and look (parity).
+    """
+
+    position: tuple[float, float]
+    anchor: AnchorPoint
+    box_width: float
+    text_align: TextAlign
+    margin: int | tuple[int, int, int, int]
+    style: _StyleParams
+
+
+@dataclass(frozen=True)
 class _SubtitleLayout:
     """Outcome of resolving the overlay against a concrete frame size.
 
-    ``segments`` are post-transform cues (``chunk`` + ``capitalize``), shared
-    by render and dry-run so they measure identical text. ``font_px`` is the
+    ``segments`` are post-transform cues (``chunk`` + ``capitalize``) and
+    ``config`` is the resolved geometry/look -- both shared by render and
+    dry-run so they measure and draw identical boxes. ``font_px`` is the
     single font size both paths use. ``fits`` is False with a populated
     ``error`` only when a cue cannot fit even at the minimum legible size.
     """
 
     segments: list[TranscriptionSegment]
+    config: _ResolvedConfig
     font_px: int
     fits: bool
     error: str | None
@@ -253,8 +271,6 @@ class TranscriptionOverlay(Effect):
         description="Advanced override: space around the box in px (or [top, right, bottom, left]). None uses 20.",
     )
 
-    _overlay_cache: dict[tuple[str, int | None], np.ndarray] = PrivateAttr(default_factory=dict)
-
     # ------------------------------------------------------------- resolution
 
     def _style_params(self) -> _StyleParams:
@@ -276,27 +292,16 @@ class TranscriptionOverlay(Effect):
             ),
         )
 
-    def _eff_position(self) -> tuple[float, float]:
-        return self.position if self.position is not None else _REGION_POSITION[self.region]
-
-    def _eff_anchor(self) -> AnchorPoint:
-        return self.anchor if self.anchor is not None else AnchorPoint.CENTER
-
-    def _eff_box_width(self) -> float:
-        return self.box_width if self.box_width is not None else 0.6
-
-    def _eff_text_align(self) -> TextAlign:
-        return self.text_align if self.text_align is not None else TextAlign.CENTER
-
-    def _eff_margin(self) -> int | tuple[int, int, int, int]:
-        return self.margin if self.margin is not None else 20
-
-    @staticmethod
-    def _margin_sides(margin: int | tuple[int, int, int, int]) -> tuple[int, int, int, int]:
-        """(top, right, bottom, left), mirroring ``ImageText._process_margin``."""
-        if isinstance(margin, int):
-            return margin, margin, margin, margin
-        return margin
+    def _resolve_config(self) -> _ResolvedConfig:
+        """Resolve every override-or-preset field to a concrete value once."""
+        return _ResolvedConfig(
+            position=self.position if self.position is not None else _REGION_POSITION[self.region],
+            anchor=self.anchor if self.anchor is not None else AnchorPoint.CENTER,
+            box_width=self.box_width if self.box_width is not None else 0.6,
+            text_align=self.text_align if self.text_align is not None else TextAlign.CENTER,
+            margin=self.margin if self.margin is not None else 20,
+            style=self._style_params(),
+        )
 
     def _transform(self, transcription: Transcription) -> Transcription:
         """Apply the cue transforms render and dry-run MUST share."""
@@ -306,69 +311,77 @@ class TranscriptionOverlay(Effect):
             transcription = transcription.capitalize_sentences()
         return transcription
 
-    def _place_cue(self, img_text: ImageText, text: str, font_px: int, width: int, height: int) -> _CueBox | None:
-        """Measure ``text`` at ``font_px`` and clamp its box inside the frame.
+    def _place_cue(self, img_text: ImageText, text: str, font_px: int, cfg: _ResolvedConfig) -> _CueBox | None:
+        """Measure ``text`` at ``font_px`` and clamp its box inside the margins.
 
         Returns ``None`` for a degenerate (whitespace-only) cue. ``fits`` is
-        False when the box is larger than the available area even after
+        False when the box is larger than the drawable area even after
         clamping -- i.e. shrinking the font is the only remedy. Used by both
-        the fit search and the renderer, so they never diverge.
+        the fit search and the renderer, so they never diverge. Margin math
+        comes from ``ImageText.available_region`` (one source of truth with
+        ``measure_text_box``).
         """
         rect = img_text.measure_text_box(
             text=text,
             font_filename=self.font_filename,
-            xy=self._eff_position(),
-            box_width=self._eff_box_width(),
+            xy=cfg.position,
+            box_width=cfg.box_width,
             font_size=font_px,
-            anchor=self._eff_anchor(),
-            margin=self._eff_margin(),
+            anchor=cfg.anchor,
+            margin=cfg.margin,
         )
         if rect.height == 0:
             return None
         box_w = int(rect.width)
         box_h = rect.height
-        mt, mr, mb, ml = self._margin_sides(self._eff_margin())
-        avail_w = width - ml - mr
-        avail_h = height - mt - mb
+        left, top, avail_w, avail_h = img_text.available_region(cfg.margin)
         fits = box_w <= avail_w and box_h <= avail_h
-        x = min(max(int(round(rect.x)), ml), width - mr - box_w)
-        y = min(max(int(round(rect.y)), mt), height - mb - box_h)
+        x = min(max(int(round(rect.x)), left), left + avail_w - box_w)
+        y = min(max(int(round(rect.y)), top), top + avail_h - box_h)
         return _CueBox(x=x, y=y, box_w=box_w, height=box_h, fits=fits)
 
     def _resolve_layout(self, width: int, height: int, transcription: Transcription) -> _SubtitleLayout:
-        """Single source of truth for font size + fit, used by render and dry-run."""
+        """Single source of truth for config + font size + fit (render & dry-run)."""
         segments = self._transform(transcription).segments
         cues = [s for s in segments if s.text.strip()]
+        cfg = self._resolve_config()
 
         desired = self.font_size if self.font_size is not None else max(1, round(self.font_scale * height))
         floor = max(1, round(self.min_font_scale * height))
+        # Never search above the desired size nor below the legible floor --
+        # but if the user pinned a font_size below the floor, honor it.
         lo = min(desired, floor)
 
         img_text = ImageText(image_size=(height, width), background=(0, 0, 0, 0))
 
-        def all_fit(font_px: int) -> bool:
+        def first_unfit(font_px: int) -> TranscriptionSegment | None:
             for cue in cues:
-                box = self._place_cue(img_text, cue.text, font_px, width, height)
+                box = self._place_cue(img_text, cue.text, font_px, cfg)
                 if box is not None and not box.fits:
-                    return False
-            return True
+                    return cue
+            return None
 
-        for font_px in range(desired, lo - 1, -1):
-            if all_fit(font_px):
-                return _SubtitleLayout(segments, font_px, True, None)
-
-        # Un-fittable even at the smallest legible size: name the offending cue.
-        offender = next(
-            (c for c in cues if (b := self._place_cue(img_text, c.text, lo, width, height)) is not None and not b.fits),
-            None,
-        )
-        bad_text = offender.text if offender is not None else "<unknown>"
-        error = (
-            f"Subtitle cue {bad_text!r} cannot fit in a {width}x{height} frame even at the minimum "
-            f"font size ({lo}px, min_font_scale={self.min_font_scale}). Lower min_font_scale, reduce "
-            f"max_words_per_cue, widen box_width, or render at a larger resolution."
-        )
-        return _SubtitleLayout(segments, lo, False, error)
+        # "fits" is monotonic in font size (a larger font never fits where a
+        # smaller one didn't -- box width is font-independent and box height
+        # is non-decreasing in font size), so binary-search the largest fit.
+        if first_unfit(desired) is None:
+            return _SubtitleLayout(segments, cfg, desired, True, None)
+        offender = first_unfit(lo)
+        if offender is not None:
+            error = (
+                f"Subtitle cue {offender.text!r} cannot fit in a {width}x{height} frame even at the "
+                f"minimum font size ({lo}px, min_font_scale={self.min_font_scale}). Lower min_font_scale, "
+                f"reduce max_words_per_cue, widen box_width, or render at a larger resolution."
+            )
+            return _SubtitleLayout(segments, cfg, lo, False, error)
+        low, high = lo, desired  # invariant: fits at low, not at high
+        while high - low > 1:
+            mid = (low + high) // 2
+            if first_unfit(mid) is None:
+                low = mid
+            else:
+                high = mid
+        return _SubtitleLayout(segments, cfg, low, True, None)
 
     # ------------------------------------------------------------- timeline
 
@@ -390,16 +403,18 @@ class TranscriptionOverlay(Effect):
         segment: TranscriptionSegment,
         highlight_word_index: int | None,
         layout: _SubtitleLayout,
+        cache: dict[tuple[str, int | None], np.ndarray],
     ) -> np.ndarray:
         height, width = video_shape[:2]
         cache_key = (segment.text, highlight_word_index)
-        if cache_key in self._overlay_cache:
-            return self._overlay_cache[cache_key]
+        if cache_key in cache:
+            return cache[cache_key]
 
+        cfg = layout.config
         img_text = ImageText(image_size=(height, width), background=(0, 0, 0, 0))
-        box = self._place_cue(img_text, segment.text, layout.font_px, width, height)
+        box = self._place_cue(img_text, segment.text, layout.font_px, cfg)
         if box is not None:
-            sp = self._style_params()
+            sp = cfg.style
             # Absolute, pre-clamped placement (anchor=TOP_LEFT, explicit px box,
             # margin already applied) -- the same numbers _resolve_layout used,
             # so a layout that validated cannot raise OutOfBoundsError here.
@@ -413,7 +428,7 @@ class TranscriptionOverlay(Effect):
                 text_color=sp.text_color,
                 background_color=sp.background_color,
                 background_padding=sp.background_padding,
-                place=self._eff_text_align(),
+                place=cfg.text_align,
                 anchor=AnchorPoint.TOP_LEFT,
                 margin=0,
                 words=[w.word for w in segment.words],
@@ -424,7 +439,7 @@ class TranscriptionOverlay(Effect):
             )
 
         overlay_image = img_text.img_array
-        self._overlay_cache[cache_key] = overlay_image
+        cache[cache_key] = overlay_image
         return overlay_image
 
     def apply(  # type: ignore[override]
@@ -446,10 +461,11 @@ class TranscriptionOverlay(Effect):
             # rather than crashing mid-render in ImageText.
             raise ValueError(layout.error)
 
-        # Frame size is fixed for this call; the cache key (text, hl) is unique
-        # within it. Reset so a reused instance applied to a differently sized
-        # video does not serve a stale-resolution overlay.
-        self._overlay_cache = {}
+        # Per-call memo of rendered overlays, keyed by (cue text, highlighted
+        # word). Local rather than instance state so the model stays stateless
+        # and re-entrant -- a reused instance can render differently sized
+        # videos without serving a stale-resolution overlay.
+        cache: dict[tuple[str, int | None], np.ndarray] = {}
         transformed = Transcription(segments=layout.segments, language=transcription.language)
 
         logger.info("Applying transcription overlay (font %dpx)...", layout.font_px)
@@ -461,7 +477,9 @@ class TranscriptionOverlay(Effect):
                 new_frames.append(frame)
                 continue
             highlight_word_index = self._get_active_word_index(active_segment, timestamp)
-            text_overlay = self._create_text_overlay(video.frame_shape, active_segment, highlight_word_index, layout)
+            text_overlay = self._create_text_overlay(
+                video.frame_shape, active_segment, highlight_word_index, layout, cache
+            )
             new_frames.append(self._apply_overlay_to_frame(frame, text_overlay))
 
         new_video = Video.from_frames(np.array(new_frames), fps=video.fps)
