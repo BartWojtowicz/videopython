@@ -6,7 +6,7 @@ from pydantic import ValidationError
 from tests.test_config import TEST_FONT_PATH
 from videopython.audio import Audio, AudioMetadata
 from videopython.base.description import BoundingBox
-from videopython.base.video import Video
+from videopython.base.video import Video, VideoMetadata
 from videopython.editing.effects import (
     Blur,
     ChromaticAberration,
@@ -16,6 +16,7 @@ from videopython.editing.effects import (
     Flash,
     FullImageOverlay,
     Glitch,
+    ImageOverlay,
     Kaleidoscope,
     KenBurns,
     MirrorFlip,
@@ -395,6 +396,108 @@ class TestTextOverlay:
         long_text = "This is a very long text that should definitely wrap to multiple lines"
         result = TextOverlay(text=long_text, font_size=16, max_width=0.5, font_filename=TEST_FONT_PATH).apply(video)
         assert result.frames.max() > 0
+
+
+class TestImageOverlay:
+    def _solid_overlay(self, tmp_path, w, h, rgb=(255, 0, 0), a=255):
+        arr = np.zeros((h, w, 4), dtype=np.uint8)
+        arr[:, :, 0], arr[:, :, 1], arr[:, :, 2] = rgb
+        arr[:, :, 3] = a
+        return _write_overlay(arr, tmp_path)
+
+    def test_rgba_alpha_blend(self, tmp_path):
+        # white overlay, alpha 127, on black -> ~127 where pasted, black elsewhere
+        video = Video.from_frames(np.zeros((4, 80, 80, 3), dtype=np.uint8), fps=10)
+        src = self._solid_overlay(tmp_path, 40, 40, rgb=(255, 255, 255), a=127)
+        result = ImageOverlay(source=src, scale=0.5, anchor="top_left", position=(0.0, 0.0)).apply(video)
+        assert np.allclose(result.frames[0][:40, :40], 127, atol=1)
+        assert result.frames[0][50:, 50:].max() == 0
+
+    def test_opacity_scales_blend(self, tmp_path):
+        video = Video.from_frames(np.zeros((3, 60, 60, 3), dtype=np.uint8), fps=10)
+        src = self._solid_overlay(tmp_path, 30, 30, rgb=(255, 255, 255), a=255)
+        full = ImageOverlay(source=src, scale=1.0, anchor="top_left", position=(0.0, 0.0), opacity=1.0).apply(
+            video.copy()
+        )
+        half = ImageOverlay(source=src, scale=1.0, anchor="top_left", position=(0.0, 0.0), opacity=0.5).apply(
+            video.copy()
+        )
+        assert full.frames[0][0, 0, 0] == 255
+        assert half.frames[0][0, 0, 0] == 127
+
+    def test_resolution_independence(self, tmp_path):
+        # Same op, two frame sizes -> overlay width is the same FRACTION of each.
+        src = self._solid_overlay(tmp_path, 20, 20)
+        small = Video.from_frames(np.zeros((2, 100, 100, 3), dtype=np.uint8), fps=10)
+        large = Video.from_frames(np.zeros((2, 200, 200, 3), dtype=np.uint8), fps=10)
+        rs = ImageOverlay(source=src, scale=0.25, anchor="top_left", position=(0.0, 0.0)).apply(small)
+        rl = ImageOverlay(source=src, scale=0.25, anchor="top_left", position=(0.0, 0.0)).apply(large)
+        small_w = int((rs.frames[0][:, :, 0] == 255).any(axis=0).sum())
+        large_w = int((rl.frames[0][:, :, 0] == 255).any(axis=0).sum())
+        assert small_w == 25
+        assert large_w == 50
+
+    def test_all_anchors_preserve_shape(self, video_1s, tmp_path):
+        src = self._solid_overlay(tmp_path, 16, 16)
+        for anchor in ("center", "top_left", "top_center", "bottom_center", "bottom_left", "bottom_right"):
+            result = ImageOverlay(source=src, scale=0.2, anchor=anchor).apply(video_1s.copy())
+            assert result.video_shape == video_1s.video_shape
+
+    def test_off_frame_is_noop(self, tmp_path):
+        # bottom_right anchor at (0, 0) places the whole box off the top-left -> no-op, no raise.
+        original = np.full((3, 50, 50, 3), 70, dtype=np.uint8)
+        video = Video.from_frames(original.copy(), fps=10)
+        src = self._solid_overlay(tmp_path, 20, 20)
+        result = ImageOverlay(source=src, scale=0.3, anchor="bottom_right", position=(0.0, 0.0)).apply(video)
+        assert np.array_equal(result.frames, original)
+
+    def test_window_restricts_effect(self, tmp_path):
+        video = Video.from_frames(np.zeros((20, 40, 40, 3), dtype=np.uint8), fps=10)
+        src = self._solid_overlay(tmp_path, 40, 40, rgb=(255, 255, 255), a=255)
+        result = ImageOverlay(
+            source=src, scale=1.0, anchor="top_left", position=(0.0, 0.0), window=TimeRange(start=1.0)
+        ).apply(video)
+        assert result.frames[0].max() == 0  # before window: untouched
+        assert result.frames[-1].min() == 255  # inside window: fully overlaid
+
+    def test_preserves_shape(self, video_1s, tmp_path):
+        src = self._solid_overlay(tmp_path, 24, 24)
+        result = ImageOverlay(source=src, scale=0.3).apply(video_1s)
+        assert result.video_shape == video_1s.video_shape
+
+    def test_opaque_rgb_source_blends_by_opacity(self, tmp_path):
+        # RGB (no alpha) source -> alpha treated as 255, so opacity alone drives the blend.
+        src = _write_overlay(255 * np.ones((20, 20, 3), dtype=np.uint8), tmp_path)
+        video = Video.from_frames(np.zeros((2, 40, 40, 3), dtype=np.uint8), fps=10)
+        result = ImageOverlay(source=src, scale=1.0, anchor="top_left", position=(0.0, 0.0), opacity=0.5).apply(video)
+        assert result.frames[0][0, 0, 0] == 127
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"scale": 0.0},
+            {"scale": -0.1},
+            {"scale": 1.5},
+            {"opacity": -0.1},
+            {"opacity": 1.1},
+            {"position": (1.5, 0.5)},
+            {"position": (0.5, -0.2)},
+        ],
+    )
+    def test_invalid_params_raise(self, kwargs):
+        with pytest.raises(ValidationError):
+            ImageOverlay(source="logo.png", **kwargs)
+
+    def test_predict_metadata_rejects_missing_source(self):
+        meta = VideoMetadata(height=100, width=100, fps=10, frame_count=10, total_seconds=1.0)
+        with pytest.raises(ValueError, match="not a readable image"):
+            ImageOverlay(source="/no/such/file.png").predict_metadata(meta)
+
+    def test_predict_metadata_allows_oversized_scale(self, tmp_path):
+        # Contract: geometry run() can clip is NOT rejected at validate() time.
+        src = self._solid_overlay(tmp_path, 4000, 10)
+        meta = VideoMetadata(height=100, width=100, fps=10, frame_count=10, total_seconds=1.0)
+        assert ImageOverlay(source=src, scale=1.0).predict_metadata(meta) == meta
 
 
 @pytest.fixture

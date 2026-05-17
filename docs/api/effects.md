@@ -83,6 +83,7 @@ Every effect except `add_subtitles` is streamable (compatible with
 | `vignette` | `Vignette` | Radial darkening from the edges |
 | `ken_burns` | `KenBurns` | Pan-and-zoom between two bounding boxes |
 | `full_image_overlay` | `FullImageOverlay` | Composite a full-frame image |
+| `image_overlay` | `ImageOverlay` | Scaled, positioned image (logo / watermark) |
 | `fade` | `Fade` | Audio + video fade in/out/in_out |
 | `volume_adjust` | `VolumeAdjust` | Audio-only effect |
 | `text_overlay` | `TextOverlay` | Rendered text on top of frames |
@@ -115,6 +116,10 @@ Every effect except `add_subtitles` is streamable (compatible with
 ### FullImageOverlay
 
 ::: videopython.editing.FullImageOverlay
+
+### ImageOverlay
+
+::: videopython.editing.ImageOverlay
 
 ### ColorGrading
 

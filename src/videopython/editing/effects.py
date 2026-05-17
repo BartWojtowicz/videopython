@@ -29,13 +29,14 @@ from videopython.editing.operation import Effect
 
 if TYPE_CHECKING:
     from videopython.audio import Audio
-    from videopython.base.video import Video
+    from videopython.base.video import Video, VideoMetadata
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "Effect",
     "FullImageOverlay",
+    "ImageOverlay",
     "Blur",
     "Zoom",
     "ColorGrading",
@@ -768,6 +769,184 @@ class TextOverlay(Effect):
             blended = (overlay_rgb * alpha + region.astype(np.float32) * (1.0 - alpha)).astype(np.uint8)
             frame[dst_y : dst_y + paste_h, dst_x : dst_x + paste_w] = blended
 
+        return video
+
+
+class ImageOverlay(Effect):
+    """Composites a scaled image at an anchored position on every frame in the window.
+
+    A resolution-independent watermark / logo / brand mark. Unlike
+    :class:`FullImageOverlay` (full-frame only, raises on size mismatch), the
+    image is scaled to a fraction of the frame *width* and placed at an
+    anchored normalized position, so one config works across 1080p / 4k /
+    vertical / square. Loaded just-in-time from ``source`` so the op stays
+    JSON-serialisable. Off-frame or oversized placement clips to a partial
+    paste or a no-op -- the same contract as :class:`TextOverlay`, never an
+    error; only an unreadable ``source`` is rejected (in ``predict_metadata``).
+    """
+
+    op: Literal["image_overlay"] = "image_overlay"
+    streamable: ClassVar[bool] = True
+
+    source: Path = Field(
+        description=(
+            "Path to an RGB or RGBA image file (PNG/JPEG/WebP). Loaded at apply time; kept JSON-serialisable as a path."
+        ),
+    )
+    scale: float = Field(
+        0.15,
+        gt=0,
+        le=1,
+        description=(
+            "Overlay width as a fraction of frame width (0-1). Height follows "
+            "the image's aspect ratio. Resolution-independent."
+        ),
+    )
+    opacity: float = Field(
+        1.0,
+        ge=0,
+        le=1,
+        description="Multiplies the image's own alpha. 0 = fully transparent, 1 = use the image alpha unchanged.",
+    )
+    position: tuple[float, float] = Field(
+        (0.95, 0.95),
+        description=(
+            "Where to place the overlay as normalized (x, y) coordinates. "
+            "(0, 0) = top-left corner, (1, 1) = bottom-right corner."
+        ),
+    )
+    anchor: Literal["center", "top_left", "top_center", "bottom_center", "bottom_left", "bottom_right"] = Field(
+        "bottom_right",
+        description="Which point of the overlay box sits at the position coordinate.",
+    )
+
+    _overlay_rgba: np.ndarray | None = PrivateAttr(default=None)
+    _stream_noop: bool = PrivateAttr(default=False)
+    _stream_alpha: np.ndarray | None = PrivateAttr(default=None)
+    _stream_rgb: np.ndarray | None = PrivateAttr(default=None)
+    _stream_dst: tuple[int, int, int, int] = PrivateAttr(default=(0, 0, 0, 0))
+
+    @model_validator(mode="after")
+    def _validate_position(self) -> ImageOverlay:
+        if not (0.0 <= self.position[0] <= 1.0 and 0.0 <= self.position[1] <= 1.0):
+            raise ValueError("position values must be in range [0, 1]")
+        return self
+
+    def predict_metadata(self, meta: VideoMetadata, **_context: Any) -> VideoMetadata:
+        """Reject only a missing/unreadable ``source`` (see :meth:`Operation.predict_metadata`).
+
+        An unreadable source is the one failure ``run()`` cannot survive -- it
+        would raise mid-stream after expensive frame decode -- so it is caught
+        at ``validate()`` time, symmetric with ``TranscriptionOverlay``.
+        Geometry (oversized / off-frame) is deliberately *not* checked here: it
+        clips to a valid no-op like :class:`TextOverlay`, so rejecting it would
+        break that contract and the parity with the op this is modeled on.
+        ``verify()`` is a cheap header check (no full decode), so ``validate()``
+        stays frame-free.
+        """
+        try:
+            with Image.open(self.source) as im:
+                im.verify()
+        except OSError as exc:
+            raise ValueError(f"image_overlay source {str(self.source)!r} is not a readable image: {exc}") from exc
+        return meta
+
+    def _load_overlay(self) -> np.ndarray:
+        if self._overlay_rgba is not None:
+            return self._overlay_rgba
+        img = Image.open(self.source).convert("RGBA")
+        self._overlay_rgba = np.array(img, dtype=np.uint8)
+        return self._overlay_rgba
+
+    def _compute_position(self, frame_width: int, frame_height: int, img_w: int, img_h: int) -> tuple[int, int]:
+        # Copied verbatim from TextOverlay: ImageOverlay's anchor Literal is
+        # deliberately the same set, so the geometry is shared by construction.
+        px = int(self.position[0] * frame_width)
+        py = int(self.position[1] * frame_height)
+
+        if self.anchor == "center":
+            return px - img_w // 2, py - img_h // 2
+        if self.anchor == "top_left":
+            return px, py
+        if self.anchor == "top_center":
+            return px - img_w // 2, py
+        if self.anchor == "bottom_center":
+            return px - img_w // 2, py - img_h
+        if self.anchor == "bottom_left":
+            return px, py - img_h
+        # bottom_right
+        return px - img_w, py - img_h
+
+    def _resized_overlay(self, frame_w: int) -> np.ndarray:
+        overlay = self._load_overlay()
+        src_h, src_w = overlay.shape[:2]
+        target_w = max(1, round(self.scale * frame_w))
+        target_h = max(1, round(target_w * src_h / src_w))
+        if (target_w, target_h) == (src_w, src_h):
+            return overlay
+        resized = Image.fromarray(overlay).resize((target_w, target_h), Image.LANCZOS)
+        return np.array(resized, dtype=np.uint8)
+
+    def _blend_params(
+        self, frame_w: int, frame_h: int
+    ) -> tuple[np.ndarray, np.ndarray, tuple[int, int, int, int]] | None:
+        """Placement + blend inputs shared by the eager and streaming paths.
+
+        Single source of truth so the two paths cannot drift -- the
+        eager/stream parity-hole class of bug fixed in 0.34.1. Returns ``None``
+        when the overlay lands fully off-frame (the effect is a no-op).
+        """
+        overlay = self._resized_overlay(frame_w)
+        oh, ow = overlay.shape[:2]
+        x, y = self._compute_position(frame_w, frame_h, ow, oh)
+
+        src_x = max(0, -x)
+        src_y = max(0, -y)
+        dst_x = max(0, x)
+        dst_y = max(0, y)
+        paste_w = min(ow - src_x, frame_w - dst_x)
+        paste_h = min(oh - src_y, frame_h - dst_y)
+
+        if paste_w <= 0 or paste_h <= 0:
+            return None
+
+        region = overlay[src_y : src_y + paste_h, src_x : src_x + paste_w]
+        alpha = (region[:, :, 3:4].astype(np.float32) / 255.0) * self.opacity
+        rgb = region[:, :, :3].astype(np.float32)
+        return alpha, rgb, (dst_y, dst_x, paste_h, paste_w)
+
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+        params = self._blend_params(width, height)
+        if params is None:
+            self._stream_noop = True
+            return
+        self._stream_noop = False
+        self._stream_alpha, self._stream_rgb, self._stream_dst = params
+
+    def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
+        if self._stream_noop:
+            return frame
+        assert self._stream_alpha is not None and self._stream_rgb is not None
+        dy, dx, ph, pw = self._stream_dst
+        region = frame[dy : dy + ph, dx : dx + pw]
+        blended = (
+            self._stream_rgb * self._stream_alpha + region.astype(np.float32) * (1.0 - self._stream_alpha)
+        ).astype(np.uint8)
+        frame[dy : dy + ph, dx : dx + pw] = blended
+        return frame
+
+    def _apply(self, video: Video) -> Video:
+        frame_h, frame_w = video.frame_shape[:2]
+        params = self._blend_params(frame_w, frame_h)
+        if params is None:
+            return video
+        alpha, rgb, (dy, dx, ph, pw) = params
+
+        logger.info("Applying image overlay...")
+        for frame in tqdm(video.frames, desc="Image overlay"):
+            region = frame[dy : dy + ph, dx : dx + pw]
+            blended = (rgb * alpha + region.astype(np.float32) * (1.0 - alpha)).astype(np.uint8)
+            frame[dy : dy + ph, dx : dx + pw] = blended
         return video
 
 

@@ -1,5 +1,18 @@
 # Release Notes
 
+## 0.35.0
+
+New `image_overlay` operation: a scaled, anchored, time-windowed image
+overlay for logos / watermarks / brand marks. Unlike `full_image_overlay`
+(full-frame, raises on size mismatch), `scale` is a fraction of frame width
+so one config is resolution-independent across 1080p / 4k / vertical /
+square; `position`/`anchor` reuse `TextOverlay`'s geometry and off-frame
+placement clips to a no-op (never an error). Streams via the `run_to_file`
+fast path with eager/streamed parity. `predict_metadata` rejects only a
+missing/unreadable `source` at `validate()` time -- geometry that `run()`
+can clip is not rejected. This codifies the `predict_metadata` contract
+(reject iff `run()` would fail) in the `Operation` docstring.
+
 ## 0.34.1
 
 Fixes a parity hole in the 0.34.0 subtitle fit check: `add_subtitles`

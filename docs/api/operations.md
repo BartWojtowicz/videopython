@@ -158,6 +158,7 @@ field.
 | `vignette` | `Vignette` | effect | yes |
 | `ken_burns` | `KenBurns` | effect | yes |
 | `full_image_overlay` | `FullImageOverlay` | effect | yes |
+| `image_overlay` | `ImageOverlay` | effect | yes |
 | `fade` | `Fade` | effect | yes |
 | `volume_adjust` | `VolumeAdjust` | effect | yes |
 | `text_overlay` | `TextOverlay` | effect | yes |

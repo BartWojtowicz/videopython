@@ -175,7 +175,18 @@ class Operation(BaseModel):
         raise NotImplementedError(f"{type(self).__name__}.apply not implemented")
 
     def predict_metadata(self, meta: VideoMetadata) -> VideoMetadata:
-        """Predict output metadata from input metadata. Default: identity."""
+        """Predict output metadata from input metadata. Default: identity.
+
+        Run during ``VideoEdit.validate()``'s dry-run, before any frames are
+        decoded. Beyond predicting shape, this is the fail-fast gate, and it
+        has one contract: **reject exactly the plans that would otherwise crash
+        or do unrecoverable / expensive work in** :meth:`apply` **/** ``run()``;
+        anything ``run()`` can absorb by graceful degradation is NOT rejected.
+        ``TranscriptionOverlay`` rejects un-fittable subtitles (they used to
+        crash mid-render); ``TextOverlay``/``ImageOverlay`` do not reject
+        off-frame geometry (it clips to a valid no-op). Keep the check
+        metadata-cheap -- no frame decode.
+        """
         return meta
 
     def to_ffmpeg_filter(self, ctx: FilterCtx) -> str | None:

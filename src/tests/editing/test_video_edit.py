@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import numpy as np
 import pytest
+from PIL import Image
 from pydantic import ValidationError
 
 from tests.test_config import BIG_VIDEO_PATH, SMALL_VIDEO_METADATA, SMALL_VIDEO_PATH
@@ -254,6 +255,28 @@ class TestExecution:
         assert result.frames.shape[2] == 200
         assert result.frames.shape[1] == 100
 
+    def test_run_with_image_overlay(self, tmp_path):
+        logo = tmp_path / "logo.png"
+        arr = np.zeros((50, 50, 4), dtype=np.uint8)
+        arr[:, :, 2] = 255  # blue
+        arr[:, :, 3] = 255
+        Image.fromarray(arr, "RGBA").save(logo)
+        plan = {
+            "segments": [
+                _segment(
+                    start=0.0,
+                    end=2.0,
+                    operations=[{"op": "image_overlay", "source": str(logo), "scale": 0.2, "anchor": "bottom_right"}],
+                )
+            ]
+        }
+        edit = VideoEdit.from_dict(plan)
+        meta = edit.validate()
+        result = edit.run()
+        assert result.frame_shape[0] == meta.height
+        assert result.frame_shape[1] == meta.width
+        assert (result.frames[0][:, :, 2] == 255).any()
+
 
 # ----------------------------------------------------------------- validation
 
@@ -265,6 +288,11 @@ class TestValidation:
         assert meta.total_seconds == pytest.approx(4.0, abs=0.1)
         assert meta.width == SMALL_VIDEO_METADATA.width
         assert meta.height == SMALL_VIDEO_METADATA.height
+
+    def test_validate_rejects_missing_image_overlay_source(self):
+        plan = {"segments": [_segment(operations=[{"op": "image_overlay", "source": "/no/such/logo.png"}])]}
+        with pytest.raises(ValueError, match="not a readable image"):
+            VideoEdit.from_dict(plan).validate()
 
     def test_validate_resize_and_crop_chained(self):
         plan = {
