@@ -8,6 +8,7 @@ from .effects import (
     Flash,
     FullImageOverlay,
     Glitch,
+    ImageOverlay,
     Kaleidoscope,
     KenBurns,
     MirrorFlip,
@@ -56,6 +57,7 @@ __all__ = [
     "SilenceRemoval",
     # Effects
     "FullImageOverlay",
+    "ImageOverlay",
     "Blur",
     "Zoom",
     "ColorGrading",
