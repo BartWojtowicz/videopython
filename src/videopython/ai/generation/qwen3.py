@@ -92,6 +92,56 @@ _SPEECH_CHARS_DEFAULT = 12.0
 _LOW_LOGPROB_HINT_THRESHOLD = -1.0
 
 
+# Conservative chars-per-token used to size chunks without invoking the
+# tokenizer. Morphologically rich languages land around 1.5-2.0
+# chars/token; ASCII is ~3-4. We use the low end so chunks stay safe for
+# any source language.
+_CHARS_PER_TOKEN = 2.0
+# Token reserve for the system prompt + user-prompt envelope ("Input
+# segments:" / "Translations (...)" wrappers). Empirical upper bound.
+_PROMPT_OVERHEAD_TOKENS = 300
+# Per-segment JSON wrapper cost (keys, braces, commas, index). Added on
+# top of len(seg.text) when sizing chunks.
+_SEGMENT_ENVELOPE_CHARS = 40
+
+
+def _chunk_segment_indices(
+    segments: list[TranscriptionSegment],
+    n_ctx: int,
+    max_tokens: int,
+) -> list[list[int]]:
+    """Group positions in ``segments`` into batches that fit one Qwen call.
+
+    Each batch must satisfy ``prompt_tokens + max_tokens <= n_ctx``, which
+    llama.cpp enforces. We approximate prompt token count from character
+    length using ``_CHARS_PER_TOKEN``; the conservative ratio means a chunk
+    estimated at the budget will tokenize to comfortably less.
+
+    A segment whose own serialized form exceeds the per-call budget goes in
+    its own chunk anyway — better to let llama.cpp report a clean overflow
+    on one giant segment than to silently swallow it.
+    """
+    prompt_token_budget = n_ctx - max_tokens - _PROMPT_OVERHEAD_TOKENS
+    if prompt_token_budget <= 0:
+        return [[i] for i in range(len(segments))]
+    char_budget = int(prompt_token_budget * _CHARS_PER_TOKEN)
+
+    chunks: list[list[int]] = []
+    current: list[int] = []
+    current_chars = 0
+    for i, seg in enumerate(segments):
+        seg_chars = len(seg.text) + _SEGMENT_ENVELOPE_CHARS
+        if current and current_chars + seg_chars > char_budget:
+            chunks.append(current)
+            current = []
+            current_chars = 0
+        current.append(i)
+        current_chars += seg_chars
+    if current:
+        chunks.append(current)
+    return chunks
+
+
 def _target_chars_for(duration_seconds: float, target_lang: str) -> int:
     """Character-count budget for a segment of ``duration_seconds`` in ``target_lang``."""
     rate = _SPEECH_CHARS_PER_SEC.get(target_lang, _SPEECH_CHARS_DEFAULT)
@@ -170,9 +220,12 @@ class Qwen3Translator:
             ``DEFAULT_REPO_ID``; override for eval harnesses.
         filename: GGUF filename within ``repo_id``. Defaults to
             ``DEFAULT_FILENAME``.
-        n_ctx: llama.cpp context window. 8192 is plenty for a 15-min source;
-            raise for very long sources. Hard cap is the model's training
-            context (262K for Qwen3-4B-Instruct-2507).
+        n_ctx: llama.cpp context window. ``translate_segments`` splits the
+            input across multiple calls when it doesn't fit, so 8192 stays
+            safe even for very long sources; raise to reduce the number of
+            calls (and gain cross-segment context per call) at the cost of
+            VRAM. Hard cap is the model's training context (262K for
+            Qwen3-4B-Instruct-2507).
         max_tokens: Generation cap per call. 4× the input character count
             is a safe upper bound for translation output.
         temperature: Decoding temperature. 0.1 keeps output structurally
@@ -257,6 +310,52 @@ class Qwen3Translator:
         raw = response["choices"][0]["text"]
         return _parse_jsonl_response(raw)
 
+    def _qwen_translate_chunked(
+        self,
+        segments: list[TranscriptionSegment],
+        target_lang: str,
+        source_lang: str,
+        progress_callback: Callable[[float], None] | None = None,
+        progress_start: float = 0.0,
+        progress_end: float = 1.0,
+    ) -> dict[int, str]:
+        """Translate ``segments`` across one or more Qwen calls.
+
+        Returns a dict keyed by position in ``segments``. Splitting into
+        chunks keeps each call under llama.cpp's ``n_ctx`` cap — without
+        chunking, a long source with hundreds of dense segments easily
+        blows past the default 8192 token window.
+
+        Progress is reported as a linear ramp from ``progress_start`` to
+        ``progress_end``, one tick per chunk completed.
+        """
+        results: dict[int, str] = {}
+        if not segments:
+            if progress_callback is not None:
+                progress_callback(progress_end)
+            return results
+
+        chunks = _chunk_segment_indices(segments, self.n_ctx, self.max_tokens)
+        if len(chunks) > 1:
+            logger.info(
+                "Qwen3Translator: splitting %d segments into %d chunks (n_ctx=%d)",
+                len(segments),
+                len(chunks),
+                self.n_ctx,
+            )
+        for chunk_num, chunk_positions in enumerate(chunks):
+            chunk_segments = [segments[p] for p in chunk_positions]
+            chunk_result = self._qwen_translate(chunk_segments, target_lang, source_lang)
+            # chunk_result keys are 0..len(chunk_positions)-1; map back to
+            # positions in the caller-provided ``segments`` list.
+            for local_idx, text in chunk_result.items():
+                if 0 <= local_idx < len(chunk_positions):
+                    results[chunk_positions[local_idx]] = text
+            if progress_callback is not None:
+                fraction = (chunk_num + 1) / len(chunks)
+                progress_callback(progress_start + (progress_end - progress_start) * fraction)
+        return results
+
     def translate_segments(
         self,
         segments: list[TranscriptionSegment],
@@ -266,10 +365,10 @@ class Qwen3Translator:
     ) -> list[TranslatedSegment]:
         """Translate segments via Qwen with parse-retry + optional Marian fallback.
 
-        The progress_callback fires three times: 0.5 after the first
-        Qwen call, 0.9 after the optional retry/fallback, 1.0 at the
-        end. M2.1 phase 2 confirmed smaller batches don't help on CPU,
-        so finer-grained progress isn't possible without fake ticks.
+        The progress_callback ramps from 0 to 0.5 across the first-pass
+        Qwen chunks, hits 0.9 after the optional retry/fallback, and 1.0
+        at the end. Input larger than the model's context window is split
+        across multiple Qwen calls (see ``_qwen_translate_chunked``).
         """
         effective_source = source_lang or "en"
         self._failures_last_call = []
@@ -277,13 +376,15 @@ class Qwen3Translator:
         translatable_indices = [i for i, seg in enumerate(segments) if _is_translatable_text(seg.text)]
         translatable_segments = [segments[i] for i in translatable_indices]
 
-        # First attempt.
-        if translatable_segments:
-            qwen_results = self._qwen_translate(translatable_segments, target_lang, effective_source)
-        else:
-            qwen_results = {}
-        if progress_callback is not None:
-            progress_callback(0.5)
+        # First attempt — chunked to fit n_ctx.
+        qwen_results = self._qwen_translate_chunked(
+            translatable_segments,
+            target_lang,
+            effective_source,
+            progress_callback=progress_callback,
+            progress_start=0.0,
+            progress_end=0.5,
+        )
 
         # Identify segments Qwen failed (unparseable or missing index).
         # Indices in qwen_results / translatable_segments are 0-based positions
@@ -299,11 +400,15 @@ class Qwen3Translator:
                 len(retry_segments),
                 len(translatable_segments),
             )
-            retry_results = self._qwen_translate(retry_segments, target_lang, effective_source)
-            # retry_results uses 0..len(retry_segments)-1 as keys; map back.
-            for retry_local, original_local in enumerate(missing_local_indices):
-                if retry_local in retry_results:
-                    qwen_results[original_local] = retry_results[retry_local]
+            retry_results = self._qwen_translate_chunked(
+                retry_segments,
+                target_lang,
+                effective_source,
+            )
+            # retry_results keys are positions in retry_segments; map back to
+            # translatable_segments.
+            for retry_local, translation in retry_results.items():
+                qwen_results[missing_local_indices[retry_local]] = translation
         if progress_callback is not None:
             progress_callback(0.9)
 

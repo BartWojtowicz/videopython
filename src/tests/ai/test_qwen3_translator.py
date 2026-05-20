@@ -12,6 +12,7 @@ from videopython.ai.generation.qwen3 import (
     Qwen3Translator,
     _build_system_prompt,
     _build_user_prompt,
+    _chunk_segment_indices,
     _parse_jsonl_response,
     _target_chars_for,
 )
@@ -333,3 +334,118 @@ class TestUnloadAndProtocol:
         langs = Qwen3Translator.get_supported_languages()
         assert isinstance(langs, dict)
         assert "en" in langs and "es" in langs
+
+
+class TestChunkSegmentIndices:
+    """Pure helper — exercises the char-budget splitter without any LLM."""
+
+    def test_small_input_one_chunk(self) -> None:
+        segs = [_seg(0, 1, "a"), _seg(1, 2, "b"), _seg(2, 3, "c")]
+        chunks = _chunk_segment_indices(segs, n_ctx=8192, max_tokens=4096)
+        assert chunks == [[0, 1, 2]]
+
+    def test_large_input_splits_into_multiple_chunks(self) -> None:
+        # 80 segments × ~300 chars each = ~24000 chars. With n_ctx=8192 and
+        # max_tokens=4096 the prompt budget is ~3796 tokens ≈ 7592 chars, so
+        # the result must be more than one chunk.
+        segs = [_seg(i, i + 1, "x" * 300) for i in range(80)]
+        chunks = _chunk_segment_indices(segs, n_ctx=8192, max_tokens=4096)
+        assert len(chunks) >= 2
+        # Every position covered exactly once, in order.
+        flattened = [i for chunk in chunks for i in chunk]
+        assert flattened == list(range(80))
+
+    def test_oversized_single_segment_isolated(self) -> None:
+        # A segment that on its own exceeds the budget must still appear,
+        # in its own chunk — we'd rather surface llama.cpp's own error on
+        # that one segment than drop it silently.
+        big = _seg(0, 10, "y" * 50_000)
+        small = _seg(10, 11, "ok")
+        chunks = _chunk_segment_indices([big, small], n_ctx=8192, max_tokens=4096)
+        assert chunks[0] == [0]
+        assert [1] in chunks
+
+    def test_pathological_n_ctx_falls_back_to_per_segment(self) -> None:
+        # If max_tokens leaves no room, the helper degrades to one-per-chunk
+        # instead of returning an empty list (which would silently drop work).
+        segs = [_seg(0, 1, "a"), _seg(1, 2, "b")]
+        chunks = _chunk_segment_indices(segs, n_ctx=1024, max_tokens=4096)
+        assert chunks == [[0], [1]]
+
+    def test_empty_input_returns_empty(self) -> None:
+        assert _chunk_segment_indices([], n_ctx=8192, max_tokens=4096) == []
+
+
+class TestChunkedTranslation:
+    """End-to-end behaviour when input spans multiple Qwen calls."""
+
+    def test_multi_chunk_first_pass_maps_indices_correctly(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # 80 long segments → multiple chunks. Each fake call returns a
+        # response that uses the chunk-local indices (0..chunk_size-1).
+        segs = [_seg(i, i + 1, "x" * 300) for i in range(80)]
+        chunks = _chunk_segment_indices(segs, n_ctx=8192, max_tokens=4096)
+        assert len(chunks) >= 2  # sanity for the test premise
+
+        # For each chunk, build a response that translates seg-i to
+        # "tr-<original_position>" so we can verify index mapping.
+        scripted: list[str] = []
+        for chunk_positions in chunks:
+            lines = [f'{{"i": {local}, "translated": "tr-{orig}"}}' for local, orig in enumerate(chunk_positions)]
+            scripted.append("\n".join(lines))
+        fake = _FakeLlama(scripted)
+        _patch_qwen_with_fake(monkeypatch, fake)
+
+        translator = Qwen3Translator(device="cpu")
+        result = translator.translate_segments(segs, target_lang="es", source_lang="en")
+
+        assert [r.translated_text for r in result] == [f"tr-{i}" for i in range(80)]
+        assert translator.translation_failures == []
+        assert len(fake.prompts_seen) == len(chunks)
+
+    def test_retry_spans_chunks_when_many_segments_fail(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # First pass: each chunk returns nothing parseable. Retry pass:
+        # the missing set is the whole input and must itself be chunked.
+        segs = [_seg(i, i + 1, "x" * 300) for i in range(80)]
+        chunks = _chunk_segment_indices(segs, n_ctx=8192, max_tokens=4096)
+
+        scripted: list[str] = []
+        # First pass: garbage for every chunk.
+        scripted.extend(["garbage"] * len(chunks))
+        # Retry pass: same chunking is applied, return clean responses.
+        for chunk_positions in chunks:
+            lines = [f'{{"i": {local}, "translated": "rt-{orig}"}}' for local, orig in enumerate(chunk_positions)]
+            scripted.append("\n".join(lines))
+        fake = _FakeLlama(scripted)
+        _patch_qwen_with_fake(monkeypatch, fake)
+
+        translator = Qwen3Translator(device="cpu", marian_fallback=False)
+        result = translator.translate_segments(segs, target_lang="es", source_lang="en")
+
+        assert [r.translated_text for r in result] == [f"rt-{i}" for i in range(80)]
+        assert translator.translation_failures == []
+        # First-pass chunks + retry-pass chunks = 2× len(chunks).
+        assert len(fake.prompts_seen) == 2 * len(chunks)
+
+    def test_progress_callback_ramps_across_chunks(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # 3 chunks in the first pass → 3 ticks ramping to 0.5, then 0.9, 1.0.
+        segs = [_seg(i, i + 1, "x" * 300) for i in range(80)]
+        chunks = _chunk_segment_indices(segs, n_ctx=8192, max_tokens=4096)
+        scripted = []
+        for chunk_positions in chunks:
+            lines = [f'{{"i": {local}, "translated": "ok"}}' for local in range(len(chunk_positions))]
+            scripted.append("\n".join(lines))
+        fake = _FakeLlama(scripted)
+        _patch_qwen_with_fake(monkeypatch, fake)
+
+        translator = Qwen3Translator(device="cpu")
+        ticks: list[float] = []
+        translator.translate_segments(segs, target_lang="es", source_lang="en", progress_callback=ticks.append)
+
+        # One ramp tick per first-pass chunk, then 0.9 and 1.0.
+        assert len(ticks) == len(chunks) + 2
+        assert ticks[-2:] == [0.9, 1.0]
+        # First ramp ticks land between 0 and 0.5 inclusive, strictly increasing.
+        ramp = ticks[: len(chunks)]
+        assert ramp[-1] == pytest.approx(0.5)
+        assert all(0 < t <= 0.5 for t in ramp)
+        assert ramp == sorted(ramp)
