@@ -1,5 +1,18 @@
 # Release Notes
 
+## 0.35.1
+
+Fixes a hard failure in `Qwen3Translator` on long sources. The translator
+built one prompt containing every segment, so a long source with hundreds
+of dense segments ballooned past the default 8192-token `n_ctx` and
+llama.cpp rejected the call with a context-window overflow.
+`translate_segments` now splits the input across as many Qwen calls as
+needed via a char-budget heuristic (`_chunk_segment_indices`), and the
+retry pass is chunked the same way. Indices, progress callback semantics
+(ramps 0 → 0.5 across first-pass chunks, then 0.9, then 1.0), and the
+Marian fallback path are preserved; the default 8192 `n_ctx` is now safe
+for sources of any length.
+
 ## 0.35.0
 
 New `image_overlay` operation: a scaled, anchored, time-windowed image
