@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 
 from tests.test_config import SMALL_VIDEO_METADATA, SMALL_VIDEO_PATH
+from videopython.base.exceptions import PlanErrorCode, PlanValidationError
 from videopython.base.transcription import Transcription, TranscriptionSegment, TranscriptionWord
 from videopython.base.video import Video, VideoMetadata
 from videopython.editing.transcription_overlay import (
@@ -148,10 +149,16 @@ class TestValidateRunGapClosed:
             ]
         }
         source = VideoMetadata(height=1080, width=1920, fps=30, frame_count=60, total_seconds=2.0)
-        with pytest.raises(ValueError, match="add_subtitles.*cannot fit") as exc:
+        with pytest.raises(PlanValidationError, match="cannot fit") as exc:
             VideoEdit.from_dict(plan).validate_with_metadata(source, context={"transcription": _tx(_WORDS)})
         # crop 0.2 of 1920x1080 -> 384x216, NOT the 1920x1080 source.
         assert "384x216 frame" in str(exc.value)
+        # The typed error survives the _predict_segment handler with its
+        # location enriched by the segment+op index.
+        err = exc.value.errors[0]
+        assert err.code is PlanErrorCode.SUBTITLE_UNFITTABLE
+        assert err.op == "add_subtitles"
+        assert err.location == "segments[0].operations[1]"
 
     def test_reasonable_subtitles_pass_validate(self):
         plan = {

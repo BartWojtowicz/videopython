@@ -13,9 +13,10 @@ from PIL import Image
 from pydantic import ValidationError
 
 from tests.test_config import BIG_VIDEO_PATH, SMALL_VIDEO_METADATA, SMALL_VIDEO_PATH
+from videopython.base.exceptions import PlanErrorCode, PlanValidationError
 from videopython.base.transcription import Transcription, TranscriptionWord
 from videopython.base.video import Video, VideoMetadata
-from videopython.editing.transforms import Resize
+from videopython.editing.transforms import Resize, SpeedChange
 from videopython.editing.video_edit import SegmentConfig, VideoEdit, _segment_context
 
 
@@ -167,6 +168,14 @@ class TestJsonSchema:
         assert seg_schema["required"] == ["source", "start", "end"]
         assert seg_schema["additionalProperties"] is False
         assert "operations" in seg_schema["properties"]
+
+    def test_schema_source_carries_path_format(self):
+        # Derived from `model_json_schema()`, so `source` keeps its `format: path`
+        # (the hand-rolled version dropped it).
+        schema = VideoEdit.json_schema()
+        source = schema["properties"]["segments"]["items"]["properties"]["source"]
+        assert source["type"] == "string"
+        assert source["format"] == "path"
 
     def test_schema_includes_operations_via_discriminator(self):
         """The op-union schema should cover every registered Operation."""
@@ -380,6 +389,133 @@ class TestValidation:
         }
         with pytest.raises(ValueError, match="exceeds duration"):
             VideoEdit.from_dict(plan).validate()
+
+
+class TestWindowClamp:
+    """Window-stop clamping at validate (clamp_windows) and its run() parity."""
+
+    @staticmethod
+    def _speed_then_blur_plan() -> dict[str, Any]:
+        # 12s source @1.5x -> 8s; blur window.stop=10 overruns the post-speed length.
+        return {
+            "segments": [
+                _segment(
+                    start=0.0,
+                    end=12.0,
+                    operations=[
+                        {"op": "speed_change", "speed": 1.5, "adjust_audio": False},
+                        {
+                            "op": "blur_effect",
+                            "mode": "constant",
+                            "iterations": 1,
+                            "window": {"start": 0, "stop": 10.0},
+                        },
+                    ],
+                )
+            ]
+        }
+
+    def test_raises_by_default(self):
+        edit = VideoEdit.from_dict(self._speed_then_blur_plan())
+        with pytest.raises(PlanValidationError, match="window.stop") as exc:
+            edit.validate_with_metadata(SMALL_VIDEO_METADATA)
+        assert exc.value.errors[0].code == PlanErrorCode.EFFECT_WINDOW_EXCEEDS_DURATION
+
+    def test_passes_with_clamp(self):
+        edit = VideoEdit.from_dict(self._speed_then_blur_plan())
+        meta = edit.validate_with_metadata(SMALL_VIDEO_METADATA, clamp_windows=True)
+        # Effect metadata prediction is identity; the clamp only suppresses the
+        # false raise and does not change the returned duration.
+        assert meta.total_seconds == pytest.approx(8.0, abs=0.05)
+
+    def test_clamped_stop_equals_post_op_duration(self):
+        edit = VideoEdit.from_dict(self._speed_then_blur_plan())
+        post_dur = SpeedChange(speed=1.5).predict_metadata(SMALL_VIDEO_METADATA).total_seconds
+        repaired, clamps = edit.repair(SMALL_VIDEO_METADATA)
+        assert [c.location for c in clamps] == ["segments[0].operations[1]"]
+        assert clamps[0].field == "window.stop"
+        assert clamps[0].old == 10.0
+        assert clamps[0].new == pytest.approx(post_dur)
+        # The repaired op carries the clamped stop; self is untouched.
+        assert repaired.segments[0].operations[1].window.stop == pytest.approx(post_dur)
+        assert edit.segments[0].operations[1].window.stop == 10.0
+        # Clamped validate now passes for the repaired plan with no clamping.
+        repaired.validate_with_metadata(SMALL_VIDEO_METADATA)
+
+    def test_clamp_matches_run_resolved_window(self):
+        # The clamped stop is exactly what Effect._resolved_window uses at run
+        # time: min(stop, total_seconds) against the post-op running duration.
+        post_dur = SpeedChange(speed=1.5).predict_metadata(SMALL_VIDEO_METADATA).total_seconds
+        repaired, _ = VideoEdit.from_dict(self._speed_then_blur_plan()).repair(SMALL_VIDEO_METADATA)
+        blur = repaired.segments[0].operations[1]
+        _, run_stop = blur._resolved_window(post_dur)
+        assert blur.window.stop == pytest.approx(run_stop)
+
+    def test_run_to_file_produces_clamped_output(self, tmp_path):
+        edit = VideoEdit.from_dict(self._speed_then_blur_plan())
+        out = edit.run_to_file(tmp_path / "clamped")
+        result = Video.from_path(str(out))
+        post_dur = SpeedChange(speed=1.5).predict_metadata(SMALL_VIDEO_METADATA).total_seconds
+        # run() silently clamps the same window, so the output is the post-speed length.
+        assert result.total_seconds == pytest.approx(post_dur, abs=0.25)
+
+    def test_cut_then_window_parity(self):
+        # cut to 6s, then a blur with window.stop=9 overruns the post-cut length.
+        plan = {
+            "segments": [
+                _segment(
+                    start=0.0,
+                    end=12.0,
+                    operations=[
+                        {"op": "cut", "start": 0.0, "end": 6.0},
+                        {
+                            "op": "blur_effect",
+                            "mode": "constant",
+                            "iterations": 1,
+                            "window": {"start": 0, "stop": 9.0},
+                        },
+                    ],
+                )
+            ]
+        }
+        edit = VideoEdit.from_dict(plan)
+        with pytest.raises(PlanValidationError, match="window.stop"):
+            edit.validate_with_metadata(SMALL_VIDEO_METADATA)
+        repaired, clamps = edit.repair(SMALL_VIDEO_METADATA)
+        assert clamps[0].old == 9.0
+        assert clamps[0].new == pytest.approx(6.0, abs=0.05)
+        edit.validate_with_metadata(SMALL_VIDEO_METADATA, clamp_windows=True)
+
+    def test_start_overrun_still_raises_with_clamp(self):
+        # Clamping stop only -- a window.start past the duration must still raise.
+        plan = {
+            "segments": [
+                _segment(
+                    start=0.0,
+                    end=12.0,
+                    operations=[
+                        {"op": "speed_change", "speed": 1.5, "adjust_audio": False},
+                        {
+                            "op": "blur_effect",
+                            "mode": "constant",
+                            "iterations": 1,
+                            "window": {"start": 10.0},
+                        },
+                    ],
+                )
+            ]
+        }
+        with pytest.raises(PlanValidationError, match="window.start"):
+            VideoEdit.from_dict(plan).validate_with_metadata(SMALL_VIDEO_METADATA, clamp_windows=True)
+
+    def test_repair_segment_end_overrun_reports_source_code(self):
+        # repair() shares the cut step with validate(): a segment end past the
+        # source raises SEGMENT_END_EXCEEDS_SOURCE, not CUT_EXCEEDS_DURATION.
+        edit = VideoEdit.from_dict({"segments": [_segment(start=0.0, end=99.0)]})
+        with pytest.raises(PlanValidationError) as exc:
+            edit.repair(SMALL_VIDEO_METADATA)
+        assert exc.value.errors[0].code is PlanErrorCode.SEGMENT_END_EXCEEDS_SOURCE
+        assert exc.value.errors[0].location == "segments[0]"
 
 
 # ------------------------------------------------------- validate_with_metadata
@@ -861,3 +997,146 @@ class TestMetadataChain:
         source_meta = VideoMetadata(height=500, width=800, fps=24, frame_count=240, total_seconds=10.0)
         meta = VideoEdit.from_dict(plan).validate_with_metadata(source_meta)
         assert meta.total_seconds > 3.0
+
+
+# --------------------------------------------------- typed PlanValidationError
+
+
+class TestPlanValidationErrors:
+    """Each validate raise site emits a typed `PlanValidationError` whose
+    `.errors[0]` carries the right code/location, while `str(e)` stays
+    byte-identical to the pre-change bare `ValueError` prose."""
+
+    def test_segment_end_exceeds_source(self):
+        plan = {"segments": [_segment(start=0.0, end=99.0)]}
+        edit = VideoEdit.from_dict(plan)
+        with pytest.raises(PlanValidationError) as exc:
+            edit.validate_with_metadata(SMALL_VIDEO_METADATA)
+        assert str(exc.value) == "Segment 0: end (99.0) exceeds source duration (12s)"
+        err = exc.value.errors[0]
+        assert err.code is PlanErrorCode.SEGMENT_END_EXCEEDS_SOURCE
+        assert err.location == "segments[0]"
+        assert err.field == "end"
+        assert err.value == 99.0
+        assert err.limit == 12
+
+    def test_segment_end_equals_total_passes(self):
+        # SMALL_VIDEO_METADATA.total_seconds == 12; exact boundary must pass.
+        plan = {"segments": [_segment(start=0.0, end=12.0)]}
+        out = VideoEdit.from_dict(plan).validate_with_metadata(SMALL_VIDEO_METADATA)
+        assert out.total_seconds == pytest.approx(12.0, abs=1e-3)
+
+    def test_segment_end_within_eps_passes(self):
+        # total + 5e-4 is inside DURATION_EPS, so it must pass.
+        plan = {"segments": [_segment(start=0.0, end=12.0 + 5e-4)]}
+        VideoEdit.from_dict(plan).validate_with_metadata(SMALL_VIDEO_METADATA)
+
+    def test_segment_end_beyond_eps_rejects_with_segment_index(self):
+        # total + 2e-3 is beyond DURATION_EPS, so it must reject with the index.
+        plan = {"segments": [_segment(start=0.0, end=12.0 + 2e-3)]}
+        with pytest.raises(PlanValidationError) as exc:
+            VideoEdit.from_dict(plan).validate_with_metadata(SMALL_VIDEO_METADATA)
+        err = exc.value.errors[0]
+        assert err.code is PlanErrorCode.SEGMENT_END_EXCEEDS_SOURCE
+        assert err.location == "segments[0]"
+        assert str(exc.value).startswith("Segment 0:")
+
+    def test_effect_window_exceeds_duration(self):
+        plan = {
+            "segments": [
+                _segment(
+                    end=3.0,
+                    operations=[
+                        {"op": "blur_effect", "mode": "constant", "iterations": 1, "window": {"start": 10}},
+                    ],
+                )
+            ]
+        }
+        with pytest.raises(PlanValidationError) as exc:
+            VideoEdit.from_dict(plan).validate_with_metadata(SMALL_VIDEO_METADATA)
+        assert str(exc.value) == "Effect 'blur_effect' window.start (10.0) exceeds duration (3.0s)"
+        err = exc.value.errors[0]
+        assert err.code is PlanErrorCode.EFFECT_WINDOW_EXCEEDS_DURATION
+        assert err.location == "segments[0].operations[0]"
+        assert err.op == "blur_effect"
+        assert err.field == "window.start"
+
+    def test_effect_window_stop_exceeds_duration(self):
+        plan = {
+            "segments": [
+                _segment(
+                    end=3.0,
+                    operations=[
+                        {"op": "blur_effect", "mode": "constant", "iterations": 1, "window": {"stop": 10}},
+                    ],
+                )
+            ]
+        }
+        with pytest.raises(PlanValidationError) as exc:
+            VideoEdit.from_dict(plan).validate_with_metadata(SMALL_VIDEO_METADATA)
+        assert str(exc.value) == "Effect 'blur_effect' window.stop (10.0) exceeds duration (3.0s)"
+        err = exc.value.errors[0]
+        assert err.code is PlanErrorCode.EFFECT_WINDOW_EXCEEDS_DURATION
+        assert err.location == "segments[0].operations[0]"
+        assert err.field == "window.stop"
+
+    def test_cut_exceeds_duration_enriched_with_segment_location(self):
+        plan = {"segments": [_segment(start=0.0, end=2.0, operations=[{"op": "cut", "start": 0.0, "end": 99.0}])]}
+        with pytest.raises(PlanValidationError) as exc:
+            VideoEdit.from_dict(plan).validate_with_metadata(SMALL_VIDEO_METADATA)
+        # The cut runs against the post-cut segment metadata (2.0s).
+        assert str(exc.value) == "end time (99.0) exceeds video duration (2.0)"
+        err = exc.value.errors[0]
+        assert err.code is PlanErrorCode.CUT_EXCEEDS_DURATION
+        assert err.location == "segments[0].operations[0]"
+        assert err.op == "cut"
+
+    def test_concat_mismatch_fps(self):
+        meta_a = VideoMetadata(width=320, height=240, fps=30.0, frame_count=60, total_seconds=2.0)
+        meta_b = VideoMetadata(width=320, height=240, fps=24.0, frame_count=48, total_seconds=2.0)
+        plan = {
+            "segments": [_segment(source="a.mp4", end=2.0), _segment(source="b.mp4", end=2.0)],
+            "match_to_lowest_fps": False,
+        }
+        with pytest.raises(PlanValidationError) as exc:
+            VideoEdit.from_dict(plan).validate_with_metadata({"a.mp4": meta_a, "b.mp4": meta_b})
+        assert str(exc.value) == (
+            "Segment 0 fps (30.0) != segment 1 fps (24.0); all segments must share fps for concatenation."
+        )
+        err = exc.value.errors[0]
+        assert err.code is PlanErrorCode.CONCAT_MISMATCH
+        assert err.location == "segments[1]"
+        assert err.field == "fps"
+
+    def test_concat_mismatch_dimensions(self):
+        meta_a = VideoMetadata(width=640, height=480, fps=24.0, frame_count=48, total_seconds=2.0)
+        meta_b = VideoMetadata(width=320, height=240, fps=24.0, frame_count=48, total_seconds=2.0)
+        plan = {
+            "segments": [_segment(source="a.mp4", end=2.0), _segment(source="b.mp4", end=2.0)],
+            "match_to_lowest_resolution": False,
+        }
+        with pytest.raises(PlanValidationError) as exc:
+            VideoEdit.from_dict(plan).validate_with_metadata({"a.mp4": meta_a, "b.mp4": meta_b})
+        assert str(exc.value) == (
+            "Segment 0 dimensions (640x480) != segment 1 (320x240); all segments must share dimensions."
+        )
+        err = exc.value.errors[0]
+        assert err.code is PlanErrorCode.CONCAT_MISMATCH
+        assert err.location == "segments[1]"
+        assert err.field == "dimensions"
+
+    def test_unknown_op_is_typed(self):
+        from videopython.editing.video_edit import _resolve_operation
+
+        with pytest.raises(PlanValidationError) as exc:
+            _resolve_operation({"op": "nope"})
+        assert "Unknown op_id 'nope'" in str(exc.value)
+        err = exc.value.errors[0]
+        assert err.code is PlanErrorCode.UNKNOWN_OP
+        assert err.op == "nope"
+
+    def test_unknown_op_via_from_dict_still_validation_error(self):
+        # Raised inside a Pydantic BeforeValidator, so it surfaces as a
+        # ValidationError; the message is preserved for substring matching.
+        with pytest.raises(ValidationError, match="Unknown op_id"):
+            VideoEdit.from_dict({"segments": [_segment(operations=[{"op": "nope"}])]})

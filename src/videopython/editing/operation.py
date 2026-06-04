@@ -85,6 +85,37 @@ class FilterCtx:
     fps: float
 
 
+LLM_HIDDEN_KEY = "llm_hidden"
+
+
+def _strip_llm_hidden(schema: dict[str, Any]) -> dict[str, Any]:
+    """Recursively drop fields marked ``llm_hidden`` from a generated JSON schema.
+
+    A field declared with ``Field(json_schema_extra={"llm_hidden": True})`` is a
+    valid wire field -- it still parses and runs -- but advanced / non-LLM, e.g. a
+    raw font *path* when a ``font`` name enum already covers the LLM case. This
+    walks ``properties`` / ``$defs`` at any depth, removes such fields, and prunes
+    them from sibling ``required`` lists, so the LLM-facing schema never shows
+    them. Mutates and returns ``schema`` (callers pass a freshly generated dict).
+    """
+    props = schema.get("properties")
+    if isinstance(props, dict):
+        hidden = [name for name, sub in props.items() if isinstance(sub, dict) and sub.get(LLM_HIDDEN_KEY)]
+        for name in hidden:
+            del props[name]
+        required = schema.get("required")
+        if hidden and isinstance(required, list):
+            schema["required"] = [r for r in required if r not in hidden]
+    for value in schema.values():
+        if isinstance(value, dict):
+            _strip_llm_hidden(value)
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    _strip_llm_hidden(item)
+    return schema
+
+
 class Operation(BaseModel):
     """Pydantic base for every editing primitive.
 
@@ -104,6 +135,7 @@ class Operation(BaseModel):
     category: ClassVar[OpCategory] = OpCategory.SPECIAL
     streamable: ClassVar[bool] = False
     requires: ClassVar[tuple[str, ...]] = ()
+    llm_exposed: ClassVar[bool] = True
 
     _registry: ClassVar[dict[str, type[Operation]]] = {}
 
@@ -143,6 +175,17 @@ class Operation(BaseModel):
         return dict(Operation._registry)
 
     @classmethod
+    def llm_registry(cls) -> dict[str, type[Operation]]:
+        """Snapshot of ``{op_id: subclass}`` for LLM-exposed Operations only.
+
+        A subset of :meth:`registry` filtered to subclasses with
+        ``llm_exposed`` True. Server-only ops (e.g. those needing a
+        server-resolved ``source`` path) are excluded so they never leak into
+        the LLM-facing schema.
+        """
+        return {op_id: sub for op_id, sub in Operation._registry.items() if sub.llm_exposed}
+
+    @classmethod
     def get(cls, op_id: str) -> type[Operation]:
         """Look up the Operation subclass for ``op_id``."""
         try:
@@ -152,17 +195,31 @@ class Operation(BaseModel):
             raise KeyError(f"Unknown op_id {op_id!r}. Known ops: [{known}]") from exc
 
     @classmethod
-    def json_schema(cls) -> dict[str, Any]:
-        """Discriminated-union JSON schema over every registered Operation.
+    def json_schema(cls, include_server_only: bool = False) -> dict[str, Any]:
+        """Discriminated-union JSON schema over registered Operations.
 
         ``op`` is the discriminator tag. This is the LLM-facing schema for
-        validating a single operation payload.
+        validating a single operation payload. By default the union covers only
+        LLM-exposed ops (:meth:`llm_registry`); pass ``include_server_only=True``
+        to build the union from the full :meth:`registry`. Fields marked
+        ``llm_hidden`` (advanced overrides like raw font paths) are stripped.
         """
-        if not Operation._registry:
+        source = Operation._registry if include_server_only else cls.llm_registry()
+        if not source:
             return {"type": "object"}
-        ops = sorted(Operation._registry.values(), key=lambda c: c.__name__)
+        ops = sorted(source.values(), key=lambda c: c.__name__)
         annotated = Annotated[Union[tuple(ops)], Discriminator("op")]  # type: ignore[valid-type]  # noqa: UP007
-        return TypeAdapter(annotated).json_schema()
+        return _strip_llm_hidden(TypeAdapter(annotated).json_schema())
+
+    @classmethod
+    def llm_json_schema(cls) -> dict[str, Any]:
+        """Per-op JSON schema with ``llm_hidden`` fields removed.
+
+        Like ``cls.model_json_schema()`` but drops advanced / non-LLM fields
+        (e.g. raw font paths) so a single op can be exposed to an LLM directly
+        without leaking a field the model shouldn't fill in.
+        """
+        return _strip_llm_hidden(cls.model_json_schema())
 
     def apply(self, video: Video) -> Video:
         """Run this operation on ``video``.
@@ -186,6 +243,12 @@ class Operation(BaseModel):
         crash mid-render); ``TextOverlay``/``ImageOverlay`` do not reject
         off-frame geometry (it clips to a valid no-op). Keep the check
         metadata-cheap -- no frame decode.
+
+        Duration bounds checks use the shared
+        :data:`videopython.editing.transforms.DURATION_EPS` tolerance: a value
+        is rejected only when it exceeds the limit by more than ``DURATION_EPS``
+        seconds, so sub-millisecond float drift at an exact boundary passes
+        consistently across the editing layer.
         """
         return meta
 

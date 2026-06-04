@@ -69,6 +69,7 @@ class FullImageOverlay(Effect):
 
     op: Literal["full_image_overlay"] = "full_image_overlay"
     streamable: ClassVar[bool] = True
+    llm_exposed: ClassVar[bool] = False
 
     source: Path = Field(
         description=(
@@ -631,7 +632,23 @@ class TextOverlay(Effect):
         "center",
         description="Which point of the text box sits at the position coordinate.",
     )
-    font_filename: str | None = Field(None, description="Path to a .ttf font file, or None for the default font.")
+    font: Literal["anton", "bebas-neue", "lato-bold", "poppins-bold"] | None = Field(
+        None,
+        description=(
+            "Bundled font to render with, or null for the default. "
+            "'poppins-bold': clean geometric sans, general purpose. "
+            "'lato-bold': humanist sans, very readable. "
+            "'anton': tall condensed display, ideal for short-form vertical. "
+            "'bebas-neue': bold condensed display, dramatic alternative."
+        ),
+    )
+    font_filename: str | None = Field(
+        None,
+        description=(
+            "Advanced override: path to a .ttf font file. Takes precedence over `font`; None for the default font."
+        ),
+        json_schema_extra={"llm_hidden": True},
+    )
 
     _rendered: np.ndarray | None = PrivateAttr(default=None)
     _stream_noop: bool = PrivateAttr(default=False)
@@ -646,7 +663,7 @@ class TextOverlay(Effect):
         return self
 
     def _get_font(self) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-        return load_font(self.font_filename, self.font_size)
+        return load_font(self.font_filename or self.font, self.font_size)
 
     def _wrap_text(self, text: str, font: ImageFont.FreeTypeFont | ImageFont.ImageFont, max_px: int) -> str:
         lines: list[str] = []
@@ -795,6 +812,7 @@ class ImageOverlay(Effect):
 
     op: Literal["image_overlay"] = "image_overlay"
     streamable: ClassVar[bool] = True
+    llm_exposed: ClassVar[bool] = False
 
     source: Path = Field(
         description=(

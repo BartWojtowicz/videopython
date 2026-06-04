@@ -1,5 +1,49 @@
 # Release Notes
 
+## 0.36.0
+
+Sharpens the LLM-editing surface so consumers write less glue and hit fewer
+validate-retry loops. Six changes, several **breaking** on the schema / error
+surface:
+
+- **Named bundled fonts.** Poppins-Bold, Lato-Bold, Anton, and BebasNeue ship
+  with the package (alongside their OFL licenses). `TextOverlay` and
+  `add_subtitles` gain a `font` field — a fixed enum (`anton`, `bebas-neue`,
+  `lato-bold`, `poppins-bold`, exposed as `videopython.base.fonts.FONT_NAMES`)
+  an LLM can pick from, and stored plans round-trip on the name. `load_font`
+  resolves a registered name before the path → DejaVu → PIL fallback and stays
+  non-raising. `font_filename` remains as an advanced override (it takes
+  precedence over `font`).
+- **Server-only ops.** New `llm_exposed: ClassVar[bool]` (default `True`) plus
+  `Operation.llm_registry()`. `image_overlay` and `full_image_overlay` are now
+  `llm_exposed=False` — they need a server-resolved `source` path the model
+  can't supply. **Breaking:** `Operation.json_schema()` and
+  `VideoEdit.json_schema()` now cover only LLM-exposed ops by default; pass
+  `Operation.json_schema(include_server_only=True)` for the full union.
+  `Operation.registry()` and `from_dict` are unchanged (they still see all ops).
+  The same hiding works per field: `Field(json_schema_extra={"llm_hidden": True})`
+  drops a valid-but-advanced field from the LLM-facing schema. `font_filename`
+  (on `text_overlay`/`add_subtitles`) and `highlight_bold_font` are now hidden —
+  the `font` name enum is the LLM-facing surface; the raw paths remain parseable.
+  New `cls.llm_json_schema()` gives the per-op schema with these stripped.
+- **Typed validation errors. (Breaking)** `validate()` now raises
+  `PlanValidationError` (a `ValueError` subclass — `str(e)` is unchanged and
+  `except ValueError` still works) carrying structured `.errors`: a list of
+  `PlanError(code, location, op, field, value, limit, predicted_duration)`, so
+  consumers branch on a code instead of substring-matching the message.
+- **Window-clamp repair.** `validate(clamp_windows=True)` /
+  `validate_with_metadata(..., clamp_windows=True)` clamp an effect `window.stop`
+  that overruns a duration-shrunk chain (after `cut` / `speed_change` /
+  `silence_removal`) to the run-time value instead of raising — closing a
+  validate-vs-`run()` divergence with no extra LLM call. `VideoEdit.repair()`
+  returns a corrected copy of the plan plus the applied `WindowClamp`s.
+- **Unified duration tolerance.** A single `DURATION_EPS` (1e-3) is applied at
+  the segment-end guard, effect-window check, and `CutSeconds`/`CutFrames`, so a
+  sub-millisecond boundary value is accepted (and reported) consistently.
+- **Drift-proof `VideoEdit.json_schema()`.** Reimplemented as a thin transform
+  over `model_json_schema()` so it can't desync from the models; `source` now
+  correctly carries `"format": "path"`.
+
 ## 0.35.1
 
 Fixes a hard failure in `Qwen3Translator` on long sources. The translator

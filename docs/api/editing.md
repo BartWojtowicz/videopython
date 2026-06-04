@@ -122,11 +122,31 @@ plan and checks:
 - effect `window` is within the predicted segment duration
 - concatenation compatibility (exact fps + dimensions)
 
-Returns the predicted final `VideoMetadata`. Raises `ValueError` on
-failure.
+Returns the predicted final `VideoMetadata`. On failure it raises
+`PlanValidationError` (a `ValueError` subclass, so `except ValueError`
+keeps working) carrying structured `.errors` — each a `PlanError` with a
+`code`, `location`, and the offending `field`/`value`/`limit`.
 
 For dry-run validation without disk access, pass a pre-built
 `VideoMetadata` to `validate_with_metadata(meta_or_dict, context=...)`.
+
+### Repairing window overruns
+
+When a duration-shrinking op (`cut`, `speed_change`, `silence_removal`)
+precedes a windowed effect, the effect's `window.stop` can land past the
+shortened clip. `run()` clamps it silently, but `validate()` rejects it by
+default. To reconcile the two:
+
+- `validate(clamp_windows=True)` (also on `validate_with_metadata`) clamps
+  each overrunning `window.stop` to the predicted duration instead of
+  raising. Only `window.stop` is clamped; an out-of-range `window.start`
+  still raises.
+- `repair(source_metadata, context=...)` returns `(repaired_edit, clamps)`
+  — a corrected copy of the plan plus the list of `WindowClamp` records —
+  leaving the original untouched. It clamps `window.stop` *only*; it is not
+  a full validator, so `validate()` the returned plan before running it.
+  Prefer `validate(clamp_windows=True)` unless you need the repaired plan
+  object back.
 
 ## Matching Sources
 
@@ -144,10 +164,11 @@ Set either flag to `false` to require sources match natively; otherwise
 ## JSON Schema (`json_schema`)
 
 `VideoEdit.json_schema()` returns a JSON Schema for the wire format,
-including the discriminated union over every registered `Operation`.
-Pass it to any LLM API as a tool/function schema or structured-output
-format. AI operations appear in the union only after
-`import videopython.ai` has run.
+including the discriminated union over every LLM-exposed `Operation`
+(server-only ops like `image_overlay` are excluded — see
+[Operations](operations.md#llm-exposed-vs-server-only-ops)). Pass it to
+any LLM API as a tool/function schema or structured-output format. AI
+operations appear in the union only after `import videopython.ai` has run.
 
 ```python
 schema = VideoEdit.json_schema()

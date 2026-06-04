@@ -89,15 +89,39 @@ from videopython.editing import Operation
 # Snapshot of {op_id: subclass} for every registered operation:
 Operation.registry()
 
+# LLM-safe subset: only ops with llm_exposed=True (omits server-only ops):
+Operation.llm_registry()
+
 # Look up by op_id (raises KeyError if unknown):
 cls = Operation.get("resize")
 
-# Discriminated-union JSON Schema covering every registered op:
+# Discriminated-union JSON Schema over the LLM-exposed ops:
 schema = Operation.json_schema()
+# ...or over every registered op (worker / from_dict path):
+full = Operation.json_schema(include_server_only=True)
 ```
 
 AI operations register lazily, so call `import videopython.ai` before
 inspecting the registry if you need `face_crop` and friends.
+
+### LLM-exposed vs server-only ops
+
+Every `Operation` carries `llm_exposed: ClassVar[bool] = True`. Set it to
+`False` for ops the model must never emit — typically ops that need a
+server-resolved `source` path (`image_overlay`, `full_image_overlay`).
+`Operation.llm_registry()` and the default `Operation.json_schema()` /
+`VideoEdit.json_schema()` cover only `llm_exposed` ops, while
+`Operation.registry()` and `from_dict` still see *all* ops so a stored
+plan continues to execute.
+
+The same idea applies at the **field** level: a field declared with
+`Field(json_schema_extra={"llm_hidden": True})` is a valid wire field (it
+still parses and runs) but is dropped from the LLM-facing schema. This hides
+advanced overrides the model shouldn't fill in — e.g. the raw `font_filename`
+path on `text_overlay`/`add_subtitles`, whose LLM-facing counterpart is the
+`font` name enum. The default `Operation.json_schema()` and
+`cls.llm_json_schema()` (below) strip these; `cls.model_json_schema()` keeps
+them.
 
 ## Discovering Operations
 
@@ -114,13 +138,16 @@ transforms = {k: v for k, v in Operation.registry().items()
 ## Per-Operation JSON Schema
 
 Every subclass exposes `cls.model_json_schema()` (standard Pydantic),
-returning the JSON Schema for that specific op's fields:
+returning the JSON Schema for that specific op's fields. For an LLM-facing
+single-op schema, use `cls.llm_json_schema()` — identical but with
+`llm_hidden` fields stripped:
 
 ```python
 from videopython.editing import Operation
 
 cls = Operation.get("blur_effect")
-schema = cls.model_json_schema()
+schema = cls.model_json_schema()         # full (all fields)
+llm_schema = cls.llm_json_schema()       # LLM-facing (llm_hidden dropped)
 # {
 #   "properties": {
 #     "op": {"const": "blur_effect", ...},
@@ -133,9 +160,9 @@ schema = cls.model_json_schema()
 # }
 ```
 
-`Operation.json_schema()` is the union over all registered ops, and
-that's the schema `VideoEdit.json_schema()` embeds for the `operations`
-field.
+`Operation.json_schema()` is the union over the LLM-exposed ops (pass
+`include_server_only=True` for all of them), and that's the schema
+`VideoEdit.json_schema()` embeds for the `operations` field.
 
 ## Registered Operations
 
@@ -157,8 +184,8 @@ field.
 | `color_adjust` | `ColorGrading` | effect | yes |
 | `vignette` | `Vignette` | effect | yes |
 | `ken_burns` | `KenBurns` | effect | yes |
-| `full_image_overlay` | `FullImageOverlay` | effect | yes |
-| `image_overlay` | `ImageOverlay` | effect | yes |
+| `full_image_overlay` † | `FullImageOverlay` | effect | yes |
+| `image_overlay` † | `ImageOverlay` | effect | yes |
 | `fade` | `Fade` | effect | yes |
 | `volume_adjust` | `VolumeAdjust` | effect | yes |
 | `text_overlay` | `TextOverlay` | effect | yes |
@@ -173,6 +200,10 @@ field.
 | `pixelate` | `Pixelate` | effect | yes |
 | `mirror_flip` | `MirrorFlip` | effect | yes |
 | `kaleidoscope` | `Kaleidoscope` | effect | yes |
+
+† Server-only (`llm_exposed=False`): excluded from `Operation.llm_registry()`
+and the default LLM-facing schema because they need a server-resolved
+`source` path. Still executable via `from_dict` / `Operation.registry()`.
 
 ### AI (require `import videopython.ai`)
 

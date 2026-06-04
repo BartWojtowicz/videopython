@@ -4,8 +4,9 @@ import pytest
 from pydantic import ValidationError
 
 from videopython.audio import Audio, AudioMetadata
+from videopython.base.exceptions import PlanErrorCode, PlanValidationError
 from videopython.base.transcription import Transcription, TranscriptionSegment, TranscriptionWord
-from videopython.base.video import Video
+from videopython.base.video import Video, VideoMetadata
 from videopython.editing.transforms import (
     Crop,
     CropMode,
@@ -490,3 +491,60 @@ class TestSilenceRemoval:
             SilenceRemoval(padding=-1)
         with pytest.raises(ValueError, match="speed_factor"):
             SilenceRemoval(speed_factor=0.5)
+
+
+class TestCutDurationErrors:
+    """Typed `PlanValidationError` from the cut transforms' `predict_metadata`."""
+
+    def test_cut_seconds_end_exceeds_duration(self):
+        meta = VideoMetadata(height=500, width=800, fps=24, frame_count=240, total_seconds=10.0)
+        with pytest.raises(PlanValidationError) as exc:
+            CutSeconds(start=0.0, end=20.0).predict_metadata(meta)
+        assert str(exc.value) == "end time (20.0) exceeds video duration (10.0)"
+        err = exc.value.errors[0]
+        assert err.code is PlanErrorCode.CUT_EXCEEDS_DURATION
+        assert err.op == "cut"
+        assert err.field == "end"
+        assert err.value == 20.0
+        assert err.limit == 10.0
+
+    def test_cut_frames_end_exceeds_count(self):
+        meta = VideoMetadata(height=500, width=800, fps=24, frame_count=100, total_seconds=10.0)
+        with pytest.raises(PlanValidationError) as exc:
+            CutFrames(start=0, end=200).predict_metadata(meta)
+        assert str(exc.value) == "end frame (200) exceeds frame count (100)"
+        err = exc.value.errors[0]
+        assert err.code is PlanErrorCode.CUT_EXCEEDS_DURATION
+        assert err.op == "cut_frames"
+        assert err.field == "end"
+        assert err.value == 200
+        assert err.limit == 100
+
+
+class TestCutDurationTolerance:
+    """`DURATION_EPS` boundary behavior for the cut transforms' `predict_metadata`."""
+
+    def test_cut_seconds_end_equals_total_passes(self):
+        meta = VideoMetadata(height=500, width=800, fps=24, frame_count=240, total_seconds=10.0)
+        result = CutSeconds(start=0.0, end=10.0).predict_metadata(meta)
+        assert result.total_seconds == 10.0
+
+    def test_cut_seconds_within_eps_passes(self):
+        meta = VideoMetadata(height=500, width=800, fps=24, frame_count=240, total_seconds=10.0)
+        # total + 5e-4 is inside DURATION_EPS, so it must pass.
+        CutSeconds(start=0.0, end=10.0 + 5e-4).predict_metadata(meta)
+
+    def test_cut_seconds_beyond_eps_rejects(self):
+        meta = VideoMetadata(height=500, width=800, fps=24, frame_count=240, total_seconds=10.0)
+        # total + 2e-3 is beyond DURATION_EPS, so it must reject.
+        with pytest.raises(PlanValidationError) as exc:
+            CutSeconds(start=0.0, end=10.0 + 2e-3).predict_metadata(meta)
+        assert exc.value.errors[0].code is PlanErrorCode.CUT_EXCEEDS_DURATION
+
+    def test_cut_frames_integer_parity(self):
+        # Frames are ints; the seconds-scale eps never flips the compare.
+        meta = VideoMetadata(height=500, width=800, fps=24, frame_count=100, total_seconds=10.0)
+        # end == frame_count passes; end == frame_count + 1 rejects.
+        assert CutFrames(start=0, end=100).predict_metadata(meta).frame_count == 100
+        with pytest.raises(PlanValidationError):
+            CutFrames(start=0, end=101).predict_metadata(meta)

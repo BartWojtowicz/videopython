@@ -33,8 +33,12 @@ video.save("output.mp4")
 
 `VideoEdit.json_schema()` returns a JSON Schema (Draft-07 compatible)
 covering segments, post-operations, the matching flags, and a
-discriminated union over every registered `Operation`. AI ops appear in
-the union only after `import videopython.ai`.
+discriminated union over every **LLM-exposed** `Operation`. Server-only
+ops (those needing a server-resolved path, e.g. `image_overlay` /
+`full_image_overlay`) are excluded by default so the model never emits a
+plan it cannot fill in; pass `include_server_only=True` to
+`Operation.json_schema()` for the full union. AI ops appear in the union
+only after `import videopython.ai`.
 
 ### Anthropic tool use
 
@@ -110,21 +114,26 @@ for op_id, cls in Operation.registry().items():
 transforms = {k: v for k, v in Operation.registry().items()
               if v.category is OpCategory.TRANSFORM}
 
-# Per-op JSON Schema (standard Pydantic)
+# Per-op JSON Schema: model_json_schema() is the full Pydantic schema;
+# llm_json_schema() is the LLM-facing variant (drops `llm_hidden` advanced
+# fields like raw font paths), so prefer it for tool/function definitions.
 Operation.get("color_adjust").model_json_schema()
+Operation.get("text_overlay").llm_json_schema()
 ```
 
-For per-op tool definitions:
+For per-op tool definitions, enumerate `Operation.llm_registry()` (the
+LLM-safe subset of `registry()` — it omits server-only ops the model
+can't fill in):
 
 ```python
 tools = []
-for op_id, cls in Operation.registry().items():
+for op_id, cls in Operation.llm_registry().items():
     if cls.category is not OpCategory.TRANSFORM:
         continue
     tools.append({
         "name": f"transform_{op_id}",
         "description": (cls.__doc__ or "").splitlines()[0],
-        "input_schema": cls.model_json_schema(),
+        "input_schema": cls.llm_json_schema(),   # drops llm_hidden advanced fields
     })
 ```
 
@@ -141,19 +150,50 @@ compatibility. Catches:
   `from_dict`)
 - Out-of-range parameter values (also at `from_dict` time)
 
+Validation failures raise `PlanValidationError`, which **subclasses
+`ValueError`** (so `except ValueError` still works) and additionally
+carries a list of structured `PlanError`s — `code` (a small enum),
+`location` (e.g. `"segments[1].operations[0]"`), `field`, `value`,
+`limit` — so an agent can branch on the failure class instead of
+substring-matching the message:
+
 ```python
+from videopython.base.exceptions import PlanValidationError
+
 edit = VideoEdit.from_dict(plan)
 try:
     predicted = edit.validate()
     print(f"Output: {predicted.width}x{predicted.height}, "
           f"{predicted.total_seconds:.1f}s")
-except ValueError as e:
-    # Feed `e` back to the LLM to retry
-    print(f"Invalid plan: {e}")
+except PlanValidationError as e:
+    for err in e.errors:
+        print(f"{err.code} at {err.location}: {err.field}={err.value}")
+    # Feed `str(e)` (the human message) or `e.errors` back to the LLM to retry
 ```
 
 This makes it cheap to let an LLM retry: validate, return the error,
 ask the LLM to fix it.
+
+### Auto-repairing window overruns
+
+A common, mechanical failure: a duration-shrinking op (`cut`,
+`speed_change`, `silence_removal`) ordered *before* a windowed effect
+leaves the effect's `window.stop` past the now-shorter clip. `run()`
+silently clamps it, but `validate()` raises by default. Pass
+`clamp_windows=True` to make `validate()` clamp each overrunning
+`window.stop` to the run-time value instead of raising, or call
+`edit.repair(source_metadata)` to get back a corrected plan plus the list
+of clamps applied — no extra LLM round-trip:
+
+```python
+predicted = edit.validate(clamp_windows=True)        # don't reject clampable overruns
+fixed_edit, clamps = edit.repair(source_metadata)    # or get a repaired plan back
+```
+
+`repair()` clamps `window.stop` only — it is not a full validator (a
+`window.start` overrun, concat mismatch, or bad source still stands), so
+`validate()` the returned plan before running it. For most flows
+`validate(clamp_windows=True)` is the simpler path.
 
 ## Context Data
 
@@ -200,4 +240,6 @@ schema = VideoEdit.json_schema()    # now includes face_crop
   dimensions, and fps so it can generate sensible time ranges and
   resize targets.
 - **Expose the registry.** For agents, let the LLM call into
-  `Operation.registry()` instead of hardcoding the op list.
+  `Operation.llm_registry()` instead of hardcoding the op list — it omits
+  server-only ops the model can't supply. Use `Operation.registry()` only
+  when you need *every* op (e.g. the worker that executes a stored plan).

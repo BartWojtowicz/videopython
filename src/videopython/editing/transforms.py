@@ -17,6 +17,7 @@ from pydantic import Field, model_validator
 from tqdm import tqdm
 
 from videopython.base._dimensions import floor_to_even, round_to_even
+from videopython.base.exceptions import PlanError, PlanErrorCode, PlanValidationError
 from videopython.base.video import Video
 from videopython.editing.operation import FilterCtx, OpCategory, Operation
 
@@ -26,7 +27,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Shared tolerance (seconds) for duration bounds checks across the editing layer,
+# so the located segment guard and the cut transforms accept the same boundary.
+DURATION_EPS = 1e-3
+
 __all__ = [
+    "DURATION_EPS",
     "CutFrames",
     "CutSeconds",
     "Resize",
@@ -59,8 +65,21 @@ class CutFrames(Operation):
         return video[self.start : self.end]
 
     def predict_metadata(self, meta: VideoMetadata) -> VideoMetadata:
-        if self.end > meta.frame_count:
-            raise ValueError(f"end frame ({self.end}) exceeds frame count ({meta.frame_count})")
+        # ints; eps inert -- DURATION_EPS is seconds-scale, never flips an int compare.
+        if self.end > meta.frame_count + DURATION_EPS:
+            message = f"end frame ({self.end}) exceeds frame count ({meta.frame_count})"
+            raise PlanValidationError(
+                message,
+                [
+                    PlanError(
+                        code=PlanErrorCode.CUT_EXCEEDS_DURATION,
+                        op=self.op,
+                        field="end",
+                        value=self.end,
+                        limit=meta.frame_count,
+                    )
+                ],
+            )
         duration = round((self.end - self.start) / meta.fps, 4)
         return meta.with_duration(duration)
 
@@ -84,8 +103,21 @@ class CutSeconds(Operation):
         return video[round(self.start * video.fps) : round(self.end * video.fps)]
 
     def predict_metadata(self, meta: VideoMetadata) -> VideoMetadata:
-        if self.end > meta.total_seconds:
-            raise ValueError(f"end time ({self.end}) exceeds video duration ({meta.total_seconds})")
+        if self.end > meta.total_seconds + DURATION_EPS:
+            message = f"end time ({self.end}) exceeds video duration ({meta.total_seconds})"
+            raise PlanValidationError(
+                message,
+                [
+                    PlanError(
+                        code=PlanErrorCode.CUT_EXCEEDS_DURATION,
+                        op=self.op,
+                        field="end",
+                        value=self.end,
+                        limit=meta.total_seconds,
+                        predicted_duration=meta.total_seconds,
+                    )
+                ],
+            )
         # Mirror apply(): round both endpoints to frames before computing the duration.
         start_f = round(self.start * meta.fps)
         end_f = round(self.end * meta.fps)
