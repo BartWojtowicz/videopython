@@ -60,7 +60,7 @@ video.add_audio(audio).save("ai_video.mp4")
 
 ## LLM & AI Agent Integration
 
-Every operation is a Pydantic model whose fields ARE the JSON wire format. `VideoEdit.json_schema()` returns a JSON Schema with a discriminated union over every registered `Operation` — pass it straight to Anthropic tool use, OpenAI function calling, or any structured-output API. Then `edit.validate()` dry-runs the plan via metadata before any frames are loaded, so a failed LLM output can be fed back as an error and retried cheaply.
+Every operation is a Pydantic model whose fields ARE the JSON wire format. `VideoEdit.json_schema()` returns a JSON Schema with a discriminated union over every LLM-exposed `Operation` (server-only ops like `image_overlay` are excluded by default) — pass it straight to Anthropic tool use, OpenAI function calling, or any structured-output API. Then `edit.validate()` dry-runs the plan via metadata before any frames are loaded, raising a typed `PlanValidationError` (with structured `.errors`) that can be fed back to the LLM and retried cheaply.
 
 See the [LLM Integration Guide](https://videopython.com/guides/llm-integration/) for end-to-end examples, validation error loops, and operation discovery patterns.
 

@@ -70,7 +70,7 @@ overlay = TranscriptionOverlay(
     style="boxed",       # boxed | outline | clean | karaoke
     region="bottom",     # top | center | bottom
     font_scale=0.055,    # font height as a fraction of frame height
-    font_filename=None,  # optional: path to a .ttf, or None for the bundled font
+    font="poppins-bold", # bundled font by name, or None for the default
 )
 ```
 
@@ -79,7 +79,7 @@ Key parameters (the recommended, resolution-independent surface):
 - `style` -- A named look bundling text/highlight colors, border, and background so you express intent instead of a dozen numbers. `boxed` reproduces the historical defaults.
 - `region` -- Which vertical safe-area band the box sits in: `top`, `center`, or `bottom`.
 - `font_scale` -- Base font height as a fraction of frame height. Because it is relative, the same plan renders correctly whether the output is 480p or 4K, and an upstream `face_crop`/`resize` cannot make it overflow. It auto-shrinks toward `min_font_scale` if a cue would still not fit.
-- `font_filename` -- Path to a TrueType font, or `None` for the bundled default.
+- `font` -- A bundled font by name: `anton`, `bebas-neue`, `lato-bold`, or `poppins-bold` (the full list is `videopython.base.fonts.FONT_NAMES`). LLM-friendly because the names are a fixed enum the model can pick from and stored plans round-trip on them. `None` uses the bundled default. For a custom TrueType file, use the advanced `font_filename` override instead (it takes precedence over `font`).
 
 !!! note "Advanced overrides"
     The absolute fields (`font_size`, `text_color`, `highlight_color`,
