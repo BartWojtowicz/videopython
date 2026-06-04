@@ -227,6 +227,37 @@ def _clamp_effect_window(op: Operation, duration: float) -> Operation:
     return op.model_copy(update={"window": clamped_window})
 
 
+def _cut_meta_for_segment(index: int, seg: SegmentConfig, meta: VideoMetadata) -> VideoMetadata:
+    """Predict a segment's post-cut metadata, raising located plan errors.
+
+    The cut step shared by :meth:`VideoEdit._validate` and :meth:`VideoEdit.repair`:
+    a segment ``end`` past the source raises ``SEGMENT_END_EXCEEDS_SOURCE`` (rather
+    than the index-less ``CUT_EXCEEDS_DURATION`` ``CutSeconds`` would raise), and any
+    error ``CutSeconds`` does raise is tagged with the segment index.
+    """
+    if seg.end > meta.total_seconds + DURATION_EPS:
+        message = f"Segment {index}: end ({seg.end}) exceeds source duration ({meta.total_seconds}s)"
+        raise PlanValidationError(
+            message,
+            [
+                PlanError(
+                    code=PlanErrorCode.SEGMENT_END_EXCEEDS_SOURCE,
+                    location=f"segments[{index}]",
+                    field="end",
+                    value=seg.end,
+                    limit=meta.total_seconds,
+                    predicted_duration=meta.total_seconds,
+                )
+            ],
+        )
+    try:
+        return CutSeconds(start=seg.start, end=seg.end).predict_metadata(meta)
+    except PlanValidationError as e:
+        for err in e.errors:
+            err.location = f"segments[{index}]" if err.location is None else f"segments[{index}].{err.location}"
+        raise
+
+
 class SegmentConfig(BaseModel):
     """A single source segment with its operation chain."""
 
@@ -446,13 +477,20 @@ class VideoEdit(BaseModel):
     ) -> tuple[VideoEdit, list[WindowClamp]]:
         """Return a copy of this plan with overrunning ``window.stop``s clamped.
 
-        Walks the chain exactly as :meth:`_validate` does -- cut, fps/resolution
-        matching, then per-op metadata prediction -- clamping each :class:`Effect`'s
-        ``window.stop`` to the running predicted duration (the value
-        :meth:`Effect._resolved_window` uses at run time) and recording every
-        change as a :class:`WindowClamp`. Only ``window.stop`` is clamped; see
-        :meth:`validate` for the ``window.start`` divergence. The returned plan is
-        a deep copy -- ``self`` is left unchanged.
+        Repairs **only** the one mechanical failure ``run()`` already tolerates: an
+        :class:`Effect` ``window.stop`` that overruns the running predicted duration
+        after a duration-shrinking op. It walks the chain (cut, fps/resolution
+        matching, per-op prediction), clamps each such ``window.stop`` to that
+        duration (the value :meth:`Effect._resolved_window` uses at run time), and
+        records every change as a :class:`WindowClamp`. The returned plan is a deep
+        copy -- ``self`` is left unchanged.
+
+        This is **not** a full validator: ``window.start`` overruns, concat
+        mismatches, and other faults are left intact and will re-surface, so always
+        ``validate()`` the returned plan before running it. For most consumers
+        ``validate(clamp_windows=True)`` is the simpler entry point -- use
+        ``repair()`` only when you need the corrected plan object back. A segment
+        ``end`` past the source still hard-raises here (the plan is unrepairable).
         """
         if isinstance(source_metadata, VideoMetadata):
             metas = [source_metadata for _ in self.segments]
@@ -465,9 +503,7 @@ class VideoEdit(BaseModel):
                     raise ValueError(f"Segment {i}: no metadata for '{key}'. Available: {available}")
                 metas.append(source_metadata[key])
 
-        cut_metas = [
-            CutSeconds(start=seg.start, end=seg.end).predict_metadata(m) for seg, m in zip(self.segments, metas)
-        ]
+        cut_metas = [_cut_meta_for_segment(i, seg, m) for i, (seg, m) in enumerate(zip(self.segments, metas))]
         matched = self._apply_matching(cut_metas)
 
         records: list[WindowClamp] = []
@@ -528,33 +564,9 @@ class VideoEdit(BaseModel):
         clamp_windows: bool = False,
     ) -> VideoMetadata:
         self._assert_post_ops_supported(context)
-        cut_metas: list[VideoMetadata] = []
-        for i, (seg, meta) in enumerate(zip(self.segments, source_metas)):
-            if seg.end > meta.total_seconds + DURATION_EPS:
-                message = f"Segment {i}: end ({seg.end}) exceeds source duration ({meta.total_seconds}s)"
-                raise PlanValidationError(
-                    message,
-                    [
-                        PlanError(
-                            code=PlanErrorCode.SEGMENT_END_EXCEEDS_SOURCE,
-                            location=f"segments[{i}]",
-                            field="end",
-                            value=seg.end,
-                            limit=meta.total_seconds,
-                            predicted_duration=meta.total_seconds,
-                        )
-                    ],
-                )
-            try:
-                cut_metas.append(CutSeconds(start=seg.start, end=seg.end).predict_metadata(meta))
-            except PlanValidationError as e:
-                # CutSeconds shares DURATION_EPS with the guard above, so the
-                # dead-band can't fire here -- but if it ever does, carry the
-                # segment index (via #4 location) instead of an index-less message.
-                for err in e.errors:
-                    err.location = f"segments[{i}]" if err.location is None else f"segments[{i}].{err.location}"
-                raise
-
+        cut_metas = [
+            _cut_meta_for_segment(i, seg, meta) for i, (seg, meta) in enumerate(zip(self.segments, source_metas))
+        ]
         matched = self._apply_matching(cut_metas)
         segment_outputs = [
             self._predict_segment(i, seg, meta, context, clamp_windows=clamp_windows)

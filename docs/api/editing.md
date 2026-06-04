@@ -143,7 +143,10 @@ default. To reconcile the two:
   still raises.
 - `repair(source_metadata, context=...)` returns `(repaired_edit, clamps)`
   — a corrected copy of the plan plus the list of `WindowClamp` records —
-  leaving the original untouched.
+  leaving the original untouched. It clamps `window.stop` *only*; it is not
+  a full validator, so `validate()` the returned plan before running it.
+  Prefer `validate(clamp_windows=True)` unless you need the repaired plan
+  object back.
 
 ## Matching Sources
 

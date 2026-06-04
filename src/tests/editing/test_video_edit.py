@@ -508,6 +508,15 @@ class TestWindowClamp:
         with pytest.raises(PlanValidationError, match="window.start"):
             VideoEdit.from_dict(plan).validate_with_metadata(SMALL_VIDEO_METADATA, clamp_windows=True)
 
+    def test_repair_segment_end_overrun_reports_source_code(self):
+        # repair() shares the cut step with validate(): a segment end past the
+        # source raises SEGMENT_END_EXCEEDS_SOURCE, not CUT_EXCEEDS_DURATION.
+        edit = VideoEdit.from_dict({"segments": [_segment(start=0.0, end=99.0)]})
+        with pytest.raises(PlanValidationError) as exc:
+            edit.repair(SMALL_VIDEO_METADATA)
+        assert exc.value.errors[0].code is PlanErrorCode.SEGMENT_END_EXCEEDS_SOURCE
+        assert exc.value.errors[0].location == "segments[0]"
+
 
 # ------------------------------------------------------- validate_with_metadata
 
