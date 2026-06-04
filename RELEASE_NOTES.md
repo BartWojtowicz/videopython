@@ -1,5 +1,22 @@
 # Release Notes
 
+## 0.36.1
+
+Internal refactor of the editing core; no wire-format or runtime-behavior
+change. Streaming becomes the single source of truth for every `Effect`: the
+base `Effect._apply` now replays `streaming_init` + `process_frame` over the
+in-memory frames, so the 14 pure-frame effects drop their hand-written eager
+`_apply` and can no longer drift from the streamed path. `FullImageOverlay`
+(eager-only validation), `Vignette` (batched vectorisation), and the audio
+effects (`Fade`/`VolumeAdjust`) keep their bespoke eager paths. `TextOverlay`
+and `ImageOverlay` now share placement, off-frame clipping, and alpha blending
+via a new `_AnchoredOverlay` base (one `_overlay_for_frame` hook each), closing
+the verbatim-copy parity contract behind the 0.34.1 fix. Easing curves are
+factored into `editing/_easing.py` (used by `KenBurns` / `PunchIn`). The only
+observable difference: `position` / `anchor` sort earlier in the overlay ops'
+generated JSON schema (now inherited fields) -- cosmetic, irrelevant to tool
+use.
+
 ## 0.36.0
 
 Sharpens the LLM-editing surface so consumers write less glue and hit fewer

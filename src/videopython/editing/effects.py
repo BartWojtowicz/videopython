@@ -1,14 +1,18 @@
 """Effect Operations.
 
 An ``Effect`` is an ``Operation`` that preserves video shape and frame count.
-Subclasses override :meth:`Effect._apply` for in-memory execution and may
-additionally override :meth:`Effect.streaming_init` / :meth:`Effect.process_frame`
-for bounded-memory streaming via ``editing/streaming.py``.
+Subclasses implement the streaming contract -- :meth:`Effect.process_frame`
+(plus :meth:`Effect.streaming_init` for any precomputed state) -- which is the
+single source of truth for the effect's pixel logic. The base
+:meth:`Effect._apply` replays that contract over the in-memory frames, so
+in-memory execution comes for free and cannot drift from streaming.
 
-Effects that need to modify audio (``Fade``, ``VolumeAdjust``) override
-:meth:`Effect.apply` directly so the audio splice can stay coherent with the
-window — the base ``Effect.apply`` only splices frames, restoring the original
-audio after ``_apply`` returns.
+A few effects override the eager path deliberately: ``FullImageOverlay`` and
+``Vignette`` keep a hand-written :meth:`Effect._apply` (extra validation /
+batched vectorisation), and the audio effects (``Fade``, ``VolumeAdjust``)
+override :meth:`Effect.apply` directly so the audio splice stays coherent with
+the window. Anchored RGBA overlays (``TextOverlay``, ``ImageOverlay``) share
+their placement and blend via :class:`_AnchoredOverlay`.
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ from tqdm import tqdm
 
 from videopython.base.description import BoundingBox
 from videopython.base.fonts import load_font
+from videopython.editing._easing import ease, ease_out
 from videopython.editing.operation import Effect
 
 if TYPE_CHECKING:
@@ -183,14 +188,6 @@ class Blur(Effect):
         idx = min(frame_index, len(self._stream_sigmas) - 1)
         return self._blur_frame(frame, self._stream_sigmas[idx])
 
-    def _apply(self, video: Video) -> Video:
-        n_frames = len(video.frames)
-        sigmas = self._compute_sigmas(n_frames)
-        logger.info(f"Applying {self.mode} blur...")
-        for i in tqdm(range(n_frames), desc="Blurring"):
-            video.frames[i] = self._blur_frame(video.frames[i], sigmas[i])
-        return video
-
 
 class Zoom(Effect):
     """Progressively zooms into or out of the frame center over the clip duration."""
@@ -231,19 +228,6 @@ class Zoom(Effect):
         y = height / 2 - h / 2
         cropped = frame[round(y) : round(y + h), round(x) : round(x + w)]
         return cv2.resize(cropped, (width, height))
-
-    def _apply(self, video: Video) -> Video:
-        n_frames = len(video.frames)
-        width = video.metadata.width
-        height = video.metadata.height
-        crops = self._crop_sizes(n_frames, width, height)
-        for i in tqdm(range(n_frames), desc="Zooming"):
-            w, h = crops[i]
-            x = width / 2 - w / 2
-            y = height / 2 - h / 2
-            cropped = video.frames[i][round(y) : round(y + h), round(x) : round(x + w)]
-            video.frames[i] = cv2.resize(cropped, (width, height))
-        return video
 
 
 class ColorGrading(Effect):
@@ -297,12 +281,6 @@ class ColorGrading(Effect):
 
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
         return self._grade_frame(frame)
-
-    def _apply(self, video: Video) -> Video:
-        logger.info("Applying color grading...")
-        for i in tqdm(range(len(video.frames)), desc="Color grading"):
-            video.frames[i] = self._grade_frame(video.frames[i])
-        return video
 
 
 class Vignette(Effect):
@@ -398,18 +376,6 @@ class KenBurns(Effect):
                 raise ValueError(f"{name} extends beyond image bounds!")
         return self
 
-    def _ease(self, t: float) -> float:
-        if self.easing == "linear":
-            return t
-        if self.easing == "ease_in":
-            return t * t
-        if self.easing == "ease_out":
-            return 1 - (1 - t) * (1 - t)
-        # ease_in_out
-        if t < 0.5:
-            return 2 * t * t
-        return 1 - 2 * (1 - t) * (1 - t)
-
     def _crop_and_scale_frame(
         self, frame: np.ndarray, x: int, y: int, crop_w: int, crop_h: int, target_w: int, target_h: int
     ) -> np.ndarray:
@@ -427,9 +393,9 @@ class KenBurns(Effect):
         eh = int(self.end_region.height * height)
 
         regions = np.empty((n_frames, 4), dtype=np.int32)
+        eased = ease(np.arange(n_frames, dtype=np.float64) / max(1, n_frames - 1), self.easing)
         for i in range(n_frames):
-            t = i / max(1, n_frames - 1)
-            et = self._ease(t)
+            et = float(eased[i])
             crop_w = int(sw + (ew - sw) * et)
             crop_h = int(sh + (eh - sh) * et)
             x = max(0, min(int(sx + (ex - sx) * et), width - crop_w))
@@ -447,16 +413,6 @@ class KenBurns(Effect):
         idx = min(frame_index, len(self._stream_regions) - 1)
         x, y, cw, ch = self._stream_regions[idx]
         return self._crop_and_scale_frame(frame, x, y, cw, ch, self._stream_target_w, self._stream_target_h)
-
-    def _apply(self, video: Video) -> Video:
-        n_frames = len(video.frames)
-        height, width = video.frame_shape[:2]
-        regions = self._precompute_regions(n_frames, width, height)
-        logger.info("Applying Ken Burns effect...")
-        for i in tqdm(range(n_frames), desc="Ken Burns"):
-            x, y, cw, ch = regions[i]
-            video.frames[i] = self._crop_and_scale_frame(video.frames[i], x, y, cw, ch, width, height)
-        return video
 
 
 def _compute_curve(t: np.ndarray, curve: str) -> np.ndarray:
@@ -599,7 +555,121 @@ class VolumeAdjust(Effect):
         np.clip(audio.data, -1.0, 1.0, out=audio.data)
 
 
-class TextOverlay(Effect):
+class _AnchoredOverlay(Effect):
+    """Shared base for anchored RGBA overlays (:class:`TextOverlay`, :class:`ImageOverlay`).
+
+    Owns anchored placement, off-frame clipping, and alpha blending, so the
+    eager and streaming paths share one ``_blend_params`` source of truth (the
+    parity-hole class of bug fixed in 0.34.1). Subclasses declare their own
+    ``position``/``anchor`` field defaults and implement
+    :meth:`_overlay_for_frame` to produce the RGBA bitmap; everything
+    downstream is shared. It declares no ``op`` ``Literal``, so it is an
+    abstract intermediate and is never registered (see
+    ``Operation.__pydantic_init_subclass__``).
+    """
+
+    position: tuple[float, float] = Field(
+        (0.5, 0.5),
+        description=(
+            "Where to place the overlay as normalized (x, y) coordinates. "
+            "(0, 0) = top-left corner, (1, 1) = bottom-right corner."
+        ),
+    )
+    anchor: Literal["center", "top_left", "top_center", "bottom_center", "bottom_left", "bottom_right"] = Field(
+        "center",
+        description="Which point of the overlay box sits at the position coordinate.",
+    )
+
+    _stream_noop: bool = PrivateAttr(default=False)
+    _stream_alpha: np.ndarray | None = PrivateAttr(default=None)
+    _stream_rgb: np.ndarray | None = PrivateAttr(default=None)
+    _stream_dst: tuple[int, int, int, int] = PrivateAttr(default=(0, 0, 0, 0))
+
+    @model_validator(mode="after")
+    def _validate_position(self) -> _AnchoredOverlay:
+        if not (0.0 <= self.position[0] <= 1.0 and 0.0 <= self.position[1] <= 1.0):
+            raise ValueError("position values must be in range [0, 1]")
+        return self
+
+    def _overlay_for_frame(self, frame_width: int, frame_height: int) -> np.ndarray:
+        """Return the RGBA (uint8) bitmap to composite onto a ``frame_width`` x ``frame_height`` frame.
+
+        ``TextOverlay`` renders text; ``ImageOverlay`` resizes / rasterises its
+        source. Implemented by subclasses.
+        """
+        raise NotImplementedError(f"{type(self).__name__}._overlay_for_frame not implemented")
+
+    def _overlay_opacity(self) -> float:
+        """Extra opacity multiplier applied to the overlay's own alpha. Default: opaque."""
+        return 1.0
+
+    def _compute_position(self, frame_width: int, frame_height: int, img_w: int, img_h: int) -> tuple[int, int]:
+        px = int(self.position[0] * frame_width)
+        py = int(self.position[1] * frame_height)
+
+        if self.anchor == "center":
+            return px - img_w // 2, py - img_h // 2
+        if self.anchor == "top_left":
+            return px, py
+        if self.anchor == "top_center":
+            return px - img_w // 2, py
+        if self.anchor == "bottom_center":
+            return px - img_w // 2, py - img_h
+        if self.anchor == "bottom_left":
+            return px, py - img_h
+        # bottom_right
+        return px - img_w, py - img_h
+
+    def _blend_params(
+        self, frame_w: int, frame_h: int
+    ) -> tuple[np.ndarray, np.ndarray, tuple[int, int, int, int]] | None:
+        """Placement + blend inputs shared by the eager and streaming paths.
+
+        Single source of truth so the two paths cannot drift -- the eager/stream
+        parity-hole class of bug fixed in 0.34.1. Returns ``None`` when the
+        overlay lands fully off-frame (the effect is a no-op).
+        """
+        overlay = self._overlay_for_frame(frame_w, frame_h)
+        oh, ow = overlay.shape[:2]
+        x, y = self._compute_position(frame_w, frame_h, ow, oh)
+
+        src_x = max(0, -x)
+        src_y = max(0, -y)
+        dst_x = max(0, x)
+        dst_y = max(0, y)
+        paste_w = min(ow - src_x, frame_w - dst_x)
+        paste_h = min(oh - src_y, frame_h - dst_y)
+
+        if paste_w <= 0 or paste_h <= 0:
+            return None
+
+        region = overlay[src_y : src_y + paste_h, src_x : src_x + paste_w]
+        alpha = (region[:, :, 3:4].astype(np.float32) / 255.0) * self._overlay_opacity()
+        rgb = region[:, :, :3].astype(np.float32)
+        return alpha, rgb, (dst_y, dst_x, paste_h, paste_w)
+
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+        params = self._blend_params(width, height)
+        if params is None:
+            self._stream_noop = True
+            return
+        self._stream_noop = False
+        self._stream_alpha, self._stream_rgb, self._stream_dst = params
+
+    def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
+        if self._stream_noop:
+            return frame
+        assert self._stream_alpha is not None and self._stream_rgb is not None
+        dy, dx, ph, pw = self._stream_dst
+        region = frame[dy : dy + ph, dx : dx + pw]
+        blended = (
+            self._stream_rgb * self._stream_alpha + region.astype(np.float32) * (1.0 - self._stream_alpha)
+        ).astype(np.uint8)
+        frame[dy : dy + ph, dx : dx + pw] = blended
+        return frame
+
+
+class TextOverlay(_AnchoredOverlay):
     """Draws text on video frames, with auto word-wrap and optional background box."""
 
     op: Literal["text_overlay"] = "text_overlay"
@@ -651,16 +721,6 @@ class TextOverlay(Effect):
     )
 
     _rendered: np.ndarray | None = PrivateAttr(default=None)
-    _stream_noop: bool = PrivateAttr(default=False)
-    _stream_alpha: np.ndarray | None = PrivateAttr(default=None)
-    _stream_rgb: np.ndarray | None = PrivateAttr(default=None)
-    _stream_dst: tuple[int, int, int, int] = PrivateAttr(default=(0, 0, 0, 0))
-
-    @model_validator(mode="after")
-    def _validate_position(self) -> TextOverlay:
-        if not (0.0 <= self.position[0] <= 1.0 and 0.0 <= self.position[1] <= 1.0):
-            raise ValueError("position values must be in range [0, 1]")
-        return self
 
     def _get_font(self) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
         return load_font(self.font_filename or self.font, self.font_size)
@@ -709,88 +769,13 @@ class TextOverlay(Effect):
 
         return np.array(img, dtype=np.uint8)
 
-    def _compute_position(self, frame_width: int, frame_height: int, img_w: int, img_h: int) -> tuple[int, int]:
-        px = int(self.position[0] * frame_width)
-        py = int(self.position[1] * frame_height)
-
-        if self.anchor == "center":
-            return px - img_w // 2, py - img_h // 2
-        if self.anchor == "top_left":
-            return px, py
-        if self.anchor == "top_center":
-            return px - img_w // 2, py
-        if self.anchor == "bottom_center":
-            return px - img_w // 2, py - img_h
-        if self.anchor == "bottom_left":
-            return px, py - img_h
-        # bottom_right
-        return px - img_w, py - img_h
-
-    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+    def _overlay_for_frame(self, frame_width: int, frame_height: int) -> np.ndarray:
         if self._rendered is None:
-            self._rendered = self._render_text_image(width, height)
-        oh, ow = self._rendered.shape[:2]
-        x, y = self._compute_position(width, height, ow, oh)
-        src_x = max(0, -x)
-        src_y = max(0, -y)
-        dst_x = max(0, x)
-        dst_y = max(0, y)
-        paste_w = min(ow - src_x, width - dst_x)
-        paste_h = min(oh - src_y, height - dst_y)
-        if paste_w <= 0 or paste_h <= 0:
-            self._stream_noop = True
-            return
-        self._stream_noop = False
-        overlay_region = self._rendered[src_y : src_y + paste_h, src_x : src_x + paste_w]
-        self._stream_alpha = overlay_region[:, :, 3:4].astype(np.float32) / 255.0
-        self._stream_rgb = overlay_region[:, :, :3].astype(np.float32)
-        self._stream_dst = (dst_y, dst_x, paste_h, paste_w)
-
-    def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
-        if self._stream_noop:
-            return frame
-        assert self._stream_alpha is not None and self._stream_rgb is not None
-        dy, dx, ph, pw = self._stream_dst
-        region = frame[dy : dy + ph, dx : dx + pw]
-        blended = (
-            self._stream_rgb * self._stream_alpha + region.astype(np.float32) * (1.0 - self._stream_alpha)
-        ).astype(np.uint8)
-        frame[dy : dy + ph, dx : dx + pw] = blended
-        return frame
-
-    def _apply(self, video: Video) -> Video:
-        frame_h, frame_w = video.frame_shape[:2]
-        if self._rendered is None:
-            self._rendered = self._render_text_image(frame_w, frame_h)
-
-        overlay_rgba = self._rendered
-        oh, ow = overlay_rgba.shape[:2]
-        x, y = self._compute_position(frame_w, frame_h, ow, oh)
-
-        src_x = max(0, -x)
-        src_y = max(0, -y)
-        dst_x = max(0, x)
-        dst_y = max(0, y)
-        paste_w = min(ow - src_x, frame_w - dst_x)
-        paste_h = min(oh - src_y, frame_h - dst_y)
-
-        if paste_w <= 0 or paste_h <= 0:
-            return video
-
-        overlay_region = overlay_rgba[src_y : src_y + paste_h, src_x : src_x + paste_w]
-        alpha = overlay_region[:, :, 3:4].astype(np.float32) / 255.0
-        overlay_rgb = overlay_region[:, :, :3].astype(np.float32)
-
-        logger.info("Applying text overlay...")
-        for frame in tqdm(video.frames, desc="Text overlay"):
-            region = frame[dst_y : dst_y + paste_h, dst_x : dst_x + paste_w]
-            blended = (overlay_rgb * alpha + region.astype(np.float32) * (1.0 - alpha)).astype(np.uint8)
-            frame[dst_y : dst_y + paste_h, dst_x : dst_x + paste_w] = blended
-
-        return video
+            self._rendered = self._render_text_image(frame_width, frame_height)
+        return self._rendered
 
 
-class ImageOverlay(Effect):
+class ImageOverlay(_AnchoredOverlay):
     """Composites a scaled image at an anchored position on every frame in the window.
 
     A resolution-independent watermark / logo / brand mark. Unlike
@@ -850,16 +835,6 @@ class ImageOverlay(Effect):
 
     _overlay_rgba: np.ndarray | None = PrivateAttr(default=None)
     _svg_cache: dict[int, np.ndarray] = PrivateAttr(default_factory=dict)
-    _stream_noop: bool = PrivateAttr(default=False)
-    _stream_alpha: np.ndarray | None = PrivateAttr(default=None)
-    _stream_rgb: np.ndarray | None = PrivateAttr(default=None)
-    _stream_dst: tuple[int, int, int, int] = PrivateAttr(default=(0, 0, 0, 0))
-
-    @model_validator(mode="after")
-    def _validate_position(self) -> ImageOverlay:
-        if not (0.0 <= self.position[0] <= 1.0 and 0.0 <= self.position[1] <= 1.0):
-            raise ValueError("position values must be in range [0, 1]")
-        return self
 
     def _is_svg(self) -> bool:
         return self.source.suffix.lower() == ".svg"
@@ -909,25 +884,6 @@ class ImageOverlay(Effect):
         self._overlay_rgba = np.array(img, dtype=np.uint8)
         return self._overlay_rgba
 
-    def _compute_position(self, frame_width: int, frame_height: int, img_w: int, img_h: int) -> tuple[int, int]:
-        # Copied verbatim from TextOverlay: ImageOverlay's anchor Literal is
-        # deliberately the same set, so the geometry is shared by construction.
-        px = int(self.position[0] * frame_width)
-        py = int(self.position[1] * frame_height)
-
-        if self.anchor == "center":
-            return px - img_w // 2, py - img_h // 2
-        if self.anchor == "top_left":
-            return px, py
-        if self.anchor == "top_center":
-            return px - img_w // 2, py
-        if self.anchor == "bottom_center":
-            return px - img_w // 2, py - img_h
-        if self.anchor == "bottom_left":
-            return px, py - img_h
-        # bottom_right
-        return px - img_w, py - img_h
-
     def _resized_overlay(self, frame_w: int) -> np.ndarray:
         target_w = max(1, round(self.scale * frame_w))
         if self._is_svg():
@@ -942,67 +898,11 @@ class ImageOverlay(Effect):
         resized = Image.fromarray(overlay).resize((target_w, target_h), Image.LANCZOS)
         return np.array(resized, dtype=np.uint8)
 
-    def _blend_params(
-        self, frame_w: int, frame_h: int
-    ) -> tuple[np.ndarray, np.ndarray, tuple[int, int, int, int]] | None:
-        """Placement + blend inputs shared by the eager and streaming paths.
+    def _overlay_for_frame(self, frame_width: int, frame_height: int) -> np.ndarray:
+        return self._resized_overlay(frame_width)
 
-        Single source of truth so the two paths cannot drift -- the
-        eager/stream parity-hole class of bug fixed in 0.34.1. Returns ``None``
-        when the overlay lands fully off-frame (the effect is a no-op).
-        """
-        overlay = self._resized_overlay(frame_w)
-        oh, ow = overlay.shape[:2]
-        x, y = self._compute_position(frame_w, frame_h, ow, oh)
-
-        src_x = max(0, -x)
-        src_y = max(0, -y)
-        dst_x = max(0, x)
-        dst_y = max(0, y)
-        paste_w = min(ow - src_x, frame_w - dst_x)
-        paste_h = min(oh - src_y, frame_h - dst_y)
-
-        if paste_w <= 0 or paste_h <= 0:
-            return None
-
-        region = overlay[src_y : src_y + paste_h, src_x : src_x + paste_w]
-        alpha = (region[:, :, 3:4].astype(np.float32) / 255.0) * self.opacity
-        rgb = region[:, :, :3].astype(np.float32)
-        return alpha, rgb, (dst_y, dst_x, paste_h, paste_w)
-
-    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
-        params = self._blend_params(width, height)
-        if params is None:
-            self._stream_noop = True
-            return
-        self._stream_noop = False
-        self._stream_alpha, self._stream_rgb, self._stream_dst = params
-
-    def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
-        if self._stream_noop:
-            return frame
-        assert self._stream_alpha is not None and self._stream_rgb is not None
-        dy, dx, ph, pw = self._stream_dst
-        region = frame[dy : dy + ph, dx : dx + pw]
-        blended = (
-            self._stream_rgb * self._stream_alpha + region.astype(np.float32) * (1.0 - self._stream_alpha)
-        ).astype(np.uint8)
-        frame[dy : dy + ph, dx : dx + pw] = blended
-        return frame
-
-    def _apply(self, video: Video) -> Video:
-        frame_h, frame_w = video.frame_shape[:2]
-        params = self._blend_params(frame_w, frame_h)
-        if params is None:
-            return video
-        alpha, rgb, (dy, dx, ph, pw) = params
-
-        logger.info("Applying image overlay...")
-        for frame in tqdm(video.frames, desc="Image overlay"):
-            region = frame[dy : dy + ph, dx : dx + pw]
-            blended = (rgb * alpha + region.astype(np.float32) * (1.0 - alpha)).astype(np.uint8)
-            frame[dy : dy + ph, dx : dx + pw] = blended
-        return video
+    def _overlay_opacity(self) -> float:
+        return self.opacity
 
 
 class Shake(Effect):
@@ -1070,13 +970,6 @@ class Shake(Effect):
         dx, dy = self._stream_offsets[idx]
         return self._shake_frame(frame, float(dx), float(dy))
 
-    def _apply(self, video: Video) -> Video:
-        offsets = self._compute_offsets(len(video.frames), video.fps)
-        for i in tqdm(range(len(video.frames)), desc="Shaking"):
-            dx, dy = offsets[i]
-            video.frames[i] = self._shake_frame(video.frames[i], float(dx), float(dy))
-        return video
-
 
 class PunchIn(Effect):
     """Snap-zoom emphasis: rapidly zooms into the center, holds, optionally releases.
@@ -1113,13 +1006,11 @@ class PunchIn(Effect):
         attack = min(self.attack_frames, n_frames)
         if attack > 0:
             t = np.linspace(0.0, 1.0, attack, dtype=np.float32)
-            ease = 1.0 - (1.0 - t) * (1.0 - t)  # ease_out
-            zooms[:attack] = 1.0 + (self.zoom_factor - 1.0) * ease
+            zooms[:attack] = 1.0 + (self.zoom_factor - 1.0) * ease_out(t)
         release = min(self.release_frames, n_frames - attack)
         if release > 0:
             t = np.linspace(1.0, 0.0, release, dtype=np.float32)
-            ease = 1.0 - (1.0 - t) * (1.0 - t)
-            zooms[-release:] = 1.0 + (self.zoom_factor - 1.0) * ease
+            zooms[-release:] = 1.0 + (self.zoom_factor - 1.0) * ease_out(t)
         return zooms
 
     def _zoom_frame(self, frame: np.ndarray, zoom: float, width: int, height: int) -> np.ndarray:
@@ -1141,14 +1032,6 @@ class PunchIn(Effect):
         assert self._stream_zooms is not None
         idx = min(frame_index, len(self._stream_zooms) - 1)
         return self._zoom_frame(frame, float(self._stream_zooms[idx]), self._stream_width, self._stream_height)
-
-    def _apply(self, video: Video) -> Video:
-        n = len(video.frames)
-        height, width = video.frame_shape[:2]
-        zooms = self._zoom_envelope(n)
-        for i in tqdm(range(n), desc="Punching in"):
-            video.frames[i] = self._zoom_frame(video.frames[i], float(zooms[i]), width, height)
-        return video
 
 
 class Flash(Effect):
@@ -1214,17 +1097,6 @@ class Flash(Effect):
         if a <= 0:
             return frame
         return (frame.astype(np.float32) * (1.0 - a) + self._stream_color * a).astype(np.uint8)
-
-    def _apply(self, video: Video) -> Video:
-        n = len(video.frames)
-        alpha = self._alpha_envelope(n)
-        color = np.array(self.color, dtype=np.float32)
-        for i in tqdm(range(n), desc="Flashing"):
-            a = float(alpha[i])
-            if a <= 0:
-                continue
-            video.frames[i] = (video.frames[i].astype(np.float32) * (1.0 - a) + color * a).astype(np.uint8)
-        return video
 
 
 class ChromaticAberration(Effect):
@@ -1293,14 +1165,6 @@ class ChromaticAberration(Effect):
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
         return self._aberrate(frame)
 
-    def _apply(self, video: Video) -> Video:
-        h, w = video.frame_shape[:2]
-        if self.mode == "radial":
-            self._stream_maps = self._build_radial_maps(w, h)
-        for i in tqdm(range(len(video.frames)), desc="Chromatic aberration"):
-            video.frames[i] = self._aberrate(video.frames[i])
-        return video
-
 
 class Glitch(Effect):
     """Random horizontal slice displacement + channel offsets for a digital-corruption look.
@@ -1363,11 +1227,6 @@ class Glitch(Effect):
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
         return self._glitch_frame(frame, frame_index)
 
-    def _apply(self, video: Video) -> Video:
-        for i in tqdm(range(len(video.frames)), desc="Glitching"):
-            video.frames[i] = self._glitch_frame(video.frames[i], i)
-        return video
-
 
 class FilmGrain(Effect):
     """Additive Gaussian noise simulating film grain.
@@ -1407,11 +1266,6 @@ class FilmGrain(Effect):
 
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
         return self._grain_frame(frame, frame_index)
-
-    def _apply(self, video: Video) -> Video:
-        for i in tqdm(range(len(video.frames)), desc="Adding grain"):
-            video.frames[i] = self._grain_frame(video.frames[i], i)
-        return video
 
 
 class Sharpen(Effect):
@@ -1454,11 +1308,6 @@ class Sharpen(Effect):
 
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
         return self._sharpen_frame(frame)
-
-    def _apply(self, video: Video) -> Video:
-        for i in tqdm(range(len(video.frames)), desc="Sharpening"):
-            video.frames[i] = self._sharpen_frame(video.frames[i])
-        return video
 
 
 class Pixelate(Effect):
@@ -1507,13 +1356,6 @@ class Pixelate(Effect):
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
         assert self._stream_region_px is not None
         return self._pixelate_frame(frame, self._stream_region_px)
-
-    def _apply(self, video: Video) -> Video:
-        h, w = video.frame_shape[:2]
-        region = self._resolve_region(w, h)
-        for i in tqdm(range(len(video.frames)), desc="Pixelating"):
-            video.frames[i] = self._pixelate_frame(video.frames[i], region)
-        return video
 
 
 class MirrorFlip(Effect):
@@ -1568,11 +1410,6 @@ class MirrorFlip(Effect):
 
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
         return self._flip_frame(frame)
-
-    def _apply(self, video: Video) -> Video:
-        for i in tqdm(range(len(video.frames)), desc="Mirroring"):
-            video.frames[i] = self._flip_frame(video.frames[i])
-        return video
 
 
 class Kaleidoscope(Effect):
@@ -1633,10 +1470,3 @@ class Kaleidoscope(Effect):
 
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
         return self._kaleidoscope_frame(frame)
-
-    def _apply(self, video: Video) -> Video:
-        h, w = video.frame_shape[:2]
-        self._stream_map_x, self._stream_map_y = self._build_maps(w, h)
-        for i in tqdm(range(len(video.frames)), desc="Kaleidoscope"):
-            video.frames[i] = self._kaleidoscope_frame(video.frames[i])
-        return video

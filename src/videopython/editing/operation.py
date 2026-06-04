@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Union, get_
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Discriminator, Field, TypeAdapter, model_validator
+from tqdm import tqdm
 
 if TYPE_CHECKING:
     from videopython.base.video import Video, VideoMetadata
@@ -262,14 +263,22 @@ class Operation(BaseModel):
 
 
 class Effect(Operation):
-    """Operation that preserves shape and frame count, with optional streaming.
+    """Operation that preserves shape and frame count, driven by per-frame streaming.
 
-    Subclasses override :meth:`_apply` for in-memory execution and may
-    additionally override :meth:`streaming_init` / :meth:`process_frame` for
-    bounded-memory streaming via ``editing/streaming.py``. The base
-    :meth:`apply` resolves :attr:`window`, slices the video, runs
-    ``_apply`` on the slice, splices the result back, and asserts the
-    shape-preserving invariant.
+    Subclasses implement the streaming contract -- :meth:`process_frame` (and
+    :meth:`streaming_init` for any precomputed per-stream state) -- which is the
+    single source of truth for the effect's pixel logic. The base
+    :meth:`_apply` runs that same contract over the in-memory frames, so
+    in-memory execution comes for free; the same code path feeds
+    ``editing/streaming.py`` for bounded-memory streaming. The base
+    :meth:`apply` resolves :attr:`window`, slices the video, runs ``_apply`` on
+    the slice, splices the result back, and asserts the shape-preserving
+    invariant.
+
+    Override :meth:`_apply` only when eager execution must genuinely differ from
+    a frame-by-frame replay -- e.g. extra validation, a batched vectorisation,
+    or audio handling (``Fade``/``VolumeAdjust`` override :meth:`apply` outright
+    so the audio splice stays coherent with the window).
     """
 
     category: ClassVar[OpCategory] = OpCategory.EFFECT
@@ -325,8 +334,18 @@ class Effect(Operation):
         return start_s, stop_s
 
     def _apply(self, video: Video) -> Video:
-        """Apply the effect to ``video`` in memory. Override in subclasses."""
-        raise NotImplementedError(f"{type(self).__name__}._apply not implemented")
+        """Apply the effect to ``video`` in memory by replaying the streaming path.
+
+        Runs :meth:`streaming_init` once, then :meth:`process_frame` over every
+        frame in order -- the same logic streaming uses, so eager and streaming
+        cannot drift. Subclasses that need a genuinely different eager path
+        (extra validation, batched vectorisation) override this.
+        """
+        height, width = video.frame_shape[:2]
+        self.streaming_init(len(video.frames), video.fps, width, height)
+        for i in tqdm(range(len(video.frames)), desc=type(self).__name__):
+            video.frames[i] = self.process_frame(video.frames[i], i)
+        return video
 
     def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
         """Hook for per-stream precomputation (per-frame alphas, sigma curves...).
