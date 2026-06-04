@@ -114,6 +114,15 @@ server-resolved `source` path (`image_overlay`, `full_image_overlay`).
 `Operation.registry()` and `from_dict` still see *all* ops so a stored
 plan continues to execute.
 
+The same idea applies at the **field** level: a field declared with
+`Field(json_schema_extra={"llm_hidden": True})` is a valid wire field (it
+still parses and runs) but is dropped from the LLM-facing schema. This hides
+advanced overrides the model shouldn't fill in — e.g. the raw `font_filename`
+path on `text_overlay`/`add_subtitles`, whose LLM-facing counterpart is the
+`font` name enum. The default `Operation.json_schema()` and
+`cls.llm_json_schema()` (below) strip these; `cls.model_json_schema()` keeps
+them.
+
 ## Discovering Operations
 
 ```python
@@ -129,13 +138,16 @@ transforms = {k: v for k, v in Operation.registry().items()
 ## Per-Operation JSON Schema
 
 Every subclass exposes `cls.model_json_schema()` (standard Pydantic),
-returning the JSON Schema for that specific op's fields:
+returning the JSON Schema for that specific op's fields. For an LLM-facing
+single-op schema, use `cls.llm_json_schema()` — identical but with
+`llm_hidden` fields stripped:
 
 ```python
 from videopython.editing import Operation
 
 cls = Operation.get("blur_effect")
-schema = cls.model_json_schema()
+schema = cls.model_json_schema()         # full (all fields)
+llm_schema = cls.llm_json_schema()       # LLM-facing (llm_hidden dropped)
 # {
 #   "properties": {
 #     "op": {"const": "blur_effect", ...},

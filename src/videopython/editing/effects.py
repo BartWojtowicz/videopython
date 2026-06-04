@@ -647,6 +647,7 @@ class TextOverlay(Effect):
         description=(
             "Advanced override: path to a .ttf font file. Takes precedence over `font`; None for the default font."
         ),
+        json_schema_extra={"llm_hidden": True},
     )
 
     _rendered: np.ndarray | None = PrivateAttr(default=None)

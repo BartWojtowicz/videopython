@@ -228,9 +228,12 @@ class TranscriptionOverlay(Effect):
             "Advanced override: path to a .ttf font file for subtitle text. Takes precedence over `font`; "
             "None for the bundled default font."
         ),
+        json_schema_extra={"llm_hidden": True},
     )
     highlight_bold_font: str | None = Field(
-        None, description="Path to a bold .ttf font for the highlighted word, or None to use the regular font."
+        None,
+        description="Path to a bold .ttf font for the highlighted word, or None to use the regular font.",
+        json_schema_extra={"llm_hidden": True},
     )
 
     # ---- advanced overrides: None => derive from style/region/font_scale ----

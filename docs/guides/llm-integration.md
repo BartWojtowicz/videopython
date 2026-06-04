@@ -130,7 +130,7 @@ for op_id, cls in Operation.llm_registry().items():
     tools.append({
         "name": f"transform_{op_id}",
         "description": (cls.__doc__ or "").splitlines()[0],
-        "input_schema": cls.model_json_schema(),
+        "input_schema": cls.llm_json_schema(),   # drops llm_hidden advanced fields
     })
 ```
 

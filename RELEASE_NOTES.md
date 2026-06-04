@@ -21,6 +21,11 @@ surface:
   `VideoEdit.json_schema()` now cover only LLM-exposed ops by default; pass
   `Operation.json_schema(include_server_only=True)` for the full union.
   `Operation.registry()` and `from_dict` are unchanged (they still see all ops).
+  The same hiding works per field: `Field(json_schema_extra={"llm_hidden": True})`
+  drops a valid-but-advanced field from the LLM-facing schema. `font_filename`
+  (on `text_overlay`/`add_subtitles`) and `highlight_bold_font` are now hidden —
+  the `font` name enum is the LLM-facing surface; the raw paths remain parseable.
+  New `cls.llm_json_schema()` gives the per-op schema with these stripped.
 - **Typed validation errors. (Breaking)** `validate()` now raises
   `PlanValidationError` (a `ValueError` subclass — `str(e)` is unchanged and
   `except ValueError` still works) carrying structured `.errors`: a list of
