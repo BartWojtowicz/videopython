@@ -24,21 +24,36 @@ import subprocess
 import tempfile
 import warnings
 from pathlib import Path
-from typing import Annotated, Any, Protocol, runtime_checkable
+from typing import Annotated, Any, NamedTuple, Protocol, runtime_checkable
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SerializeAsAny, model_validator
 
 from videopython.audio import Audio, AudioLoadError
+from videopython.base.exceptions import PlanError, PlanErrorCode, PlanValidationError
 from videopython.base.video import ALLOWED_VIDEO_FORMATS, ALLOWED_VIDEO_PRESETS, Video, VideoMetadata
 from videopython.editing.effects import Effect, Fade, VolumeAdjust
 from videopython.editing.operation import FilterCtx, Operation
 from videopython.editing.streaming import EffectScheduleEntry, StreamingSegmentPlan, concat_files, stream_segment
-from videopython.editing.transforms import CutSeconds
+from videopython.editing.transforms import DURATION_EPS, CutSeconds
 
 __all__ = [
     "SegmentConfig",
     "VideoEdit",
+    "WindowClamp",
 ]
+
+
+class WindowClamp(NamedTuple):
+    """A single ``window.stop`` repair record produced by :meth:`VideoEdit.repair`.
+
+    ``location`` is the plan path of the clamped op (e.g.
+    ``'segments[0].operations[1]'``); ``field`` is always ``'window.stop'``.
+    """
+
+    location: str
+    field: str
+    old: float
+    new: float
 
 
 def _resolve_operation(value: Any) -> Operation:
@@ -58,7 +73,12 @@ def _resolve_operation(value: Any) -> Operation:
     try:
         cls = Operation.get(op_id)
     except KeyError as e:
-        raise ValueError(str(e)) from e
+        # Preserve the exact prose (str() on KeyError, incl. its quoting) so the
+        # message stays byte-identical to the previous bare ValueError.
+        raise PlanValidationError(
+            str(e),
+            [PlanError(code=PlanErrorCode.UNKNOWN_OP, op=op_id)],
+        ) from e
     return cls.model_validate(value)
 
 
@@ -151,15 +171,60 @@ def _predict_with_context(
     return op.predict_metadata(meta)
 
 
-def _validate_effect_window(op: Operation, duration: float) -> None:
+def _validate_effect_window(op: Operation, duration: float, location: str | None = None) -> None:
     """Bounds-check :attr:`Effect.window` against the predicted duration."""
     if not isinstance(op, Effect) or op.window is None:
         return
-    eps = 1e-3
+    eps = DURATION_EPS
     if op.window.start is not None and op.window.start > duration + eps:
-        raise ValueError(f"Effect '{op.op}' window.start ({op.window.start}) exceeds duration ({duration}s)")
+        message = f"Effect '{op.op}' window.start ({op.window.start}) exceeds duration ({duration}s)"
+        raise PlanValidationError(
+            message,
+            [
+                PlanError(
+                    code=PlanErrorCode.EFFECT_WINDOW_EXCEEDS_DURATION,
+                    location=location,
+                    op=op.op,
+                    field="window.start",
+                    value=op.window.start,
+                    limit=duration,
+                    predicted_duration=duration,
+                )
+            ],
+        )
     if op.window.stop is not None and op.window.stop > duration + eps:
-        raise ValueError(f"Effect '{op.op}' window.stop ({op.window.stop}) exceeds duration ({duration}s)")
+        message = f"Effect '{op.op}' window.stop ({op.window.stop}) exceeds duration ({duration}s)"
+        raise PlanValidationError(
+            message,
+            [
+                PlanError(
+                    code=PlanErrorCode.EFFECT_WINDOW_EXCEEDS_DURATION,
+                    location=location,
+                    op=op.op,
+                    field="window.stop",
+                    value=op.window.stop,
+                    limit=duration,
+                    predicted_duration=duration,
+                )
+            ],
+        )
+
+
+def _clamp_effect_window(op: Operation, duration: float) -> Operation:
+    """Return ``op`` with its ``Effect.window.stop`` clamped to ``duration``.
+
+    Mirrors :meth:`Effect._resolved_window`'s run-time ``min(stop, total_seconds)``
+    so a stop overrunning a duration-shrunk chain validates instead of raising.
+    ``TimeRange`` is ``frozen=True``, so the repair builds replacement copies via
+    ``model_copy(update=...)`` rather than mutating in place. ``window.start`` is
+    deliberately left untouched -- an out-of-range start still hard-raises.
+    """
+    if not isinstance(op, Effect) or op.window is None or op.window.stop is None:
+        return op
+    if op.window.stop <= duration:
+        return op
+    clamped_window = op.window.model_copy(update={"stop": duration})
+    return op.model_copy(update={"window": clamped_window})
 
 
 class SegmentConfig(BaseModel):
@@ -271,60 +336,57 @@ class VideoEdit(BaseModel):
     def json_schema(cls) -> dict[str, Any]:
         """LLM-facing schema: a discriminated union of operations per slot.
 
-        Field descriptions are pulled from the corresponding Pydantic
-        ``Field(description=...)`` declarations on ``VideoEdit`` and
-        ``SegmentConfig`` so the hand-rolled schema stays in sync with the
-        models without needing to repeat the docstrings here.
+        A thin transform over the Pydantic models, so it cannot drift from
+        them: the operations union is :meth:`Operation.json_schema` (LLM-exposed
+        ops by default, per the ``llm_exposed`` ClassVar), and every other field
+        shape and ``description`` is derived from ``SegmentConfig``/``VideoEdit``
+        ``model_json_schema()`` rather than hand-typed. Adding a model field thus
+        surfaces here automatically; in particular ``source`` carries its
+        ``"format": "path"``. The Draft-07 ``$schema`` envelope and the default
+        ``operations`` array shape are preserved for downstream LLM tooling.
         """
         op_schema = Operation.json_schema()
 
-        def _desc(model: type[BaseModel], field_name: str) -> str:
-            return model.model_fields[field_name].description or ""
+        def _field(model: type[BaseModel], field_name: str) -> dict[str, Any]:
+            # Pydantic emits one self-contained property block per field
+            # (description, format, minimum, ...); drop the JSON-Schema `title`
+            # (a humanized field name) the hand-rolled version never carried.
+            prop = dict(model.model_json_schema()["properties"][field_name])
+            prop.pop("title", None)
+            return prop
+
+        def _array(model: type[BaseModel], field_name: str, items: dict[str, Any]) -> dict[str, Any]:
+            # An operation-list slot: keep the model's shape/description but
+            # inline the embedded op union for `items` and a `default: []` so
+            # the list is optional in the LLM-facing schema.
+            prop = _field(model, field_name)
+            prop["items"] = items
+            prop["default"] = []
+            return prop
 
         segment_schema: dict[str, Any] = {
             "type": "object",
             "description": SegmentConfig.__doc__,
             "properties": {
-                "source": {"type": "string", "description": _desc(SegmentConfig, "source")},
-                "start": {"type": "number", "minimum": 0, "description": _desc(SegmentConfig, "start")},
-                "end": {"type": "number", "minimum": 0, "description": _desc(SegmentConfig, "end")},
-                "operations": {
-                    "type": "array",
-                    "items": op_schema,
-                    "default": [],
-                    "description": _desc(SegmentConfig, "operations"),
-                },
+                "source": _field(SegmentConfig, "source"),
+                "start": _field(SegmentConfig, "start"),
+                "end": _field(SegmentConfig, "end"),
+                "operations": _array(SegmentConfig, "operations", op_schema),
             },
             "required": ["source", "start", "end"],
             "additionalProperties": False,
         }
+        segments = _field(cls, "segments")
+        segments["items"] = segment_schema
         return {
             "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "description": cls.__doc__,
             "properties": {
-                "segments": {
-                    "type": "array",
-                    "items": segment_schema,
-                    "minItems": 1,
-                    "description": _desc(cls, "segments"),
-                },
-                "post_operations": {
-                    "type": "array",
-                    "items": op_schema,
-                    "default": [],
-                    "description": _desc(cls, "post_operations"),
-                },
-                "match_to_lowest_fps": {
-                    "type": "boolean",
-                    "default": True,
-                    "description": _desc(cls, "match_to_lowest_fps"),
-                },
-                "match_to_lowest_resolution": {
-                    "type": "boolean",
-                    "default": True,
-                    "description": _desc(cls, "match_to_lowest_resolution"),
-                },
+                "segments": segments,
+                "post_operations": _array(cls, "post_operations", op_schema),
+                "match_to_lowest_fps": _field(cls, "match_to_lowest_fps"),
+                "match_to_lowest_resolution": _field(cls, "match_to_lowest_resolution"),
             },
             "required": ["segments"],
             "additionalProperties": False,
@@ -332,21 +394,39 @@ class VideoEdit(BaseModel):
 
     # --------------------------------------------------------------- validate
 
-    def validate(self, context: dict[str, Any] | None = None) -> VideoMetadata:  # type: ignore[override]
+    def validate(  # type: ignore[override]
+        self,
+        context: dict[str, Any] | None = None,
+        *,
+        clamp_windows: bool = False,
+    ) -> VideoMetadata:
         """Dry-run the plan via metadata. Requires source files on disk.
 
         Shadows Pydantic v1's deprecated ``BaseModel.validate`` classmethod;
         use ``VideoEdit.from_dict``/``model_validate`` for plan parsing.
+
+        When ``clamp_windows`` is True, an :class:`Effect`'s ``window.stop`` that
+        overruns the running predicted duration (e.g. after a duration-shrinking
+        op like ``speed_change``/``cut``) is clamped to that duration -- the same
+        value :meth:`Effect._resolved_window` uses at run time -- instead of
+        raising. Only ``window.stop`` is clamped: a ``window.start`` past the
+        duration still hard-raises (a residual divergence from ``run()``, which
+        degrades it to a zero-width no-op).
         """
         source_metas = [VideoMetadata.from_path(str(seg.source)) for seg in self.segments]
-        return self._validate(source_metas, context)
+        return self._validate(source_metas, context, clamp_windows=clamp_windows)
 
     def validate_with_metadata(
         self,
         source_metadata: VideoMetadata | dict[str, VideoMetadata],
         context: dict[str, Any] | None = None,
+        *,
+        clamp_windows: bool = False,
     ) -> VideoMetadata:
-        """Dry-run with pre-built metadata, avoiding disk access."""
+        """Dry-run with pre-built metadata, avoiding disk access.
+
+        See :meth:`validate` for the ``clamp_windows`` semantics.
+        """
         if isinstance(source_metadata, VideoMetadata):
             metas = [source_metadata for _ in self.segments]
         else:
@@ -357,7 +437,62 @@ class VideoEdit(BaseModel):
                     available = sorted(source_metadata)
                     raise ValueError(f"Segment {i}: no metadata for '{key}'. Available: {available}")
                 metas.append(source_metadata[key])
-        return self._validate(metas, context)
+        return self._validate(metas, context, clamp_windows=clamp_windows)
+
+    def repair(
+        self,
+        source_metadata: VideoMetadata | dict[str, VideoMetadata],
+        context: dict[str, Any] | None = None,
+    ) -> tuple[VideoEdit, list[WindowClamp]]:
+        """Return a copy of this plan with overrunning ``window.stop``s clamped.
+
+        Walks the chain exactly as :meth:`_validate` does -- cut, fps/resolution
+        matching, then per-op metadata prediction -- clamping each :class:`Effect`'s
+        ``window.stop`` to the running predicted duration (the value
+        :meth:`Effect._resolved_window` uses at run time) and recording every
+        change as a :class:`WindowClamp`. Only ``window.stop`` is clamped; see
+        :meth:`validate` for the ``window.start`` divergence. The returned plan is
+        a deep copy -- ``self`` is left unchanged.
+        """
+        if isinstance(source_metadata, VideoMetadata):
+            metas = [source_metadata for _ in self.segments]
+        else:
+            metas = []
+            for i, seg in enumerate(self.segments):
+                key = str(seg.source)
+                if key not in source_metadata:
+                    available = sorted(source_metadata)
+                    raise ValueError(f"Segment {i}: no metadata for '{key}'. Available: {available}")
+                metas.append(source_metadata[key])
+
+        cut_metas = [
+            CutSeconds(start=seg.start, end=seg.end).predict_metadata(m) for seg, m in zip(self.segments, metas)
+        ]
+        matched = self._apply_matching(cut_metas)
+
+        records: list[WindowClamp] = []
+        repaired_segments: list[SegmentConfig] = []
+        for index, (segment, meta) in enumerate(zip(self.segments, matched)):
+            seg_context = _segment_context(context, segment.start, segment.end)
+            new_ops: list[Operation] = []
+            for op_index, op in enumerate(segment.operations):
+                clamped = _clamp_effect_window(op, meta.total_seconds)
+                if clamped is not op:
+                    assert isinstance(op, Effect) and op.window is not None and op.window.stop is not None
+                    records.append(
+                        WindowClamp(
+                            location=f"segments[{index}].operations[{op_index}]",
+                            field="window.stop",
+                            old=op.window.stop,
+                            new=meta.total_seconds,
+                        )
+                    )
+                new_ops.append(clamped)
+                meta = _predict_with_context(clamped, meta, seg_context)
+            repaired_segments.append(segment.model_copy(update={"operations": new_ops}))
+
+        repaired = self.model_copy(update={"segments": repaired_segments}, deep=True)
+        return repaired, records
 
     def _assert_post_ops_supported(self, context: dict[str, Any] | None) -> None:
         """Reject post_operations needing time-based context on a multi-segment plan.
@@ -389,17 +524,41 @@ class VideoEdit(BaseModel):
         self,
         source_metas: list[VideoMetadata],
         context: dict[str, Any] | None,
+        *,
+        clamp_windows: bool = False,
     ) -> VideoMetadata:
         self._assert_post_ops_supported(context)
         cut_metas: list[VideoMetadata] = []
         for i, (seg, meta) in enumerate(zip(self.segments, source_metas)):
-            if seg.end > meta.total_seconds + 1e-3:
-                raise ValueError(f"Segment {i}: end ({seg.end}) exceeds source duration ({meta.total_seconds}s)")
-            cut_metas.append(CutSeconds(start=seg.start, end=seg.end).predict_metadata(meta))
+            if seg.end > meta.total_seconds + DURATION_EPS:
+                message = f"Segment {i}: end ({seg.end}) exceeds source duration ({meta.total_seconds}s)"
+                raise PlanValidationError(
+                    message,
+                    [
+                        PlanError(
+                            code=PlanErrorCode.SEGMENT_END_EXCEEDS_SOURCE,
+                            location=f"segments[{i}]",
+                            field="end",
+                            value=seg.end,
+                            limit=meta.total_seconds,
+                            predicted_duration=meta.total_seconds,
+                        )
+                    ],
+                )
+            try:
+                cut_metas.append(CutSeconds(start=seg.start, end=seg.end).predict_metadata(meta))
+            except PlanValidationError as e:
+                # CutSeconds shares DURATION_EPS with the guard above, so the
+                # dead-band can't fire here -- but if it ever does, carry the
+                # segment index (via #4 location) instead of an index-less message.
+                for err in e.errors:
+                    err.location = f"segments[{i}]" if err.location is None else f"segments[{i}].{err.location}"
+                raise
 
         matched = self._apply_matching(cut_metas)
         segment_outputs = [
-            self._predict_segment(i, seg, meta, context) for i, (seg, meta) in enumerate(zip(self.segments, matched))
+            self._predict_segment(i, seg, meta, context, clamp_windows=clamp_windows)
+            for i, (seg, meta) in enumerate(zip(self.segments, matched))
         ]
         self._assert_concat_compatible(segment_outputs)
 
@@ -411,8 +570,8 @@ class VideoEdit(BaseModel):
             frame_count=sum(m.frame_count for m in segment_outputs),
             total_seconds=round(sum(m.total_seconds for m in segment_outputs), 4),
         )
-        for op in self.post_operations:
-            _validate_effect_window(op, assembled.total_seconds)
+        for j, op in enumerate(self.post_operations):
+            _validate_effect_window(op, assembled.total_seconds, location=f"post_operations[{j}]")
             assembled = _predict_with_context(op, assembled, context)
         return assembled
 
@@ -422,12 +581,25 @@ class VideoEdit(BaseModel):
         segment: SegmentConfig,
         meta: VideoMetadata,
         context: dict[str, Any] | None,
+        *,
+        clamp_windows: bool = False,
     ) -> VideoMetadata:
         seg_context = _segment_context(context, segment.start, segment.end)
-        for op in segment.operations:
-            _validate_effect_window(op, meta.total_seconds)
+        for op_index, op in enumerate(segment.operations):
+            location = f"segments[{index}].operations[{op_index}]"
+            if clamp_windows:
+                op = _clamp_effect_window(op, meta.total_seconds)
+            _validate_effect_window(op, meta.total_seconds, location=location)
             try:
                 meta = _predict_with_context(op, meta, seg_context)
+            except PlanValidationError as e:
+                # A typed error IS a ValueError, so the generic branch below would
+                # flatten it back to prose and drop `.errors`. Instead enrich each
+                # contained location with this segment+op index and re-raise the
+                # SAME typed error, preserving its message and structure.
+                for err in e.errors:
+                    err.location = location if err.location is None else f"{location}.{err.location}"
+                raise
             except (ValueError, TypeError) as e:
                 raise ValueError(f"Segment {index}: metadata prediction failed for '{op.op}': {e}") from e
         return meta
@@ -452,14 +624,36 @@ class VideoEdit(BaseModel):
         first = metas[0]
         for j, other in enumerate(metas[1:], start=1):
             if first.fps != other.fps:
-                raise ValueError(
+                message = (
                     f"Segment 0 fps ({first.fps}) != segment {j} fps ({other.fps}); "
                     "all segments must share fps for concatenation."
                 )
+                raise PlanValidationError(
+                    message,
+                    [
+                        PlanError(
+                            code=PlanErrorCode.CONCAT_MISMATCH,
+                            location=f"segments[{j}]",
+                            field="fps",
+                            value=other.fps,
+                            limit=first.fps,
+                        )
+                    ],
+                )
             if (first.width, first.height) != (other.width, other.height):
-                raise ValueError(
+                message = (
                     f"Segment 0 dimensions ({first.width}x{first.height}) != "
                     f"segment {j} ({other.width}x{other.height}); all segments must share dimensions."
+                )
+                raise PlanValidationError(
+                    message,
+                    [
+                        PlanError(
+                            code=PlanErrorCode.CONCAT_MISMATCH,
+                            location=f"segments[{j}]",
+                            field="dimensions",
+                        )
+                    ],
                 )
 
     # -------------------------------------------------------------------- run

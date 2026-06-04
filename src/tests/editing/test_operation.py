@@ -102,7 +102,18 @@ class TestJsonSchema:
         assert schema["discriminator"]["propertyName"] == "op"
         mapping = schema["discriminator"]["mapping"]
         assert "_doc_op" in mapping
+        assert len(schema["oneOf"]) == len(Operation.llm_registry())
+
+    def test_include_server_only_covers_full_registry(self):
+        schema = Operation.json_schema(include_server_only=True)
         assert len(schema["oneOf"]) == len(Operation.registry())
+
+    def test_server_only_ops_absent_from_default_schema(self):
+        assert "image_overlay" not in Operation.llm_registry()
+        assert "full_image_overlay" not in Operation.llm_registry()
+        mapping = Operation.json_schema()["discriminator"]["mapping"]
+        assert "image_overlay" not in mapping
+        assert "full_image_overlay" not in mapping
 
     def test_per_op_schema_has_op_const(self):
         schema = _DocOp.model_json_schema()

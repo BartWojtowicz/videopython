@@ -37,6 +37,7 @@ from PIL import Image
 from pydantic import Field
 from tqdm import tqdm
 
+from videopython.base.exceptions import PlanError, PlanErrorCode, PlanValidationError
 from videopython.base.image_text import AnchorPoint, ImageText, TextAlign
 from videopython.base.transcription import Transcription, TranscriptionSegment
 from videopython.base.video import Video, VideoMetadata
@@ -211,9 +212,22 @@ class TranscriptionOverlay(Effect):
             "exactly as transcribed."
         ),
     )
+    font: Literal["anton", "bebas-neue", "lato-bold", "poppins-bold"] | None = Field(
+        None,
+        description=(
+            "Bundled font for subtitles, or null for the default. "
+            "'poppins-bold': clean geometric sans, general purpose. "
+            "'lato-bold': humanist sans, very readable. "
+            "'anton': tall condensed display, ideal for short-form vertical. "
+            "'bebas-neue': bold condensed display, dramatic alternative."
+        ),
+    )
     font_filename: str | None = Field(
         None,
-        description="Path to a .ttf font file for rendering subtitle text, or None for the bundled default font.",
+        description=(
+            "Advanced override: path to a .ttf font file for subtitle text. Takes precedence over `font`; "
+            "None for the bundled default font."
+        ),
     )
     highlight_bold_font: str | None = Field(
         None, description="Path to a bold .ttf font for the highlighted word, or None to use the regular font."
@@ -328,7 +342,7 @@ class TranscriptionOverlay(Effect):
         """
         rect = img_text.measure_text_box(
             text=text,
-            font_filename=self.font_filename,
+            font_filename=self.font_filename or self.font,
             xy=cfg.position,
             box_width=cfg.box_width,
             font_size=font_px,
@@ -380,7 +394,7 @@ class TranscriptionOverlay(Effect):
         offender = first_unfit(lo)
         if offender is not None:
             error = (
-                f"Subtitle cue {offender.text!r} cannot fit in a {width}x{height} frame even at the "
+                f"{self.op}: Subtitle cue {offender.text!r} cannot fit in a {width}x{height} frame even at the "
                 f"minimum font size ({lo}px, min_font_scale={self.min_font_scale}). Lower min_font_scale, "
                 f"reduce max_words_per_cue, widen box_width, or render at a larger resolution."
             )
@@ -431,7 +445,7 @@ class TranscriptionOverlay(Effect):
             # so a layout that validated cannot raise OutOfBoundsError here.
             img_text.write_text_box(
                 text=segment.text,
-                font_filename=self.font_filename,
+                font_filename=self.font_filename or self.font,
                 xy=(box.x, box.y),
                 box_width=box.box_w,
                 font_size=layout.font_px,
@@ -470,7 +484,11 @@ class TranscriptionOverlay(Effect):
             # Should be unreachable when the plan went through validate(); kept
             # as defense in depth so a direct apply() still fails clearly
             # rather than crashing mid-render in ImageText.
-            raise ValueError(layout.error)
+            assert layout.error is not None
+            raise PlanValidationError(
+                layout.error,
+                [PlanError(code=PlanErrorCode.SUBTITLE_UNFITTABLE, op=self.op)],
+            )
 
         # Per-call memo of rendered overlays, keyed by (cue text, highlighted
         # word). Local rather than instance state so the model stays stateless
@@ -517,7 +535,11 @@ class TranscriptionOverlay(Effect):
             return meta
         layout = self._resolve_layout(meta.width, meta.height, transcription)
         if not layout.fits:
-            raise ValueError(layout.error)
+            assert layout.error is not None
+            raise PlanValidationError(
+                layout.error,
+                [PlanError(code=PlanErrorCode.SUBTITLE_UNFITTABLE, op=self.op)],
+            )
         return meta
 
     def _apply_overlay_to_frame(self, frame: np.ndarray, overlay: np.ndarray) -> np.ndarray:

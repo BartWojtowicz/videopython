@@ -15,9 +15,21 @@ from importlib.resources import as_file, files
 
 from PIL import ImageFont
 
-__all__ = ["DEFAULT_FONT_FILENAME", "load_font"]
+__all__ = ["BUNDLED_FONTS", "DEFAULT_FONT_FILENAME", "FONT_NAMES", "load_font"]
 
 DEFAULT_FONT_FILENAME = "DejaVuSans.ttf"
+
+# Registered short NAME -> bundled filename. The names are stable identifiers an
+# LLM can emit (saved plans round-trip on these); ``load_font`` resolves a name
+# to its bundled file before the path/DejaVu/PIL fallback chain.
+BUNDLED_FONTS: dict[str, str] = {
+    "poppins-bold": "Poppins-Bold.ttf",
+    "lato-bold": "Lato-Bold.ttf",
+    "anton": "Anton-Regular.ttf",
+    "bebas-neue": "BebasNeue-Regular.ttf",
+}
+
+FONT_NAMES: list[str] = sorted(BUNDLED_FONTS)
 
 
 def _try_truetype(path: str, font_size: int) -> ImageFont.FreeTypeFont | None:
@@ -30,19 +42,30 @@ def _try_truetype(path: str, font_size: int) -> ImageFont.FreeTypeFont | None:
 def load_font(font_filename: str | None, font_size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     """Load a font, falling back gracefully when one is unavailable.
 
-    Resolution order: the given ``font_filename`` -> the bundled DejaVu
-    Sans -> PIL's built-in bitmap font. Never raises for a missing or
-    unreadable font, so callers may pass ``None`` to mean "use the
+    Resolution order: a registered bundled NAME (``BUNDLED_FONTS``) -> the
+    given ``font_filename`` -> the bundled DejaVu Sans -> PIL's built-in
+    bitmap font. Never raises for a missing, unknown, or unreadable font, so
+    callers may pass ``None`` (or an unrecognized name) to mean "use the
     default".
 
     Args:
-        font_filename: Path to a ``.ttf``/``.otf`` file, or ``None``.
+        font_filename: A registered bundled font name, a path to a
+            ``.ttf``/``.otf`` file, or ``None``.
         font_size: Font size in points.
 
     Returns:
         A loaded PIL font object.
     """
     if font_filename:
+        bundled_filename = BUNDLED_FONTS.get(font_filename)
+        if bundled_filename is not None:
+            try:
+                with as_file(files(__package__).joinpath(bundled_filename)) as bundled:
+                    font = _try_truetype(str(bundled), font_size)
+                    if font is not None:
+                        return font
+            except (FileNotFoundError, ModuleNotFoundError):
+                pass
         font = _try_truetype(font_filename, font_size)
         if font is not None:
             return font

@@ -104,6 +104,7 @@ class Operation(BaseModel):
     category: ClassVar[OpCategory] = OpCategory.SPECIAL
     streamable: ClassVar[bool] = False
     requires: ClassVar[tuple[str, ...]] = ()
+    llm_exposed: ClassVar[bool] = True
 
     _registry: ClassVar[dict[str, type[Operation]]] = {}
 
@@ -143,6 +144,17 @@ class Operation(BaseModel):
         return dict(Operation._registry)
 
     @classmethod
+    def llm_registry(cls) -> dict[str, type[Operation]]:
+        """Snapshot of ``{op_id: subclass}`` for LLM-exposed Operations only.
+
+        A subset of :meth:`registry` filtered to subclasses with
+        ``llm_exposed`` True. Server-only ops (e.g. those needing a
+        server-resolved ``source`` path) are excluded so they never leak into
+        the LLM-facing schema.
+        """
+        return {op_id: sub for op_id, sub in Operation._registry.items() if sub.llm_exposed}
+
+    @classmethod
     def get(cls, op_id: str) -> type[Operation]:
         """Look up the Operation subclass for ``op_id``."""
         try:
@@ -152,15 +164,18 @@ class Operation(BaseModel):
             raise KeyError(f"Unknown op_id {op_id!r}. Known ops: [{known}]") from exc
 
     @classmethod
-    def json_schema(cls) -> dict[str, Any]:
-        """Discriminated-union JSON schema over every registered Operation.
+    def json_schema(cls, include_server_only: bool = False) -> dict[str, Any]:
+        """Discriminated-union JSON schema over registered Operations.
 
         ``op`` is the discriminator tag. This is the LLM-facing schema for
-        validating a single operation payload.
+        validating a single operation payload. By default the union covers only
+        LLM-exposed ops (:meth:`llm_registry`); pass ``include_server_only=True``
+        to build the union from the full :meth:`registry`.
         """
-        if not Operation._registry:
+        source = Operation._registry if include_server_only else cls.llm_registry()
+        if not source:
             return {"type": "object"}
-        ops = sorted(Operation._registry.values(), key=lambda c: c.__name__)
+        ops = sorted(source.values(), key=lambda c: c.__name__)
         annotated = Annotated[Union[tuple(ops)], Discriminator("op")]  # type: ignore[valid-type]  # noqa: UP007
         return TypeAdapter(annotated).json_schema()
 
@@ -186,6 +201,12 @@ class Operation(BaseModel):
         crash mid-render); ``TextOverlay``/``ImageOverlay`` do not reject
         off-frame geometry (it clips to a valid no-op). Keep the check
         metadata-cheap -- no frame decode.
+
+        Duration bounds checks use the shared
+        :data:`videopython.editing.transforms.DURATION_EPS` tolerance: a value
+        is rejected only when it exceeds the limit by more than ``DURATION_EPS``
+        seconds, so sub-millisecond float drift at an exact boundary passes
+        consistently across the editing layer.
         """
         return meta
 
