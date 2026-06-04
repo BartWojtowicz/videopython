@@ -114,8 +114,11 @@ for op_id, cls in Operation.registry().items():
 transforms = {k: v for k, v in Operation.registry().items()
               if v.category is OpCategory.TRANSFORM}
 
-# Per-op JSON Schema (standard Pydantic)
+# Per-op JSON Schema: model_json_schema() is the full Pydantic schema;
+# llm_json_schema() is the LLM-facing variant (drops `llm_hidden` advanced
+# fields like raw font paths), so prefer it for tool/function definitions.
 Operation.get("color_adjust").model_json_schema()
+Operation.get("text_overlay").llm_json_schema()
 ```
 
 For per-op tool definitions, enumerate `Operation.llm_registry()` (the
@@ -186,6 +189,11 @@ of clamps applied — no extra LLM round-trip:
 predicted = edit.validate(clamp_windows=True)        # don't reject clampable overruns
 fixed_edit, clamps = edit.repair(source_metadata)    # or get a repaired plan back
 ```
+
+`repair()` clamps `window.stop` only — it is not a full validator (a
+`window.start` overrun, concat mismatch, or bad source still stands), so
+`validate()` the returned plan before running it. For most flows
+`validate(clamp_windows=True)` is the simpler path.
 
 ## Context Data
 
