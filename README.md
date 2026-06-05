@@ -69,7 +69,7 @@ See the [LLM Integration Guide](https://videopython.com/guides/llm-integration/)
 - **`videopython.base`** — `Video`, `VideoMetadata`, `FrameIterator`, `ImageText`, `Transcription`, and shared result types (`BoundingBox`, `FaceTrack`, `SceneBoundary`, ...). No AI dependencies.
 - **`videopython.audio`** — `Audio` with overlay, concat, normalize, time-stretch, silence detection, segment classification.
 - **`videopython.editing`** — `Operation`/`Effect` foundation, `VideoEdit` plan runner with JSON Schema + streaming execution. Transforms (cut, resize, crop, fps, speed, reverse, freeze, silence removal) and effects (blur, zoom, color grading, vignette, Ken Burns, fade, overlays, animated subtitles).
-- **`videopython.ai`** *(install with `[ai]`)* — generation (`TextToVideo`, `ImageToVideo`, `TextToImage`, `TextToSpeech`, `TextToMusic`), understanding (`AudioToText`, `AudioClassifier`, `SceneVLM`, `FaceTracker`, `SemanticSceneDetector`), `FaceTrackingCrop` transform, and the full-pipeline `VideoAnalyzer`.
+- **`videopython.ai`** *(install with `[ai]`)* — generation (`TextToVideo`, `ImageToVideo`, `TextToImage`, `TextToSpeech`, `TextToMusic`), understanding (`AudioToText`, `AudioClassifier`, `SceneVLM`, `FaceTracker`, `ObjectDetector`, `SemanticSceneDetector`), the `FaceTrackingCrop` transform, the `ObjectDetectionOverlay` effect (per-frame bounding boxes + labels), and the full-pipeline `VideoAnalyzer`.
 - **`videopython.ai.dubbing`** — `VideoDubber` for voice-cloned revoicing with timing sync.
 
 ## Examples

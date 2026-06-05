@@ -10,6 +10,7 @@ from .description import (
     SceneBoundary,
     SceneDescription,
 )
+from .draw_detections import DetectionStyle, class_color, draw_detections
 from .exceptions import (
     AudioError,
     AudioLoadError,
@@ -44,6 +45,10 @@ __all__ = [
     "ImageText",
     "TextAlign",
     "AnchorPoint",
+    # Detection overlay renderer (AI-free)
+    "draw_detections",
+    "DetectionStyle",
+    "class_color",
     # Transcription data classes
     "Transcription",
     "TranscriptionSegment",

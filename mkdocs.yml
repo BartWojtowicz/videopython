@@ -94,3 +94,4 @@ nav:
       - AI Video Analysis: api/ai/video_analysis.md
       - AI Dubbing: api/ai/dubbing.md
       - AI Transforms: api/ai/transforms.md
+      - AI Effects: api/ai/effects.md
