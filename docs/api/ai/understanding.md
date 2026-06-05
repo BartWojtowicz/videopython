@@ -13,6 +13,7 @@ For a single aggregate, serializable analysis object across multiple analyzers, 
 | AudioClassifier | AST |
 | SemanticSceneDetector | TransNetV2 |
 | FaceTracker | YOLOv8-face |
+| ObjectDetector | YOLOv8-COCO |
 
 ## AudioToText
 
@@ -199,6 +200,33 @@ for track in tracks:
 ```
 
 ::: videopython.ai.FaceTracker
+
+## ObjectDetector
+
+`ObjectDetector` runs a YOLOv8-COCO model and returns a list of
+[`DetectedObject`](#detectedobject) per frame, with normalized bounding boxes
+sorted by confidence. It is the object-detection counterpart to `FaceTracker`
+and powers [`ObjectDetectionOverlay`](effects.md#objectdetectionoverlay).
+
+The Ultralytics weights auto-download on first use; class names come from the
+loaded model. Detection is gated by `confidence_threshold` and optionally
+restricted to `class_filter`.
+
+```python
+from videopython.ai import ObjectDetector
+from videopython.base import Video
+
+video = Video.from_path("street.mp4")
+
+detector = ObjectDetector(model_name="yolov8n.pt", class_filter=("person", "car"))
+for obj in detector.detect(video.frames[0]):
+    print(f"{obj.label} {obj.confidence:.2f} @ {obj.bounding_box}")
+
+# Batched detection over several frames.
+per_frame = detector.detect_batch(video.frames[:16])
+```
+
+::: videopython.ai.ObjectDetector
 
 ## Scene Data Classes
 

@@ -1,9 +1,11 @@
+from .effects import ObjectDetectionOverlay
 from .generation import ImageToVideo, TextToImage, TextToMusic, TextToSpeech, TextToVideo
 from .transforms import FaceTrackingCrop
 from .understanding import (
     AudioClassifier,
     AudioToText,
     FaceTracker,
+    ObjectDetector,
     SceneVLM,
     SemanticSceneDetector,
 )
@@ -20,10 +22,13 @@ __all__ = [
     "AudioToText",
     "AudioClassifier",
     "FaceTracker",
+    "ObjectDetector",
     "SceneVLM",
     "SemanticSceneDetector",
     # Transforms (AI-powered)
     "FaceTrackingCrop",
+    # Effects (AI-powered)
+    "ObjectDetectionOverlay",
     # Video analysis
     "VideoAnalysis",
     "VideoAnalysisConfig",

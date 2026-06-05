@@ -1,5 +1,36 @@
 # Release Notes
 
+## 0.37.0
+
+Adds `ObjectDetectionOverlay`, an AI-powered, streamable effect (op
+`object_detection_overlay`) that detects objects per frame with a YOLOv8-COCO
+model and draws labelled bounding boxes. Built as three small,
+independently-testable layers mirroring the `FaceTracker` / `FaceTrackingCrop`
+split, so the `editing` layer stays AI-free:
+
+- **AI-free renderer** (`videopython.base.draw_detections`): `draw_detections()`
+  plus a `DetectionStyle` value object and deterministic per-class
+  `class_color()`, reusing the existing `DetectedObject` / `BoundingBox` /
+  `load_font` primitives. Anti-aliased PIL label chips in the box colour,
+  resolution-scaled stroke/font, and edge-aware label placement; testable with
+  synthetic detections, no GPU.
+- **`ObjectDetector`** (`videopython.ai.understanding.objects`): a lazy
+  YOLOv8-COCO detector returning `list[DetectedObject]` with normalized boxes —
+  a near line-for-line counterpart to the face detector (`detect` /
+  `detect_batch`, device selection, confidence threshold, optional
+  `class_filter`).
+- **`ObjectDetectionOverlay`** (`videopython.ai.effects`): a real
+  shape-preserving `Effect`. Only `streaming_init` / `process_frame` are
+  overridden, so the base `Effect._apply` replays the identical contract and
+  eager / streaming cannot drift. `requires=()` keeps it both streamable and
+  LLM-exposed. Detection runs on a `detection_interval` cadence (default 2) and
+  boxes hold between detections, so cost is compute-bound, not memory-bound; cap
+  it with `window`, `detection_interval`, `class_filter`, and `model_size`
+  (`n` / `s` / `m`). The infra `backend` field is `llm_hidden`.
+
+Additive only — no wire-format or behavior change to existing ops. Requires the
+`[ai]` extra.
+
 ## 0.36.1
 
 Internal refactor of the editing core; no wire-format or runtime-behavior
