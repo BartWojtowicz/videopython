@@ -206,12 +206,15 @@ schema = VideoEdit.json_schema()
 ```
 
 Pass `strict=True` (`VideoEdit.json_schema(strict=True)` /
-`Operation.json_schema(strict=True)`) for a provider strict-mode grammar:
-every object closed (`additionalProperties: false`), all properties
-`required` with optionals made nullable, and the op union expressed as an
-`anyOf` of closed variants without a `discriminator` keyword. Numeric
-constraints are preserved, so grammar-constrained decoding makes simple
-bound violations impossible at decode time.
+`Operation.json_schema(strict=True)`) for a submittable provider strict-mode
+grammar: every object closed (`additionalProperties: false`), every property
+`required` (optionality follows the Pydantic type — genuinely optional fields
+stay nullable, defaulted-but-required ones keep their concrete type, so a
+grammar-valid response always parses back), the op union expressed as an
+`anyOf` of closed variants without a `discriminator`, and the union's `$defs`
+hoisted to the document root so every `$ref` resolves. Numeric constraints are
+preserved, so grammar-constrained decoding makes simple bound violations
+impossible at decode time.
 
 ## API Reference
 

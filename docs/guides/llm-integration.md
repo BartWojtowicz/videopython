@@ -43,9 +43,13 @@ only after `import videopython.ai`.
 For providers with a strict structured-output **grammar**
 (`response_format: json_schema`, strict mode), pass `strict=True`:
 `VideoEdit.json_schema(strict=True)` / `Operation.json_schema(strict=True)`
-emit a closed schema (every object `additionalProperties: false`, all
-properties `required` with optionals made nullable, the op union as an
-`anyOf` of closed variants with no `discriminator`). Grammar-constraining
+emit a submittable closed grammar (every object `additionalProperties:
+false`, every property `required`, the op union as an `anyOf` of closed
+variants with no `discriminator`, and the union's `$defs` hoisted to the
+document root so every `$ref` resolves). Optionality follows the Pydantic
+type — a genuinely optional field stays nullable, a defaulted-but-required
+one keeps its concrete type — so a grammar-valid response always parses
+back. Grammar-constraining
 the decode makes a whole class of bound violations (`window.start >= 0`,
 enums, required fields) impossible up front. Cross-field constraints
 (`timestamp < duration`, segment-dim equality) can't live in a grammar —
@@ -238,8 +242,11 @@ if errors:
     ...  # re-prompt with the previous plan + the full structured error list
 ```
 
-Every step is non-raising, so the loop has no `try/except` — `source_metadata`
-leads each call for a consistent signature across the family.
+`check()` and `normalize_dimensions()` never raise. `repair()` raises in exactly
+one case — a segment `end` past the source — which it treats as an intent error
+to re-prompt; pass `clamp_segment_end=True` if you'd rather clamp it to the source
+end and keep the loop raise-free. `source_metadata` leads each call for a
+consistent signature across the family.
 
 A clampable `window.stop` overrun (a duration-shrinking op like `cut` /
 `speed_change` ordered before a windowed effect leaves the stop past the
