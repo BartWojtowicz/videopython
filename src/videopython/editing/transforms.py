@@ -19,7 +19,7 @@ from tqdm import tqdm
 from videopython.base._dimensions import floor_to_even, round_to_even
 from videopython.base.exceptions import PlanError, PlanErrorCode, PlanValidationError
 from videopython.base.video import Video
-from videopython.editing.operation import FilterCtx, OpCategory, Operation
+from videopython.editing.operation import BoundedTimeField, FilterCtx, OpCategory, Operation
 
 if TYPE_CHECKING:
     from videopython.base.transcription import Transcription
@@ -281,7 +281,19 @@ class Crop(Operation):
     def predict_metadata(self, meta: VideoMetadata) -> VideoMetadata:
         _, _, cw, ch = self._resolve_box(meta.width, meta.height)
         if cw > meta.width or ch > meta.height:
-            raise ValueError(f"Crop {cw}x{ch} exceeds source {meta.width}x{meta.height}")
+            message = f"Crop {cw}x{ch} exceeds source {meta.width}x{meta.height}"
+            raise PlanValidationError(
+                message,
+                [
+                    PlanError(
+                        code=PlanErrorCode.CROP_EXCEEDS_SOURCE,
+                        op=self.op,
+                        field="width" if cw > meta.width else "height",
+                        value=float(cw if cw > meta.width else ch),
+                        limit=float(meta.width if cw > meta.width else meta.height),
+                    )
+                ],
+            )
         if self.mode == CropMode.CENTER:
             # Mirror apply()'s `mid - cw//2 : mid + cw//2` slice, which
             # produces 2 * (cw // 2) pixels — odd targets round down.
@@ -368,7 +380,18 @@ class SpeedChange(Operation):
     def predict_metadata(self, meta: VideoMetadata) -> VideoMetadata:
         new_count = self._new_frame_count(meta.frame_count)
         if new_count == 0:
-            raise ValueError(f"Speed {self.speed}x would result in 0 frames!")
+            message = f"Speed {self.speed}x would result in 0 frames!"
+            raise PlanValidationError(
+                message,
+                [
+                    PlanError(
+                        code=PlanErrorCode.DEGENERATE_DURATION,
+                        op=self.op,
+                        field="speed",
+                        value=self.speed,
+                    )
+                ],
+            )
         from videopython.base.video import VideoMetadata as _Meta
 
         return _Meta(
@@ -400,6 +423,9 @@ class FreezeFrame(Operation):
 
     op: Literal["freeze_frame"] = "freeze_frame"
     category: ClassVar[OpCategory] = OpCategory.TRANSFORM
+    # `timestamp` indexes a frame, so it must be strictly < the clip duration;
+    # repair clamps an out-of-range value to the last frame.
+    time_fields: ClassVar[tuple[BoundedTimeField, ...]] = (BoundedTimeField("timestamp", exclusive_end=True),)
 
     timestamp: float = Field(ge=0, description="Time in seconds at which to capture the frame.")
     duration: float = Field(2.0, gt=0, description="How long to hold the frozen frame, in seconds.")
@@ -453,7 +479,20 @@ class FreezeFrame(Operation):
 
     def predict_metadata(self, meta: VideoMetadata) -> VideoMetadata:
         if self.timestamp >= meta.total_seconds:
-            raise ValueError(f"timestamp ({self.timestamp}) must be less than video duration ({meta.total_seconds})")
+            message = f"timestamp ({self.timestamp}) must be less than video duration ({meta.total_seconds})"
+            raise PlanValidationError(
+                message,
+                [
+                    PlanError(
+                        code=PlanErrorCode.OP_TIMESTAMP_OUT_OF_RANGE,
+                        op=self.op,
+                        field="timestamp",
+                        value=self.timestamp,
+                        limit=meta.total_seconds,
+                        predicted_duration=meta.total_seconds,
+                    )
+                ],
+            )
         freeze_count = round(self.duration * meta.fps)
         if self.position in ("after", "before"):
             new_count = meta.frame_count + freeze_count

@@ -130,23 +130,51 @@ keeps working) carrying structured `.errors` — each a `PlanError` with a
 For dry-run validation without disk access, pass a pre-built
 `VideoMetadata` to `validate_with_metadata(meta_or_dict, context=...)`.
 
-### Repairing window overruns
+### Parse vs. validate
 
-When a duration-shrinking op (`cut`, `speed_change`, `silence_removal`)
-precedes a windowed effect, the effect's `window.stop` can land past the
-shortened clip. `run()` clamps it silently, but `validate()` rejects it by
-default. To reconcile the two:
+Parsing (`from_dict`) owns the plan **shape** (field types, required
+fields, unknown ops). The numeric **bounds** of the skeleton — segment
+`start`/`end` and effect `window` ranges — are owned by validation, not
+parse: a negative `window.start` or a `start >= end` segment *parses* and
+is reported by `validate`/`check`. This keeps every numeric violation a
+structured, collectable, repairable `PlanError`.
 
-- `validate(clamp_windows=True)` (also on `validate_with_metadata`) clamps
-  each overrunning `window.stop` to the predicted duration instead of
-  raising. Only `window.stop` is clamped; an out-of-range `window.start`
-  still raises.
-- `repair(source_metadata, context=...)` returns `(repaired_edit, clamps)`
-  — a corrected copy of the plan plus the list of `WindowClamp` records —
-  leaving the original untouched. It clamps `window.stop` *only*; it is not
-  a full validator, so `validate()` the returned plan before running it.
-  Prefer `validate(clamp_windows=True)` unless you need the repaired plan
-  object back.
+### Collecting every error (`check`)
+
+`check(source_metadata, context=..., clamp_windows=...)` is the
+non-raising sibling of `validate_with_metadata`: it runs the same dry-run
+but accumulates **every** `PlanError` and returns the list (`[]` == valid),
+best-effort isolating failures per segment/op. Use it to re-prompt an LLM
+once with all problems instead of one-at-a-time.
+
+### Repairing the mechanical violations (`repair`)
+
+`repair(source_metadata, context=..., clamp_op_params=True,
+clamp_segment_end=False)` returns `(repaired_edit, repairs)` — a corrected
+deep copy plus a `list[PlanRepair]` changelog (`location`, `field`, `old`,
+`new`, `code`), leaving the original untouched. It clamps only the
+unambiguous cases:
+
+- effect `window.start`/`window.stop` into `[0, duration]` (segment ops
+  and `post_operations`);
+- op time fields past the clip end (e.g. `freeze_frame.timestamp`), generic
+  via each op's declared `time_fields`;
+- a negative segment `start` → `0`, and with `clamp_segment_end=True` a
+  segment `end` past the source → the source end.
+
+It never invents intent — a concat mismatch or `end <= start` is left for
+`check()` / re-prompting — and never raises on an unrepairable op. A
+clampable `window.stop` overrun (a duration-shrinking op before a windowed
+effect) is the case `run()` already tolerates; `validate(clamp_windows=True)`
+and `check(..., clamp_windows=True)` won't report it either.
+
+### Normalizing concat geometry (`normalize_dimensions`)
+
+`normalize_dimensions(target, source_metadata, context=...)` appends a
+per-segment `resize` to a common canvas — `target` is an explicit
+`(width, height)`, `"first"`, or `"largest"` — so the "all segments share
+dimensions" concat invariant holds by construction. Returns
+`(normalized_edit, repairs)`.
 
 ## Matching Sources
 
@@ -175,6 +203,14 @@ schema = VideoEdit.json_schema()
 # tools=[{"input_schema": schema}]            # Anthropic
 # tools=[{"type": "function", "function": {"parameters": schema}}]  # OpenAI
 ```
+
+Pass `strict=True` (`VideoEdit.json_schema(strict=True)` /
+`Operation.json_schema(strict=True)`) for a provider strict-mode grammar:
+every object closed (`additionalProperties: false`), all properties
+`required` with optionals made nullable, and the op union expressed as an
+`anyOf` of closed variants without a `discriminator` keyword. Numeric
+constraints are preserved, so grammar-constrained decoding makes simple
+bound violations impossible at decode time.
 
 ## API Reference
 

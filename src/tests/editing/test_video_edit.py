@@ -58,13 +58,25 @@ class TestConstruction:
         edit = VideoEdit(segments=[segment])
         assert len(edit.segments) == 1
 
-    def test_segment_end_must_exceed_start(self):
-        with pytest.raises(ValidationError, match="must be greater than start"):
-            SegmentConfig(source=Path("a.mp4"), start=2.0, end=1.0)
+    def test_segment_range_parses_permissively(self):
+        # Permissive parse: a segment's numeric bounds (end > start, start >= 0)
+        # are owned by validate/check, not by SegmentConfig parsing. Both of
+        # these now construct; the bound is reported at validate time.
+        assert SegmentConfig(source=Path("a.mp4"), start=2.0, end=1.0).end == 1.0
+        assert SegmentConfig(source=Path("a.mp4"), start=-1.0, end=2.0).start == -1.0
 
-    def test_segment_start_negative_rejected(self):
-        with pytest.raises(ValidationError):
-            SegmentConfig(source=Path("a.mp4"), start=-1.0, end=2.0)
+    def test_segment_end_must_exceed_start_at_validate(self):
+        plan = {"segments": [_segment(start=2.0, end=1.0)]}
+        with pytest.raises(PlanValidationError, match="must be greater than start") as exc:
+            VideoEdit.from_dict(plan).validate_with_metadata(SMALL_VIDEO_METADATA)
+        assert exc.value.errors[0].code is PlanErrorCode.SEGMENT_RANGE
+
+    def test_segment_start_negative_at_validate(self):
+        plan = {"segments": [_segment(start=-1.0, end=2.0)]}
+        errs = VideoEdit.from_dict(plan).check(SMALL_VIDEO_METADATA)
+        assert errs[0].code is PlanErrorCode.SEGMENT_NEGATIVE
+        assert errs[0].location == "segments[0]"
+        assert errs[0].field == "start"
 
     def test_extra_segment_key_rejected(self):
         with pytest.raises(ValidationError, match="extra_forbidden|Extra inputs"):
@@ -391,7 +403,7 @@ class TestValidation:
             VideoEdit.from_dict(plan).validate()
 
 
-class TestWindowClamp:
+class TestClampWindows:
     """Window-stop clamping at validate (clamp_windows) and its run() parity."""
 
     @staticmethod
@@ -668,43 +680,41 @@ class TestParseErrors:
                 {"segments": [_segment(operations=[{"op": "blur_effect", "mode": "constant", "iterations": 0}])]}
             )
 
-    def test_window_stop_before_start_rejected(self):
-        with pytest.raises(ValidationError, match="must be >="):
-            VideoEdit.from_dict(
-                {
-                    "segments": [
-                        _segment(
-                            operations=[
-                                {
-                                    "op": "blur_effect",
-                                    "mode": "constant",
-                                    "iterations": 1,
-                                    "window": {"start": 2.0, "stop": 1.0},
-                                }
-                            ]
-                        )
+    def test_window_stop_before_start_at_validate(self):
+        # Permissive parse: an out-of-order window parses, the order check is
+        # owned by validate/check (WINDOW_ORDER), not by TimeRange parsing.
+        plan = {
+            "segments": [
+                _segment(
+                    operations=[
+                        {
+                            "op": "blur_effect",
+                            "mode": "constant",
+                            "iterations": 1,
+                            "window": {"start": 2.0, "stop": 1.0},
+                        }
                     ]
-                }
-            )
+                )
+            ]
+        }
+        edit = VideoEdit.from_dict(plan)  # parses fine
+        with pytest.raises(PlanValidationError, match="must be >=") as exc:
+            edit.validate_with_metadata(SMALL_VIDEO_METADATA)
+        assert exc.value.errors[0].code is PlanErrorCode.WINDOW_ORDER
 
-    def test_window_negative_start_rejected(self):
-        with pytest.raises(ValidationError):
-            VideoEdit.from_dict(
-                {
-                    "segments": [
-                        _segment(
-                            operations=[
-                                {
-                                    "op": "blur_effect",
-                                    "mode": "constant",
-                                    "iterations": 1,
-                                    "window": {"start": -1.0},
-                                }
-                            ]
-                        )
-                    ]
-                }
-            )
+    def test_window_negative_start_at_validate(self):
+        plan = {
+            "segments": [
+                _segment(
+                    operations=[{"op": "blur_effect", "mode": "constant", "iterations": 1, "window": {"start": -1.0}}]
+                )
+            ]
+        }
+        edit = VideoEdit.from_dict(plan)  # parses fine
+        errs = edit.check(SMALL_VIDEO_METADATA)
+        assert errs[0].code is PlanErrorCode.WINDOW_NEGATIVE
+        assert errs[0].location == "segments[0].operations[0]"
+        assert errs[0].field == "window.start"
 
 
 # --------------------------------------------------------------- context injection

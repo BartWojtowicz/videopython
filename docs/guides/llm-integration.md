@@ -40,6 +40,17 @@ plan it cannot fill in; pass `include_server_only=True` to
 `Operation.json_schema()` for the full union. AI ops appear in the union
 only after `import videopython.ai`.
 
+For providers with a strict structured-output **grammar**
+(`response_format: json_schema`, strict mode), pass `strict=True`:
+`VideoEdit.json_schema(strict=True)` / `Operation.json_schema(strict=True)`
+emit a closed schema (every object `additionalProperties: false`, all
+properties `required` with optionals made nullable, the op union as an
+`anyOf` of closed variants with no `discriminator`). Grammar-constraining
+the decode makes a whole class of bound violations (`window.start >= 0`,
+enums, required fields) impossible up front. Cross-field constraints
+(`timestamp < duration`, segment-dim equality) can't live in a grammar —
+those stay with `check()` / `repair()` / `normalize_dimensions()`.
+
 ### Anthropic tool use
 
 ```python
@@ -139,61 +150,97 @@ for op_id, cls in Operation.llm_registry().items():
 
 ## Validation Before Execution
 
-`VideoEdit.validate()` chains each op's `predict_metadata` across the
-plan and checks segment bounds, effect windows, and concatenation
-compatibility. Catches:
+### Parse vs. validate
 
-- Invalid time ranges (`start >= end`, `end > source duration`)
-- Effect `window` outside the predicted segment duration
-- Incompatible segment dimensions/fps for concatenation
-- Unknown operation IDs (`Pydantic ValidationError` raised by
-  `from_dict`)
-- Out-of-range parameter values (also at `from_dict` time)
+Parsing (`from_dict`) owns the **shape**: field types, required fields,
+unknown ops, extra fields, and op-local structural rules (e.g. `resize`
+needs at least one dimension) all surface as a Pydantic `ValidationError`.
+The numeric **bounds** of the plan skeleton — segment `start`/`end` and
+effect `window` ranges — are deliberately *not* enforced at parse. A
+negative `window.start` or a `start >= end` segment now *parses fine* and
+is reported by validation instead. This keeps one code path for the
+refine loop and makes every numeric violation collectable and repairable.
 
-Validation failures raise `PlanValidationError`, which **subclasses
-`ValueError`** (so `except ValueError` still works) and additionally
-carries a list of structured `PlanError`s — `code` (a small enum),
-`location` (e.g. `"segments[1].operations[0]"`), `field`, `value`,
-`limit` — so an agent can branch on the failure class instead of
-substring-matching the message:
+`VideoEdit.validate()` (or `validate_with_metadata(meta)` to avoid disk)
+chains each op's `predict_metadata` across the plan and checks segment
+bounds, effect windows, and concatenation compatibility. It raises
+`PlanValidationError` on the **first** failure — a `ValueError` subclass
+(so `except ValueError` still works) carrying structured `PlanError`s:
+`code` (a small enum), `location` (e.g. `"segments[1].operations[0]"`),
+`field`, `value`, `limit`. Branch on `code` instead of matching prose.
 
-```python
-from videopython.base.exceptions import PlanValidationError
+### Collect every error at once: `check()`
 
-edit = VideoEdit.from_dict(plan)
-try:
-    predicted = edit.validate()
-    print(f"Output: {predicted.width}x{predicted.height}, "
-          f"{predicted.total_seconds:.1f}s")
-except PlanValidationError as e:
-    for err in e.errors:
-        print(f"{err.code} at {err.location}: {err.field}={err.value}")
-    # Feed `str(e)` (the human message) or `e.errors` back to the LLM to retry
-```
-
-This makes it cheap to let an LLM retry: validate, return the error,
-ask the LLM to fix it.
-
-### Auto-repairing window overruns
-
-A common, mechanical failure: a duration-shrinking op (`cut`,
-`speed_change`, `silence_removal`) ordered *before* a windowed effect
-leaves the effect's `window.stop` past the now-shorter clip. `run()`
-silently clamps it, but `validate()` raises by default. Pass
-`clamp_windows=True` to make `validate()` clamp each overrunning
-`window.stop` to the run-time value instead of raising, or call
-`edit.repair(source_metadata)` to get back a corrected plan plus the list
-of clamps applied — no extra LLM round-trip:
+For a refine loop, raising on the first problem means whack-a-mole across
+your retry budget. `check()` is the non-raising sibling: it runs the same
+dry-run but **accumulates every error in one pass** and returns the
+`PlanError` list (empty means valid). Every plan-validation failure is
+structured, so nothing escapes as a bare `ValueError`.
 
 ```python
-predicted = edit.validate(clamp_windows=True)        # don't reject clampable overruns
-fixed_edit, clamps = edit.repair(source_metadata)    # or get a repaired plan back
+errors = edit.check(source_metadata)          # [] == valid
+for err in errors:
+    print(f"{err.code} at {err.location}: {err.field}={err.value}")
+# Re-prompt once with the full structured list instead of one-at-a-time
 ```
 
-`repair()` clamps `window.stop` only — it is not a full validator (a
-`window.start` overrun, concat mismatch, or bad source still stands), so
-`validate()` the returned plan before running it. For most flows
-`validate(clamp_windows=True)` is the simpler path.
+### Auto-repair the mechanical violations: `repair()`
+
+Most mechanical faults need no LLM at all — clamping is the obvious fix.
+`repair(source_metadata)` returns a corrected copy of the plan plus a
+structured changelog (`list[PlanRepair]`), clamping only the unambiguous
+cases and never inventing intent:
+
+- effect `window.start`/`window.stop` into `[0, duration]` (negatives →
+  `0`, overruns → `duration`), for both segment and `post_operations`;
+- time-valued op params past the clip end (e.g. `freeze_frame.timestamp`)
+  into range — generic via each op's declared bounded time fields;
+- a negative segment `start` → `0`;
+- with `clamp_segment_end=True`, a segment `end` past the source → the
+  source end (off by default, since it changes editorial intent).
+
+```python
+fixed_edit, repairs = edit.repair(source_metadata)   # clamp the mechanical majority
+for r in repairs:
+    print(f"{r.code}: {r.location}.{r.field} {r.old} -> {r.new}")  # surface to the user
+```
+
+Genuinely semantic problems (a concat dimension mismatch, an
+`end <= start` range) are left intact for re-prompting, so always
+`check()`/`validate()` the returned plan before running it. `repair()`
+never raises on an unrepairable op — it leaves it for `check()` to report.
+
+### Normalize concat geometry: `normalize_dimensions()`
+
+The one class you cannot cleanly repair in your own layer is a
+`CONCAT_MISMATCH` — detecting it needs each segment's *predicted post-op*
+dimensions and fixing it needs a per-segment resize inserted *before*
+concat. `normalize_dimensions(target, source_metadata)` does it for you,
+appending a `resize` to every segment whose predicted output differs from
+the `target` (an explicit `(w, h)`, `"first"`, or `"largest"`) and
+returning the same `PlanRepair` changelog. The "all segments share
+dimensions" invariant becomes satisfiable by construction.
+
+```python
+norm_edit, repairs = edit.normalize_dimensions((1080, 1920), source_metadata)
+```
+
+### The full refine loop
+
+```python
+edit = VideoEdit.from_dict(plan)                       # permissive parse
+edit, repairs = edit.repair(source_metadata)           # clamp the mechanical ones
+edit, dim_repairs = edit.normalize_dimensions("largest", source_metadata)
+errors = edit.check(source_metadata)                   # whatever's left, all at once
+if errors:
+    ...  # re-prompt with the previous plan + the full structured error list
+```
+
+A clampable `window.stop` overrun (a duration-shrinking op like `cut` /
+`speed_change` ordered before a windowed effect leaves the stop past the
+now-shorter clip) is the one case `run()` already tolerates by clamping.
+`validate(clamp_windows=True)` / `check(..., clamp_windows=True)` won't
+report it either; `repair()` clamps it in the returned plan.
 
 ## Context Data
 

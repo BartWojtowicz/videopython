@@ -24,36 +24,27 @@ import subprocess
 import tempfile
 import warnings
 from pathlib import Path
-from typing import Annotated, Any, NamedTuple, Protocol, runtime_checkable
+from typing import Annotated, Any, Literal, Protocol, runtime_checkable
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SerializeAsAny, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SerializeAsAny
 
 from videopython.audio import Audio, AudioLoadError
-from videopython.base.exceptions import PlanError, PlanErrorCode, PlanValidationError
+from videopython.base.exceptions import PlanError, PlanErrorCode, PlanRepair, PlanValidationError
 from videopython.base.video import ALLOWED_VIDEO_FORMATS, ALLOWED_VIDEO_PRESETS, Video, VideoMetadata
 from videopython.editing.effects import Effect, Fade, VolumeAdjust
-from videopython.editing.operation import FilterCtx, Operation
+from videopython.editing.operation import FilterCtx, Operation, _to_strict_schema
 from videopython.editing.streaming import EffectScheduleEntry, StreamingSegmentPlan, concat_files, stream_segment
-from videopython.editing.transforms import DURATION_EPS, CutSeconds
+from videopython.editing.transforms import DURATION_EPS, CutSeconds, Resize
 
 __all__ = [
     "SegmentConfig",
     "VideoEdit",
-    "WindowClamp",
 ]
 
-
-class WindowClamp(NamedTuple):
-    """A single ``window.stop`` repair record produced by :meth:`VideoEdit.repair`.
-
-    ``location`` is the plan path of the clamped op (e.g.
-    ``'segments[0].operations[1]'``); ``field`` is always ``'window.stop'``.
-    """
-
-    location: str
-    field: str
-    old: float
-    new: float
+# A located, human-readable validation failure: (message, structured PlanError).
+# Helpers return these so the validation walker can either raise the first
+# (``validate``, byte-stable prose) or accumulate them all (``check``).
+_LocatedError = tuple[str, PlanError]
 
 
 def _resolve_operation(value: Any) -> Operation:
@@ -171,43 +162,155 @@ def _predict_with_context(
     return op.predict_metadata(meta)
 
 
-def _validate_effect_window(op: Operation, duration: float, location: str | None = None) -> None:
-    """Bounds-check :attr:`Effect.window` against the predicted duration."""
+def _segment_end_exceeds_source(index: int, seg: SegmentConfig, meta: VideoMetadata) -> _LocatedError:
+    """The located ``SEGMENT_END_EXCEEDS_SOURCE`` error for ``seg.end`` past source."""
+    message = f"Segment {index}: end ({seg.end}) exceeds source duration ({meta.total_seconds}s)"
+    return message, PlanError(
+        code=PlanErrorCode.SEGMENT_END_EXCEEDS_SOURCE,
+        location=f"segments[{index}]",
+        field="end",
+        value=seg.end,
+        limit=meta.total_seconds,
+        predicted_duration=meta.total_seconds,
+    )
+
+
+def _segment_bounds_errors(index: int, seg: SegmentConfig, meta: VideoMetadata) -> list[_LocatedError]:
+    """Every numeric-bound failure of a segment's ``start``/``end``, in order.
+
+    These checks moved off the (now permissive) ``SegmentConfig`` model so a
+    bad range becomes a collectable, repairable :class:`PlanError` instead of a
+    hard ``from_dict`` failure. Order is the raise order for ``validate``:
+    negative ``start``, negative ``end``, ``end <= start``, then ``end`` past
+    the source. A segment with any of these cannot be cut, so the caller skips
+    its op chain.
+    """
+    out: list[_LocatedError] = []
+    loc = f"segments[{index}]"
+    if seg.start < 0:
+        out.append(
+            (
+                f"Segment {index}: start ({seg.start}) must be >= 0",
+                PlanError(code=PlanErrorCode.SEGMENT_NEGATIVE, location=loc, field="start", value=seg.start, limit=0.0),
+            )
+        )
+    if seg.end < 0:
+        out.append(
+            (
+                f"Segment {index}: end ({seg.end}) must be >= 0",
+                PlanError(code=PlanErrorCode.SEGMENT_NEGATIVE, location=loc, field="end", value=seg.end, limit=0.0),
+            )
+        )
+    if seg.end <= seg.start:
+        out.append(
+            (
+                f"Segment {index}: end ({seg.end}) must be greater than start ({seg.start})",
+                PlanError(code=PlanErrorCode.SEGMENT_RANGE, location=loc, field="end", value=seg.end, limit=seg.start),
+            )
+        )
+    if seg.end > meta.total_seconds + DURATION_EPS:
+        out.append(_segment_end_exceeds_source(index, seg, meta))
+    return out
+
+
+def _window_errors(op: Operation, duration: float, location: str) -> list[_LocatedError]:
+    """Every bound failure of an :attr:`Effect.window`, in raise order.
+
+    Subsumes the old window-vs-duration check and the negative/order checks that
+    moved off the (now permissive) ``TimeRange`` model: negative ``start``,
+    negative ``stop``, ``stop < start``, ``start`` past duration, ``stop`` past
+    duration. A ``stop`` clamped to ``duration`` by ``clamp_windows`` no longer
+    overruns, so the final check stays silent for it (matching ``run()``).
+    """
     if not isinstance(op, Effect) or op.window is None:
-        return
+        return []
+    out: list[_LocatedError] = []
+    start, stop = op.window.start, op.window.stop
     eps = DURATION_EPS
-    if op.window.start is not None and op.window.start > duration + eps:
-        message = f"Effect '{op.op}' window.start ({op.window.start}) exceeds duration ({duration}s)"
-        raise PlanValidationError(
-            message,
-            [
-                PlanError(
-                    code=PlanErrorCode.EFFECT_WINDOW_EXCEEDS_DURATION,
-                    location=location,
-                    op=op.op,
-                    field="window.start",
-                    value=op.window.start,
-                    limit=duration,
-                    predicted_duration=duration,
-                )
-            ],
+    if start is not None and start < 0:
+        out.append(
+            (
+                f"Effect '{op.op}' window.start ({start}) must be >= 0",
+                PlanError(PlanErrorCode.WINDOW_NEGATIVE, location, op.op, "window.start", start, 0.0),
+            )
         )
-    if op.window.stop is not None and op.window.stop > duration + eps:
-        message = f"Effect '{op.op}' window.stop ({op.window.stop}) exceeds duration ({duration}s)"
-        raise PlanValidationError(
-            message,
-            [
-                PlanError(
-                    code=PlanErrorCode.EFFECT_WINDOW_EXCEEDS_DURATION,
-                    location=location,
-                    op=op.op,
-                    field="window.stop",
-                    value=op.window.stop,
-                    limit=duration,
-                    predicted_duration=duration,
-                )
-            ],
+    if stop is not None and stop < 0:
+        out.append(
+            (
+                f"Effect '{op.op}' window.stop ({stop}) must be >= 0",
+                PlanError(PlanErrorCode.WINDOW_NEGATIVE, location, op.op, "window.stop", stop, 0.0),
+            )
         )
+    if start is not None and stop is not None and stop < start:
+        out.append(
+            (
+                f"Effect '{op.op}' window.stop ({stop}) must be >= start ({start})",
+                PlanError(PlanErrorCode.WINDOW_ORDER, location, op.op, "window.stop", stop, start),
+            )
+        )
+    if start is not None and start > duration + eps:
+        out.append(
+            (
+                f"Effect '{op.op}' window.start ({start}) exceeds duration ({duration}s)",
+                PlanError(
+                    PlanErrorCode.EFFECT_WINDOW_EXCEEDS_DURATION,
+                    location,
+                    op.op,
+                    "window.start",
+                    start,
+                    duration,
+                    duration,
+                ),
+            )
+        )
+    if stop is not None and stop > duration + eps:
+        out.append(
+            (
+                f"Effect '{op.op}' window.stop ({stop}) exceeds duration ({duration}s)",
+                PlanError(
+                    PlanErrorCode.EFFECT_WINDOW_EXCEEDS_DURATION,
+                    location,
+                    op.op,
+                    "window.stop",
+                    stop,
+                    duration,
+                    duration,
+                ),
+            )
+        )
+    return out
+
+
+def _concat_errors(metas: list[VideoMetadata]) -> list[_LocatedError]:
+    """``CONCAT_MISMATCH`` errors for fps/dimension divergence across segments."""
+    if len(metas) <= 1:
+        return []
+    out: list[_LocatedError] = []
+    first = metas[0]
+    for j, other in enumerate(metas[1:], start=1):
+        if first.fps != other.fps:
+            out.append(
+                (
+                    f"Segment 0 fps ({first.fps}) != segment {j} fps ({other.fps}); "
+                    "all segments must share fps for concatenation.",
+                    PlanError(
+                        PlanErrorCode.CONCAT_MISMATCH,
+                        location=f"segments[{j}]",
+                        field="fps",
+                        value=other.fps,
+                        limit=first.fps,
+                    ),
+                )
+            )
+        if (first.width, first.height) != (other.width, other.height):
+            out.append(
+                (
+                    f"Segment 0 dimensions ({first.width}x{first.height}) != "
+                    f"segment {j} ({other.width}x{other.height}); all segments must share dimensions.",
+                    PlanError(PlanErrorCode.CONCAT_MISMATCH, location=f"segments[{j}]", field="dimensions"),
+                )
+            )
+    return out
 
 
 def _clamp_effect_window(op: Operation, duration: float) -> Operation:
@@ -215,9 +318,9 @@ def _clamp_effect_window(op: Operation, duration: float) -> Operation:
 
     Mirrors :meth:`Effect._resolved_window`'s run-time ``min(stop, total_seconds)``
     so a stop overrunning a duration-shrunk chain validates instead of raising.
-    ``TimeRange`` is ``frozen=True``, so the repair builds replacement copies via
-    ``model_copy(update=...)`` rather than mutating in place. ``window.start`` is
-    deliberately left untouched -- an out-of-range start still hard-raises.
+    This is the narrow ``clamp_windows`` repair: ``window.start`` and negative
+    bounds are deliberately left untouched (still reported by ``_window_errors``).
+    :meth:`VideoEdit.repair` uses the broader :func:`_repair_effect_window`.
     """
     if not isinstance(op, Effect) or op.window is None or op.window.stop is None:
         return op
@@ -227,35 +330,103 @@ def _clamp_effect_window(op: Operation, duration: float) -> Operation:
     return op.model_copy(update={"window": clamped_window})
 
 
-def _cut_meta_for_segment(index: int, seg: SegmentConfig, meta: VideoMetadata) -> VideoMetadata:
-    """Predict a segment's post-cut metadata, raising located plan errors.
+def _repair_effect_window(op: Operation, duration: float) -> tuple[Operation, list[PlanRepair]]:
+    """Clamp an :attr:`Effect.window`'s ``start``/``stop`` into ``[0, duration]``.
 
-    The cut step shared by :meth:`VideoEdit._validate` and :meth:`VideoEdit.repair`:
-    a segment ``end`` past the source raises ``SEGMENT_END_EXCEEDS_SOURCE`` (rather
-    than the index-less ``CUT_EXCEEDS_DURATION`` ``CutSeconds`` would raise), and any
-    error ``CutSeconds`` does raise is tagged with the segment index.
+    The repair counterpart to :func:`_window_errors`: a negative endpoint snaps
+    to ``0`` (``WINDOW_NEGATIVE``); one past the duration snaps to ``duration``
+    (``EFFECT_WINDOW_EXCEEDS_DURATION``). Returns the (possibly new) op and a
+    :class:`PlanRepair` per change with an empty ``location`` the caller fills
+    in. A ``stop < start`` left after clamping is deliberately not invented away
+    -- it stays for ``check``/``validate`` to report.
     """
-    if seg.end > meta.total_seconds + DURATION_EPS:
-        message = f"Segment {index}: end ({seg.end}) exceeds source duration ({meta.total_seconds}s)"
-        raise PlanValidationError(
-            message,
-            [
-                PlanError(
-                    code=PlanErrorCode.SEGMENT_END_EXCEEDS_SOURCE,
-                    location=f"segments[{index}]",
-                    field="end",
-                    value=seg.end,
-                    limit=meta.total_seconds,
-                    predicted_duration=meta.total_seconds,
-                )
-            ],
-        )
-    try:
-        return CutSeconds(start=seg.start, end=seg.end).predict_metadata(meta)
-    except PlanValidationError as e:
-        for err in e.errors:
-            err.location = f"segments[{index}]" if err.location is None else f"segments[{index}].{err.location}"
-        raise
+    if not isinstance(op, Effect) or op.window is None:
+        return op, []
+    start, stop = op.window.start, op.window.stop
+    new_start, new_stop = start, stop
+    changes: list[PlanRepair] = []
+    if start is not None and start < 0:
+        new_start = 0.0
+        changes.append(PlanRepair("", "window.start", start, 0.0, PlanErrorCode.WINDOW_NEGATIVE))
+    elif start is not None and start > duration:
+        new_start = duration
+        changes.append(PlanRepair("", "window.start", start, duration, PlanErrorCode.EFFECT_WINDOW_EXCEEDS_DURATION))
+    if stop is not None and stop < 0:
+        new_stop = 0.0
+        changes.append(PlanRepair("", "window.stop", stop, 0.0, PlanErrorCode.WINDOW_NEGATIVE))
+    elif stop is not None and stop > duration:
+        new_stop = duration
+        changes.append(PlanRepair("", "window.stop", stop, duration, PlanErrorCode.EFFECT_WINDOW_EXCEEDS_DURATION))
+    if not changes:
+        return op, []
+    new_window = op.window.model_copy(update={"start": new_start, "stop": new_stop})
+    return op.model_copy(update={"window": new_window}), changes
+
+
+def _clamp_time_fields(op: Operation, meta: VideoMetadata) -> tuple[Operation, list[PlanRepair]]:
+    """Clamp every declared :attr:`Operation.time_fields` value into range.
+
+    Generic over the op's :class:`BoundedTimeField` declarations: the lower
+    bound is ``0``; the upper is the clip duration, or -- for ``exclusive_end``
+    fields that index a frame (``freeze_frame.timestamp``) -- the last
+    addressable frame ``(frame_count - 1) / fps``. Only an *out-of-range* value
+    is touched (and recorded as an ``OP_TIMESTAMP_OUT_OF_RANGE``
+    :class:`PlanRepair` with a caller-filled ``location``); an in-range value is
+    left exactly as written -- no rounding, no phantom changelog entry.
+    """
+    changes: list[PlanRepair] = []
+    new_op = op
+    for tf in op.time_fields:
+        value = getattr(new_op, tf.name)
+        if value is None:
+            continue
+        upper = max(0.0, (meta.frame_count - 1) / meta.fps if tf.exclusive_end else meta.total_seconds)
+        if value < 0 or value > upper:
+            clamped = round(min(max(value, 0.0), upper), 4)
+            new_op = new_op.model_copy(update={tf.name: clamped})
+            changes.append(PlanRepair("", tf.name, value, clamped, PlanErrorCode.OP_TIMESTAMP_OUT_OF_RANGE))
+    return new_op, changes
+
+
+def _repair_op_chain(
+    ops: list[Operation],
+    meta: VideoMetadata,
+    context: dict[str, Any] | None,
+    location_prefix: str,
+    *,
+    clamp: bool,
+) -> tuple[list[Operation], list[PlanRepair], VideoMetadata | None]:
+    """Clamp an op chain's windows / time-fields, predicting forward to track duration.
+
+    Shared by :meth:`VideoEdit.repair` for both a segment's ``operations``
+    (``location_prefix='segments[i].operations'``) and the plan's
+    ``post_operations`` (``location_prefix='post_operations'``). Each op (while
+    the running duration is still known) gets :func:`_repair_effect_window` +
+    :func:`_clamp_time_fields` applied, with ``f'{location_prefix}[op_index]'``
+    stamped onto every :class:`PlanRepair`. The first op that cannot be
+    predicted ends clamping -- the rest are kept verbatim (we can't know the
+    duration past it) and the returned running meta is ``None`` so the caller
+    knows the chain broke.
+    """
+    new_ops: list[Operation] = []
+    repairs: list[PlanRepair] = []
+    running: VideoMetadata | None = meta
+    for op_index, op in enumerate(ops):
+        if clamp and running is not None:
+            location = f"{location_prefix}[{op_index}]"
+            op, win_changes = _repair_effect_window(op, running.total_seconds)
+            op, time_changes = _clamp_time_fields(op, running)
+            for change in (*win_changes, *time_changes):
+                change.location = location
+                repairs.append(change)
+        new_ops.append(op)
+        if running is None:
+            continue
+        try:
+            running = _predict_with_context(op, running, context)
+        except (ValueError, TypeError):
+            running = None
+    return new_ops, repairs, running
 
 
 class SegmentConfig(BaseModel):
@@ -264,8 +435,11 @@ class SegmentConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     source: Path = Field(description="Path to the source video file.")
-    start: float = Field(ge=0, description="Segment start time in seconds.")
-    end: float = Field(ge=0, description="Segment end time in seconds.")
+    # Parsing is permissive (plain floats, no ge=0 / end>start): the numeric
+    # bounds are owned by validate/check/repair as structured PlanErrors. See
+    # `_segment_bounds_errors` and the VideoEdit class docstring.
+    start: float = Field(description="Segment start time in seconds.")
+    end: float = Field(description="Segment end time in seconds.")
     operations: list[OperationInput] = Field(
         default_factory=list,
         description=(
@@ -273,12 +447,6 @@ class SegmentConfig(BaseModel):
             "Each item is an Operation discriminated by its `op` field."
         ),
     )
-
-    @model_validator(mode="after")
-    def _validate_range(self) -> SegmentConfig:
-        if self.end <= self.start:
-            raise ValueError(f"end ({self.end}) must be greater than start ({self.start})")
-        return self
 
     @property
     def duration(self) -> float:
@@ -313,7 +481,19 @@ class SegmentConfig(BaseModel):
 
 
 class VideoEdit(BaseModel):
-    """A multi-segment editing plan."""
+    """A multi-segment editing plan.
+
+    **Parse vs. validate.** Parsing (``from_dict``/``model_validate``) owns the
+    *shape*: field types, required fields, unknown-op/extra-field rejection, and
+    op-local structural rules (e.g. ``resize`` needs a dimension) surface as a
+    Pydantic ``ValidationError``. The numeric *bounds* of the plan skeleton --
+    segment ``start``/``end`` and effect ``window`` ranges -- are deliberately
+    **not** enforced at parse; they are owned by :meth:`validate` / :meth:`check`
+    / :meth:`repair`, which report them as structured :class:`PlanError`s. This
+    keeps one code path for the LLM refine loop: ``from_dict`` (permissive) ->
+    :meth:`repair` (clamp the mechanical ones) -> :meth:`check` (collect whatever
+    remains) -> re-prompt with the full structured error list.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -364,7 +544,7 @@ class VideoEdit(BaseModel):
         return self.model_dump(mode="json", exclude_none=False)
 
     @classmethod
-    def json_schema(cls) -> dict[str, Any]:
+    def json_schema(cls, *, strict: bool = False) -> dict[str, Any]:
         """LLM-facing schema: a discriminated union of operations per slot.
 
         A thin transform over the Pydantic models, so it cannot drift from
@@ -375,7 +555,20 @@ class VideoEdit(BaseModel):
         surfaces here automatically; in particular ``source`` carries its
         ``"format": "path"``. The Draft-07 ``$schema`` envelope and the default
         ``operations`` array shape are preserved for downstream LLM tooling.
+
+        With ``strict=True`` the result is a provider strict-mode grammar
+        (closed objects, all properties ``required`` with optionals made
+        nullable, the op union as ``anyOf`` of closed variants). See
+        :meth:`Operation.json_schema` for the strict-mode contract. Use it as a
+        ``response_format: json_schema`` grammar so simple bound violations
+        (``window.start >= 0``, enums, required fields) become impossible at
+        decode time. Cross-field constraints (``timestamp < duration``,
+        segment-dim equality) cannot live in a grammar and stay with
+        :meth:`check` / :meth:`repair` / :meth:`normalize_dimensions`.
         """
+        # Build the permissive envelope, then (if strict) run one closing pass
+        # over the whole thing -- including the embedded op union -- so the
+        # hand-built segment/top-level objects are closed and required too.
         op_schema = Operation.json_schema()
 
         def _field(model: type[BaseModel], field_name: str) -> dict[str, Any]:
@@ -409,7 +602,7 @@ class VideoEdit(BaseModel):
         }
         segments = _field(cls, "segments")
         segments["items"] = segment_schema
-        return {
+        schema = {
             "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "description": cls.__doc__,
@@ -422,6 +615,7 @@ class VideoEdit(BaseModel):
             "required": ["segments"],
             "additionalProperties": False,
         }
+        return _to_strict_schema(schema) if strict else schema
 
     # --------------------------------------------------------------- validate
 
@@ -458,103 +652,260 @@ class VideoEdit(BaseModel):
 
         See :meth:`validate` for the ``clamp_windows`` semantics.
         """
-        if isinstance(source_metadata, VideoMetadata):
-            metas = [source_metadata for _ in self.segments]
-        else:
-            metas = []
-            for i, seg in enumerate(self.segments):
-                key = str(seg.source)
-                if key not in source_metadata:
-                    available = sorted(source_metadata)
-                    raise ValueError(f"Segment {i}: no metadata for '{key}'. Available: {available}")
-                metas.append(source_metadata[key])
+        metas = self._resolve_source_metas(source_metadata)
         return self._validate(metas, context, clamp_windows=clamp_windows)
+
+    def check(
+        self,
+        source_metadata: VideoMetadata | dict[str, VideoMetadata],
+        context: dict[str, Any] | None = None,
+        *,
+        clamp_windows: bool = False,
+    ) -> list[PlanError]:
+        """Collect **every** plan error in one pass; ``[]`` means valid.
+
+        The non-raising sibling of :meth:`validate_with_metadata`: it runs the
+        same dry-run but accumulates instead of aborting on the first failure,
+        so an LLM refine loop can fix all problems in a single re-prompt instead
+        of playing whack-a-mole across a retry budget. Best-effort: each segment
+        is checked against its own source metadata, per-op and per-segment errors
+        collected; a check that cannot run because an earlier one failed (a
+        segment's op chain past a bad cut, the cross-segment concat check when a
+        segment did not produce an output) is skipped rather than aborting.
+
+        Returns the same :class:`PlanError` list that
+        :attr:`PlanValidationError.errors` carries -- every failure is structured
+        (no bare ``ValueError`` escapes the walk), so a consumer branches on
+        ``code`` rather than substring-matching prose. ``clamp_windows`` matches
+        :meth:`validate`: a clampable ``window.stop`` overrun is not reported.
+        """
+        metas = self._resolve_source_metas(source_metadata)
+        _, errors = self._collect(metas, context, clamp_windows=clamp_windows, stop_first=False)
+        return errors
 
     def repair(
         self,
         source_metadata: VideoMetadata | dict[str, VideoMetadata],
         context: dict[str, Any] | None = None,
-    ) -> tuple[VideoEdit, list[WindowClamp]]:
-        """Return a copy of this plan with overrunning ``window.stop``s clamped.
+        *,
+        clamp_op_params: bool = True,
+        clamp_segment_end: bool = False,
+    ) -> tuple[VideoEdit, list[PlanRepair]]:
+        """Return a copy of this plan with the *unambiguous* violations clamped.
 
-        Repairs **only** the one mechanical failure ``run()`` already tolerates: an
-        :class:`Effect` ``window.stop`` that overruns the running predicted duration
-        after a duration-shrinking op. It walks the chain (cut, fps/resolution
-        matching, per-op prediction), clamps each such ``window.stop`` to that
-        duration (the value :meth:`Effect._resolved_window` uses at run time), and
-        records every change as a :class:`WindowClamp`. The returned plan is a deep
-        copy -- ``self`` is left unchanged.
+        Walks the chain (cut, fps/resolution matching, per-op prediction) and
+        clamps only the mechanical faults whose fix is not a judgement call,
+        recording each as a :class:`PlanRepair`. The returned plan is a deep copy
+        (``self`` is untouched); the changelog is meant to be surfaced to the
+        user ("we trimmed your effect to fit"). ``repair`` never *invents* intent
+        -- genuinely semantic problems (a concat dimension mismatch, an
+        ``end <= start`` range) are left for :meth:`check` / re-prompting.
 
-        This is **not** a full validator: ``window.start`` overruns, concat
-        mismatches, and other faults are left intact and will re-surface, so always
-        ``validate()`` the returned plan before running it. For most consumers
-        ``validate(clamp_windows=True)`` is the simpler entry point -- use
-        ``repair()`` only when you need the corrected plan object back. A segment
-        ``end`` past the source still hard-raises here (the plan is unrepairable).
+        With ``clamp_op_params`` (default ``True``) it clamps each effect
+        ``window.start``/``window.stop`` into ``[0, duration]`` and each declared
+        :attr:`Operation.time_fields` value (e.g. ``freeze_frame.timestamp`` past
+        the clip end) into range, plus a negative segment ``start`` to ``0``.
+        With ``clamp_segment_end`` (default ``False``, since it changes editorial
+        intent) it also clamps a segment ``end`` past the source to the source
+        end; left ``False``, that case hard-raises as before. Always
+        :meth:`check` / :meth:`validate` the returned plan before running it.
         """
-        if isinstance(source_metadata, VideoMetadata):
-            metas = [source_metadata for _ in self.segments]
-        else:
-            metas = []
-            for i, seg in enumerate(self.segments):
-                key = str(seg.source)
-                if key not in source_metadata:
-                    available = sorted(source_metadata)
-                    raise ValueError(f"Segment {i}: no metadata for '{key}'. Available: {available}")
-                metas.append(source_metadata[key])
+        metas = self._resolve_source_metas(source_metadata)
+        repairs: list[PlanRepair] = []
 
-        cut_metas = [_cut_meta_for_segment(i, seg, m) for i, (seg, m) in enumerate(zip(self.segments, metas))]
-        matched = self._apply_matching(cut_metas)
-
-        records: list[WindowClamp] = []
-        repaired_segments: list[SegmentConfig] = []
-        for index, (segment, meta) in enumerate(zip(self.segments, matched)):
-            seg_context = _segment_context(context, segment.start, segment.end)
-            new_ops: list[Operation] = []
-            for op_index, op in enumerate(segment.operations):
-                clamped = _clamp_effect_window(op, meta.total_seconds)
-                if clamped is not op:
-                    assert isinstance(op, Effect) and op.window is not None and op.window.stop is not None
-                    records.append(
-                        WindowClamp(
-                            location=f"segments[{index}].operations[{op_index}]",
-                            field="window.stop",
-                            old=op.window.stop,
-                            new=meta.total_seconds,
-                        )
+        # Pass 1: segment-level start/end repairs, and the cut metadata each
+        # surviving segment's op clamps run against.
+        fixed_segments: list[SegmentConfig] = []
+        cut_metas: list[VideoMetadata | None] = []
+        for i, (seg, meta) in enumerate(zip(self.segments, metas)):
+            start, end = seg.start, seg.end
+            if clamp_op_params and start < 0:
+                repairs.append(PlanRepair(f"segments[{i}]", "start", start, 0.0, PlanErrorCode.SEGMENT_NEGATIVE))
+                start = 0.0
+            if end > meta.total_seconds + DURATION_EPS:
+                if clamp_segment_end:
+                    new_end = round(meta.total_seconds, 4)
+                    repairs.append(
+                        PlanRepair(f"segments[{i}]", "end", end, new_end, PlanErrorCode.SEGMENT_END_EXCEEDS_SOURCE)
                     )
-                new_ops.append(clamped)
-                meta = _predict_with_context(clamped, meta, seg_context)
-            repaired_segments.append(segment.model_copy(update={"operations": new_ops}))
+                    end = new_end
+                else:
+                    message, err = _segment_end_exceeds_source(i, seg, meta)
+                    raise PlanValidationError(message, [err])
+            seg = seg.model_copy(update={"start": start, "end": end})
+            fixed_segments.append(seg)
+            repairable = start >= 0 and end > start and end <= meta.total_seconds + DURATION_EPS
+            cut_metas.append(CutSeconds(start=start, end=end).predict_metadata(meta) if repairable else None)
 
-        repaired = self.model_copy(update={"segments": repaired_segments}, deep=True)
-        return repaired, records
+        # Pass 2: per-segment op clamps against the matched cut meta. Capture each
+        # segment's predicted output -- needed to assemble the post-op timeline.
+        present = [(i, m) for i, m in enumerate(cut_metas) if m is not None]
+        matched_by_index = dict(zip((i for i, _ in present), self._apply_matching([m for _, m in present])))
+        final_segments: list[SegmentConfig] = []
+        seg_output_metas: list[VideoMetadata | None] = []
+        for i, seg in enumerate(fixed_segments):
+            seg_meta = matched_by_index.get(i)
+            if seg_meta is None:
+                final_segments.append(seg)
+                seg_output_metas.append(None)
+                continue
+            seg_context = _segment_context(context, seg.start, seg.end)
+            new_ops, op_repairs, out_meta = _repair_op_chain(
+                list(seg.operations),
+                seg_meta,
+                seg_context,
+                f"segments[{i}].operations",
+                clamp=clamp_op_params,
+            )
+            repairs.extend(op_repairs)
+            final_segments.append(seg.model_copy(update={"operations": new_ops}))
+            seg_output_metas.append(out_meta)
 
-    def _assert_post_ops_supported(self, context: dict[str, Any] | None) -> None:
-        """Reject post_operations needing time-based context on a multi-segment plan.
+        # Pass 3: clamp post-op windows / time-fields against the assembled
+        # timeline -- but only when every segment predicted (else its duration is
+        # unknown). A negative post_operations window is the canonical attempt-3
+        # failure, so this matters as much as the per-segment clamps.
+        update: dict[str, Any] = {"segments": final_segments}
+        outputs = [m for m in seg_output_metas if m is not None]
+        if self.post_operations and len(outputs) == len(self.segments):
+            first = outputs[0]
+            assembled = VideoMetadata(
+                height=first.height,
+                width=first.width,
+                fps=first.fps,
+                frame_count=sum(m.frame_count for m in outputs),
+                total_seconds=round(sum(m.total_seconds for m in outputs), 4),
+            )
+            new_post, post_repairs, _ = _repair_op_chain(
+                list(self.post_operations),
+                assembled,
+                context,
+                "post_operations",
+                clamp=clamp_op_params,
+            )
+            repairs.extend(post_repairs)
+            update["post_operations"] = new_post
+
+        repaired = self.model_copy(update=update, deep=True)
+        return repaired, repairs
+
+    def normalize_dimensions(
+        self,
+        target: tuple[int, int] | Literal["first", "largest"],
+        source_metadata: VideoMetadata | dict[str, VideoMetadata],
+        context: dict[str, Any] | None = None,
+    ) -> tuple[VideoEdit, list[PlanRepair]]:
+        """Make every segment concat-compatible by resizing to a common canvas.
+
+        ``CONCAT_MISMATCH`` is the one class a consumer cannot cleanly repair in
+        its own layer: detecting it needs each segment's *predicted post-op*
+        dimensions, and fixing it needs a per-segment resize inserted **before**
+        concat. videopython owns both, so it does it here: predict each segment's
+        output dimensions, pick the ``target`` -- an explicit ``(width, height)``,
+        ``"first"`` (segment 0's output), or ``"largest"`` (greatest area) -- and
+        append a ``resize`` op to every segment whose output differs, recording a
+        :class:`PlanRepair` per insertion. The returned plan satisfies the
+        "all segments share dimensions" invariant by construction.
+
+        Expressed purely as appended ``resize`` ops, so the normal
+        validate/run/stream paths need no special casing. Resizing to an exact
+        canvas can distort aspect when segments genuinely differ -- intended for
+        a plan whose segments already share a target aspect (resolve that
+        upstream). Requires an otherwise-predictable plan; an op that fails
+        prediction raises here (run :meth:`repair`/:meth:`check` first).
+        """
+        metas = self._resolve_source_metas(source_metadata)
+        cut_metas = []
+        for i, (seg, meta) in enumerate(zip(self.segments, metas)):
+            for message, err in _segment_bounds_errors(i, seg, meta):
+                raise PlanValidationError(message, [err])
+            cut_metas.append(CutSeconds(start=seg.start, end=seg.end).predict_metadata(meta))
+        matched = self._apply_matching(cut_metas)
+        outputs = [
+            self._predict_segment(i, seg, meta, context) for i, (seg, meta) in enumerate(zip(self.segments, matched))
+        ]
+
+        if target == "first":
+            tw, th = outputs[0].width, outputs[0].height
+        elif target == "largest":
+            biggest = max(outputs, key=lambda m: m.width * m.height)
+            tw, th = biggest.width, biggest.height
+        else:
+            tw, th = target
+
+        repairs: list[PlanRepair] = []
+        new_segments: list[SegmentConfig] = []
+        for i, (seg, out) in enumerate(zip(self.segments, outputs)):
+            if (out.width, out.height) == (tw, th):
+                new_segments.append(seg)
+                continue
+            new_ops = [*seg.operations, Resize(width=tw, height=th)]
+            repairs.append(
+                PlanRepair(
+                    location=f"segments[{i}]",
+                    field="dimensions",
+                    old=f"{out.width}x{out.height}",
+                    new=f"{tw}x{th}",
+                    code=PlanErrorCode.CONCAT_MISMATCH,
+                )
+            )
+            new_segments.append(seg.model_copy(update={"operations": new_ops}))
+
+        normalized = self.model_copy(update={"segments": new_segments}, deep=True)
+        return normalized, repairs
+
+    def _resolve_source_metas(self, source_metadata: VideoMetadata | dict[str, VideoMetadata]) -> list[VideoMetadata]:
+        """One ``VideoMetadata`` per segment from a single meta or a by-source dict."""
+        if isinstance(source_metadata, VideoMetadata):
+            return [source_metadata for _ in self.segments]
+        metas: list[VideoMetadata] = []
+        for i, seg in enumerate(self.segments):
+            key = str(seg.source)
+            if key not in source_metadata:
+                available = sorted(source_metadata)
+                raise ValueError(f"Segment {i}: no metadata for '{key}'. Available: {available}")
+            metas.append(source_metadata[key])
+        return metas
+
+    def _post_op_context_errors(self, context: dict[str, Any] | None) -> list[_LocatedError]:
+        """``POST_OP_REQUIRES_CONTEXT`` errors for time-context post-ops on a multi-segment plan.
 
         ``post_operations`` run on the assembled, concatenated timeline. A
         source-absolute context value (e.g. a ``Transcription``) cannot be
         re-based across a multi-segment concat, and passing the raw value would
         silently mis-time the op (subtitles/silence-removal against the wrong
-        timeline). Fail fast with an actionable message instead of producing a
-        wrong render. Single-segment plans are unaffected -- their concatenated
+        timeline). Single-segment plans are unaffected -- their concatenated
         timeline is just the one segment's, handled by ``_segment_context``.
         """
         if len(self.segments) <= 1 or not self.post_operations:
-            return
+            return []
         rebaseable = _rebaseable_keys(context)
         if not rebaseable:
-            return
-        for op in self.post_operations:
+            return []
+        out: list[_LocatedError] = []
+        for j, op in enumerate(self.post_operations):
             clash = sorted(set(op.requires) & rebaseable)
             if clash:
-                raise ValueError(
+                message = (
                     f"post_operation '{op.op}' requires time-based context {clash}, but the plan "
                     f"has {len(self.segments)} segments. post_operations run on the concatenated "
                     "timeline and time-based context is not re-based across a multi-segment concat. "
                     f"Move '{op.op}' into a segment, or use a single-segment plan."
                 )
+                out.append(
+                    (
+                        message,
+                        PlanError(PlanErrorCode.POST_OP_REQUIRES_CONTEXT, location=f"post_operations[{j}]", op=op.op),
+                    )
+                )
+        return out
+
+    def _assert_post_ops_supported(self, context: dict[str, Any] | None) -> None:
+        """Raising guard used by ``run``/``run_to_file`` (see :meth:`_post_op_context_errors`)."""
+        errs = self._post_op_context_errors(context)
+        if errs:
+            message, err = errs[0]
+            raise PlanValidationError(message, [err])
 
     def _validate(
         self,
@@ -563,29 +914,123 @@ class VideoEdit(BaseModel):
         *,
         clamp_windows: bool = False,
     ) -> VideoMetadata:
-        self._assert_post_ops_supported(context)
-        cut_metas = [
-            _cut_meta_for_segment(i, seg, meta) for i, (seg, meta) in enumerate(zip(self.segments, source_metas))
-        ]
-        matched = self._apply_matching(cut_metas)
-        segment_outputs = [
-            self._predict_segment(i, seg, meta, context, clamp_windows=clamp_windows)
-            for i, (seg, meta) in enumerate(zip(self.segments, matched))
-        ]
-        self._assert_concat_compatible(segment_outputs)
+        assembled, _ = self._collect(source_metas, context, clamp_windows=clamp_windows, stop_first=True)
+        assert assembled is not None  # stop_first raised on any error, so a result is guaranteed
+        return assembled
 
-        first = segment_outputs[0]
+    def _collect(
+        self,
+        source_metas: list[VideoMetadata],
+        context: dict[str, Any] | None,
+        *,
+        clamp_windows: bool,
+        stop_first: bool,
+    ) -> tuple[VideoMetadata | None, list[PlanError]]:
+        """The single dry-run walker behind both :meth:`validate` and :meth:`check`.
+
+        ``stop_first=True`` raises ``PlanValidationError`` on the first failure
+        (byte-stable prose for existing callers); ``stop_first=False``
+        accumulates every structured error and returns them. The check *order* is
+        identical in both modes -- post-op context guard, per-segment cut, fps/res
+        matching, per-segment op prediction, cross-segment concat, post-ops -- so
+        the first collected error always matches what ``validate`` would raise.
+        """
+        errors: list[PlanError] = []
+
+        def emit(message: str, err: PlanError) -> None:
+            if stop_first:
+                raise PlanValidationError(message, [err])
+            errors.append(err)
+
+        def raise_or_collect(exc: PlanValidationError) -> None:
+            if stop_first:
+                raise exc
+            errors.extend(exc.errors)
+
+        for message, err in self._post_op_context_errors(context):
+            emit(message, err)
+
+        # Cut each segment against its own source metadata. A bad range isolates
+        # that segment (no cut meta -> its op chain is skipped below).
+        cut_metas: list[VideoMetadata | None] = []
+        for i, (seg, meta) in enumerate(zip(self.segments, source_metas)):
+            bounds = _segment_bounds_errors(i, seg, meta)
+            if bounds:
+                for message, err in bounds:
+                    emit(message, err)
+                cut_metas.append(None)
+                continue
+            cut_metas.append(CutSeconds(start=seg.start, end=seg.end).predict_metadata(meta))
+
+        present = [(i, m) for i, m in enumerate(cut_metas) if m is not None]
+        matched_by_index = dict(zip((i for i, _ in present), self._apply_matching([m for _, m in present])))
+
+        # `_apply_matching` runs over the cuttable subset only; an uncuttable
+        # segment isolates and is already reported, so the (now-invalid) plan's
+        # matched dims may differ from run()'s all-segments matching -- harmless,
+        # since that plan can't run until the bad segment is fixed.
+        seg_outputs: dict[int, VideoMetadata] = {}
+        for i, seg in enumerate(self.segments):
+            seg_meta = matched_by_index.get(i)
+            if seg_meta is None:
+                continue
+            seg_context = _segment_context(context, seg.start, seg.end)
+            failed = False
+            for op_index, op in enumerate(seg.operations):
+                location = f"segments[{i}].operations[{op_index}]"
+                if clamp_windows:
+                    op = _clamp_effect_window(op, seg_meta.total_seconds)
+                for message, err in _window_errors(op, seg_meta.total_seconds, location):
+                    emit(message, err)
+                try:
+                    seg_meta = _predict_with_context(op, seg_meta, seg_context)
+                except PlanValidationError as e:
+                    for perr in e.errors:
+                        perr.location = location if perr.location is None else f"{location}.{perr.location}"
+                    raise_or_collect(e)
+                    failed = True
+                    break
+                except (ValueError, TypeError) as e:
+                    message = f"Segment {i}: metadata prediction failed for '{op.op}': {e}"
+                    emit(message, PlanError(PlanErrorCode.OP_PREDICTION_FAILED, location=location, op=op.op))
+                    failed = True
+                    break
+            if not failed:
+                seg_outputs[i] = seg_meta
+
+        # Concat + post-ops need every segment's predicted output. When a segment
+        # failed, those dependent checks are skipped (best-effort): the consumer
+        # fixes the isolated segment and they surface on the next pass.
+        if len(seg_outputs) != len(self.segments):
+            return None, errors
+        outputs = [seg_outputs[i] for i in range(len(self.segments))]
+        for message, err in _concat_errors(outputs):
+            emit(message, err)
+
+        first = outputs[0]
         assembled = VideoMetadata(
             height=first.height,
             width=first.width,
             fps=first.fps,
-            frame_count=sum(m.frame_count for m in segment_outputs),
-            total_seconds=round(sum(m.total_seconds for m in segment_outputs), 4),
+            frame_count=sum(m.frame_count for m in outputs),
+            total_seconds=round(sum(m.total_seconds for m in outputs), 4),
         )
         for j, op in enumerate(self.post_operations):
-            _validate_effect_window(op, assembled.total_seconds, location=f"post_operations[{j}]")
-            assembled = _predict_with_context(op, assembled, context)
-        return assembled
+            location = f"post_operations[{j}]"
+            for message, err in _window_errors(op, assembled.total_seconds, location):
+                emit(message, err)
+            try:
+                assembled = _predict_with_context(op, assembled, context)
+            except PlanValidationError as e:
+                for perr in e.errors:
+                    perr.location = location if perr.location is None else f"{location}.{perr.location}"
+                raise_or_collect(e)
+                return None, errors
+            except (ValueError, TypeError) as e:
+                message = f"post_operations[{j}]: metadata prediction failed for '{op.op}': {e}"
+                emit(message, PlanError(PlanErrorCode.OP_PREDICTION_FAILED, location=location, op=op.op))
+                return None, errors
+        return assembled, errors
 
     def _predict_segment(
         self,
@@ -593,22 +1038,22 @@ class VideoEdit(BaseModel):
         segment: SegmentConfig,
         meta: VideoMetadata,
         context: dict[str, Any] | None,
-        *,
-        clamp_windows: bool = False,
     ) -> VideoMetadata:
+        """Predict one segment's post-op metadata, raising located plan errors.
+
+        The always-raising single-segment predictor used by
+        :meth:`normalize_dimensions` (which needs each segment's predicted output
+        dimensions). :meth:`_collect` has its own per-op loop because it must
+        also accumulate, clamp windows, and isolate failures per segment.
+        """
         seg_context = _segment_context(context, segment.start, segment.end)
         for op_index, op in enumerate(segment.operations):
             location = f"segments[{index}].operations[{op_index}]"
-            if clamp_windows:
-                op = _clamp_effect_window(op, meta.total_seconds)
-            _validate_effect_window(op, meta.total_seconds, location=location)
+            for message, err in _window_errors(op, meta.total_seconds, location):
+                raise PlanValidationError(message, [err])
             try:
                 meta = _predict_with_context(op, meta, seg_context)
             except PlanValidationError as e:
-                # A typed error IS a ValueError, so the generic branch below would
-                # flatten it back to prose and drop `.errors`. Instead enrich each
-                # contained location with this segment+op index and re-raise the
-                # SAME typed error, preserving its message and structure.
                 for err in e.errors:
                     err.location = location if err.location is None else f"{location}.{err.location}"
                 raise
@@ -628,45 +1073,6 @@ class VideoEdit(BaseModel):
             min_h = min(m.height for m in result)
             result = [m.with_dimensions(min_w, min_h) if (m.width, m.height) != (min_w, min_h) else m for m in result]
         return result
-
-    @staticmethod
-    def _assert_concat_compatible(metas: list[VideoMetadata]) -> None:
-        if len(metas) <= 1:
-            return
-        first = metas[0]
-        for j, other in enumerate(metas[1:], start=1):
-            if first.fps != other.fps:
-                message = (
-                    f"Segment 0 fps ({first.fps}) != segment {j} fps ({other.fps}); "
-                    "all segments must share fps for concatenation."
-                )
-                raise PlanValidationError(
-                    message,
-                    [
-                        PlanError(
-                            code=PlanErrorCode.CONCAT_MISMATCH,
-                            location=f"segments[{j}]",
-                            field="fps",
-                            value=other.fps,
-                            limit=first.fps,
-                        )
-                    ],
-                )
-            if (first.width, first.height) != (other.width, other.height):
-                message = (
-                    f"Segment 0 dimensions ({first.width}x{first.height}) != "
-                    f"segment {j} ({other.width}x{other.height}); all segments must share dimensions."
-                )
-                raise PlanValidationError(
-                    message,
-                    [
-                        PlanError(
-                            code=PlanErrorCode.CONCAT_MISMATCH,
-                            location=f"segments[{j}]",
-                            field="dimensions",
-                        )
-                    ],
-                )
 
     # -------------------------------------------------------------------- run
 
