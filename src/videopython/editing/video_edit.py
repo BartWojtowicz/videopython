@@ -556,19 +556,22 @@ class VideoEdit(BaseModel):
         ``"format": "path"``. The Draft-07 ``$schema`` envelope and the default
         ``operations`` array shape are preserved for downstream LLM tooling.
 
-        With ``strict=True`` the result is a provider strict-mode grammar
-        (closed objects, all properties ``required`` with optionals made
-        nullable, the op union as ``anyOf`` of closed variants). See
-        :meth:`Operation.json_schema` for the strict-mode contract. Use it as a
-        ``response_format: json_schema`` grammar so simple bound violations
-        (``window.start >= 0``, enums, required fields) become impossible at
-        decode time. Cross-field constraints (``timestamp < duration``,
-        segment-dim equality) cannot live in a grammar and stay with
-        :meth:`check` / :meth:`repair` / :meth:`normalize_dimensions`.
+        With ``strict=True`` the result is a submittable provider strict-mode
+        grammar: a closed object root, all properties ``required`` (optionality
+        kept as Pydantic emitted it -- no synthesized nulls), the op union as
+        ``anyOf`` of closed variants, and the union's ``$defs`` hoisted to the
+        document root so every ``$ref`` resolves. See :meth:`Operation.json_schema`
+        for the strict-mode contract. Use it as a ``response_format: json_schema``
+        grammar so simple bound violations (``window.start >= 0``, enums, required
+        fields) become impossible at decode time. Cross-field constraints
+        (``timestamp < duration``, segment-dim equality) cannot live in a grammar
+        and stay with :meth:`check` / :meth:`repair` / :meth:`normalize_dimensions`.
         """
         # Build the permissive envelope, then (if strict) run one closing pass
         # over the whole thing -- including the embedded op union -- so the
         # hand-built segment/top-level objects are closed and required too.
+        # `op_schema` is a self-contained union carrying its own root `$defs`;
+        # the same object is inlined as the `items` of both operation slots.
         op_schema = Operation.json_schema()
 
         def _field(model: type[BaseModel], field_name: str) -> dict[str, Any]:
@@ -615,7 +618,16 @@ class VideoEdit(BaseModel):
             "required": ["segments"],
             "additionalProperties": False,
         }
-        return _to_strict_schema(schema) if strict else schema
+        if not strict:
+            return schema
+        # Inlining the op union as `items` buried its `$defs` while its `$ref`s
+        # stayed root-relative (`#/$defs/X`), so they dangled. Hoist the (shared)
+        # defs to this schema's root before the strict pass, so every ref
+        # resolves and the result is a submittable provider grammar.
+        op_defs = op_schema.pop("$defs", None)
+        if op_defs:
+            schema["$defs"] = op_defs
+        return _to_strict_schema(schema)
 
     # --------------------------------------------------------------- validate
 
@@ -739,8 +751,7 @@ class VideoEdit(BaseModel):
 
         # Pass 2: per-segment op clamps against the matched cut meta. Capture each
         # segment's predicted output -- needed to assemble the post-op timeline.
-        present = [(i, m) for i, m in enumerate(cut_metas) if m is not None]
-        matched_by_index = dict(zip((i for i, _ in present), self._apply_matching([m for _, m in present])))
+        matched_by_index = self._match_cuttable(cut_metas)
         final_segments: list[SegmentConfig] = []
         seg_output_metas: list[VideoMetadata | None] = []
         for i, seg in enumerate(fixed_segments):
@@ -791,8 +802,8 @@ class VideoEdit(BaseModel):
 
     def normalize_dimensions(
         self,
-        target: tuple[int, int] | Literal["first", "largest"],
         source_metadata: VideoMetadata | dict[str, VideoMetadata],
+        target: tuple[int, int] | Literal["first", "largest"],
         context: dict[str, Any] | None = None,
     ) -> tuple[VideoEdit, list[PlanRepair]]:
         """Make every segment concat-compatible by resizing to a common canvas.
@@ -802,33 +813,54 @@ class VideoEdit(BaseModel):
         dimensions, and fixing it needs a per-segment resize inserted **before**
         concat. videopython owns both, so it does it here: predict each segment's
         output dimensions, pick the ``target`` -- an explicit ``(width, height)``,
-        ``"first"`` (segment 0's output), or ``"largest"`` (greatest area) -- and
-        append a ``resize`` op to every segment whose output differs, recording a
-        :class:`PlanRepair` per insertion. The returned plan satisfies the
-        "all segments share dimensions" invariant by construction.
+        ``"first"`` (the first predictable segment's output), or ``"largest"``
+        (greatest area) -- and append a ``resize`` op to every segment whose
+        output differs, recording a :class:`PlanRepair` per insertion. The
+        returned plan satisfies the "all segments share dimensions" invariant for
+        every segment it could predict.
+
+        Best-effort and non-raising, matching :meth:`repair` / :meth:`check`: a
+        segment that cannot be cut (bad range) or whose op chain fails prediction
+        is left untouched and its fault deferred to :meth:`check`, rather than
+        aborting the whole call. This keeps the documented refine flow
+        (``repair -> normalize_dimensions -> check``) a single non-raising path.
+        When no segment is predictable the plan is returned unchanged with an
+        empty changelog.
 
         Expressed purely as appended ``resize`` ops, so the normal
         validate/run/stream paths need no special casing. Resizing to an exact
         canvas can distort aspect when segments genuinely differ -- intended for
         a plan whose segments already share a target aspect (resolve that
-        upstream). Requires an otherwise-predictable plan; an op that fails
-        prediction raises here (run :meth:`repair`/:meth:`check` first).
+        upstream).
         """
         metas = self._resolve_source_metas(source_metadata)
-        cut_metas = []
+        # Predict each segment's post-op output dims; None when it can't be cut
+        # or an op fails prediction (best-effort: deferred to check, never raised).
+        cut_metas: list[VideoMetadata | None] = []
         for i, (seg, meta) in enumerate(zip(self.segments, metas)):
-            for message, err in _segment_bounds_errors(i, seg, meta):
-                raise PlanValidationError(message, [err])
-            cut_metas.append(CutSeconds(start=seg.start, end=seg.end).predict_metadata(meta))
-        matched = self._apply_matching(cut_metas)
-        outputs = [
-            self._predict_segment(i, seg, meta, context) for i, (seg, meta) in enumerate(zip(self.segments, matched))
-        ]
+            if _segment_bounds_errors(i, seg, meta):
+                cut_metas.append(None)
+            else:
+                cut_metas.append(CutSeconds(start=seg.start, end=seg.end).predict_metadata(meta))
+        matched_by_index = self._match_cuttable(cut_metas)
+        outputs: list[VideoMetadata | None] = []
+        for i, seg in enumerate(self.segments):
+            seg_meta = matched_by_index.get(i)
+            if seg_meta is None:
+                outputs.append(None)
+                continue
+            try:
+                outputs.append(self._predict_segment(i, seg, seg_meta, context))
+            except (ValueError, TypeError):
+                outputs.append(None)
 
+        known = [m for m in outputs if m is not None]
+        if not known:
+            return self.model_copy(deep=True), []
         if target == "first":
-            tw, th = outputs[0].width, outputs[0].height
+            tw, th = known[0].width, known[0].height
         elif target == "largest":
-            biggest = max(outputs, key=lambda m: m.width * m.height)
+            biggest = max(known, key=lambda m: m.width * m.height)
             tw, th = biggest.width, biggest.height
         else:
             tw, th = target
@@ -836,7 +868,7 @@ class VideoEdit(BaseModel):
         repairs: list[PlanRepair] = []
         new_segments: list[SegmentConfig] = []
         for i, (seg, out) in enumerate(zip(self.segments, outputs)):
-            if (out.width, out.height) == (tw, th):
+            if out is None or (out.width, out.height) == (tw, th):
                 new_segments.append(seg)
                 continue
             new_ops = [*seg.operations, Resize(width=tw, height=th)]
@@ -962,8 +994,7 @@ class VideoEdit(BaseModel):
                 continue
             cut_metas.append(CutSeconds(start=seg.start, end=seg.end).predict_metadata(meta))
 
-        present = [(i, m) for i, m in enumerate(cut_metas) if m is not None]
-        matched_by_index = dict(zip((i for i, _ in present), self._apply_matching([m for _, m in present])))
+        matched_by_index = self._match_cuttable(cut_metas)
 
         # `_apply_matching` runs over the cuttable subset only; an uncuttable
         # segment isolates and is already reported, so the (now-invalid) plan's
@@ -1060,6 +1091,18 @@ class VideoEdit(BaseModel):
             except (ValueError, TypeError) as e:
                 raise ValueError(f"Segment {index}: metadata prediction failed for '{op.op}': {e}") from e
         return meta
+
+    def _match_cuttable(self, cut_metas: list[VideoMetadata | None]) -> dict[int, VideoMetadata]:
+        """Run fps/resolution matching over the cuttable segments only, by original index.
+
+        An uncuttable segment (a ``None`` cut meta -- a bad range, isolated and
+        reported elsewhere) is excluded so it cannot perturb the ``min`` fps/dims
+        that :meth:`_apply_matching` derives. Returns ``{original_index: matched
+        meta}`` so callers stay index-aligned with ``self.segments``. Shared by
+        :meth:`_collect`, :meth:`repair`, and :meth:`normalize_dimensions`.
+        """
+        present = [(i, m) for i, m in enumerate(cut_metas) if m is not None]
+        return dict(zip((i for i, _ in present), self._apply_matching([m for _, m in present])))
 
     def _apply_matching(self, metas: list[VideoMetadata]) -> list[VideoMetadata]:
         if len(metas) <= 1:

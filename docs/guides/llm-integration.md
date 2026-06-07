@@ -215,14 +215,16 @@ never raises on an unrepairable op — it leaves it for `check()` to report.
 The one class you cannot cleanly repair in your own layer is a
 `CONCAT_MISMATCH` — detecting it needs each segment's *predicted post-op*
 dimensions and fixing it needs a per-segment resize inserted *before*
-concat. `normalize_dimensions(target, source_metadata)` does it for you,
+concat. `normalize_dimensions(source_metadata, target)` does it for you,
 appending a `resize` to every segment whose predicted output differs from
 the `target` (an explicit `(w, h)`, `"first"`, or `"largest"`) and
 returning the same `PlanRepair` changelog. The "all segments share
-dimensions" invariant becomes satisfiable by construction.
+dimensions" invariant becomes satisfiable by construction. Like `repair()`
+and `check()` it is best-effort and non-raising: a segment it can't predict
+yet is left untouched and deferred to `check()`.
 
 ```python
-norm_edit, repairs = edit.normalize_dimensions((1080, 1920), source_metadata)
+norm_edit, repairs = edit.normalize_dimensions(source_metadata, (1080, 1920))
 ```
 
 ### The full refine loop
@@ -230,11 +232,14 @@ norm_edit, repairs = edit.normalize_dimensions((1080, 1920), source_metadata)
 ```python
 edit = VideoEdit.from_dict(plan)                       # permissive parse
 edit, repairs = edit.repair(source_metadata)           # clamp the mechanical ones
-edit, dim_repairs = edit.normalize_dimensions("largest", source_metadata)
+edit, dim_repairs = edit.normalize_dimensions(source_metadata, "largest")
 errors = edit.check(source_metadata)                   # whatever's left, all at once
 if errors:
     ...  # re-prompt with the previous plan + the full structured error list
 ```
+
+Every step is non-raising, so the loop has no `try/except` — `source_metadata`
+leads each call for a consistent signature across the family.
 
 A clampable `window.stop` overrun (a duration-shrinking op like `cut` /
 `speed_change` ordered before a windowed effect leaves the stop past the

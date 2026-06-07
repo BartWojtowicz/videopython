@@ -32,15 +32,21 @@ collectable, repairable `PlanError` rather than a hard `from_dict` failure.
   declaration), and a negative segment `start` — returning a structured
   `PlanRepair` changelog. **Breaking:** `WindowClamp` is removed; `repair()` now
   returns `list[PlanRepair]` (`location, field, old, new, code`).
-- **`VideoEdit.normalize_dimensions(target, source_metadata)`** — appends a
+- **`VideoEdit.normalize_dimensions(source_metadata, target)`** — appends a
   per-segment `resize` to a common canvas (`(w, h)` / `"first"` / `"largest"`)
   so `CONCAT_MISMATCH` is satisfiable by construction; returns the changelog.
+  Best-effort and non-raising like `repair()`/`check()`: a segment it cannot
+  predict is left untouched and deferred to `check()`, so the
+  `repair -> normalize_dimensions -> check` flow has one non-raising path.
 - **Strict schema.** `VideoEdit.json_schema(strict=True)` /
-  `Operation.json_schema(strict=True)` emit a provider strict-mode grammar
-  (closed objects, all-required with nullable optionals, `anyOf` union without
-  `discriminator`, numeric constraints preserved) for grammar-constrained
-  decoding. `PlanError`/`PlanErrorCode`/`PlanValidationError`/`PlanRepair` are
-  now exported from `videopython.base`.
+  `Operation.json_schema(strict=True)` emit a *submittable* provider strict-mode
+  grammar (closed objects, all-required, union `$defs` hoisted to the document
+  root so every `$ref` resolves, `anyOf` union without `discriminator`, numeric
+  constraints preserved). Optionality is taken from the Pydantic type, not from
+  "has a default": only genuinely `Optional` fields are nullable, so a
+  grammar-valid payload always round-trips through `model_validate`.
+  `PlanError`/`PlanErrorCode`/`PlanValidationError`/`PlanRepair` are now exported
+  from `videopython.base`.
 
 ## 0.37.0
 

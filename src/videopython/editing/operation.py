@@ -139,12 +139,21 @@ def _to_strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
 
     Strict structured-output modes (OpenAI/OpenRouter ``json_schema``) require:
     every object closed (``additionalProperties: false``); every declared
-    property listed in ``required`` -- so an optional/defaulted field is made
-    *nullable* (``anyOf`` with ``{"type": "null"}``) rather than dropped from
-    ``required``; and unions expressed as ``anyOf`` without a ``discriminator``
-    keyword. The ``default`` keyword (which strict mode rejects, and which is
-    moot once every field is required) is dropped. Numeric constraints already
-    emitted by Pydantic are kept verbatim.
+    property listed in ``required``; and unions expressed as ``anyOf`` without a
+    ``discriminator`` keyword. The ``default`` keyword (which strict mode
+    rejects, and which is moot once every field is required) is dropped. Numeric
+    constraints already emitted by Pydantic are kept verbatim.
+
+    Optionality is taken verbatim from what Pydantic emitted, *not* synthesized:
+    strict mode represents an optional field as a nullable required field, and
+    Pydantic already encodes exactly that -- an ``Optional`` field carries a
+    ``{"type": "null"}`` branch while a defaulted-but-non-``Optional`` field
+    (e.g. ``operations: list = []``, ``match_to_lowest_fps: bool = True``) does
+    not. So we force every property into ``required`` without adding null
+    branches: synthesizing null for a non-``Optional`` field would let a grammar
+    emit a null the Pydantic model then rejects -- reintroducing the very
+    re-prompt strict mode exists to remove. The union discriminator ``op`` is a
+    defaulted ``const`` and is likewise kept required and non-nullable for free.
 
     Returns a new schema; the input is not mutated. Pydantic ``$ref``/``$defs``
     indirection is left intact (providers resolve it); the per-``$defs`` object
@@ -170,37 +179,14 @@ def _to_strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
         for key in ("discriminator", "default", "format", "$schema", "$id"):
             out.pop(key, None)
 
-        # Close every object and require all of its properties.
+        # Close every object and require all of its properties. Nullability is
+        # left exactly as Pydantic emitted it (see the docstring) -- no synthesis.
         if isinstance(out.get("properties"), dict):
-            props = out["properties"]
             out["additionalProperties"] = False
-            originally_required = set(node.get("required", []))
-            for name, sub in props.items():
-                # A single-value const/enum (the union discriminator `op`) must
-                # stay a non-nullable required tag -- nulling it would let a
-                # grammar emit an undiscriminable, unroutable variant.
-                if name not in originally_required and isinstance(sub, dict) and not _is_single_value_tag(sub):
-                    props[name] = _make_nullable(sub)
-            out["required"] = list(props.keys())
+            out["required"] = list(out["properties"].keys())
         return out
 
     return walk(copy.deepcopy(schema))
-
-
-def _is_single_value_tag(sub: dict[str, Any]) -> bool:
-    """True for a fixed-value field (``const`` or single-element ``enum``)."""
-    return "const" in sub or (isinstance(sub.get("enum"), list) and len(sub["enum"]) == 1)
-
-
-def _make_nullable(sub: dict[str, Any]) -> dict[str, Any]:
-    """Allow ``null`` for an optional property kept in a strict ``required`` list."""
-    if sub.get("type") == "null":
-        return sub
-    if "anyOf" in sub:
-        if not any(isinstance(v, dict) and v.get("type") == "null" for v in sub["anyOf"]):
-            sub = {**sub, "anyOf": [*sub["anyOf"], {"type": "null"}]}
-        return sub
-    return {"anyOf": [sub, {"type": "null"}]}
 
 
 class Operation(BaseModel):
@@ -303,9 +289,10 @@ class Operation(BaseModel):
         With ``strict=True`` the schema is rewritten for use as a provider
         structured-output **grammar** (OpenAI/OpenRouter ``json_schema`` strict
         mode): every object is closed (``additionalProperties: false``), every
-        property is listed in ``required`` (defaulted/optional fields are made
-        nullable rather than omitted, except the single-value ``op`` discriminator,
-        which stays a required non-nullable tag), and the discriminated union is
+        property is listed in ``required`` with its optionality kept exactly as
+        Pydantic emitted it (an ``Optional`` field keeps its nullable branch; a
+        defaulted non-``Optional`` field -- including the ``op`` discriminator --
+        stays required and non-nullable), and the discriminated union is
         expressed as a plain ``anyOf`` of closed variants (``discriminator``,
         ``default``, custom ``format``, and ``$schema`` -- all unsupported or moot
         in strict mode -- are dropped). Numeric constraints

@@ -10,6 +10,7 @@ Byte-stable raising behaviour lives in ``test_video_edit.py``.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import pytest
@@ -300,7 +301,7 @@ class TestNormalizeDimensions:
         )
 
     def test_explicit_target_resizes_all_to_canvas(self):
-        norm, repairs = self._mismatched_plan().normalize_dimensions((1920, 1080), SMALL_VIDEO_METADATA)
+        norm, repairs = self._mismatched_plan().normalize_dimensions(SMALL_VIDEO_METADATA, (1920, 1080))
         assert {(r.location, r.new) for r in repairs} == {
             ("segments[0]", "1920x1080"),
             ("segments[1]", "1920x1080"),
@@ -309,21 +310,76 @@ class TestNormalizeDimensions:
         assert (meta.width, meta.height) == (1920, 1080)
 
     def test_first_target_only_resizes_divergent_segments(self):
-        norm, repairs = self._mismatched_plan().normalize_dimensions("first", SMALL_VIDEO_METADATA)
+        norm, repairs = self._mismatched_plan().normalize_dimensions(SMALL_VIDEO_METADATA, "first")
         # Segment 0 already matches "first"; only segment 1 is rewritten.
         assert [r.location for r in repairs] == ["segments[1]"]
         assert norm.check(SMALL_VIDEO_METADATA) == []
 
     def test_largest_target_picks_max_area(self):
-        norm, repairs = self._mismatched_plan().normalize_dimensions("largest", SMALL_VIDEO_METADATA)
+        norm, repairs = self._mismatched_plan().normalize_dimensions(SMALL_VIDEO_METADATA, "largest")
         assert [r.location for r in repairs] == ["segments[0]"]
         meta = norm.validate_with_metadata(SMALL_VIDEO_METADATA)
         assert (meta.width, meta.height) == (1280, 720)
 
     def test_already_uniform_plan_is_unchanged(self):
         edit = VideoEdit.from_dict({"segments": [_segment(start=0.0, end=5.0), _segment(start=5.0, end=10.0)]})
-        norm, repairs = edit.normalize_dimensions("first", SMALL_VIDEO_METADATA)
+        norm, repairs = edit.normalize_dimensions(SMALL_VIDEO_METADATA, "first")
         assert repairs == []
+
+    def test_unpredictable_segment_is_skipped_not_raised(self):
+        # A segment whose op chain can't predict (crop exceeds source) must not
+        # abort normalize: it is left untouched and deferred to check(), while a
+        # predictable divergent segment still gets normalized.
+        edit = VideoEdit.from_dict(
+            {
+                "segments": [
+                    _segment(start=0.0, end=5.0, operations=[{"op": "crop", "width": 9999, "height": 9999}]),
+                    _segment(start=0.0, end=5.0, operations=[{"op": "resize", "width": 640, "height": 360}]),
+                ],
+                "match_to_lowest_resolution": False,
+            }
+        )
+        norm, repairs = edit.normalize_dimensions(SMALL_VIDEO_METADATA, (1920, 1080))  # does not raise
+        # Only the predictable segment 1 was resized; the crop survives for check.
+        assert [r.location for r in repairs] == ["segments[1]"]
+        assert PlanErrorCode.CROP_EXCEEDS_SOURCE in _codes(norm.check(SMALL_VIDEO_METADATA))
+
+
+# --------------------------------------------------------------- refine loop (end to end)
+
+
+class TestRefineLoop:
+    def test_repair_then_normalize_then_check_converges(self):
+        # The documented flow on ONE multi-fault plan: an out-of-range freeze
+        # timestamp (repair pass 2) AND a negative post-op window (repair pass 3)
+        # AND a concat dimension mismatch (normalize). After repair -> normalize
+        # -> check the plan is valid, and the middle step never raises.
+        plan = {
+            "segments": [
+                _segment(
+                    start=0.0,
+                    end=5.0,
+                    operations=[
+                        {"op": "resize", "width": 640, "height": 360},
+                        {"op": "freeze_frame", "timestamp": 999.0},
+                    ],
+                ),
+                _segment(start=0.0, end=5.0, operations=[{"op": "resize", "width": 1280, "height": 720}]),
+            ],
+            "post_operations": [{"op": "blur_effect", "mode": "constant", "iterations": 1, "window": {"start": -2.0}}],
+            "match_to_lowest_resolution": False,
+        }
+        edit = VideoEdit.from_dict(plan)
+        assert edit.check(META)  # starts invalid
+
+        repaired, repairs = edit.repair(META)
+        assert {c.code for c in repairs} == {
+            PlanErrorCode.OP_TIMESTAMP_OUT_OF_RANGE,  # pass 2, segment op
+            PlanErrorCode.WINDOW_NEGATIVE,  # pass 3, post-op
+        }
+        norm, dim_repairs = repaired.normalize_dimensions(META, "largest")
+        assert [c.code for c in dim_repairs] == [PlanErrorCode.CONCAT_MISMATCH]
+        assert norm.check(META) == []
 
 
 # --------------------------------------------------------------- strict json schema
@@ -352,10 +408,59 @@ class TestStrictSchema:
         assert "discriminator" not in blob
         assert "anyOf" in blob
 
-    def test_optional_field_made_nullable(self):
-        seg = VideoEdit.json_schema(strict=True)["properties"]["segments"]["items"]
-        ops = seg["properties"]["operations"]
-        assert any(isinstance(v, dict) and v.get("type") == "null" for v in ops["anyOf"])
+    def test_optionality_matches_pydantic_not_defaultedness(self):
+        # Optionality is taken from the Pydantic type, NOT from "has a default":
+        # a genuinely Optional field keeps a null branch; a defaulted-but-non-
+        # Optional field (list/bool with a default) stays required and concrete.
+        # Synthesizing null on the latter would be grammar-legal yet rejected by
+        # the model -- see test_grammar_valid_payload_round_trips_through_model.
+        schema = VideoEdit.json_schema(strict=True)
+
+        def admits_null(node: dict[str, Any]) -> bool:
+            if node.get("type") == "null":
+                return True
+            return any(isinstance(b, dict) and b.get("type") == "null" for b in node.get("anyOf", []))
+
+        # Effect.window is `TimeRange | None` -> nullable, and still required.
+        blur = schema["$defs"]["Blur"]
+        assert admits_null(blur["properties"]["window"])
+        assert "window" in blur["required"]
+        # operations / match_* have defaults but non-Optional types -> NOT
+        # nullable, but still required (strict mode requires every property).
+        seg = schema["properties"]["segments"]["items"]
+        assert not admits_null(seg["properties"]["operations"])
+        assert "operations" in seg["required"]
+        assert not admits_null(schema["properties"]["match_to_lowest_fps"])
+        assert "match_to_lowest_fps" in schema["required"]
+
+    def test_refs_resolve_against_root_defs(self):
+        # The inlined op union's `$ref`s are root-relative (`#/$defs/X`); their
+        # `$defs` must be hoisted to the document root or every ref dangles and a
+        # provider rejects the grammar at submit time.
+        schema = VideoEdit.json_schema(strict=True)
+        ref_targets = set(re.findall(r"#/\$defs/([A-Za-z0-9_]+)", json.dumps(schema)))
+        assert ref_targets, "expected $ref pointers in the strict schema"
+        root_defs = set(schema.get("$defs", {}))
+        assert ref_targets <= root_defs, f"dangling refs: {sorted(ref_targets - root_defs)}"
+
+    def test_grammar_valid_payload_round_trips_through_model(self):
+        # The grammar must not permit values the model then rejects: a payload
+        # conforming to the strict schema (every field present, null only where
+        # the grammar allows it) must parse via model_validate.
+        payload = {
+            "segments": [
+                {
+                    "source": "a.mp4",
+                    "start": 0.0,
+                    "end": 5.0,
+                    "operations": [{"op": "blur_effect", "mode": "constant", "iterations": 1, "window": None}],
+                }
+            ],
+            "post_operations": [],
+            "match_to_lowest_fps": True,
+            "match_to_lowest_resolution": True,
+        }
+        VideoEdit.model_validate(payload)  # must not raise
 
     def test_discriminator_op_stays_non_nullable(self):
         # The `op` tag must remain a required, non-nullable const in every

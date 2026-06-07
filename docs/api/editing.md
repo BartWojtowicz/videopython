@@ -170,11 +170,12 @@ and `check(..., clamp_windows=True)` won't report it either.
 
 ### Normalizing concat geometry (`normalize_dimensions`)
 
-`normalize_dimensions(target, source_metadata, context=...)` appends a
+`normalize_dimensions(source_metadata, target, context=...)` appends a
 per-segment `resize` to a common canvas — `target` is an explicit
 `(width, height)`, `"first"`, or `"largest"` — so the "all segments share
-dimensions" concat invariant holds by construction. Returns
-`(normalized_edit, repairs)`.
+dimensions" concat invariant holds by construction. Best-effort and
+non-raising like `repair()`/`check()`: a segment it can't yet predict is
+left untouched for `check()` to report. Returns `(normalized_edit, repairs)`.
 
 ## Matching Sources
 
