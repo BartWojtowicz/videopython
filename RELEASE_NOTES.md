@@ -1,5 +1,53 @@
 # Release Notes
 
+## 0.38.0
+
+Validation/repair primitives that let an LLM-driven compiler converge on a valid
+`VideoEdit` in a single re-prompt instead of playing whack-a-mole across a retry
+budget. The plan skeleton now **parses permissively** (shape only) and owns its
+numeric bounds at validation, so every mechanical violation is a structured,
+collectable, repairable `PlanError` rather than a hard `from_dict` failure.
+
+- **Permissive parse (breaking).** `TimeRange.start/stop` and
+  `SegmentConfig.start/end` drop their parse-time `ge=0` / ordering validators —
+  a negative `window.start` or a `start >= end` segment now *parses* and is
+  reported by validation. The boundary: parsing owns shape/required-fields
+  (still a Pydantic `ValidationError` — e.g. `resize` with no dimension, unknown
+  ops, extra fields); validation owns the numeric and metadata-relative bounds
+  (`PlanValidationError`).
+- **`VideoEdit.check(source_metadata, *, clamp_windows=False) -> list[PlanError]`**
+  — the non-raising sibling of `validate`: runs the full dry-run and returns
+  **every** error in one pass (`[]` == valid), best-effort isolating failures
+  per segment/op. `validate*()` still raises, byte-stable.
+- **Structured everywhere.** The remaining bare `ValueError`s on the
+  predict/validate path are now `PlanValidationError` with new `PlanErrorCode`s
+  (`OP_TIMESTAMP_OUT_OF_RANGE`, `CROP_EXCEEDS_SOURCE`, `DEGENERATE_DURATION`,
+  `SOURCE_UNREADABLE`, `WINDOW_NEGATIVE`, `WINDOW_ORDER`, `SEGMENT_NEGATIVE`,
+  `SEGMENT_RANGE`, `POST_OP_REQUIRES_CONTEXT`, `OP_PREDICTION_FAILED`), so
+  nothing escapes the collect-all walk and consumers branch on `code`.
+- **Real `repair()`.** `repair(..., clamp_op_params=True, clamp_segment_end=False)`
+  now clamps effect `window.start`/`window.stop` into `[0, duration]` (segment
+  ops *and* `post_operations`), op time fields past the clip end
+  (`freeze_frame.timestamp`, generic via a per-op `BoundedTimeField`
+  declaration), and a negative segment `start` — returning a structured
+  `PlanRepair` changelog. **Breaking:** `WindowClamp` is removed; `repair()` now
+  returns `list[PlanRepair]` (`location, field, old, new, code`).
+- **`VideoEdit.normalize_dimensions(source_metadata, target)`** — appends a
+  per-segment `resize` to a common canvas (`(w, h)` / `"first"` / `"largest"`)
+  so `CONCAT_MISMATCH` is satisfiable by construction; returns the changelog.
+  Best-effort and non-raising like `repair()`/`check()`: a segment it cannot
+  predict is left untouched and deferred to `check()`, so the
+  `repair -> normalize_dimensions -> check` flow has one non-raising path.
+- **Strict schema.** `VideoEdit.json_schema(strict=True)` /
+  `Operation.json_schema(strict=True)` emit a *submittable* provider strict-mode
+  grammar (closed objects, all-required, union `$defs` hoisted to the document
+  root so every `$ref` resolves, `anyOf` union without `discriminator`, numeric
+  constraints preserved). Optionality is taken from the Pydantic type, not from
+  "has a default": only genuinely `Optional` fields are nullable, so a
+  grammar-valid payload always round-trips through `model_validate`.
+  `PlanError`/`PlanErrorCode`/`PlanValidationError`/`PlanRepair` are now exported
+  from `videopython.base`.
+
 ## 0.37.0
 
 Adds `ObjectDetectionOverlay`, an AI-powered, streamable effect (op

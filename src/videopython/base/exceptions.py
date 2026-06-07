@@ -85,12 +85,26 @@ class PlanErrorCode(str, Enum):
     instead of substring-matching the human message text.
     """
 
+    # Segment range vs source / shape.
     SEGMENT_END_EXCEEDS_SOURCE = "segment_end_exceeds_source"
+    SEGMENT_NEGATIVE = "segment_negative"
+    SEGMENT_RANGE = "segment_range"
+    # Effect windows.
     EFFECT_WINDOW_EXCEEDS_DURATION = "effect_window_exceeds_duration"
+    WINDOW_NEGATIVE = "window_negative"
+    WINDOW_ORDER = "window_order"
+    # Operation-level, metadata-relative checks.
     CUT_EXCEEDS_DURATION = "cut_exceeds_duration"
+    OP_TIMESTAMP_OUT_OF_RANGE = "op_timestamp_out_of_range"
+    CROP_EXCEEDS_SOURCE = "crop_exceeds_source"
+    DEGENERATE_DURATION = "degenerate_duration"
+    SOURCE_UNREADABLE = "source_unreadable"
+    OP_PREDICTION_FAILED = "op_prediction_failed"
+    # Assembly / structural.
     UNKNOWN_OP = "unknown_op"
     CONCAT_MISMATCH = "concat_mismatch"
     SUBTITLE_UNFITTABLE = "subtitle_unfittable"
+    POST_OP_REQUIRES_CONTEXT = "post_op_requires_context"
 
 
 @dataclass
@@ -110,12 +124,37 @@ class PlanError:
     predicted_duration: float | None = None
 
 
+@dataclass
+class PlanRepair:
+    """A single change a repair/normalize pass made to a plan.
+
+    The structured changelog returned by :meth:`VideoEdit.repair` and
+    :meth:`VideoEdit.normalize_dimensions`. ``location`` is a path into the
+    plan (e.g. ``'segments[0].operations[1]'``); ``field`` is the changed
+    field (``'window.stop'``, ``'timestamp'``, ``'dimensions'``, ...). ``old``
+    and ``new`` carry the before/after values -- a ``float`` for numeric
+    clamps, a ``str`` for composite values like ``'768x432'``. ``code`` is the
+    :class:`PlanErrorCode` of the violation that was repaired, so a consumer
+    can surface "we trimmed your effect to fit" wording keyed on the class.
+    """
+
+    location: str
+    field: str
+    old: float | str | None
+    new: float | str | None
+    code: PlanErrorCode
+
+
 class PlanValidationError(ValueError):
     """Typed plan-validation failure carrying structured :class:`PlanError`s.
 
     Subclasses ``ValueError`` so ``str(e)`` stays byte-identical to the bare
     ``ValueError`` prose emitted before this type existed -- existing
     ``pytest.raises(match=...)`` and consumer substring fallbacks keep working.
+
+    ``str(e)`` is the first error's human message; ``.errors`` carries every
+    structured :class:`PlanError`. The non-raising :meth:`VideoEdit.check`
+    returns the same ``PlanError`` list directly.
     """
 
     def __init__(self, message: str, errors: list[PlanError]):

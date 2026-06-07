@@ -42,13 +42,12 @@ class TestTimeRange:
         tr = TimeRange()
         assert tr.start is None and tr.stop is None
 
-    def test_negative_start_rejected(self):
-        with pytest.raises(ValidationError):
-            TimeRange(start=-1.0)
-
-    def test_stop_before_start_rejected(self):
-        with pytest.raises(ValidationError):
-            TimeRange(start=3.0, stop=1.0)
+    def test_parses_permissively_negative_and_unordered(self):
+        # TimeRange is the plan skeleton: parsing owns the shape, the numeric
+        # bounds (>= 0, stop >= start) are owned by VideoEdit.validate/check.
+        assert TimeRange(start=-1.0).start == -1.0
+        unordered = TimeRange(start=3.0, stop=1.0)
+        assert (unordered.start, unordered.stop) == (3.0, 1.0)
 
     def test_extra_field_rejected(self):
         with pytest.raises(ValidationError):

@@ -29,6 +29,7 @@ from pydantic import Field, PrivateAttr, model_validator
 from tqdm import tqdm
 
 from videopython.base.description import BoundingBox
+from videopython.base.exceptions import PlanError, PlanErrorCode, PlanValidationError
 from videopython.base.fonts import load_font
 from videopython.editing._easing import ease, ease_out
 from videopython.editing.operation import Effect
@@ -860,7 +861,11 @@ class ImageOverlay(_AnchoredOverlay):
                 with Image.open(self.source) as im:
                     im.verify()
         except (OSError, ValueError) as exc:
-            raise ValueError(f"image_overlay source {str(self.source)!r} is not a readable image: {exc}") from exc
+            message = f"image_overlay source {str(self.source)!r} is not a readable image: {exc}"
+            raise PlanValidationError(
+                message,
+                [PlanError(code=PlanErrorCode.SOURCE_UNREADABLE, op=self.op, field="source")],
+            ) from exc
         return meta
 
     def _rasterize_svg(self, target_w: int) -> np.ndarray:

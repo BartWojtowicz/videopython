@@ -15,6 +15,10 @@ from .exceptions import (
     AudioError,
     AudioLoadError,
     OutOfBoundsError,
+    PlanError,
+    PlanErrorCode,
+    PlanRepair,
+    PlanValidationError,
     TextRenderError,
     TransformError,
     VideoError,
@@ -41,6 +45,11 @@ __all__ = [
     "TransformError",
     "TextRenderError",
     "OutOfBoundsError",
+    # Structured plan validation / repair
+    "PlanError",
+    "PlanErrorCode",
+    "PlanValidationError",
+    "PlanRepair",
     # Text rendering primitives
     "ImageText",
     "TextAlign",
