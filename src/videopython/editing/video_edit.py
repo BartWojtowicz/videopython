@@ -231,21 +231,42 @@ def _window_errors(op: Operation, duration: float, location: str) -> list[_Locat
         out.append(
             (
                 f"Effect '{op.op}' window.start ({start}) must be >= 0",
-                PlanError(PlanErrorCode.WINDOW_NEGATIVE, location, op.op, "window.start", start, 0.0),
+                PlanError(
+                    code=PlanErrorCode.WINDOW_NEGATIVE,
+                    location=location,
+                    op=op.op,
+                    field="window.start",
+                    value=start,
+                    limit=0.0,
+                ),
             )
         )
     if stop is not None and stop < 0:
         out.append(
             (
                 f"Effect '{op.op}' window.stop ({stop}) must be >= 0",
-                PlanError(PlanErrorCode.WINDOW_NEGATIVE, location, op.op, "window.stop", stop, 0.0),
+                PlanError(
+                    code=PlanErrorCode.WINDOW_NEGATIVE,
+                    location=location,
+                    op=op.op,
+                    field="window.stop",
+                    value=stop,
+                    limit=0.0,
+                ),
             )
         )
     if start is not None and stop is not None and stop < start:
         out.append(
             (
                 f"Effect '{op.op}' window.stop ({stop}) must be >= start ({start})",
-                PlanError(PlanErrorCode.WINDOW_ORDER, location, op.op, "window.stop", stop, start),
+                PlanError(
+                    code=PlanErrorCode.WINDOW_ORDER,
+                    location=location,
+                    op=op.op,
+                    field="window.stop",
+                    value=stop,
+                    limit=start,
+                ),
             )
         )
     if start is not None and start > duration + eps:
@@ -253,13 +274,13 @@ def _window_errors(op: Operation, duration: float, location: str) -> list[_Locat
             (
                 f"Effect '{op.op}' window.start ({start}) exceeds duration ({duration}s)",
                 PlanError(
-                    PlanErrorCode.EFFECT_WINDOW_EXCEEDS_DURATION,
-                    location,
-                    op.op,
-                    "window.start",
-                    start,
-                    duration,
-                    duration,
+                    code=PlanErrorCode.EFFECT_WINDOW_EXCEEDS_DURATION,
+                    location=location,
+                    op=op.op,
+                    field="window.start",
+                    value=start,
+                    limit=duration,
+                    predicted_duration=duration,
                 ),
             )
         )
@@ -268,13 +289,13 @@ def _window_errors(op: Operation, duration: float, location: str) -> list[_Locat
             (
                 f"Effect '{op.op}' window.stop ({stop}) exceeds duration ({duration}s)",
                 PlanError(
-                    PlanErrorCode.EFFECT_WINDOW_EXCEEDS_DURATION,
-                    location,
-                    op.op,
-                    "window.stop",
-                    stop,
-                    duration,
-                    duration,
+                    code=PlanErrorCode.EFFECT_WINDOW_EXCEEDS_DURATION,
+                    location=location,
+                    op=op.op,
+                    field="window.stop",
+                    value=stop,
+                    limit=duration,
+                    predicted_duration=duration,
                 ),
             )
         )
@@ -313,6 +334,37 @@ def _concat_errors(metas: list[VideoMetadata]) -> list[_LocatedError]:
     return out
 
 
+def _assemble_timeline(outputs: list[VideoMetadata]) -> VideoMetadata:
+    """The concatenated-output metadata for a list of per-segment outputs.
+
+    Segment 0 fixes height/width/fps (matching/normalization already made them
+    uniform); ``frame_count`` and ``total_seconds`` sum. This is the
+    prediction-side model of ``run()``'s ``result + video`` concat -- shared by
+    :meth:`_collect` (validates post-ops against it) and :meth:`repair` (clamps
+    post-ops against it) so the two can never disagree on the post-op duration.
+    """
+    first = outputs[0]
+    return VideoMetadata(
+        height=first.height,
+        width=first.width,
+        fps=first.fps,
+        frame_count=sum(m.frame_count for m in outputs),
+        total_seconds=round(sum(m.total_seconds for m in outputs), 4),
+    )
+
+
+def _relocate(errors: list[PlanError], location: str) -> None:
+    """Stamp ``location`` onto each error, preserving any deeper sub-path it carries.
+
+    A typed op error may already carry a field-level ``location`` (e.g. a nested
+    op error); prefix it with the op's plan path, otherwise set it. Mutates in
+    place. The one home for the located-error convention shared by every per-op
+    walk (``_collect``'s segment and post-op loops, ``_predict_segment``).
+    """
+    for err in errors:
+        err.location = location if err.location is None else f"{location}.{err.location}"
+
+
 def _clamp_effect_window(op: Operation, duration: float) -> Operation:
     """Return ``op`` with its ``Effect.window.stop`` clamped to ``duration``.
 
@@ -330,49 +382,58 @@ def _clamp_effect_window(op: Operation, duration: float) -> Operation:
     return op.model_copy(update={"window": clamped_window})
 
 
-def _repair_effect_window(op: Operation, duration: float) -> tuple[Operation, list[PlanRepair]]:
+def _repair_effect_window(op: Operation, duration: float, location: str) -> tuple[Operation, list[PlanRepair]]:
     """Clamp an :attr:`Effect.window`'s ``start``/``stop`` into ``[0, duration]``.
 
-    The repair counterpart to :func:`_window_errors`: a negative endpoint snaps
-    to ``0`` (``WINDOW_NEGATIVE``); one past the duration snaps to ``duration``
-    (``EFFECT_WINDOW_EXCEEDS_DURATION``). Returns the (possibly new) op and a
-    :class:`PlanRepair` per change with an empty ``location`` the caller fills
-    in. A ``stop < start`` left after clamping is deliberately not invented away
-    -- it stays for ``check``/``validate`` to report.
+    The repair counterpart to :func:`_window_errors`, sharing its boundaries
+    exactly: a negative endpoint snaps to ``0`` (``WINDOW_NEGATIVE``); one past
+    the duration *by more than* ``DURATION_EPS`` snaps to ``duration``
+    (``EFFECT_WINDOW_EXCEEDS_DURATION``). The eps tolerance matches the check, so
+    a within-eps overrun ``check``/``validate`` accept is left untouched (no
+    phantom repair). Each change is recorded as a :class:`PlanRepair` at
+    ``location``. A ``stop < start`` left after clamping is deliberately not
+    invented away -- it stays for ``check``/``validate`` to report.
     """
     if not isinstance(op, Effect) or op.window is None:
         return op, []
     start, stop = op.window.start, op.window.stop
     new_start, new_stop = start, stop
     changes: list[PlanRepair] = []
+    eps = DURATION_EPS
     if start is not None and start < 0:
         new_start = 0.0
-        changes.append(PlanRepair("", "window.start", start, 0.0, PlanErrorCode.WINDOW_NEGATIVE))
-    elif start is not None and start > duration:
+        changes.append(PlanRepair(location, "window.start", start, 0.0, PlanErrorCode.WINDOW_NEGATIVE))
+    elif start is not None and start > duration + eps:
         new_start = duration
-        changes.append(PlanRepair("", "window.start", start, duration, PlanErrorCode.EFFECT_WINDOW_EXCEEDS_DURATION))
+        changes.append(
+            PlanRepair(location, "window.start", start, duration, PlanErrorCode.EFFECT_WINDOW_EXCEEDS_DURATION)
+        )
     if stop is not None and stop < 0:
         new_stop = 0.0
-        changes.append(PlanRepair("", "window.stop", stop, 0.0, PlanErrorCode.WINDOW_NEGATIVE))
-    elif stop is not None and stop > duration:
+        changes.append(PlanRepair(location, "window.stop", stop, 0.0, PlanErrorCode.WINDOW_NEGATIVE))
+    elif stop is not None and stop > duration + eps:
         new_stop = duration
-        changes.append(PlanRepair("", "window.stop", stop, duration, PlanErrorCode.EFFECT_WINDOW_EXCEEDS_DURATION))
+        changes.append(
+            PlanRepair(location, "window.stop", stop, duration, PlanErrorCode.EFFECT_WINDOW_EXCEEDS_DURATION)
+        )
     if not changes:
         return op, []
     new_window = op.window.model_copy(update={"start": new_start, "stop": new_stop})
     return op.model_copy(update={"window": new_window}), changes
 
 
-def _clamp_time_fields(op: Operation, meta: VideoMetadata) -> tuple[Operation, list[PlanRepair]]:
+def _repair_time_fields(op: Operation, meta: VideoMetadata, location: str) -> tuple[Operation, list[PlanRepair]]:
     """Clamp every declared :attr:`Operation.time_fields` value into range.
 
-    Generic over the op's :class:`BoundedTimeField` declarations: the lower
-    bound is ``0``; the upper is the clip duration, or -- for ``exclusive_end``
-    fields that index a frame (``freeze_frame.timestamp``) -- the last
-    addressable frame ``(frame_count - 1) / fps``. Only an *out-of-range* value
-    is touched (and recorded as an ``OP_TIMESTAMP_OUT_OF_RANGE``
-    :class:`PlanRepair` with a caller-filled ``location``); an in-range value is
-    left exactly as written -- no rounding, no phantom changelog entry.
+    Generic over the op's :class:`BoundedTimeField` declarations, and gated on
+    *exactly what validation rejects* so an in-range value is never touched (no
+    rounding, no phantom changelog entry). An ``exclusive_end`` field indexes a
+    frame, so validation rejects ``value >= total_seconds`` (e.g.
+    ``freeze_frame.timestamp``); an out-of-range one is clamped to the last
+    addressable frame ``(frame_count - 1) / fps`` (strictly ``< duration``). An
+    inclusive field rejects ``value > total_seconds + DURATION_EPS`` and clamps
+    to the duration. Each change is recorded as an ``OP_TIMESTAMP_OUT_OF_RANGE``
+    :class:`PlanRepair` at ``location``.
     """
     changes: list[PlanRepair] = []
     new_op = op
@@ -380,11 +441,16 @@ def _clamp_time_fields(op: Operation, meta: VideoMetadata) -> tuple[Operation, l
         value = getattr(new_op, tf.name)
         if value is None:
             continue
-        upper = max(0.0, (meta.frame_count - 1) / meta.fps if tf.exclusive_end else meta.total_seconds)
-        if value < 0 or value > upper:
+        if tf.exclusive_end:
+            over = value >= meta.total_seconds
+            upper = max(0.0, (meta.frame_count - 1) / meta.fps)
+        else:
+            over = value > meta.total_seconds + DURATION_EPS
+            upper = max(0.0, meta.total_seconds)
+        if value < 0 or over:
             clamped = round(min(max(value, 0.0), upper), 4)
             new_op = new_op.model_copy(update={tf.name: clamped})
-            changes.append(PlanRepair("", tf.name, value, clamped, PlanErrorCode.OP_TIMESTAMP_OUT_OF_RANGE))
+            changes.append(PlanRepair(location, tf.name, value, clamped, PlanErrorCode.OP_TIMESTAMP_OUT_OF_RANGE))
     return new_op, changes
 
 
@@ -402,11 +468,10 @@ def _repair_op_chain(
     (``location_prefix='segments[i].operations'``) and the plan's
     ``post_operations`` (``location_prefix='post_operations'``). Each op (while
     the running duration is still known) gets :func:`_repair_effect_window` +
-    :func:`_clamp_time_fields` applied, with ``f'{location_prefix}[op_index]'``
-    stamped onto every :class:`PlanRepair`. The first op that cannot be
-    predicted ends clamping -- the rest are kept verbatim (we can't know the
-    duration past it) and the returned running meta is ``None`` so the caller
-    knows the chain broke.
+    :func:`_repair_time_fields` applied at ``f'{location_prefix}[op_index]'``.
+    The first op that cannot be predicted ends clamping -- the rest are kept
+    verbatim (we can't know the duration past it) and the returned running meta
+    is ``None`` so the caller knows the chain broke.
     """
     new_ops: list[Operation] = []
     repairs: list[PlanRepair] = []
@@ -414,11 +479,10 @@ def _repair_op_chain(
     for op_index, op in enumerate(ops):
         if clamp and running is not None:
             location = f"{location_prefix}[{op_index}]"
-            op, win_changes = _repair_effect_window(op, running.total_seconds)
-            op, time_changes = _clamp_time_fields(op, running)
-            for change in (*win_changes, *time_changes):
-                change.location = location
-                repairs.append(change)
+            op, win_changes = _repair_effect_window(op, running.total_seconds, location)
+            op, time_changes = _repair_time_fields(op, running, location)
+            repairs.extend(win_changes)
+            repairs.extend(time_changes)
         new_ops.append(op)
         if running is None:
             continue
@@ -779,14 +843,7 @@ class VideoEdit(BaseModel):
         update: dict[str, Any] = {"segments": final_segments}
         outputs = [m for m in seg_output_metas if m is not None]
         if self.post_operations and len(outputs) == len(self.segments):
-            first = outputs[0]
-            assembled = VideoMetadata(
-                height=first.height,
-                width=first.width,
-                fps=first.fps,
-                frame_count=sum(m.frame_count for m in outputs),
-                total_seconds=round(sum(m.total_seconds for m in outputs), 4),
-            )
+            assembled = _assemble_timeline(outputs)
             new_post, post_repairs, _ = _repair_op_chain(
                 list(self.post_operations),
                 assembled,
@@ -1016,8 +1073,7 @@ class VideoEdit(BaseModel):
                 try:
                     seg_meta = _predict_with_context(op, seg_meta, seg_context)
                 except PlanValidationError as e:
-                    for perr in e.errors:
-                        perr.location = location if perr.location is None else f"{location}.{perr.location}"
+                    _relocate(e.errors, location)
                     raise_or_collect(e)
                     failed = True
                     break
@@ -1038,14 +1094,7 @@ class VideoEdit(BaseModel):
         for message, err in _concat_errors(outputs):
             emit(message, err)
 
-        first = outputs[0]
-        assembled = VideoMetadata(
-            height=first.height,
-            width=first.width,
-            fps=first.fps,
-            frame_count=sum(m.frame_count for m in outputs),
-            total_seconds=round(sum(m.total_seconds for m in outputs), 4),
-        )
+        assembled = _assemble_timeline(outputs)
         for j, op in enumerate(self.post_operations):
             location = f"post_operations[{j}]"
             for message, err in _window_errors(op, assembled.total_seconds, location):
@@ -1053,8 +1102,7 @@ class VideoEdit(BaseModel):
             try:
                 assembled = _predict_with_context(op, assembled, context)
             except PlanValidationError as e:
-                for perr in e.errors:
-                    perr.location = location if perr.location is None else f"{location}.{perr.location}"
+                _relocate(e.errors, location)
                 raise_or_collect(e)
                 return None, errors
             except (ValueError, TypeError) as e:
@@ -1085,8 +1133,7 @@ class VideoEdit(BaseModel):
             try:
                 meta = _predict_with_context(op, meta, seg_context)
             except PlanValidationError as e:
-                for err in e.errors:
-                    err.location = location if err.location is None else f"{location}.{err.location}"
+                _relocate(e.errors, location)
                 raise
             except (ValueError, TypeError) as e:
                 raise ValueError(f"Segment {index}: metadata prediction failed for '{op.op}': {e}") from e

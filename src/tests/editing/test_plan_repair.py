@@ -270,6 +270,61 @@ class TestRepair:
         assert changes == []
         assert repaired.segments[0].operations[0].window.stop == 8.0
 
+    def test_unrepairable_segment_skips_post_op_clamp(self):
+        # When a segment can't predict (crop exceeds source), the post-op timeline
+        # duration is unknown, so repair's pass-3 guard short-circuits: a negative
+        # post-op window is left untouched and surfaces (with the crop) in check().
+        plan = {
+            "segments": [
+                _segment(start=0.0, end=5.0, operations=[{"op": "crop", "width": 9999, "height": 9999}]),
+                _segment(start=0.0, end=5.0),
+            ],
+            "post_operations": [{"op": "blur_effect", "mode": "constant", "iterations": 1, "window": {"start": -2.0}}],
+        }
+        edit = VideoEdit.from_dict(plan)
+        repaired, changes = edit.repair(META)
+        assert changes == []  # segment unpredictable -> pass 3 skipped
+        assert repaired.post_operations[0].window.start == -2.0  # untouched
+        assert PlanErrorCode.CROP_EXCEEDS_SOURCE in _codes(repaired.check(META))
+
+    def test_window_stop_within_eps_is_not_clamped(self):
+        # A stop within DURATION_EPS of the duration is valid per check(); repair
+        # must share that boundary and not emit a phantom clamp.
+        from videopython.editing.transforms import DURATION_EPS
+
+        plan = {
+            "segments": [
+                _segment(
+                    start=0.0,
+                    end=10.0,
+                    operations=[
+                        {
+                            "op": "blur_effect",
+                            "mode": "constant",
+                            "iterations": 1,
+                            "window": {"start": 0.0, "stop": 10.0 + DURATION_EPS / 2},
+                        }
+                    ],
+                )
+            ]
+        }
+        edit = VideoEdit.from_dict(plan)
+        assert edit.check(META) == []  # within eps -> valid
+        repaired, changes = edit.repair(META)
+        assert changes == []  # no phantom EFFECT_WINDOW_EXCEEDS_DURATION repair
+
+    def test_freeze_timestamp_in_exclusive_band_is_not_clamped(self):
+        # META fps=24; a [0,10] cut yields frame_count=240, total_seconds=10.0, so
+        # the last addressable frame is 239/24=9.9583. A timestamp in
+        # [9.9583, 10.0) is valid per check() (< duration) and must not be clamped
+        # -- repair's exclusive-end bound matches FreezeFrame's `< total_seconds`.
+        plan = {"segments": [_segment(start=0.0, end=10.0, operations=[{"op": "freeze_frame", "timestamp": 9.97}])]}
+        edit = VideoEdit.from_dict(plan)
+        assert edit.check(META) == []
+        repaired, changes = edit.repair(META)
+        assert changes == []
+        assert repaired.segments[0].operations[0].timestamp == 9.97
+
     def test_clamp_op_params_false_is_noop_for_windows(self):
         plan = {
             "segments": [

@@ -30,6 +30,7 @@ Subclass contract::
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, NamedTuple, Union, get_args, get_origin
@@ -84,10 +85,12 @@ class BoundedTimeField(NamedTuple):
     """Declares a time-valued (seconds) op field that :meth:`VideoEdit.repair` clamps.
 
     ``name`` is the field; the lower bound is always ``0``. ``exclusive_end``
-    picks the upper bound: ``False`` clamps to the clip duration (the value may
-    equal it); ``True`` clamps to the last addressable frame
-    ``(frame_count - 1) / fps`` -- for fields that index a frame and so must be
-    *strictly* less than the duration (e.g. ``freeze_frame.timestamp``).
+    distinguishes how the upper bound is enforced so repair clamps exactly what
+    validation rejects: ``False`` permits the clip duration (reject ``value >
+    total_seconds``, clamp to the duration); ``True`` is for a field that indexes
+    a frame and so must be *strictly* less than the duration (reject ``value >=
+    total_seconds``, clamp to the last addressable frame ``(frame_count - 1) /
+    fps``) -- e.g. ``freeze_frame.timestamp``.
     """
 
     name: str
@@ -159,7 +162,6 @@ def _to_strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
     indirection is left intact (providers resolve it); the per-``$defs`` object
     bodies are rewritten in place of their definitions.
     """
-    import copy
 
     def walk(node: Any) -> Any:
         if isinstance(node, list):
