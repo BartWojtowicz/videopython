@@ -264,7 +264,13 @@ out of the `context` dict and threads them into the op:
 # silence_removal and add_subtitles both need a transcription
 edit = VideoEdit.from_dict(plan)
 video = edit.run(context={"transcription": transcription})
+# ... or stream to disk; context-requiring effects stream too
+edit.run_to_file("out.mp4", context={"transcription": transcription})
 ```
+
+Time-based context values (e.g. a `Transcription` with source-absolute
+timestamps) are re-based onto each cut segment's local timeline
+automatically, on both the eager and streaming paths.
 
 Discover requires-aware ops via the registry:
 

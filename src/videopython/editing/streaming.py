@@ -14,7 +14,7 @@ from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import TracebackType
-from typing import get_args
+from typing import Any, get_args
 
 import numpy as np
 from tqdm import tqdm
@@ -30,11 +30,18 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class EffectScheduleEntry:
-    """An effect with its active frame range for streaming."""
+    """An effect with its active frame range for streaming.
+
+    ``context`` carries the effect's resolved ``requires`` values (already
+    re-based onto the segment-local timeline by the plan builder), forwarded
+    as keyword arguments to ``streaming_init``. Empty for context-free
+    effects.
+    """
 
     effect: Effect
     start_frame: int
     end_frame: int  # exclusive
+    context: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -187,10 +194,14 @@ def stream_segment(
     duration = plan.end_second - plan.start_second
     total_frames = round(duration * plan.output_fps)
 
-    # Initialize effects for streaming
+    # Initialize effects for streaming. Runs before this segment's decode,
+    # so a context-requiring effect with missing context fails before any
+    # frame work on this segment.
     for entry in plan.effect_schedule:
         n_effect_frames = entry.end_frame - entry.start_frame
-        entry.effect.streaming_init(n_effect_frames, plan.output_fps, plan.output_width, plan.output_height)
+        entry.effect.streaming_init(
+            n_effect_frames, plan.output_fps, plan.output_width, plan.output_height, **entry.context
+        )
 
     # Save audio to temp file for muxing
     audio_path = None
@@ -224,8 +235,17 @@ def stream_segment(
                 frame_count = 0
                 for _, frame in tqdm(decoder, desc="Streaming", total=total_frames):
                     for entry in plan.effect_schedule:
-                        if entry.start_frame <= frame_count < entry.end_frame:
-                            frame = entry.effect.process_frame(frame, frame_count - entry.start_frame)
+                        # total_frames is an estimate (round(duration * fps));
+                        # ffmpeg can emit one more frame on rounding ties. An
+                        # entry covering the full estimated range is treated
+                        # as open-ended so trailing frames don't escape it
+                        # (an unfaded frame popping after a fade-out), with
+                        # the window-local index clamped so envelope arrays
+                        # sized to the estimate stay in bounds.
+                        open_ended = entry.end_frame >= total_frames
+                        if entry.start_frame <= frame_count and (frame_count < entry.end_frame or open_ended):
+                            local_index = min(frame_count, entry.end_frame - 1) - entry.start_frame
+                            frame = entry.effect.process_frame(frame, local_index)
 
                     encoder.write_frame(frame)
                     frame_count += 1

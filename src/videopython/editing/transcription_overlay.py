@@ -34,8 +34,7 @@ from typing import Any, ClassVar, Literal
 
 import numpy as np
 from PIL import Image
-from pydantic import Field
-from tqdm import tqdm
+from pydantic import Field, PrivateAttr
 
 from videopython.base.exceptions import PlanError, PlanErrorCode, PlanValidationError
 from videopython.base.image_text import AnchorPoint, ImageText, TextAlign
@@ -155,7 +154,10 @@ class TranscriptionOverlay(Effect):
 
     Each word lights up in the highlight color as it is spoken, based on
     transcription timestamps. Requires a word-level transcription, which the
-    runner supplies via the ``requires=("transcription",)`` declaration.
+    runner supplies via the ``requires=("transcription",)`` declaration --
+    re-based onto the segment's local timeline and forwarded to
+    :meth:`streaming_init`, so subtitled edits run on the O(1)-memory
+    streaming path; the eager path replays the same contract.
 
     Geometry is resolution-relative by default (``font_scale``/``region``), so
     a plan validated by ``VideoEdit.validate()`` that passes will also render;
@@ -164,7 +166,7 @@ class TranscriptionOverlay(Effect):
     """
 
     op: Literal["add_subtitles"] = "add_subtitles"
-    streamable: ClassVar[bool] = False
+    streamable: ClassVar[bool] = True
     requires: ClassVar[tuple[str, ...]] = ("transcription",)
 
     # ---- primary, resolution-independent surface ----
@@ -287,6 +289,18 @@ class TranscriptionOverlay(Effect):
         None,
         description="Advanced override: space around the box in px (or [top, right, bottom, left]). None uses 20.",
     )
+
+    # Per-stream state precomputed by streaming_init (the PrivateAttr pattern
+    # shared by every streamable effect). Reset on every init, so a reused
+    # instance can render differently sized videos without serving a
+    # stale-resolution overlay.
+    _stream_layout: _SubtitleLayout | None = PrivateAttr(default=None)
+    _stream_transcription: Transcription | None = PrivateAttr(default=None)
+    _stream_cache: dict[tuple[str, int | None], np.ndarray] = PrivateAttr(default_factory=dict)
+    _stream_current_cue: str | None = PrivateAttr(default=None)
+    _stream_fps: float = PrivateAttr(default=0.0)
+    _stream_shape: tuple[int, int, int] = PrivateAttr(default=(0, 0, 3))
+    _stream_t0_frames: int = PrivateAttr(default=0)
 
     # ------------------------------------------------------------- resolution
 
@@ -470,53 +484,78 @@ class TranscriptionOverlay(Effect):
         cache[cache_key] = overlay_image
         return overlay_image
 
-    def apply(  # type: ignore[override]
+    def streaming_init(
         self,
-        video: Video,
+        total_frames: int,
+        fps: float,
+        width: int,
+        height: int,
         transcription: Transcription | None = None,
-    ) -> Video:
+        **_context: Any,
+    ) -> None:
+        """Precompute per-stream subtitle state (layout, cues, overlay cache).
+
+        ``transcription`` timestamps must be local to the timeline the frames
+        come from: the runner re-bases source-absolute context onto the cut
+        segment before this hook runs (``_segment_context``). With a
+        ``window`` set, frame indices arrive window-local, so timestamps are
+        offset by the window start (the window addresses segment time).
+        """
         if transcription is None:
             raise ValueError(
                 "TranscriptionOverlay requires transcription data. "
                 "Pass it via VideoEdit.run(context={'transcription': ...}) or directly to apply()."
             )
-
-        height, width = video.frame_shape[:2]
         layout = self._resolve_layout(width, height, transcription)
         if not layout.fits:
             # Should be unreachable when the plan went through validate(); kept
-            # as defense in depth so a direct apply() still fails clearly
-            # rather than crashing mid-render in ImageText.
+            # as defense in depth so direct/un-validated execution still fails
+            # clearly before any frame work, never mid-render. Raised before
+            # decode starts on both the eager and streaming paths.
             assert layout.error is not None
             raise PlanValidationError(
                 layout.error,
                 [PlanError(code=PlanErrorCode.SUBTITLE_UNFITTABLE, op=self.op)],
             )
+        self._stream_layout = layout
+        self._stream_transcription = Transcription(segments=layout.segments, language=transcription.language)
+        self._stream_cache = {}
+        self._stream_current_cue = None
+        self._stream_fps = fps
+        self._stream_shape = (height, width, 3)
+        win_start = 0.0 if self.window is None or self.window.start is None else float(self.window.start)
+        self._stream_t0_frames = round(win_start * fps)
+        logger.info("Rendering transcription overlay (font %dpx)...", layout.font_px)
 
-        # Per-call memo of rendered overlays, keyed by (cue text, highlighted
-        # word). Local rather than instance state so the model stays stateless
-        # and re-entrant -- a reused instance can render differently sized
-        # videos without serving a stale-resolution overlay.
-        cache: dict[tuple[str, int | None], np.ndarray] = {}
-        transformed = Transcription(segments=layout.segments, language=transcription.language)
+    def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
+        layout = self._stream_layout
+        transcription = self._stream_transcription
+        assert layout is not None and transcription is not None, "streaming_init was not called"
+        timestamp = (self._stream_t0_frames + frame_index) / self._stream_fps
+        active_segment = self._get_active_segment(transcription, timestamp)
+        if active_segment is None:
+            return frame
+        # Frames arrive in time order on both paths and only one cue is
+        # active at a time, so only the current cue's highlight variants are
+        # ever needed: evicting on cue change bounds the cache to
+        # (words_per_cue + 1) full-frame overlays regardless of video length,
+        # keeping the streaming path's O(1)-memory contract.
+        if active_segment.text != self._stream_current_cue:
+            self._stream_cache.clear()
+            self._stream_current_cue = active_segment.text
+        highlight_word_index = self._get_active_word_index(active_segment, timestamp)
+        text_overlay = self._create_text_overlay(
+            self._stream_shape, active_segment, highlight_word_index, layout, self._stream_cache
+        )
+        return self._apply_overlay_to_frame(frame, text_overlay)
 
-        logger.info("Applying transcription overlay (font %dpx)...", layout.font_px)
-        new_frames = []
-        for frame_index, frame in enumerate(tqdm(video.frames, desc="Transcription overlay")):
-            timestamp = frame_index / video.fps
-            active_segment = self._get_active_segment(transformed, timestamp)
-            if active_segment is None:
-                new_frames.append(frame)
-                continue
-            highlight_word_index = self._get_active_word_index(active_segment, timestamp)
-            text_overlay = self._create_text_overlay(
-                video.frame_shape, active_segment, highlight_word_index, layout, cache
-            )
-            new_frames.append(self._apply_overlay_to_frame(frame, text_overlay))
-
-        new_video = Video.from_frames(np.array(new_frames), fps=video.fps)
-        new_video.audio = video.audio
-        return new_video
+    def apply(  # type: ignore[override]
+        self,
+        video: Video,
+        transcription: Transcription | None = None,
+    ) -> Video:
+        """Eager render by replaying the streaming contract (one pixel path)."""
+        return super().apply(video, transcription=transcription)
 
     def predict_metadata(
         self,

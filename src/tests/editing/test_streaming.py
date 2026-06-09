@@ -1,17 +1,22 @@
 """Tests for the streaming video processing pipeline."""
 
+import subprocess
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pytest
 from PIL import Image
 
 from tests.test_config import SMALL_VIDEO_PATH
+from videopython.base.transcription import Transcription, TranscriptionWord
 from videopython.base.video import Video, VideoMetadata
 from videopython.editing import VideoEdit
 from videopython.editing.effects import ColorGrading, Fade
+from videopython.editing.operation import TimeRange
 from videopython.editing.streaming import EffectScheduleEntry, FrameEncoder, StreamingSegmentPlan, stream_segment
+from videopython.editing.transcription_overlay import TranscriptionOverlay
 
 
 @pytest.fixture
@@ -567,3 +572,227 @@ class TestFrameEncoder:
             assert meta.height == 64
         finally:
             out_path.unlink(missing_ok=True)
+
+
+class TestContextStreaming:
+    """Context-requiring effects (add_subtitles) run on the streaming path.
+
+    The plan builder resolves `requires` context onto the segment-local
+    timeline and carries it on the schedule entry; the segment uses a
+    mid-video cut (start > 0) so these tests fail if re-basing is skipped.
+    """
+
+    _PLAN = {
+        "segments": [
+            {
+                "source": SMALL_VIDEO_PATH,
+                "start": 4.0,
+                "end": 8.0,
+                "operations": [{"op": "add_subtitles", "font_scale": 0.1}],
+            }
+        ],
+    }
+
+    @staticmethod
+    def _absolute_transcription() -> Transcription:
+        # Source-absolute words overlapping the [4.0, 8.0) cut.
+        return Transcription(
+            words=[
+                TranscriptionWord(start=4.5, end=5.5, word="hello"),
+                TranscriptionWord(start=5.5, end=6.5, word="streaming"),
+                TranscriptionWord(start=6.5, end=7.5, word="world"),
+            ]
+        )
+
+    def test_add_subtitles_streams_and_matches_eager(self, tmp_path):
+        """run_to_file must not fall back to eager, and must match run()."""
+        context = {"transcription": self._absolute_transcription()}
+        eager_video = VideoEdit.from_dict(self._PLAN).run(context=context)
+
+        out_path = tmp_path / "subtitled.mp4"
+        with patch.object(VideoEdit, "_run_to_file_eager", side_effect=AssertionError("fell back to eager")):
+            VideoEdit.from_dict(self._PLAN).run_to_file(out_path, context=context)
+        streamed_video = Video.from_path(str(out_path))
+
+        assert abs(len(eager_video.frames) - len(streamed_video.frames)) <= 1
+
+        # Frame inside the first cue (segment-local t=1.0s == source t=5.0s).
+        active = round(1.0 * 24)
+        eager_frame = eager_video.frames[active].astype(np.float32)
+        stream_frame = streamed_video.frames[active].astype(np.float32)
+        mae = np.abs(eager_frame - stream_frame).mean()
+        assert mae < 15, f"Mean absolute error too high: {mae}"
+
+        # The subtitle was actually drawn: against the raw (no-subtitle) cut,
+        # a meaningful share of pixels changed by far more than codec noise.
+        # Guards the failure mode where both paths silently drop the context
+        # and the parity assertion above passes vacuously.
+        baseline = Video.from_path(SMALL_VIDEO_PATH, start_second=4.0, end_second=8.0)
+        drawn_diff = np.abs(baseline.frames[active].astype(np.float32) - stream_frame)
+        drawn_fraction = (drawn_diff > 50).mean()
+        assert drawn_fraction > 0.005, f"No subtitle pixels detected: {drawn_fraction}"
+
+        # Re-base proof: before the first re-based cue (local t=0.1s; words
+        # start at local 0.5s) the frame is the unmodified source. Absolute
+        # (un-re-based) timestamps would draw here (4.5-7.5s overlaps 0.1s
+        # only if timestamps were kept source-absolute -- they must not be).
+        quiet = round(0.1 * 24)
+        quiet_diff = np.abs(
+            baseline.frames[quiet].astype(np.float32) - streamed_video.frames[quiet].astype(np.float32)
+        ).mean()
+        assert quiet_diff < 15, f"Frame before first cue was modified: {quiet_diff}"
+
+    def test_missing_context_raises_before_decode(self, tmp_path):
+        """No transcription in context -> the op's own clear error, pre-decode."""
+        edit = VideoEdit.from_dict(self._PLAN)
+        with pytest.raises(ValueError, match="requires transcription data"):
+            edit.run_to_file(tmp_path / "out.mp4")
+
+    def test_no_overlap_context_raises_like_eager(self, tmp_path):
+        """Words entirely outside the cut are dropped by re-basing -> same error."""
+        context = {
+            "transcription": Transcription(words=[TranscriptionWord(start=50.0, end=51.0, word="late")]),
+        }
+        edit = VideoEdit.from_dict(self._PLAN)
+        with pytest.raises(ValueError, match="requires transcription data"):
+            edit.run_to_file(tmp_path / "out.mp4", context=context)
+
+    def test_effect_then_transform_falls_back_and_matches_eager(self, tmp_path):
+        """A transform after add_subtitles can't stream in plan order; the
+        plan falls back to eager so validate()/run()/run_to_file() agree.
+
+        Regression: streaming hoisted the crop to decode time and resolved
+        the subtitle layout at post-crop dims, so a plan that passed
+        validate() could raise SUBTITLE_UNFITTABLE mid-run_to_file (or
+        render visibly differently from run()).
+        """
+        plan = {
+            "segments": [
+                {
+                    "source": SMALL_VIDEO_PATH,
+                    "start": 4.0,
+                    "end": 8.0,
+                    "operations": [
+                        {"op": "add_subtitles", "font_scale": 0.1},
+                        {"op": "crop", "width": 400, "height": 300},
+                    ],
+                }
+            ],
+        }
+        context = {"transcription": self._absolute_transcription()}
+        eager_video = VideoEdit.from_dict(plan).run(context=context)
+
+        out_path = tmp_path / "out.mp4"
+        with patch.object(
+            VideoEdit, "_run_to_file_eager", autospec=True, side_effect=VideoEdit._run_to_file_eager
+        ) as eager_spy:
+            VideoEdit.from_dict(plan).run_to_file(out_path, context=context)
+        assert eager_spy.called, "effect-then-transform plan must take the eager fallback"
+        streamed_video = Video.from_path(str(out_path))
+
+        assert abs(len(eager_video.frames) - len(streamed_video.frames)) <= 1
+        active = round(1.0 * 24)
+        mae = np.abs(
+            eager_video.frames[active].astype(np.float32) - streamed_video.frames[active].astype(np.float32)
+        ).mean()
+        assert mae < 15, f"Mean absolute error too high: {mae}"
+
+
+class TestTranscriptionOverlayStreamingHooks:
+    """Deterministic synthetic-frame tests of the streaming contract itself."""
+
+    @staticmethod
+    def _local_transcription() -> Transcription:
+        return Transcription(
+            words=[
+                TranscriptionWord(start=0.5, end=1.0, word="hello"),
+                TranscriptionWord(start=1.0, end=1.5, word="world"),
+            ]
+        )
+
+    def test_process_frame_draws_inside_cue_only(self):
+        overlay = TranscriptionOverlay(font_scale=0.1)
+        overlay.streaming_init(48, 24.0, 640, 360, transcription=self._local_transcription())
+
+        frame = np.zeros((360, 640, 3), dtype=np.uint8)
+        # t = 0.75s: inside the cue -> pixels drawn.
+        inside = overlay.process_frame(frame.copy(), round(0.75 * 24))
+        assert inside.any()
+        # t = 0.1s: before the cue -> untouched.
+        outside = overlay.process_frame(frame.copy(), round(0.1 * 24))
+        assert not outside.any()
+
+    def test_window_offsets_timestamps(self):
+        """With a window, frame indices are window-local; timestamps must not be."""
+        overlay = TranscriptionOverlay(font_scale=0.1, window=TimeRange(start=1.0, stop=2.0))
+        overlay.streaming_init(24, 24.0, 640, 360, transcription=self._local_transcription())
+
+        frame = np.zeros((360, 640, 3), dtype=np.uint8)
+        # Window-local index 6 -> segment t = 1.25s: inside the "world" word.
+        inside = overlay.process_frame(frame.copy(), 6)
+        assert inside.any()
+        # Window-local index 20 -> segment t ~ 1.83s: past the last word.
+        outside = overlay.process_frame(frame.copy(), 20)
+        assert not outside.any()
+
+    def test_streaming_init_without_transcription_raises(self):
+        overlay = TranscriptionOverlay()
+        with pytest.raises(ValueError, match="requires transcription data"):
+            overlay.streaming_init(48, 24.0, 640, 360)
+
+    def test_overlay_cache_is_bounded_by_cue_change_eviction(self):
+        """Only the active cue's highlight variants stay cached.
+
+        Regression: the per-stream overlay memo accumulated a full-frame
+        RGBA canvas per (cue, highlight) pair for the whole stream --
+        gigabytes on long subtitled videos, on the "O(1)-memory" path.
+        """
+        overlay = TranscriptionOverlay(font_scale=0.1, max_words_per_cue=2)
+        transcription = Transcription(
+            words=[
+                TranscriptionWord(start=0.0, end=0.5, word="one"),
+                TranscriptionWord(start=0.5, end=1.0, word="two"),
+                TranscriptionWord(start=1.0, end=1.5, word="three"),
+                TranscriptionWord(start=1.5, end=2.0, word="four"),
+            ]
+        )
+        overlay.streaming_init(48, 24.0, 640, 360, transcription=transcription)
+
+        frame = np.zeros((360, 640, 3), dtype=np.uint8)
+        for i in range(48):
+            overlay.process_frame(frame.copy(), i)
+
+        # Two 2-word cues were rendered; only the second (active) cue's
+        # variants may remain: at most one per word plus a no-highlight one.
+        assert 0 < len(overlay._stream_cache) <= 3
+        assert all(text == overlay._stream_current_cue for text, _ in overlay._stream_cache)
+
+
+class TestTrailingFrameSchedule:
+    """Frames past the round(duration*fps) estimate still get full-range effects."""
+
+    def test_fade_out_covers_rounding_tie_extra_frame(self, tmp_path):
+        # At 10 fps, the cut [1.0, 4.05] schedules round(3.05 * 10) = 30
+        # frames while ffmpeg can emit 31 on the rounding tie. Without
+        # open-ended schedule entries the extra frame escaped the fade-out
+        # and popped back to full brightness on the last frame.
+        src_10fps = tmp_path / "src_10fps.mp4"
+        subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-i", SMALL_VIDEO_PATH, "-r", "10", "-an", str(src_10fps)],
+            check=True,
+        )
+        plan = {
+            "segments": [
+                {
+                    "source": str(src_10fps),
+                    "start": 1.0,
+                    "end": 4.05,
+                    "operations": [{"op": "fade", "mode": "out", "duration": 1.0}],
+                }
+            ],
+        }
+        out_path = tmp_path / "faded.mp4"
+        with patch.object(VideoEdit, "_run_to_file_eager", side_effect=AssertionError("fell back to eager")):
+            VideoEdit.from_dict(plan).run_to_file(out_path)
+        result = Video.from_path(str(out_path))
+        assert result.frames[-1].mean() < 5, f"Last frame escaped the fade: {result.frames[-1].mean()}"

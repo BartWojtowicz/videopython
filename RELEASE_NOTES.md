@@ -1,5 +1,60 @@
 # Release Notes
 
+## 0.39.0
+
+Context-requiring effects now stream. `add_subtitles` — previously the most
+common reason a whole plan silently fell back to eager, in-memory execution —
+runs on the O(1)-memory streaming path. First step of the streaming-first
+migration (TODO.md P0.1).
+
+- **Context threading.** `run_to_file` resolves each segment's `requires`
+  context at plan-build time, re-based onto the segment-local timeline by the
+  same `_segment_context` machinery the eager path uses (slice to
+  `[start, end)`, shift by `-start`, drop empty slices). The resolved kwargs
+  travel on `EffectScheduleEntry.context` and are forwarded to the effect's
+  `streaming_init` — the streaming twin of `_apply_with_context`. Context
+  errors (missing/non-overlapping transcription) raise *before that segment
+  decodes*, with the same exception as the eager path. Context-requiring
+  *transforms* (`silence_removal`) still fall back to eager: an ffmpeg filter
+  string can't consume runtime context.
+- **Transform-after-effect plans now fall back to eager** instead of
+  streaming with reordered semantics. Streaming hoists all transform filters
+  to decode time, *before* every per-frame effect, so a segment like
+  `[fade, resample_fps]` or `[add_subtitles, crop]` streamed against a
+  different timeline/dims than plan order prescribes — mistimed envelopes,
+  and for subtitles a layout resolved at post-transform dims that could fail
+  *after* `validate()` passed. Such plans (a pre-existing latent bug for
+  context-free effects, newly reachable for `add_subtitles`) now execute
+  eagerly, in strict plan order. Transforms-then-effects plans stream as
+  before.
+- **Bounded subtitle overlay cache.** The per-stream overlay memo evicts on
+  cue change (frames arrive in time order; only the active cue's highlight
+  variants are needed), bounding it to `max_words_per_cue + 1` full-frame
+  overlays regardless of video length — without this, an hour of 1080p
+  speech would accumulate gigabytes on the "O(1)-memory" path.
+- **Trailing-frame fix in `stream_segment`.** The scheduled frame count is
+  an estimate (`round(duration * fps)`); on rounding ties ffmpeg can emit
+  one extra frame, which previously escaped every full-range effect (an
+  unfaded frame popping after a fade-out, subtitles vanishing on the last
+  frame). Full-range entries are now open-ended with a clamped window-local
+  index.
+- **`TranscriptionOverlay` ported to the streaming contract**
+  (`streamable=True`): subtitle layout/cue state precomputes in
+  `streaming_init`, per-frame rendering lives in `process_frame`, and the
+  eager path replays exactly that contract via the base `Effect._apply` — one
+  pixel path, parity by construction (the 0.36.1 principle).
+- **`Effect.streaming_init` signature widened** to
+  `streaming_init(total_frames, fps, width, height, **context)`; the base
+  `apply`/`_apply` thread `**context` through. Effects without `requires` are
+  always called without context kwargs. **External `Effect` subclasses must
+  widen their `streaming_init`/`_apply` overrides with `**_context: Any`.**
+- **Behavior changes in `TranscriptionOverlay`:** `window` is now honored
+  (previously ignored — the overlay rendered over the full clip regardless);
+  window-local frame indices are mapped back to segment time, so cue timing is
+  unchanged. `apply()` now mutates input frames in place, like every other
+  effect (it used to return a fresh `Video`); snapshot frames before applying
+  if you compare against the input.
+
 ## 0.38.0
 
 Validation/repair primitives that let an LLM-driven compiler converge on a valid

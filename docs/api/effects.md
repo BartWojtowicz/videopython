@@ -72,8 +72,10 @@ list. The `window` field travels inline as a nested object:
 
 ## Available Effects
 
-Every effect except `add_subtitles` is streamable (compatible with
-`VideoEdit.run_to_file()` for constant-memory processing).
+Every effect is streamable (compatible with `VideoEdit.run_to_file()` for
+constant-memory processing). Context-requiring effects (`add_subtitles`)
+stream too: pass `context=` to `run_to_file` and the runner re-bases it onto
+each segment's local timeline.
 
 | op | Class | Description |
 |---|---|---|
@@ -87,7 +89,7 @@ Every effect except `add_subtitles` is streamable (compatible with
 | `fade` | `Fade` | Audio + video fade in/out/in_out |
 | `volume_adjust` | `VolumeAdjust` | Audio-only effect |
 | `text_overlay` | `TextOverlay` | Rendered text on top of frames |
-| `add_subtitles` | `TranscriptionOverlay` | Requires `transcription` context |
+| `add_subtitles` | `TranscriptionOverlay` | Word-level subtitles; requires `transcription` context |
 | `shake` | `Shake` | Per-frame jitter (random / rhythmic / decay) |
 | `punch_in` | `PunchIn` | Snap-zoom emphasis with optional release |
 | `flash` | `Flash` | Solid-color frame flash with attack/decay |

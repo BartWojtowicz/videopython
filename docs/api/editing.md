@@ -98,7 +98,8 @@ Each operation contributes either a ffmpeg `-vf` filter
 streamable, `run_to_file` falls back to eager (`run()` + `save()`).
 
 **Streamable transforms**: `resize`, `crop`, `resample_fps`.
-**Streamable effects**: every `Effect` except `add_subtitles`.
+**Streamable effects**: every `Effect`, including the context-requiring
+`add_subtitles` (pass `context=` to `run_to_file`).
 
 ## Context Data
 
@@ -110,7 +111,12 @@ of the `context` dict and threads them into `apply` / `predict_metadata`:
 ```python
 edit = VideoEdit.from_dict(plan)
 video = edit.run(context={"transcription": my_transcription})
+edit.run_to_file("out.mp4", context={"transcription": my_transcription})
 ```
+
+On both paths, time-based context values are re-based onto each cut
+segment's local timeline; on the streaming path the resolved values are
+delivered to the effect's `streaming_init`.
 
 ## Validation
 

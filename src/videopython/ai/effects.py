@@ -9,7 +9,7 @@ AI-free renderer in :mod:`videopython.base.draw_detections`.
 
 from __future__ import annotations
 
-from typing import ClassVar, Literal
+from typing import Any, ClassVar, Literal
 
 import numpy as np
 from pydantic import Field, PrivateAttr
@@ -97,7 +97,7 @@ class ObjectDetectionOverlay(Effect):
                 backend=self.backend,
             )
 
-    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int, **_context: Any) -> None:
         self._last = []
         self._init_detector()
 

@@ -109,7 +109,7 @@ class FullImageOverlay(Effect):
         img_pil.paste(overlay_pil, (0, 0), overlay_pil)
         return np.array(img_pil)
 
-    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int, **_context: Any) -> None:
         self._load_overlay()
         self._stream_total = total_frames
         self._stream_fade_frames = round(self.fade_time * fps) if self.fade_time > 0 else 0
@@ -121,7 +121,7 @@ class FullImageOverlay(Effect):
         fade_alpha = 1.0 if dist_from_end >= self._stream_fade_frames else dist_from_end / self._stream_fade_frames
         return self._overlay_frame(frame, fade_alpha)
 
-    def _apply(self, video: Video) -> Video:
+    def _apply(self, video: Video, **_context: Any) -> Video:
         overlay = self._load_overlay()
         if video.frame_shape != overlay[:, :, :3].shape:
             raise ValueError(f"Mismatch of overlay shape `{overlay.shape}` with video shape: `{video.frame_shape}`!")
@@ -181,7 +181,7 @@ class Blur(Effect):
             ratios = np.linspace(1.0, 1 / n_frames, n_frames)
         return base_sigma * np.sqrt(np.maximum(1, np.round(ratios * self.iterations)))
 
-    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int, **_context: Any) -> None:
         self._stream_sigmas = self._compute_sigmas(total_frames)
 
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
@@ -215,7 +215,7 @@ class Zoom(Effect):
             crop_w, crop_h = crop_w[::-1], crop_h[::-1]
         return np.stack([crop_w, crop_h], axis=1)
 
-    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int, **_context: Any) -> None:
         self._stream_crops = self._crop_sizes(total_frames, width, height)
         self._stream_width = width
         self._stream_height = height
@@ -317,7 +317,7 @@ class Vignette(Effect):
         mask = 1.0 - np.clip(distance - 0.5, 0, 1) * 2 * self.strength
         return mask.astype(np.float32)
 
-    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int, **_context: Any) -> None:
         if self._mask is None or self._mask.shape != (height, width):
             self._mask = self._create_mask(height, width)
         self._stream_mask_3d = self._mask[:, :, np.newaxis]
@@ -326,7 +326,7 @@ class Vignette(Effect):
         assert self._stream_mask_3d is not None
         return (frame.astype(np.float32) * self._stream_mask_3d).astype(np.uint8)
 
-    def _apply(self, video: Video) -> Video:
+    def _apply(self, video: Video, **_context: Any) -> Video:
         logger.info("Applying vignette effect...")
         height, width = video.frame_shape[:2]
         if self._mask is None or self._mask.shape != (height, width):
@@ -404,7 +404,7 @@ class KenBurns(Effect):
             regions[i] = (x, y, crop_w, crop_h)
         return regions
 
-    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int, **_context: Any) -> None:
         self._stream_regions = self._precompute_regions(total_frames, width, height)
         self._stream_target_w = width
         self._stream_target_h = height
@@ -461,7 +461,7 @@ class Fade(Effect):
             alpha[-ramp:] = np.minimum(alpha[-ramp:], _compute_curve(t, self.curve))
         return alpha
 
-    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int, **_context: Any) -> None:
         self._stream_alpha = self._fade_envelope(total_frames, fps)
 
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
@@ -649,7 +649,7 @@ class _AnchoredOverlay(Effect):
         rgb = region[:, :, :3].astype(np.float32)
         return alpha, rgb, (dst_y, dst_x, paste_h, paste_w)
 
-    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int, **_context: Any) -> None:
         params = self._blend_params(width, height)
         if params is None:
             self._stream_noop = True
@@ -966,7 +966,7 @@ class Shake(Effect):
         M = np.array([[1.0, 0.0, dx], [0.0, 1.0, dy]], dtype=np.float32)
         return cv2.warpAffine(frame, M, (w, h), borderMode=cv2.BORDER_REFLECT)
 
-    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int, **_context: Any) -> None:
         self._stream_offsets = self._compute_offsets(total_frames, fps)
 
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
@@ -1028,7 +1028,7 @@ class PunchIn(Effect):
         cropped = frame[y : y + crop_h, x : x + crop_w]
         return cv2.resize(cropped, (width, height), interpolation=cv2.INTER_LINEAR)
 
-    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int, **_context: Any) -> None:
         self._stream_zooms = self._zoom_envelope(total_frames)
         self._stream_width = width
         self._stream_height = height
@@ -1091,7 +1091,7 @@ class Flash(Effect):
             alpha[:] = self.peak_alpha
         return alpha
 
-    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int, **_context: Any) -> None:
         self._stream_alpha = self._alpha_envelope(total_frames)
         self._stream_color = np.array(self.color, dtype=np.float32)
 
@@ -1163,7 +1163,7 @@ class ChromaticAberration(Effect):
             out[:, :, 2] = cv2.remap(b, b_map_x, b_map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
         return out
 
-    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int, **_context: Any) -> None:
         if self.mode == "radial":
             self._stream_maps = self._build_radial_maps(width, height)
 
@@ -1226,7 +1226,7 @@ class Glitch(Effect):
 
         return out
 
-    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int, **_context: Any) -> None:
         return None
 
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
@@ -1266,7 +1266,7 @@ class FilmGrain(Effect):
             noise = rng.standard_normal((h, w, 3), dtype=np.float32) * amp
         return np.clip(frame.astype(np.float32) + noise, 0, 255).astype(np.uint8)
 
-    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int, **_context: Any) -> None:
         return None
 
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
@@ -1308,7 +1308,7 @@ class Sharpen(Effect):
         sharpened = cv2.addWeighted(frame, 1.0 + self.amount, blurred, -self.amount, 0)
         return sharpened
 
-    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int, **_context: Any) -> None:
         return None
 
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
@@ -1355,7 +1355,7 @@ class Pixelate(Effect):
         frame[y : y + h, x : x + w] = big
         return frame
 
-    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int, **_context: Any) -> None:
         self._stream_region_px = self._resolve_region(width, height)
 
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
@@ -1410,7 +1410,7 @@ class MirrorFlip(Effect):
             out[:half, :] = out[h - half :, :][::-1, :]
         return out
 
-    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int, **_context: Any) -> None:
         return None
 
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
@@ -1470,7 +1470,7 @@ class Kaleidoscope(Effect):
             borderMode=cv2.BORDER_REFLECT,
         )
 
-    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int, **_context: Any) -> None:
         self._stream_map_x, self._stream_map_y = self._build_maps(width, height)
 
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
