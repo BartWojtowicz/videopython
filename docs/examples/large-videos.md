@@ -49,6 +49,14 @@ When all operations are streamable, frames are never loaded into memory. If any 
 is not streamable (e.g. `reverse`, `speed_change`), the pipeline falls back to eager
 mode automatically.
 
+Context-requiring effects stream too: pass `context=` to `run_to_file` and
+e.g. `add_subtitles` burns word-level subtitles on the streaming path, with
+the transcription re-based onto each segment's local timeline:
+
+```python
+edit.run_to_file("output.mp4", context={"transcription": transcription})
+```
+
 See the [Operations](../api/operations.md#registered-operations) table for the
 list of streamable ops. Inspect `Operation.get(op_id).streamable` programmatically.
 

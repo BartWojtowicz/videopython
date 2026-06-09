@@ -189,7 +189,7 @@ llm_schema = cls.llm_json_schema()       # LLM-facing (llm_hidden dropped)
 | `fade` | `Fade` | effect | yes |
 | `volume_adjust` | `VolumeAdjust` | effect | yes |
 | `text_overlay` | `TextOverlay` | effect | yes |
-| `add_subtitles` | `TranscriptionOverlay` | effect | no (requires `transcription`) |
+| `add_subtitles` | `TranscriptionOverlay` | effect | yes (requires `transcription` context) |
 | `shake` | `Shake` | effect | yes |
 | `punch_in` | `PunchIn` | effect | yes |
 | `flash` | `Flash` | effect | yes |

@@ -920,9 +920,16 @@ class TestGenericContextRebasing:
 
 
 class TestStreamingRequiresGuard:
-    """An op that `requires` runtime context forces the eager path."""
+    """How `requires` interacts with the streaming plan builder.
 
-    def test_build_streaming_plan_returns_none_for_requires_op(self, monkeypatch):
+    Context-requiring *effects* stream: their requires-keys are resolved,
+    re-based onto the segment-local timeline, and carried on the schedule
+    entry. Context-requiring *transforms* (the ffmpeg-filter path) still
+    force the eager fallback -- a filter string can't consume runtime
+    context.
+    """
+
+    def test_build_streaming_plan_returns_none_for_requires_transform(self, monkeypatch):
         plan = VideoEdit.from_dict(
             {
                 "segments": [
@@ -938,9 +945,105 @@ class TestStreamingRequiresGuard:
         seg = plan.segments[0]
         # resize is streamable, so without the guard a plan is built.
         assert plan._build_streaming_plan(seg, None, None, None) is not None
-        # Same streamable op, now declaring a context requirement -> eager.
+        # Same streamable transform, now declaring a context requirement -> eager.
         monkeypatch.setattr(Resize, "requires", ("transcription",))
         assert plan._build_streaming_plan(seg, None, None, None) is None
+
+    def test_requires_effect_builds_plan_with_rebased_context(self):
+        plan = VideoEdit.from_dict(
+            {
+                "segments": [
+                    _segment(
+                        source=SMALL_VIDEO_PATH,
+                        start=4.0,
+                        end=8.0,
+                        operations=[{"op": "add_subtitles"}],
+                    )
+                ]
+            }
+        )
+        tx = _make_transcription([(4.5, 5.5, "hello"), (5.5, 6.5, "world")])
+        built = plan._build_streaming_plan(plan.segments[0], None, None, None, {"transcription": tx})
+
+        assert built is not None
+        [entry] = built.effect_schedule
+        rebased = entry.context["transcription"]
+        words = [w for s in rebased.segments for w in s.words]
+        # Source-absolute 4.5-6.5s -> segment-local 0.5-2.5s (offset by -start).
+        assert words[0].start == pytest.approx(0.5)
+        assert words[-1].end == pytest.approx(2.5)
+
+    def test_requires_effect_without_context_builds_plan_with_empty_context(self):
+        # The plan still builds; streaming_init raises the op's own clear
+        # "requires transcription data" error pre-decode, mirroring eager.
+        plan = VideoEdit.from_dict(
+            {
+                "segments": [
+                    _segment(
+                        source=SMALL_VIDEO_PATH,
+                        start=0.0,
+                        end=1.0,
+                        operations=[{"op": "add_subtitles"}],
+                    )
+                ]
+            }
+        )
+        built = plan._build_streaming_plan(plan.segments[0], None, None, None)
+        assert built is not None
+        assert built.effect_schedule[0].context == {}
+
+    def test_context_free_effect_gets_empty_entry_context(self):
+        plan = VideoEdit.from_dict(
+            {
+                "segments": [
+                    _segment(
+                        source=SMALL_VIDEO_PATH,
+                        start=0.0,
+                        end=1.0,
+                        operations=[{"op": "color_adjust", "brightness": 0.2}],
+                    )
+                ]
+            }
+        )
+        tx = _make_transcription([(0.2, 0.8, "hello")])
+        built = plan._build_streaming_plan(plan.segments[0], None, None, None, {"transcription": tx})
+        assert built is not None
+        # Only `requires` keys land on the entry -- never the whole context.
+        assert built.effect_schedule[0].context == {}
+
+
+class TestStreamingOpOrderGuard:
+    """A transform after a scheduled effect forces the eager fallback.
+
+    vf filters run at decode time, before every scheduled effect's
+    process_frame, so an effect-then-transform plan cannot stream in plan
+    order: the effect's frame range and streaming_init dims/fps would be
+    computed against a timeline the later filter changes.
+    """
+
+    @staticmethod
+    def _plan(operations: list[dict[str, Any]]) -> VideoEdit:
+        return VideoEdit.from_dict(
+            {"segments": [_segment(source=SMALL_VIDEO_PATH, start=0.0, end=2.0, operations=operations)]}
+        )
+
+    def test_transform_after_effect_returns_none(self):
+        plan = self._plan(
+            [
+                {"op": "fade", "mode": "in", "duration": 0.5},
+                {"op": "resize", "width": 64, "height": 64},
+            ]
+        )
+        assert plan._build_streaming_plan(plan.segments[0], None, None, None) is None
+
+    def test_transform_before_effect_streams(self):
+        plan = self._plan(
+            [
+                {"op": "resize", "width": 64, "height": 64},
+                {"op": "fade", "mode": "in", "duration": 0.5},
+            ]
+        )
+        assert plan._build_streaming_plan(plan.segments[0], None, None, None) is not None
 
 
 class TestPostOpsGuard:

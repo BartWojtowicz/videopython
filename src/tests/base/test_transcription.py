@@ -7,9 +7,15 @@ from videopython.base.video import Video
 from videopython.editing.transcription_overlay import TranscriptionOverlay
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def dummy_video():
-    """Create a 10-second video with black frames."""
+    """Create a 10-second video with black frames.
+
+    Function-scoped: ``TranscriptionOverlay.apply`` replays the streaming
+    contract via ``Effect._apply``, which (like every effect) mutates the
+    input frames in place, so a shared instance would leak overlays across
+    tests.
+    """
     return Video.from_image(np.zeros((360, 640, 3), dtype=np.uint8), fps=30, length_seconds=10.0)
 
 
@@ -106,21 +112,17 @@ def test_transcription_overlay_frame_content_changes(dummy_video, dummy_transcri
     """Test that TranscriptionOverlay actually modifies frame content during active segments."""
     overlay = TranscriptionOverlay(font_filename=TEST_FONT_PATH)
 
+    # apply() mutates frames in place (the Effect contract), so snapshot first.
+    original_frame_at_1s = dummy_video.frames[30].copy()  # 30fps * 1s = frame 30
+    original_frame_at_4s = dummy_video.frames[120].copy()  # 30fps * 4s = frame 120
+
     result_video = overlay.apply(video=dummy_video, transcription=dummy_transcription)
 
     # Frame at timestamp 1.0 should have text overlay (within first segment 0.0-1.8)
-    frame_at_1s = result_video.frames[30]  # 30fps * 1s = frame 30
-    original_frame_at_1s = dummy_video.frames[30]
-
-    # The frames should be different (overlay was applied)
-    assert not np.array_equal(frame_at_1s, original_frame_at_1s)
+    assert not np.array_equal(result_video.frames[30], original_frame_at_1s)
 
     # Frame at timestamp 4.0 should be unchanged (no active segment)
-    frame_at_4s = result_video.frames[120]  # 30fps * 4s = frame 120
-    original_frame_at_4s = dummy_video.frames[120]
-
-    # The frames should be identical (no overlay applied)
-    assert np.array_equal(frame_at_4s, original_frame_at_4s)
+    assert np.array_equal(result_video.frames[120], original_frame_at_4s)
 
 
 def test_transcription_overlay_defaults_font_when_none(dummy_video, dummy_transcription):
@@ -129,12 +131,16 @@ def test_transcription_overlay_defaults_font_when_none(dummy_video, dummy_transc
 
     assert overlay.font_filename is None
 
+    # apply() mutates frames in place (the Effect contract), so snapshot first.
+    original_at_1s = dummy_video.frames[30].copy()
+    original_at_4s = dummy_video.frames[120].copy()
+
     result_video = overlay.apply(video=dummy_video, transcription=dummy_transcription)
 
     # Active segment (0.0-1.8): frame at 1s must be modified despite no font path.
-    assert not np.array_equal(result_video.frames[30], dummy_video.frames[30])
+    assert not np.array_equal(result_video.frames[30], original_at_1s)
     # Inactive region (~4s): frame unchanged.
-    assert np.array_equal(result_video.frames[120], dummy_video.frames[120])
+    assert np.array_equal(result_video.frames[120], original_at_4s)
 
 
 def test_transcription_with_offset(dummy_transcription):
@@ -739,12 +745,16 @@ def test_overlay_normalizes_long_lowercase_segment(dummy_video):
     )
     overlay = TranscriptionOverlay(font_filename=TEST_FONT_PATH, font_size=20)
 
+    # apply() mutates frames in place (the Effect contract), so snapshot first.
+    original_at_1s = dummy_video.frames[30].copy()
+    original_at_4s = dummy_video.frames[120].copy()
+
     result_video = overlay.apply(video=dummy_video, transcription=transcription)
 
     assert isinstance(result_video, Video)
     # Active region (~1s) is modified; inactive region (~4s) is untouched.
-    assert not np.array_equal(result_video.frames[30], dummy_video.frames[30])
-    assert np.array_equal(result_video.frames[120], dummy_video.frames[120])
+    assert not np.array_equal(result_video.frames[30], original_at_1s)
+    assert np.array_equal(result_video.frames[120], original_at_4s)
 
 
 def test_overlay_normalization_can_be_disabled(dummy_video, dummy_transcription):

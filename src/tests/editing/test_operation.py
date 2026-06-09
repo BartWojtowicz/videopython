@@ -8,7 +8,7 @@ behavioural tests live in ``test_transforms.py`` / ``test_effects.py``.
 from __future__ import annotations
 
 import json
-from typing import ClassVar, Literal
+from typing import Any, ClassVar, Literal
 
 import numpy as np
 import pytest
@@ -182,7 +182,7 @@ class _Brighten(Effect):
 
     delta: int = Field(10, ge=-255, le=255, description="Amount added to every pixel (clipped to uint8).")
 
-    def _apply(self, video: Video) -> Video:
+    def _apply(self, video: Video, **_context: Any) -> Video:
         from videopython.base.video import Video as _V
 
         out = np.clip(video.frames.astype(np.int16) + self.delta, 0, 255).astype(np.uint8)
@@ -194,7 +194,7 @@ class _Brighten(Effect):
 class _ShapeBreaker(Effect):
     op: Literal["_shape_breaker"] = "_shape_breaker"
 
-    def _apply(self, video: Video) -> Video:
+    def _apply(self, video: Video, **_context: Any) -> Video:
         from videopython.base.video import Video as _V
 
         return _V.from_frames(video.frames[:-1], fps=video.fps)

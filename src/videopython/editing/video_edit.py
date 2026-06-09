@@ -1202,7 +1202,7 @@ class VideoEdit(BaseModel):
         target_fps, target_w, target_h = self._matching_targets_from_disk()
         plans: list[StreamingSegmentPlan] = []
         for segment in self.segments:
-            plan = self._build_streaming_plan(segment, target_fps, target_w, target_h)
+            plan = self._build_streaming_plan(segment, target_fps, target_w, target_h, context)
             if plan is None:
                 return self._run_to_file_eager(output_path, format, preset, crf, context)
             plans.append(plan)
@@ -1216,9 +1216,12 @@ class VideoEdit(BaseModel):
             total_frames = round((plan.end_second - plan.start_second) * plan.output_fps)
             for op in self.post_operations:
                 if op.requires:
-                    # Same reason as the per-segment guard: no runtime context
-                    # in the streaming path. (Multi-segment + requires already
-                    # raised by _assert_post_ops_supported.)
+                    # Segment ops get re-based context on their schedule entry,
+                    # but post-ops run on the assembled timeline where the eager
+                    # path passes context *raw* -- folding that into the segment
+                    # schedule is the P0.4 scheduling work. Defer to eager.
+                    # (Multi-segment + requires already raised by
+                    # _assert_post_ops_supported.)
                     return self._run_to_file_eager(output_path, format, preset, crf, context)
                 if not isinstance(op, Effect) or not op.streamable:
                     return self._run_to_file_eager(output_path, format, preset, crf, context)
@@ -1271,6 +1274,7 @@ class VideoEdit(BaseModel):
         target_fps: float | None,
         target_w: int | None,
         target_h: int | None,
+        context: dict[str, Any] | None = None,
     ) -> StreamingSegmentPlan | None:
         source_meta = VideoMetadata.from_path(str(segment.source))
         out_fps = target_fps or source_meta.fps
@@ -1283,21 +1287,39 @@ class VideoEdit(BaseModel):
         if target_fps and target_fps != source_meta.fps:
             vf_filters.append(f"fps={target_fps}")
 
+        # Resolve requires-context onto the segment's local timeline once; each
+        # context-requiring effect gets its keys on the schedule entry, which
+        # stream_segment forwards to streaming_init (the streaming twin of
+        # _apply_with_context). Like _segment_context's eager consumers, a
+        # missing/empty key is passed as absent so the effect raises its own
+        # clear "requires ..." error -- before that segment's decode.
+        seg_context = _segment_context(context, segment.start, segment.end)
+
         effect_schedule: list[EffectScheduleEntry] = []
         for op in segment.operations:
-            if op.requires:
-                # Streaming schedules effects by frame range with no runtime
-                # context, so it can't supply -- let alone re-base onto the
-                # segment's local timeline -- anything an op `requires`. Defer
-                # to the eager path, where _segment_context handles re-basing.
-                return None
             if isinstance(op, Effect):
                 if not op.streamable:
                     return None
+                op_context: dict[str, Any] = {}
+                if op.requires and seg_context:
+                    op_context = {k: seg_context[k] for k in op.requires if k in seg_context}
                 total_frames = round(segment.duration * out_fps)
                 start_f, end_f = _effect_frame_range(op, out_fps, total_frames)
-                effect_schedule.append(EffectScheduleEntry(op, start_f, end_f))
+                effect_schedule.append(EffectScheduleEntry(op, start_f, end_f, op_context))
                 continue
+            if op.requires:
+                # Context-requiring transforms (e.g. silence_removal) have no
+                # streaming strategy yet -- an ffmpeg filter string can't
+                # consume runtime context. Defer the plan to the eager path.
+                return None
+            if effect_schedule:
+                # vf_filters run at decode time, BEFORE every scheduled
+                # effect's process_frame, so a transform that follows an
+                # effect in plan order cannot be expressed without reordering:
+                # the effect's frame range and streaming_init dims/fps were
+                # computed against a timeline this filter would change. Defer
+                # to the eager path, which executes ops strictly in plan order.
+                return None
             # Non-effect transform: compile to ffmpeg filter if streamable.
             ctx = FilterCtx(width=out_w, height=out_h, fps=out_fps)
             filter_expr = op.to_ffmpeg_filter(ctx)

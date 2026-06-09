@@ -397,12 +397,12 @@ class Effect(Operation):
         original_shape = video.video_shape
 
         if self.window is None or (self.window.start is None and self.window.stop is None):
-            result = self._apply(video)
+            result = self._apply(video, **context)
         else:
             start_s, stop_s = self._resolved_window(video.total_seconds)
             start_f = round(start_s * video.fps)
             end_f = round(stop_s * video.fps)
-            inner = self._apply(video[start_f:end_f])
+            inner = self._apply(video[start_f:end_f], **context)
             old_audio = video.audio
             result = _Video.from_frames(
                 np.r_["0,2", video.frames[:start_f], inner.frames, video.frames[end_f:]],
@@ -436,22 +436,29 @@ class Effect(Operation):
             raise ValueError(f"Effect stop ({stop_s}) must be >= start ({start_s})")
         return start_s, stop_s
 
-    def _apply(self, video: Video) -> Video:
+    def _apply(self, video: Video, **context: Any) -> Video:
         """Apply the effect to ``video`` in memory by replaying the streaming path.
 
         Runs :meth:`streaming_init` once, then :meth:`process_frame` over every
         frame in order -- the same logic streaming uses, so eager and streaming
-        cannot drift. Subclasses that need a genuinely different eager path
-        (extra validation, batched vectorisation) override this.
+        cannot drift. ``context`` carries resolved ``requires`` values through
+        to :meth:`streaming_init`, mirroring the streaming scheduler.
+        Subclasses that need a genuinely different eager path (extra
+        validation, batched vectorisation) override this.
         """
         height, width = video.frame_shape[:2]
-        self.streaming_init(len(video.frames), video.fps, width, height)
+        self.streaming_init(len(video.frames), video.fps, width, height, **context)
         for i in tqdm(range(len(video.frames)), desc=type(self).__name__):
             video.frames[i] = self.process_frame(video.frames[i], i)
         return video
 
-    def streaming_init(self, total_frames: int, fps: float, width: int, height: int) -> None:
+    def streaming_init(self, total_frames: int, fps: float, width: int, height: int, **_context: Any) -> None:
         """Hook for per-stream precomputation (per-frame alphas, sigma curves...).
+
+        ``_context`` carries resolved ``requires`` values for context-aware
+        effects (e.g. ``transcription=...`` for ``TranscriptionOverlay``),
+        already re-based onto the local timeline by the runner. Effects that
+        declare no ``requires`` are always called without context kwargs.
 
         Default: no-op. Override in subclasses that need it.
         """
