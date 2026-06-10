@@ -122,12 +122,22 @@ def analyze_streamability(
     entries: list[OpStreamability] = []
     for i, ops in enumerate(segment_operations):
         seen_effect = False
+        seen_encode_filter = False
         for j, op in enumerate(ops):
             location = f"segments[{i}].operations[{j}]"
             if isinstance(op, Effect):
-                if op.streamable:
-                    entries.append(OpStreamability(location, op.op, StreamingClass.FRAME_EFFECT))
-                else:
+                if op.streamable and op.compiles_to_filter:
+                    # Filter-class effect (add_subtitles): joins the decode
+                    # filter chain at this plan position -- or the encode
+                    # chain when frame effects precede it -- so it streams in
+                    # plan order either way and does not block later
+                    # transforms the way a scheduled frame effect does. The
+                    # builder mirrors this exactly.
+                    entries.append(OpStreamability(location, op.op, StreamingClass.FILTER))
+                    if seen_effect:
+                        seen_encode_filter = True
+                    continue
+                if not op.streamable:
                     entries.append(
                         OpStreamability(
                             location,
@@ -136,6 +146,21 @@ def analyze_streamability(
                             reason="effect has no streaming implementation (streamable=False)",
                         )
                     )
+                elif seen_encode_filter:
+                    entries.append(
+                        OpStreamability(
+                            location,
+                            op.op,
+                            StreamingClass.EAGER,
+                            reason=(
+                                "frame effect follows burned-in subtitles (an encode-stage filter) in "
+                                "plan order; the filter runs after every frame effect, so plan order "
+                                "cannot be preserved -- move the effect before the subtitles to stream"
+                            ),
+                        )
+                    )
+                else:
+                    entries.append(OpStreamability(location, op.op, StreamingClass.FRAME_EFFECT))
                 seen_effect = True
             elif op.requires:
                 entries.append(
@@ -198,6 +223,18 @@ def analyze_streamability(
                     ),
                 )
             )
+        elif isinstance(op, Effect) and op.streamable and op.compiles_to_filter:
+            entries.append(
+                OpStreamability(
+                    location,
+                    op.op,
+                    StreamingClass.EAGER,
+                    reason=(
+                        "filter-class post-operations cannot fold into the segment schedule -- "
+                        "move the op into the segment to stream"
+                    ),
+                )
+            )
         elif isinstance(op, Effect) and op.streamable:
             entries.append(OpStreamability(location, op.op, StreamingClass.FRAME_EFFECT))
         elif isinstance(op, Effect):
@@ -240,7 +277,17 @@ class EffectScheduleEntry:
 
 @dataclass
 class StreamingSegmentPlan:
-    """Describes how to stream-process one video segment."""
+    """Describes how to stream-process one video segment.
+
+    ``vf_filters`` run at decode time, before every scheduled effect;
+    ``post_vf_filters`` run at encode time (``FrameEncoder``'s ``-vf``),
+    after every scheduled effect -- where a filter-class op that follows
+    frame effects in plan order lands (e.g. ``[fade, add_subtitles]``).
+
+    ``owned_temp_files`` are compile-time artifacts referenced by the filter
+    chains (e.g. the ``.ass`` file behind a ``subtitles=`` entry); the runner
+    deletes them once streaming finishes or the plan is abandoned.
+    """
 
     source_path: Path
     start_second: float
@@ -250,6 +297,8 @@ class StreamingSegmentPlan:
     output_height: int
     vf_filters: list[str] = field(default_factory=list)
     effect_schedule: list[EffectScheduleEntry] = field(default_factory=list)
+    post_vf_filters: list[str] = field(default_factory=list)
+    owned_temp_files: list[Path] = field(default_factory=list)
 
 
 class FrameEncoder:
@@ -268,6 +317,7 @@ class FrameEncoder:
         format: str = "mp4",
         preset: str = "medium",
         crf: int = 23,
+        vf_filters: list[str] | None = None,
     ):
         self._output_path = output_path
         self._width = width
@@ -277,6 +327,7 @@ class FrameEncoder:
         self._format = format
         self._preset = preset
         self._crf = crf
+        self._vf_filters = vf_filters or []
         self._stack: ExitStack | None = None
         self._process: subprocess.Popen[bytes] | None = None
 
@@ -302,6 +353,12 @@ class FrameEncoder:
         if self._audio_path is not None:
             cmd.extend(["-i", str(self._audio_path)])
 
+        if self._vf_filters:
+            # Encode-stage filters: run after every per-frame effect (frames
+            # arrive via stdin already processed). The rawvideo pipe's PTS
+            # start at zero, so time-based filters (subtitles=) see the same
+            # segment-local timeline the decode side uses.
+            cmd.extend(["-vf", ",".join(self._vf_filters)])
         cmd.extend(
             [
                 "-c:v",
@@ -424,6 +481,7 @@ def stream_segment(
                 format=format,
                 preset=preset,
                 crf=crf,
+                vf_filters=plan.post_vf_filters,
             ) as encoder:
                 logger.info("Streaming frames...")
                 frame_count = 0

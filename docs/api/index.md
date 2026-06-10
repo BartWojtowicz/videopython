@@ -7,7 +7,7 @@ videopython is organized into four top-level subpackages. Everything outside `vi
 Data containers and I/O primitives:
 
 - [**Video**](core/video.md) - `Video`, `VideoMetadata`, `FrameIterator` - loading, saving, inspecting
-- [**Text & Transcription**](text.md) - `ImageText` rendering primitive and `Transcription` data classes
+- [**Text & Transcription**](text.md) - `Transcription` data classes and the `add_subtitles` overlay
 
 ## `videopython.audio`
 

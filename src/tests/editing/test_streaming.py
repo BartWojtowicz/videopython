@@ -14,9 +14,7 @@ from videopython.base.transcription import Transcription, TranscriptionWord
 from videopython.base.video import Video, VideoMetadata
 from videopython.editing import VideoEdit
 from videopython.editing.effects import ColorGrading, Fade
-from videopython.editing.operation import TimeRange
 from videopython.editing.streaming import EffectScheduleEntry, FrameEncoder, StreamingSegmentPlan, stream_segment
-from videopython.editing.transcription_overlay import TranscriptionOverlay
 
 
 @pytest.fixture
@@ -575,11 +573,12 @@ class TestFrameEncoder:
 
 
 class TestContextStreaming:
-    """Context-requiring effects (add_subtitles) run on the streaming path.
+    """Context-requiring ops (add_subtitles) run on the streaming path.
 
     The plan builder resolves `requires` context onto the segment-local
-    timeline and carries it on the schedule entry; the segment uses a
-    mid-video cut (start > 0) so these tests fail if re-basing is skipped.
+    timeline and delivers it at compile time (the subtitles op bakes it into
+    its ASS document); the segment uses a mid-video cut (start > 0) so these
+    tests fail if re-basing is skipped.
     """
 
     _PLAN = {
@@ -657,14 +656,10 @@ class TestContextStreaming:
         with pytest.raises(ValueError, match="requires transcription data"):
             edit.run_to_file(tmp_path / "out.mp4", context=context)
 
-    def test_effect_then_transform_falls_back_and_matches_eager(self, tmp_path):
-        """A transform after add_subtitles can't stream in plan order; the
-        plan falls back to eager so validate()/run()/run_to_file() agree.
-
-        Regression: streaming hoisted the crop to decode time and resolved
-        the subtitle layout at post-crop dims, so a plan that passed
-        validate() could raise SUBTITLE_UNFITTABLE mid-run_to_file (or
-        render visibly differently from run()).
+    def test_subtitles_then_transform_streams_in_plan_order(self, tmp_path):
+        """A transform after add_subtitles streams: both join the decode
+        filter chain in plan order (subtitles burn at pre-crop dims, then the
+        crop applies), so the output matches the eager run().
         """
         plan = {
             "segments": [
@@ -683,89 +678,17 @@ class TestContextStreaming:
         eager_video = VideoEdit.from_dict(plan).run(context=context)
 
         out_path = tmp_path / "out.mp4"
-        with patch.object(
-            VideoEdit, "_run_to_file_eager", autospec=True, side_effect=VideoEdit._run_to_file_eager
-        ) as eager_spy:
+        with patch.object(VideoEdit, "_run_to_file_eager", side_effect=AssertionError("fell back to eager")):
             VideoEdit.from_dict(plan).run_to_file(out_path, context=context)
-        assert eager_spy.called, "effect-then-transform plan must take the eager fallback"
         streamed_video = Video.from_path(str(out_path))
 
+        assert streamed_video.frames.shape[1:3] == (300, 400)
         assert abs(len(eager_video.frames) - len(streamed_video.frames)) <= 1
         active = round(1.0 * 24)
         mae = np.abs(
             eager_video.frames[active].astype(np.float32) - streamed_video.frames[active].astype(np.float32)
         ).mean()
         assert mae < 15, f"Mean absolute error too high: {mae}"
-
-
-class TestTranscriptionOverlayStreamingHooks:
-    """Deterministic synthetic-frame tests of the streaming contract itself."""
-
-    @staticmethod
-    def _local_transcription() -> Transcription:
-        return Transcription(
-            words=[
-                TranscriptionWord(start=0.5, end=1.0, word="hello"),
-                TranscriptionWord(start=1.0, end=1.5, word="world"),
-            ]
-        )
-
-    def test_process_frame_draws_inside_cue_only(self):
-        overlay = TranscriptionOverlay(font_scale=0.1)
-        overlay.streaming_init(48, 24.0, 640, 360, transcription=self._local_transcription())
-
-        frame = np.zeros((360, 640, 3), dtype=np.uint8)
-        # t = 0.75s: inside the cue -> pixels drawn.
-        inside = overlay.process_frame(frame.copy(), round(0.75 * 24))
-        assert inside.any()
-        # t = 0.1s: before the cue -> untouched.
-        outside = overlay.process_frame(frame.copy(), round(0.1 * 24))
-        assert not outside.any()
-
-    def test_window_offsets_timestamps(self):
-        """With a window, frame indices are window-local; timestamps must not be."""
-        overlay = TranscriptionOverlay(font_scale=0.1, window=TimeRange(start=1.0, stop=2.0))
-        overlay.streaming_init(24, 24.0, 640, 360, transcription=self._local_transcription())
-
-        frame = np.zeros((360, 640, 3), dtype=np.uint8)
-        # Window-local index 6 -> segment t = 1.25s: inside the "world" word.
-        inside = overlay.process_frame(frame.copy(), 6)
-        assert inside.any()
-        # Window-local index 20 -> segment t ~ 1.83s: past the last word.
-        outside = overlay.process_frame(frame.copy(), 20)
-        assert not outside.any()
-
-    def test_streaming_init_without_transcription_raises(self):
-        overlay = TranscriptionOverlay()
-        with pytest.raises(ValueError, match="requires transcription data"):
-            overlay.streaming_init(48, 24.0, 640, 360)
-
-    def test_overlay_cache_is_bounded_by_cue_change_eviction(self):
-        """Only the active cue's highlight variants stay cached.
-
-        Regression: the per-stream overlay memo accumulated a full-frame
-        RGBA canvas per (cue, highlight) pair for the whole stream --
-        gigabytes on long subtitled videos, on the "O(1)-memory" path.
-        """
-        overlay = TranscriptionOverlay(font_scale=0.1, max_words_per_cue=2)
-        transcription = Transcription(
-            words=[
-                TranscriptionWord(start=0.0, end=0.5, word="one"),
-                TranscriptionWord(start=0.5, end=1.0, word="two"),
-                TranscriptionWord(start=1.0, end=1.5, word="three"),
-                TranscriptionWord(start=1.5, end=2.0, word="four"),
-            ]
-        )
-        overlay.streaming_init(48, 24.0, 640, 360, transcription=transcription)
-
-        frame = np.zeros((360, 640, 3), dtype=np.uint8)
-        for i in range(48):
-            overlay.process_frame(frame.copy(), i)
-
-        # Two 2-word cues were rendered; only the second (active) cue's
-        # variants may remain: at most one per word plus a no-highlight one.
-        assert 0 < len(overlay._stream_cache) <= 3
-        assert all(text == overlay._stream_current_cue for text, _ in overlay._stream_cache)
 
 
 class TestTrailingFrameSchedule:

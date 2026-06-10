@@ -12,10 +12,18 @@ unreadable font:
 from __future__ import annotations
 
 from importlib.resources import as_file, files
+from pathlib import Path
 
 from PIL import ImageFont
 
-__all__ = ["BUNDLED_FONTS", "DEFAULT_FONT_FILENAME", "FONT_NAMES", "load_font"]
+__all__ = [
+    "BUNDLED_FONTS",
+    "BUNDLED_FONT_FAMILIES",
+    "DEFAULT_FONT_FILENAME",
+    "FONT_NAMES",
+    "bundled_fonts_dir",
+    "load_font",
+]
 
 DEFAULT_FONT_FILENAME = "DejaVuSans.ttf"
 
@@ -30,6 +38,29 @@ BUNDLED_FONTS: dict[str, str] = {
 }
 
 FONT_NAMES: list[str] = sorted(BUNDLED_FONTS)
+
+# Registered NAME (or None for the default) -> (family name, is-bold-face),
+# exactly as declared in each file's name table. Renderers that match fonts by
+# family name -- libass via the ffmpeg ``subtitles=`` filter's ``fontsdir`` --
+# need these, not the filenames. Verified against the bundled .ttf files
+# (PIL ``ImageFont.getname()``); a test pins them.
+BUNDLED_FONT_FAMILIES: dict[str | None, tuple[str, bool]] = {
+    None: ("DejaVu Sans", False),
+    "poppins-bold": ("Poppins", True),
+    "lato-bold": ("Lato", True),
+    "anton": ("Anton", False),
+    "bebas-neue": ("Bebas Neue", False),
+}
+
+
+def bundled_fonts_dir() -> Path:
+    """Filesystem directory holding the bundled .ttf files.
+
+    For ffmpeg/libass ``fontsdir`` wiring, which needs a real directory path.
+    Standard (non-zip) installs ship the package unpacked, so the resources
+    root is a plain directory.
+    """
+    return Path(str(files(__package__)))
 
 
 def _try_truetype(path: str, font_size: int) -> ImageFont.FreeTypeFont | None:

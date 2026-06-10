@@ -73,9 +73,11 @@ list. The `window` field travels inline as a nested object:
 ## Available Effects
 
 Every effect is streamable (compatible with `VideoEdit.run_to_file()` for
-constant-memory processing). Context-requiring effects (`add_subtitles`)
-stream too: pass `context=` to `run_to_file` and the runner re-bases it onto
-each segment's local timeline.
+constant-memory processing). Context-requiring ops (`add_subtitles`) stream
+too: pass `context=` to `run_to_file` and the runner re-bases it onto each
+segment's local timeline. `add_subtitles` is special: it compiles to a
+libass `subtitles=` ffmpeg filter at plan-compile time instead of running
+per-frame Python.
 
 | op | Class | Description |
 |---|---|---|
@@ -89,7 +91,7 @@ each segment's local timeline.
 | `fade` | `Fade` | Audio + video fade in/out/in_out |
 | `volume_adjust` | `VolumeAdjust` | Audio-only effect |
 | `text_overlay` | `TextOverlay` | Rendered text on top of frames |
-| `add_subtitles` | `TranscriptionOverlay` | Word-level subtitles; requires `transcription` context |
+| `add_subtitles` | `TranscriptionOverlay` | Word-level subtitles via libass; requires `transcription` context |
 | `shake` | `Shake` | Per-frame jitter (random / rhythmic / decay) |
 | `punch_in` | `PunchIn` | Snap-zoom emphasis with optional release |
 | `flash` | `Flash` | Solid-color frame flash with attack/decay |

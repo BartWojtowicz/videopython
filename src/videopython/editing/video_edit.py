@@ -1253,76 +1253,93 @@ class VideoEdit(BaseModel):
 
         target_fps, target_w, target_h = self._matching_targets_from_disk()
         plans: list[StreamingSegmentPlan] = []
-        for i, segment in enumerate(self.segments):
-            plan = self._build_streaming_plan(segment, target_fps, target_w, target_h, context)
-            if plan is None:
+        # Built plans may own compile-time temp files (e.g. the .ass behind a
+        # subtitles= filter); delete them on every exit -- success, eager
+        # fallback (eager re-renders from scratch), or error.
+        try:
+            for i, segment in enumerate(self.segments):
+                plan = self._build_streaming_plan(segment, target_fps, target_w, target_h, context)
+                if plan is None:
+                    return self._eager_fallback(
+                        strict_streaming,
+                        f"segments[{i}] did not compile to a streaming plan",
+                        output_path,
+                        format,
+                        preset,
+                        crf,
+                        context,
+                    )
+                plans.append(plan)
+
+            # Post-ops only fold cleanly into a single segment plan; multi-segment
+            # post-ops would need a second pass we don't bother with.
+            if self.post_operations and len(plans) != 1:
                 return self._eager_fallback(
                     strict_streaming,
-                    f"segments[{i}] did not compile to a streaming plan",
+                    "post-operations on a multi-segment plan",
                     output_path,
                     format,
                     preset,
                     crf,
                     context,
                 )
-            plans.append(plan)
+            if self.post_operations:
+                plan = plans[0]
+                total_frames = round((plan.end_second - plan.start_second) * plan.output_fps)
+                for op in self.post_operations:
+                    if op.requires:
+                        # Segment ops get re-based context on their schedule entry,
+                        # but post-ops run on the assembled timeline where the eager
+                        # path passes context *raw* -- folding that into the segment
+                        # schedule is the P0.4 scheduling work. Defer to eager.
+                        # (Multi-segment + requires already raised by
+                        # _assert_post_ops_supported.)
+                        return self._eager_fallback(
+                            strict_streaming,
+                            f"post-operation '{op.op}' requires runtime context",
+                            output_path,
+                            format,
+                            preset,
+                            crf,
+                            context,
+                        )
+                    if not isinstance(op, Effect) or not op.streamable or op.compiles_to_filter:
+                        # compiles_to_filter post-ops are excluded too: folding
+                        # appends a frame-effect schedule entry, which a
+                        # filter-class op cannot serve (no process_frame).
+                        return self._eager_fallback(
+                            strict_streaming,
+                            f"post-operation '{op.op}' cannot fold into the segment schedule",
+                            output_path,
+                            format,
+                            preset,
+                            crf,
+                            context,
+                        )
+                    start_f, end_f = _effect_frame_range(op, plan.output_fps, total_frames)
+                    plan.effect_schedule.append(EffectScheduleEntry(op, start_f, end_f))
 
-        # Post-ops only fold cleanly into a single segment plan; multi-segment
-        # post-ops would need a second pass we don't bother with.
-        if self.post_operations and len(plans) != 1:
-            return self._eager_fallback(
-                strict_streaming, "post-operations on a multi-segment plan", output_path, format, preset, crf, context
-            )
-        if self.post_operations:
-            plan = plans[0]
-            total_frames = round((plan.end_second - plan.start_second) * plan.output_fps)
-            for op in self.post_operations:
-                if op.requires:
-                    # Segment ops get re-based context on their schedule entry,
-                    # but post-ops run on the assembled timeline where the eager
-                    # path passes context *raw* -- folding that into the segment
-                    # schedule is the P0.4 scheduling work. Defer to eager.
-                    # (Multi-segment + requires already raised by
-                    # _assert_post_ops_supported.)
-                    return self._eager_fallback(
-                        strict_streaming,
-                        f"post-operation '{op.op}' requires runtime context",
-                        output_path,
-                        format,
-                        preset,
-                        crf,
-                        context,
-                    )
-                if not isinstance(op, Effect) or not op.streamable:
-                    return self._eager_fallback(
-                        strict_streaming,
-                        f"post-operation '{op.op}' is not a streamable effect",
-                        output_path,
-                        format,
-                        preset,
-                        crf,
-                        context,
-                    )
-                start_f, end_f = _effect_frame_range(op, plan.output_fps, total_frames)
-                plan.effect_schedule.append(EffectScheduleEntry(op, start_f, end_f))
+            if len(plans) == 1:
+                plan = plans[0]
+                audio = self._load_segment_audio(self.segments[0], plan)
+                return stream_segment(plan, output_path, audio=audio, format=format, preset=preset, crf=crf)
 
-        if len(plans) == 1:
-            plan = plans[0]
-            audio = self._load_segment_audio(self.segments[0], plan)
-            return stream_segment(plan, output_path, audio=audio, format=format, preset=preset, crf=crf)
-
-        temp_files: list[Path] = []
-        try:
-            for segment, plan in zip(self.segments, plans):
-                tmp = tempfile.NamedTemporaryFile(suffix=f".{format}", delete=False)
-                tmp.close()
-                audio = self._load_segment_audio(segment, plan)
-                stream_segment(plan, Path(tmp.name), audio=audio, format=format, preset=preset, crf=crf)
-                temp_files.append(Path(tmp.name))
-            return concat_files(temp_files, output_path)
+            temp_files: list[Path] = []
+            try:
+                for segment, plan in zip(self.segments, plans):
+                    tmp = tempfile.NamedTemporaryFile(suffix=f".{format}", delete=False)
+                    tmp.close()
+                    audio = self._load_segment_audio(segment, plan)
+                    stream_segment(plan, Path(tmp.name), audio=audio, format=format, preset=preset, crf=crf)
+                    temp_files.append(Path(tmp.name))
+                return concat_files(temp_files, output_path)
+            finally:
+                for f in temp_files:
+                    f.unlink(missing_ok=True)
         finally:
-            for f in temp_files:
-                f.unlink(missing_ok=True)
+            for plan in plans:
+                for f in plan.owned_temp_files:
+                    f.unlink(missing_ok=True)
 
     def _eager_fallback(
         self,
@@ -1398,49 +1415,91 @@ class VideoEdit(BaseModel):
         # clear "requires ..." error -- before that segment's decode.
         seg_context = _segment_context(context, segment.start, segment.end)
 
+        owned_files: list[Path] = []
+
+        def abandon() -> None:
+            """Delete compile-time temp files of a plan that won't run."""
+            for f in owned_files:
+                f.unlink(missing_ok=True)
+
         effect_schedule: list[EffectScheduleEntry] = []
-        for op in segment.operations:
-            if isinstance(op, Effect):
-                if not op.streamable:
+        post_vf_filters: list[str] = []
+        try:
+            for op in segment.operations:
+                if isinstance(op, Effect):
+                    if not op.streamable:
+                        abandon()
+                        return None
+                    if op.compiles_to_filter:
+                        # Filter-class effect (add_subtitles): consumes its
+                        # context at compile time and joins the filter chain at
+                        # this op's plan position -- the decode chain when no
+                        # frame effect precedes it, else the encode chain
+                        # (FrameEncoder -vf), which runs after every
+                        # process_frame. Either way plan order is preserved. A
+                        # None compile falls through to the frame-effect path.
+                        ctx = FilterCtx(width=out_w, height=out_h, fps=out_fps, context=seg_context or {})
+                        filter_expr = op.to_ffmpeg_filter(ctx)
+                        owned_files.extend(ctx.owned_files)
+                        if filter_expr is not None:
+                            if effect_schedule or post_vf_filters:
+                                post_vf_filters.append(filter_expr)
+                            else:
+                                vf_filters.append(filter_expr)
+                            continue
+                    if post_vf_filters:
+                        # A frame effect after an encode-stage filter would run
+                        # before it (process_frame precedes the encoder), so
+                        # plan order cannot be preserved. Defer to eager.
+                        abandon()
+                        return None
+                    op_context: dict[str, Any] = {}
+                    if op.requires and seg_context:
+                        op_context = {k: seg_context[k] for k in op.requires if k in seg_context}
+                    total_frames = round(segment.duration * out_fps)
+                    start_f, end_f = _effect_frame_range(op, out_fps, total_frames)
+                    effect_schedule.append(EffectScheduleEntry(op, start_f, end_f, op_context))
+                    continue
+                if op.requires:
+                    # Context-requiring transforms (e.g. silence_removal) have no
+                    # streaming strategy yet -- an ffmpeg filter string can't
+                    # consume runtime context. Defer the plan to the eager path.
+                    abandon()
                     return None
-                op_context: dict[str, Any] = {}
-                if op.requires and seg_context:
-                    op_context = {k: seg_context[k] for k in op.requires if k in seg_context}
-                total_frames = round(segment.duration * out_fps)
-                start_f, end_f = _effect_frame_range(op, out_fps, total_frames)
-                effect_schedule.append(EffectScheduleEntry(op, start_f, end_f, op_context))
-                continue
-            if op.requires:
-                # Context-requiring transforms (e.g. silence_removal) have no
-                # streaming strategy yet -- an ffmpeg filter string can't
-                # consume runtime context. Defer the plan to the eager path.
-                return None
-            if effect_schedule:
-                # vf_filters run at decode time, BEFORE every scheduled
-                # effect's process_frame, so a transform that follows an
-                # effect in plan order cannot be expressed without reordering:
-                # the effect's frame range and streaming_init dims/fps were
-                # computed against a timeline this filter would change. Defer
-                # to the eager path, which executes ops strictly in plan order.
-                return None
-            # Non-effect transform: compile to ffmpeg filter if streamable.
-            # The `streamable` flag is the authoritative declaration -- checked
-            # first so the streamability report (which classifies by the flag)
-            # can never disagree with the builder in this direction: a
-            # flag-False transform goes eager even if it has a working
-            # to_ffmpeg_filter. The remaining drift class (flag True, filter
-            # compiles to None) is caught by _eager_fallback under strict mode.
-            if not op.streamable:
-                return None
-            ctx = FilterCtx(width=out_w, height=out_h, fps=out_fps)
-            filter_expr = op.to_ffmpeg_filter(ctx)
-            if filter_expr is None:
-                return None
-            vf_filters.append(filter_expr)
-            new_meta = op.predict_metadata(
-                VideoMetadata(height=out_h, width=out_w, fps=out_fps, frame_count=1, total_seconds=1.0)
-            )
-            out_w, out_h, out_fps = new_meta.width, new_meta.height, new_meta.fps
+                if effect_schedule:
+                    # vf_filters run at decode time, BEFORE every scheduled
+                    # effect's process_frame, so a transform that follows an
+                    # effect in plan order cannot be expressed without reordering:
+                    # the effect's frame range and streaming_init dims/fps were
+                    # computed against a timeline this filter would change. Defer
+                    # to the eager path, which executes ops strictly in plan order.
+                    abandon()
+                    return None
+                # Non-effect transform: compile to ffmpeg filter if streamable.
+                # The `streamable` flag is the authoritative declaration -- checked
+                # first so the streamability report (which classifies by the flag)
+                # can never disagree with the builder in this direction: a
+                # flag-False transform goes eager even if it has a working
+                # to_ffmpeg_filter. The remaining drift class (flag True, filter
+                # compiles to None) is caught by _eager_fallback under strict mode.
+                if not op.streamable:
+                    abandon()
+                    return None
+                ctx = FilterCtx(width=out_w, height=out_h, fps=out_fps)
+                filter_expr = op.to_ffmpeg_filter(ctx)
+                if filter_expr is None:
+                    abandon()
+                    return None
+                vf_filters.append(filter_expr)
+                new_meta = op.predict_metadata(
+                    VideoMetadata(height=out_h, width=out_w, fps=out_fps, frame_count=1, total_seconds=1.0)
+                )
+                out_w, out_h, out_fps = new_meta.width, new_meta.height, new_meta.fps
+        except BaseException:
+            # A raising compile or prediction (e.g. missing subtitle context,
+            # crop exceeding source) must not leak earlier ops' temp files.
+            abandon()
+            raise
 
         return StreamingSegmentPlan(
             source_path=segment.source,
@@ -1451,6 +1510,8 @@ class VideoEdit(BaseModel):
             output_height=out_h,
             vf_filters=vf_filters,
             effect_schedule=effect_schedule,
+            post_vf_filters=post_vf_filters,
+            owned_temp_files=owned_files,
         )
 
     def _load_segment_audio(

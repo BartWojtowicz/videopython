@@ -66,18 +66,6 @@ class TransformError(VideoPythonError):
     pass
 
 
-class TextRenderError(VideoPythonError):
-    """Base exception for text rendering errors."""
-
-    pass
-
-
-class OutOfBoundsError(TextRenderError):
-    """Raised when text would be rendered outside image bounds."""
-
-    pass
-
-
 class PlanErrorCode(str, Enum):
     """Machine-readable failure classes raised while validating a ``VideoEdit``.
 
@@ -103,7 +91,6 @@ class PlanErrorCode(str, Enum):
     # Assembly / structural.
     UNKNOWN_OP = "unknown_op"
     CONCAT_MISMATCH = "concat_mismatch"
-    SUBTITLE_UNFITTABLE = "subtitle_unfittable"
     POST_OP_REQUIRES_CONTEXT = "post_op_requires_context"
     # Streaming strictness (opt-in via strict_streaming).
     STREAMING_FALLBACK = "streaming_fallback"

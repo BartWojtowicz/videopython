@@ -45,10 +45,12 @@ class TestStreamabilityReport:
     def test_filter_and_frame_effect_classes(self):
         report = _plan([RESIZE, FADE, SUBTITLES]).streamability()
 
+        # add_subtitles compiles to a filter (encode-stage here, since it
+        # follows a frame effect) -- FILTER either way.
         assert [e.streaming_class for e in report.entries] == [
             StreamingClass.FILTER,
             StreamingClass.FRAME_EFFECT,
-            StreamingClass.FRAME_EFFECT,
+            StreamingClass.FILTER,
         ]
         assert [e.location for e in report.entries] == [
             "segments[0].operations[0]",
