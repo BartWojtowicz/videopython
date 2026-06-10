@@ -31,8 +31,9 @@ Subclass contract::
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, NamedTuple, Union, get_args, get_origin
 
 import numpy as np
@@ -99,11 +100,23 @@ class BoundedTimeField(NamedTuple):
 
 @dataclass(frozen=True)
 class FilterCtx:
-    """Current pipeline state (post-prior-ops) when compiling to ffmpeg."""
+    """Current pipeline state (post-prior-ops) when compiling to ffmpeg.
+
+    ``context`` carries the resolved, segment-local runtime context (the same
+    re-based values ``streaming_init`` receives) so a context-consuming op can
+    compile itself into the filter chain (e.g. ``add_subtitles`` consuming the
+    transcription to write an ``.ass`` file). Empty when no context applies.
+
+    ``owned_files`` collects temp files a compilation creates (the ``.ass``
+    file a ``subtitles=`` entry references); the plan runner deletes them once
+    streaming finishes or the plan is abandoned.
+    """
 
     width: int
     height: int
     fps: float
+    context: dict[str, Any] = field(default_factory=dict)
+    owned_files: list[Path] = field(default_factory=list)
 
 
 LLM_HIDDEN_KEY = "llm_hidden"
@@ -390,6 +403,20 @@ class Effect(Operation):
         None,
         description="Time window for the effect in seconds. Omit to apply across the full duration.",
     )
+
+    @property
+    def compiles_to_filter(self) -> bool:
+        """Whether this effect joins the decode filter chain instead of scheduling per-frame Python.
+
+        When True, the streaming plan builder calls :meth:`to_ffmpeg_filter`
+        (with the segment's resolved context on the :class:`FilterCtx`) and, if
+        it compiles, appends the result to the vf chain at this op's plan
+        position -- the Filter class of the streaming contract. Instance-level
+        rather than a ClassVar because it may depend on field values (e.g.
+        ``add_subtitles``'s ``renderer``). False by default: effects normally
+        stream via ``streaming_init``/``process_frame``.
+        """
+        return False
 
     def apply(self, video: Video, **context: Any) -> Video:
         from videopython.base.video import Video as _Video

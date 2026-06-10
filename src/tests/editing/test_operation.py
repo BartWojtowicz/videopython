@@ -126,7 +126,6 @@ class TestJsonSchema:
         # while the `font` name enum stays.
         as_json = json.dumps(Operation.json_schema())
         assert "font_filename" not in as_json
-        assert "highlight_bold_font" not in as_json
         assert "anton" in as_json  # the `font` enum is still present
 
     def test_llm_json_schema_strips_but_model_schema_keeps(self):

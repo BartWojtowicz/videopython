@@ -950,6 +950,10 @@ class TestStreamingRequiresGuard:
         assert plan._build_streaming_plan(seg, None, None, None) is None
 
     def test_requires_effect_builds_plan_with_rebased_context(self):
+        # A frame effect declaring `requires` (the ai layer's
+        # object_detection_overlay is the in-tree case; add_subtitles compiles
+        # to a filter instead) gets its keys re-based onto the segment-local
+        # timeline and carried on the schedule entry.
         plan = VideoEdit.from_dict(
             {
                 "segments": [
@@ -957,13 +961,14 @@ class TestStreamingRequiresGuard:
                         source=SMALL_VIDEO_PATH,
                         start=4.0,
                         end=8.0,
-                        operations=[{"op": "add_subtitles"}],
+                        operations=[{"op": "color_adjust", "brightness": 0.2}],
                     )
                 ]
             }
         )
-        tx = _make_transcription([(4.5, 5.5, "hello"), (5.5, 6.5, "world")])
-        built = plan._build_streaming_plan(plan.segments[0], None, None, None, {"transcription": tx})
+        with patch.object(type(plan.segments[0].operations[0]), "requires", ("transcription",)):
+            tx = _make_transcription([(4.5, 5.5, "hello"), (5.5, 6.5, "world")])
+            built = plan._build_streaming_plan(plan.segments[0], None, None, None, {"transcription": tx})
 
         assert built is not None
         [entry] = built.effect_schedule
@@ -975,7 +980,27 @@ class TestStreamingRequiresGuard:
 
     def test_requires_effect_without_context_builds_plan_with_empty_context(self):
         # The plan still builds; streaming_init raises the op's own clear
-        # "requires transcription data" error pre-decode, mirroring eager.
+        # missing-context error pre-decode, mirroring eager.
+        plan = VideoEdit.from_dict(
+            {
+                "segments": [
+                    _segment(
+                        source=SMALL_VIDEO_PATH,
+                        start=0.0,
+                        end=1.0,
+                        operations=[{"op": "color_adjust", "brightness": 0.2}],
+                    )
+                ]
+            }
+        )
+        with patch.object(type(plan.segments[0].operations[0]), "requires", ("transcription",)):
+            built = plan._build_streaming_plan(plan.segments[0], None, None, None)
+        assert built is not None
+        assert built.effect_schedule[0].context == {}
+
+    def test_missing_subtitle_context_raises_at_plan_build(self):
+        # add_subtitles compiles at plan build and needs its transcription
+        # there; the same clear error the eager path raises, still pre-decode.
         plan = VideoEdit.from_dict(
             {
                 "segments": [
@@ -988,9 +1013,8 @@ class TestStreamingRequiresGuard:
                 ]
             }
         )
-        built = plan._build_streaming_plan(plan.segments[0], None, None, None)
-        assert built is not None
-        assert built.effect_schedule[0].context == {}
+        with pytest.raises(ValueError, match="requires transcription data"):
+            plan._build_streaming_plan(plan.segments[0], None, None, None)
 
     def test_context_free_effect_gets_empty_entry_context(self):
         plan = VideoEdit.from_dict(

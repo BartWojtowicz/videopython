@@ -1,11 +1,59 @@
 # Release Notes
 
+## 0.41.0
+
+**The subtitle renderer is now libass.** `add_subtitles` consumes its
+transcription when the plan compiles, bakes the look into an ASS document,
+and ffmpeg's `subtitles=` filter burns it in — native-speed rendering with
+zero per-frame Python (~4x faster than the removed PIL renderer on display
+fonts). One pixel path everywhere: the streaming path emits one `-vf` entry,
+and the eager `run()` path pipes the in-memory frames through the same
+filter. ffmpeg must include libass. The PIL rendering engine
+(`videopython.base.ImageText`, ~1,200 lines plus the layout/fit machinery)
+is deleted.
+
+- **Filter-class effects.** New `Effect.compiles_to_filter` hook: the op
+  joins the filter chain at its plan position instead of scheduling
+  `process_frame` — the decode chain normally, or the new encode-stage chain
+  (`StreamingSegmentPlan.post_vf_filters`, `FrameEncoder`'s `-vf`) when frame
+  effects precede it. Both `[add_subtitles, crop]` and
+  `[fade, add_subtitles]` now stream end-to-end in plan order; under the old
+  renderer the former forced the whole-plan eager fallback. A frame effect
+  ordered *after* the burned-in subtitles is the one shape that still falls
+  back to eager (reported as such by `streamability()`). `FilterCtx` gains
+  `context` (re-based, segment-local runtime values for compile-time
+  consumption) and `owned_files` (compile-time temp artifacts, deleted by the
+  runner on every exit path).
+- **ASS mapping.** Style presets and region placement map natively
+  (`\an`+`\pos` box-center semantics, margins from `box_width`, background
+  via libass `BorderStyle=4`); the word-level highlight is word-state
+  Dialogue events (active-word color + `\fscx/\fscy` size pop — ASS `\k`
+  karaoke can only express stay-lit highlighting). `font_scale` is corrected
+  for libass's cell-height font sizing vs PIL's em sizing, so the apparent
+  size is unchanged. Bundled fonts ship to libass via `fontsdir`;
+  `BUNDLED_FONT_FAMILIES` pins the name-table families it matches on.
+  `window` is applied by clipping event times at compile (the `subtitles`
+  filter has no timeline support).
+- **Breaking — removed without deprecation:**
+  - `add_subtitles` fields `min_font_scale`, `text_align`, `margin`, and
+    `highlight_bold_font` (libass wraps instead of shrinking; centers text;
+    derives margins from `box_width`; uses one font face). Plans carrying
+    them now fail to parse.
+  - Subtitle fit validation: libass wraps long cues, so `validate()`/
+    `check()` no longer reject "unfittable" subtitles;
+    `PlanErrorCode.SUBTITLE_UNFITTABLE` is removed.
+  - `videopython.base.ImageText`, `TextAlign`, `TextRenderError`,
+    `OutOfBoundsError` are removed. `AnchorPoint` (still the `anchor` field
+    type) moved to `videopython.editing`.
+  - Subtitle pixel output differs from 0.40.0 (human-reviewed side by side;
+    placement and box metrics shift slightly).
+
 ## 0.40.0
 
 Streamability becomes a contract instead of a silent behavior. Whether
 `run_to_file` streams in O(1) memory or eager-loads the whole video is now
 inspectable before running anything, and enforceable. Second step of the
-streaming-first migration (TODO.md P0.2).
+streaming-first migration.
 
 - **Per-op streamability report.** `VideoEdit.streamability()` classifies
   every op in plan order by streaming class — `filter` (ffmpeg `-vf`),

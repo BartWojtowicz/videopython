@@ -77,9 +77,9 @@ The `window` field on the wire:
 {"op": "color_adjust", "brightness": 0.1, "window": {"start": 1.0, "stop": 3.0}}
 ```
 
-Audio-mutating effects (`Fade`, `VolumeAdjust`) and ops that don't fit
-the frame-preserving shape (`TranscriptionOverlay`) override `apply`
-directly.
+Audio-mutating effects (`Fade`, `VolumeAdjust`) override `apply` directly;
+`TranscriptionOverlay` overrides it to pipe frames through its libass
+filter.
 
 ## Registry API
 
@@ -189,7 +189,7 @@ llm_schema = cls.llm_json_schema()       # LLM-facing (llm_hidden dropped)
 | `fade` | `Fade` | effect | yes |
 | `volume_adjust` | `VolumeAdjust` | effect | yes |
 | `text_overlay` | `TextOverlay` | effect | yes |
-| `add_subtitles` | `TranscriptionOverlay` | effect | yes (requires `transcription` context) |
+| `add_subtitles` | `TranscriptionOverlay` | effect | yes — compiles to a libass `subtitles=` filter (requires `transcription` context) |
 | `shake` | `Shake` | effect | yes |
 | `punch_in` | `PunchIn` | effect | yes |
 | `flash` | `Flash` | effect | yes |

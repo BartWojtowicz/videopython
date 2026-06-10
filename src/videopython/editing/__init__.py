@@ -1,3 +1,4 @@
+from ._ass import AnchorPoint
 from .effects import (
     Blur,
     ChromaticAberration,
@@ -83,6 +84,8 @@ __all__ = [
     # Plan runner
     "VideoEdit",
     "SegmentConfig",
+    # Subtitle placement
+    "AnchorPoint",
     # Streamability report
     "StreamabilityReport",
     "OpStreamability",

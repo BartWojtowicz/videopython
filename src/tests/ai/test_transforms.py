@@ -593,25 +593,6 @@ class TestFaceCropSubtitleValidateGap:
         ]
         return Transcription(segments=[TranscriptionSegment.from_words(words)])
 
-    def test_validate_measures_subtitles_against_post_crop_frame(self):
-        """Without Step 0, face_crop was identity and validate() measured
-        against 1920x1080; the overflow only surfaced mid-render. Now the
-        cropped frame is predicted, so an un-fittable cue fails fast and the
-        error names the post-crop dimensions."""
-        from videopython.editing.video_edit import VideoEdit
-
-        plan = self._plan(
-            [
-                {"op": "face_crop", "target_aspect": [9, 16]},
-                {"op": "add_subtitles", "font_size": 300, "min_font_scale": 0.5},
-            ]
-        )
-        source = VideoMetadata(height=240, width=320, fps=30, frame_count=60, total_seconds=2.0)
-        with pytest.raises(ValueError, match="add_subtitles.*cannot fit") as exc:
-            VideoEdit.from_dict(plan).validate_with_metadata(source, context={"transcription": self._transcription()})
-        # 320x240 cropped to 9:16 -> 134x240 (not the 320x240 source).
-        assert "134x240 frame" in str(exc.value)
-
     def test_reasonable_plan_passes_and_reports_cropped_dims(self):
         from videopython.editing.video_edit import VideoEdit
 

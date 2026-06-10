@@ -1,6 +1,6 @@
 # Text & Transcription
 
-Classes for handling transcriptions and rendering text overlays on video.
+Classes for handling transcriptions and burning subtitles onto video.
 
 ## Transcription Classes
 
@@ -42,26 +42,14 @@ video = overlay.apply(video, transcription)
 
 Geometry is **resolution-independent** by default: `font_scale`/`region` are
 fractions of the frame, so the same overlay renders correctly at any output
-size and an upstream `face_crop`/`resize` cannot make it overflow. The
-absolute fields (`font_size`, `position`, `box_width`, explicit colors, ...)
-remain optional advanced overrides for back-compat -- leave them unset to
-derive from the `style`/`region`/`font_scale` presets. Because the layout is
-frame-relative and shared between the dry-run and the render,
-`VideoEdit.validate()` rejects an un-fittable subtitle plan up front instead
-of crashing mid-render.
+size. The absolute fields (`font_size`, `position`, `box_width`, explicit
+colors, ...) remain optional advanced overrides -- leave them unset to derive
+from the `style`/`region`/`font_scale` presets. Rendering is done by libass
+(ffmpeg's `subtitles=` filter) from a compile-time ASS document: native
+speed, and long cues wrap within the box instead of failing to fit.
 
 ::: videopython.editing.TranscriptionOverlay
 
-### ImageText
-
-Low-level text rendering on images:
-
-::: videopython.base.ImageText
-
-### TextAlign
-
-::: videopython.base.TextAlign
-
 ### AnchorPoint
 
-::: videopython.base.AnchorPoint
+::: videopython.editing.AnchorPoint

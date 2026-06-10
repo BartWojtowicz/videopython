@@ -101,6 +101,16 @@ streamable, `run_to_file` falls back to eager (`run()` + `save()`).
 **Streamable effects**: every `Effect`, including the context-requiring
 `add_subtitles` (pass `context=` to `run_to_file`).
 
+`add_subtitles` renders via libass: the transcription is compiled to an
+ASS document at plan-compile time and burned in by ffmpeg's `subtitles=`
+filter — native speed, zero per-frame Python, classified as a `filter` in
+the streamability report. It joins the filter chain at its plan position:
+the decode chain normally (so transforms may follow it in plan order), or
+the encode chain when frame effects precede it (so `[fade, add_subtitles]`
+streams too). The eager `run()` path pipes the in-memory frames through the
+same filter — one pixel path everywhere. Requires an ffmpeg built with
+libass.
+
 ### Streamability report and strict mode
 
 `edit.streamability()` classifies every op by streaming class without
