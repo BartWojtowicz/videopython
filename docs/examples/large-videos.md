@@ -47,7 +47,10 @@ edit.run_to_file("output.mp4", crf=20, preset="medium")
 
 When all operations are streamable, frames are never loaded into memory. If any operation
 is not streamable (e.g. `reverse`, `speed_change`), the pipeline falls back to eager
-mode automatically.
+mode automatically. To find out ahead of time, `edit.streamability()` returns a per-op
+report without touching the disk; to forbid the fallback outright, pass
+`strict_streaming=True` to `run_to_file` (raises `PlanValidationError` before any
+decode) or to `check` (reports structured `STREAMING_FALLBACK` errors).
 
 Context-requiring effects stream too: pass `context=` to `run_to_file` and
 e.g. `add_subtitles` burns word-level subtitles on the streaming path, with

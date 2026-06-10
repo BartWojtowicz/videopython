@@ -33,7 +33,14 @@ from videopython.base.exceptions import PlanError, PlanErrorCode, PlanRepair, Pl
 from videopython.base.video import ALLOWED_VIDEO_FORMATS, ALLOWED_VIDEO_PRESETS, Video, VideoMetadata
 from videopython.editing.effects import Effect, Fade, VolumeAdjust
 from videopython.editing.operation import FilterCtx, Operation, _to_strict_schema
-from videopython.editing.streaming import EffectScheduleEntry, StreamingSegmentPlan, concat_files, stream_segment
+from videopython.editing.streaming import (
+    EffectScheduleEntry,
+    StreamabilityReport,
+    StreamingSegmentPlan,
+    analyze_streamability,
+    concat_files,
+    stream_segment,
+)
 from videopython.editing.transforms import DURATION_EPS, CutSeconds, Resize
 
 __all__ = [
@@ -737,6 +744,7 @@ class VideoEdit(BaseModel):
         context: dict[str, Any] | None = None,
         *,
         clamp_windows: bool = False,
+        strict_streaming: bool = False,
     ) -> list[PlanError]:
         """Collect **every** plan error in one pass; ``[]`` means valid.
 
@@ -754,10 +762,35 @@ class VideoEdit(BaseModel):
         (no bare ``ValueError`` escapes the walk), so a consumer branches on
         ``code`` rather than substring-matching prose. ``clamp_windows`` matches
         :meth:`validate`: a clampable ``window.stop`` overrun is not reported.
+
+        With ``strict_streaming=True``, ops that would force
+        :meth:`run_to_file`'s silent eager fallback are additionally reported as
+        ``STREAMING_FALLBACK`` errors (appended after the validity errors, in
+        plan order), with the cause in :attr:`PlanError.detail` -- the gating
+        twin of ``run_to_file(strict_streaming=True)``. See
+        :meth:`streamability` for the full per-op report including the ops that
+        *do* stream.
         """
         metas = self._resolve_source_metas(source_metadata)
         _, errors = self._collect(metas, context, clamp_windows=clamp_windows, stop_first=False)
+        if strict_streaming:
+            errors.extend(self.streamability().errors())
         return errors
+
+    def streamability(self) -> StreamabilityReport:
+        """Classify every op by streaming class, without touching the disk.
+
+        Streamability is purely structural -- it depends on op classes, their
+        order, and the plan shape, never on source metadata or runtime context
+        -- so this needs no source files and is safe to call before a job is
+        admitted. ``report.streamable`` answers "will :meth:`run_to_file`
+        stream in O(1) memory, or eager-load the whole video?"; each entry
+        carries the op's memory class and, for fallbacks, the reason.
+        """
+        return analyze_streamability(
+            [list(seg.operations) for seg in self.segments],
+            list(self.post_operations),
+        )
 
     def repair(
         self,
@@ -1188,29 +1221,58 @@ class VideoEdit(BaseModel):
         preset: ALLOWED_VIDEO_PRESETS = "medium",
         crf: int = 23,
         context: dict[str, Any] | None = None,
+        *,
+        strict_streaming: bool = False,
     ) -> Path:
         """Execute the plan, streaming directly to a file when possible.
 
         Falls back to eager (``self.run().save(...)``) for any operation that
         isn't streamable. Memory usage is O(1) w.r.t. video length for fully
         streamable pipelines.
+
+        With ``strict_streaming=True`` the silent fallback becomes a
+        :class:`PlanValidationError` carrying one ``STREAMING_FALLBACK``
+        :class:`PlanError` per offending op -- raised before any decode, so a
+        consumer that priced a job as O(1) memory never eager-loads the whole
+        video instead. Gate plans early with ``check(strict_streaming=True)``
+        or :meth:`streamability`, which report the same fallbacks without
+        running anything.
         """
         self._assert_post_ops_supported(context)
+        if strict_streaming:
+            report = self.streamability()
+            if not report.streamable:
+                causes = "; ".join(f"{e.location} '{e.op}': {e.reason}" for e in report.fallbacks)
+                message = (
+                    f"strict_streaming=True rejects this plan: {len(report.fallbacks)} op(s) "
+                    f"would force the eager in-memory fallback -- {causes}"
+                )
+                raise PlanValidationError(message, report.errors())
         output_path = Path(output_path).with_suffix(f".{format}")
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         target_fps, target_w, target_h = self._matching_targets_from_disk()
         plans: list[StreamingSegmentPlan] = []
-        for segment in self.segments:
+        for i, segment in enumerate(self.segments):
             plan = self._build_streaming_plan(segment, target_fps, target_w, target_h, context)
             if plan is None:
-                return self._run_to_file_eager(output_path, format, preset, crf, context)
+                return self._eager_fallback(
+                    strict_streaming,
+                    f"segments[{i}] did not compile to a streaming plan",
+                    output_path,
+                    format,
+                    preset,
+                    crf,
+                    context,
+                )
             plans.append(plan)
 
         # Post-ops only fold cleanly into a single segment plan; multi-segment
         # post-ops would need a second pass we don't bother with.
         if self.post_operations and len(plans) != 1:
-            return self._run_to_file_eager(output_path, format, preset, crf, context)
+            return self._eager_fallback(
+                strict_streaming, "post-operations on a multi-segment plan", output_path, format, preset, crf, context
+            )
         if self.post_operations:
             plan = plans[0]
             total_frames = round((plan.end_second - plan.start_second) * plan.output_fps)
@@ -1222,9 +1284,25 @@ class VideoEdit(BaseModel):
                     # schedule is the P0.4 scheduling work. Defer to eager.
                     # (Multi-segment + requires already raised by
                     # _assert_post_ops_supported.)
-                    return self._run_to_file_eager(output_path, format, preset, crf, context)
+                    return self._eager_fallback(
+                        strict_streaming,
+                        f"post-operation '{op.op}' requires runtime context",
+                        output_path,
+                        format,
+                        preset,
+                        crf,
+                        context,
+                    )
                 if not isinstance(op, Effect) or not op.streamable:
-                    return self._run_to_file_eager(output_path, format, preset, crf, context)
+                    return self._eager_fallback(
+                        strict_streaming,
+                        f"post-operation '{op.op}' is not a streamable effect",
+                        output_path,
+                        format,
+                        preset,
+                        crf,
+                        context,
+                    )
                 start_f, end_f = _effect_frame_range(op, plan.output_fps, total_frames)
                 plan.effect_schedule.append(EffectScheduleEntry(op, start_f, end_f))
 
@@ -1245,6 +1323,31 @@ class VideoEdit(BaseModel):
         finally:
             for f in temp_files:
                 f.unlink(missing_ok=True)
+
+    def _eager_fallback(
+        self,
+        strict_streaming: bool,
+        detail: str,
+        output_path: Path,
+        format: ALLOWED_VIDEO_FORMATS,
+        preset: ALLOWED_VIDEO_PRESETS,
+        crf: int,
+        context: dict[str, Any] | None,
+    ) -> Path:
+        """Take the eager path -- or refuse to, under ``strict_streaming``.
+
+        When the :meth:`streamability` report is in sync with the plan builder
+        the strict branch is unreachable: the upfront gate in
+        :meth:`run_to_file` already raised. Reaching it means the two drifted
+        (e.g. a third-party transform whose ``streamable`` flag does not match
+        its ``to_ffmpeg_filter``) -- refuse to silently eager-load anyway.
+        """
+        if strict_streaming:
+            raise PlanValidationError(
+                f"strict_streaming=True: plan stopped streaming despite a clean streamability report ({detail})",
+                [PlanError(code=PlanErrorCode.STREAMING_FALLBACK, detail=detail)],
+            )
+        return self._run_to_file_eager(output_path, format, preset, crf, context)
 
     def _run_to_file_eager(
         self,
@@ -1321,6 +1424,14 @@ class VideoEdit(BaseModel):
                 # to the eager path, which executes ops strictly in plan order.
                 return None
             # Non-effect transform: compile to ffmpeg filter if streamable.
+            # The `streamable` flag is the authoritative declaration -- checked
+            # first so the streamability report (which classifies by the flag)
+            # can never disagree with the builder in this direction: a
+            # flag-False transform goes eager even if it has a working
+            # to_ffmpeg_filter. The remaining drift class (flag True, filter
+            # compiles to None) is caught by _eager_fallback under strict mode.
+            if not op.streamable:
+                return None
             ctx = FilterCtx(width=out_w, height=out_h, fps=out_fps)
             filter_expr = op.to_ffmpeg_filter(ctx)
             if filter_expr is None:

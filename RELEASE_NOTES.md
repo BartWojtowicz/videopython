@@ -1,5 +1,46 @@
 # Release Notes
 
+## 0.40.0
+
+Streamability becomes a contract instead of a silent behavior. Whether
+`run_to_file` streams in O(1) memory or eager-loads the whole video is now
+inspectable before running anything, and enforceable. Second step of the
+streaming-first migration (TODO.md P0.2).
+
+- **Per-op streamability report.** `VideoEdit.streamability()` classifies
+  every op in plan order by streaming class — `filter` (ffmpeg `-vf`),
+  `frame_effect` (`streaming_init`/`process_frame`), or `eager` (no streaming
+  strategy; forces the whole-plan fallback) — with the reason on each `eager`
+  entry. Purely structural: no source files, metadata, or context needed, so
+  admission gating can happen before anything is downloaded.
+  `report.streamable` is the plan-level verdict; `report.errors()` renders
+  the fallbacks as structured `PlanError`s.
+- **`check(..., strict_streaming=True)`** appends one `STREAMING_FALLBACK`
+  error per fallback-forcing op (after the regular validity errors, in plan
+  order), so an LLM refine loop treats "won't stream" like any other plan
+  violation. Default `check()` behavior is unchanged.
+- **`run_to_file(..., strict_streaming=True)`** raises `PlanValidationError`
+  carrying those errors instead of silently eager-loading — before any
+  decode. The former fallback sites are also guarded: if a plan stops
+  streaming despite a clean report (e.g. a third-party transform whose
+  `streamable` flag disagrees with its `to_ffmpeg_filter`), strict mode
+  raises rather than eager-loading. Default behavior is unchanged.
+- **New error vocabulary.** `PlanErrorCode.STREAMING_FALLBACK`, plus an
+  optional `PlanError.detail: str | None` field carrying a human-readable
+  cause for codes where the code alone isn't actionable (populated for
+  streaming fallbacks; `None` everywhere else, so existing constructions and
+  comparisons are unaffected).
+- **The `streamable` flag is now authoritative for transforms.** The plan
+  builder consults it before compiling `to_ffmpeg_filter`, so a transform
+  declaring `streamable=False` takes the eager path even if its filter
+  compiles — the report and the runtime can no longer disagree in that
+  direction. Affects only third-party ops with a mismatched declaration
+  (a working filter but `streamable=False` previously streamed silently);
+  all built-in ops declare coherently, pinned by registry tests in both the
+  editing and ai suites.
+- New exports: `StreamabilityReport`, `OpStreamability`, `StreamingClass`
+  from `videopython.editing`.
+
 ## 0.39.0
 
 Context-requiring effects now stream. `add_subtitles` — previously the most

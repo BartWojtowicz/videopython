@@ -105,6 +105,8 @@ class PlanErrorCode(str, Enum):
     CONCAT_MISMATCH = "concat_mismatch"
     SUBTITLE_UNFITTABLE = "subtitle_unfittable"
     POST_OP_REQUIRES_CONTEXT = "post_op_requires_context"
+    # Streaming strictness (opt-in via strict_streaming).
+    STREAMING_FALLBACK = "streaming_fallback"
 
 
 @dataclass
@@ -113,6 +115,9 @@ class PlanError:
 
     ``location`` is a path into the plan (e.g. ``'segments[1].operations[0]'``);
     the remaining fields are populated when meaningful for the ``code``.
+    ``detail`` carries a short human-readable cause when the code alone is not
+    actionable (e.g. *why* an op forces the eager fallback) -- prose meant for
+    LLM refine-loop feedback, not for branching.
     """
 
     code: PlanErrorCode
@@ -122,6 +127,7 @@ class PlanError:
     value: float | None = None
     limit: float | None = None
     predicted_duration: float | None = None
+    detail: str | None = None
 
 
 @dataclass

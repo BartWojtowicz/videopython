@@ -10,8 +10,10 @@ from __future__ import annotations
 import logging
 import subprocess
 import tempfile
+from collections.abc import Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from types import TracebackType
 from typing import Any, get_args
@@ -22,10 +24,202 @@ from tqdm import tqdm
 from videopython.audio import Audio
 from videopython.base import _ffmpeg
 from videopython.base._dimensions import require_even
+from videopython.base.exceptions import PlanError, PlanErrorCode
 from videopython.base.video import ALLOWED_VIDEO_FORMATS, ALLOWED_VIDEO_PRESETS, FrameIterator
 from videopython.editing.effects import Effect
+from videopython.editing.operation import Operation
 
 logger = logging.getLogger(__name__)
+
+
+class StreamingClass(str, Enum):
+    """How an op executes on the streaming path -- its memory class.
+
+    ``FILTER`` and ``FRAME_EFFECT`` stream in O(1) memory w.r.t. video length;
+    ``EAGER`` means the op has no streaming strategy (yet), which forces the
+    *whole plan* onto the eager in-memory path. Future classes from the
+    streaming-first contract (frame mapper, cut list, bounded buffer) will be
+    added here as they are implemented.
+    """
+
+    FILTER = "filter"
+    """Compiles to an ffmpeg ``-vf`` filter applied at decode time."""
+    FRAME_EFFECT = "frame_effect"
+    """Shape-preserving per-frame Python (``streaming_init`` + ``process_frame``)."""
+    EAGER = "eager"
+    """No streaming strategy; forces the whole-plan eager fallback."""
+
+
+@dataclass(frozen=True)
+class OpStreamability:
+    """Streaming classification for a single op within a plan."""
+
+    location: str
+    """Path into the plan, e.g. ``'segments[1].operations[0]'``."""
+    op: str
+    """The op discriminator, e.g. ``'add_subtitles'``."""
+    streaming_class: StreamingClass
+    reason: str | None = None
+    """Why the op forces the eager fallback; ``None`` unless ``EAGER``."""
+
+    @property
+    def streams(self) -> bool:
+        return self.streaming_class is not StreamingClass.EAGER
+
+
+@dataclass(frozen=True)
+class StreamabilityReport:
+    """Per-op streaming classification for a whole plan.
+
+    Built by :meth:`VideoEdit.streamability` from the plan structure alone --
+    no source files, metadata, or runtime context needed -- so a consumer can
+    gate job admission on it before downloading anything. ``streamable`` is
+    the plan-level verdict: one ``EAGER`` op forces the *entire*
+    ``run_to_file`` onto the eager in-memory path.
+    """
+
+    entries: tuple[OpStreamability, ...]
+
+    @property
+    def streamable(self) -> bool:
+        """True when ``run_to_file`` will stream (no op forces the fallback)."""
+        return all(e.streams for e in self.entries)
+
+    @property
+    def fallbacks(self) -> tuple[OpStreamability, ...]:
+        """The ops that force the eager fallback, in plan order."""
+        return tuple(e for e in self.entries if not e.streams)
+
+    def errors(self) -> list[PlanError]:
+        """The fallbacks as structured ``STREAMING_FALLBACK`` plan errors.
+
+        The same shape :meth:`VideoEdit.check` returns, so an LLM refine loop
+        can treat "would not stream" exactly like any other plan violation.
+        """
+        return [
+            PlanError(code=PlanErrorCode.STREAMING_FALLBACK, location=e.location, op=e.op, detail=e.reason)
+            for e in self.fallbacks
+        ]
+
+
+def analyze_streamability(
+    segment_operations: Sequence[Sequence[Operation]],
+    post_operations: Sequence[Operation],
+) -> StreamabilityReport:
+    """Classify every op in a plan by streaming class, in plan order.
+
+    Mirrors the decision points of ``VideoEdit._build_streaming_plan`` and the
+    post-op folding in ``VideoEdit.run_to_file`` exactly -- this function is
+    the single documented source of those rules. Both deciders treat the
+    ``streamable`` ClassVar as the authoritative declaration (a flag-False
+    transform never streams, even with a working ``to_ffmpeg_filter``); the
+    one divergence the flag cannot express -- flag True but the filter
+    compiles to ``None`` -- is caught at runtime by the strict-mode drift
+    guard, and a registry test pins flag-True transforms to an actual
+    ``to_ffmpeg_filter`` override. Purely structural: no disk access and no
+    runtime context.
+    """
+    entries: list[OpStreamability] = []
+    for i, ops in enumerate(segment_operations):
+        seen_effect = False
+        for j, op in enumerate(ops):
+            location = f"segments[{i}].operations[{j}]"
+            if isinstance(op, Effect):
+                if op.streamable:
+                    entries.append(OpStreamability(location, op.op, StreamingClass.FRAME_EFFECT))
+                else:
+                    entries.append(
+                        OpStreamability(
+                            location,
+                            op.op,
+                            StreamingClass.EAGER,
+                            reason="effect has no streaming implementation (streamable=False)",
+                        )
+                    )
+                seen_effect = True
+            elif op.requires:
+                entries.append(
+                    OpStreamability(
+                        location,
+                        op.op,
+                        StreamingClass.EAGER,
+                        reason=(
+                            f"transform requires runtime context {sorted(op.requires)} and has no "
+                            "streaming strategy yet -- an ffmpeg filter cannot consume runtime context"
+                        ),
+                    )
+                )
+            elif seen_effect:
+                entries.append(
+                    OpStreamability(
+                        location,
+                        op.op,
+                        StreamingClass.EAGER,
+                        reason=(
+                            "transform follows an effect in plan order; ffmpeg filters run at decode "
+                            "time, before every scheduled effect, so plan order cannot be preserved -- "
+                            "move the transform before the effect to stream"
+                        ),
+                    )
+                )
+            elif op.streamable:
+                entries.append(OpStreamability(location, op.op, StreamingClass.FILTER))
+            else:
+                entries.append(
+                    OpStreamability(
+                        location,
+                        op.op,
+                        StreamingClass.EAGER,
+                        reason="transform has no ffmpeg filter compilation",
+                    )
+                )
+
+    multi_segment = len(segment_operations) > 1
+    for j, op in enumerate(post_operations):
+        location = f"post_operations[{j}]"
+        if multi_segment:
+            entries.append(
+                OpStreamability(
+                    location,
+                    op.op,
+                    StreamingClass.EAGER,
+                    reason="post-operations on a multi-segment plan cannot stream yet (no cross-segment schedule)",
+                )
+            )
+        elif op.requires:
+            entries.append(
+                OpStreamability(
+                    location,
+                    op.op,
+                    StreamingClass.EAGER,
+                    reason=(
+                        f"post-operation requires runtime context {sorted(op.requires)}, which is not "
+                        "re-based onto the assembled timeline -- move it into the segment to stream"
+                    ),
+                )
+            )
+        elif isinstance(op, Effect) and op.streamable:
+            entries.append(OpStreamability(location, op.op, StreamingClass.FRAME_EFFECT))
+        elif isinstance(op, Effect):
+            entries.append(
+                OpStreamability(
+                    location,
+                    op.op,
+                    StreamingClass.EAGER,
+                    reason="effect has no streaming implementation (streamable=False)",
+                )
+            )
+        else:
+            entries.append(
+                OpStreamability(
+                    location,
+                    op.op,
+                    StreamingClass.EAGER,
+                    reason="transforms cannot stream as post-operations -- move the transform into the segment",
+                )
+            )
+
+    return StreamabilityReport(entries=tuple(entries))
 
 
 @dataclass
