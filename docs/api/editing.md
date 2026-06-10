@@ -101,6 +101,31 @@ streamable, `run_to_file` falls back to eager (`run()` + `save()`).
 **Streamable effects**: every `Effect`, including the context-requiring
 `add_subtitles` (pass `context=` to `run_to_file`).
 
+### Streamability report and strict mode
+
+`edit.streamability()` classifies every op by streaming class without
+touching the disk — `filter` (ffmpeg `-vf`), `frame_effect`
+(`process_frame`), or `eager` (forces the whole-plan fallback, with the
+reason on the entry):
+
+```python
+report = edit.streamability()
+report.streamable        # will run_to_file stream in O(1) memory?
+report.fallbacks         # the offending ops, with reasons
+report.errors()          # the same as structured STREAMING_FALLBACK PlanErrors
+```
+
+To make the fallback an error instead of a silent behavior change:
+
+- `edit.check(meta, strict_streaming=True)` appends one
+  `STREAMING_FALLBACK` error per offending op (location, op, and the
+  reason in `detail`) after the regular validity errors.
+- `edit.run_to_file(path, strict_streaming=True)` raises
+  `PlanValidationError` with those errors before any decode.
+
+Streamability is purely structural (op classes, order, plan shape), so a
+consumer can gate job admission on the report before downloading sources.
+
 ## Context Data
 
 Operations that need side-channel data (e.g. `silence_removal` and

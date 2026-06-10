@@ -188,6 +188,14 @@ for err in errors:
 # Re-prompt once with the full structured list instead of one-at-a-time
 ```
 
+With `check(source_metadata, strict_streaming=True)`, ops that would force
+`run_to_file`'s silent eager fallback are reported too — one
+`STREAMING_FALLBACK` error per op, with the actionable cause in
+`err.detail` (e.g. "transform follows an effect in plan order ... move the
+transform before the effect to stream"), so the refine loop can treat
+"won't stream" like any other violation. The full per-op classification
+(including the ops that do stream) is `edit.streamability()`.
+
 ### Auto-repair the mechanical violations: `repair()`
 
 Most mechanical faults need no LLM at all — clamping is the obvious fix.

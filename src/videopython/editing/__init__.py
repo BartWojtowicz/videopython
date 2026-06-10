@@ -22,6 +22,7 @@ from .effects import (
     Zoom,
 )
 from .operation import FilterCtx, OpCategory, Operation, TimeRange
+from .streaming import OpStreamability, StreamabilityReport, StreamingClass
 from .transcription_overlay import SubtitleRegion, SubtitleStyle, TranscriptionOverlay
 from .transforms import (
     Crop,
@@ -82,4 +83,8 @@ __all__ = [
     # Plan runner
     "VideoEdit",
     "SegmentConfig",
+    # Streamability report
+    "StreamabilityReport",
+    "OpStreamability",
+    "StreamingClass",
 ]
