@@ -128,11 +128,11 @@ class TestParsingAndSerialization:
     def test_post_operations_round_trip(self):
         plan = {
             "segments": [_segment()],
-            "post_operations": [{"op": "reverse"}, {"op": "fade", "mode": "out", "duration": 0.5}],
+            "post_operations": [{"op": "vignette"}, {"op": "fade", "mode": "out", "duration": 0.5}],
         }
         edit = VideoEdit.from_dict(plan)
         out = edit.to_dict()
-        assert [op["op"] for op in out["post_operations"]] == ["reverse", "fade"]
+        assert [op["op"] for op in out["post_operations"]] == ["vignette", "fade"]
 
     def test_window_round_trip(self):
         plan = {
@@ -197,7 +197,7 @@ class TestJsonSchema:
         # the exact shape comes from Operation.json_schema(), so just check the
         # union mentions a known op_id.
         as_json = json.dumps(op_schema)
-        for op_id in ("resize", "blur_effect", "fade", "reverse"):
+        for op_id in ("resize", "blur_effect", "fade", "speed_change"):
             assert op_id in as_json, f"Operation {op_id!r} missing from schema"
 
     def test_schema_has_descriptions_for_every_top_level_field(self):
@@ -270,11 +270,19 @@ class TestExecution:
     def test_run_with_post_operations(self):
         plan = {
             "segments": [_segment(start=0.0, end=2.0)],
-            "post_operations": [{"op": "resize", "width": 200, "height": 100}],
+            "post_operations": [{"op": "fade", "mode": "out", "duration": 0.5}],
         }
         result = VideoEdit.from_dict(plan).run()
-        assert result.frames.shape[2] == 200
-        assert result.frames.shape[1] == 100
+        assert result.frames[-1].mean() < 5
+
+    def test_transform_post_op_is_rejected(self):
+        # Streaming is the only engine; transforms cannot stream as post-ops.
+        plan = {
+            "segments": [_segment(start=0.0, end=2.0)],
+            "post_operations": [{"op": "resize", "width": 200, "height": 100}],
+        }
+        with pytest.raises(PlanValidationError, match="move the transform into the segment"):
+            VideoEdit.from_dict(plan).run()
 
     def test_run_with_image_overlay(self, tmp_path):
         logo = tmp_path / "logo.png"
@@ -827,25 +835,6 @@ class TestSegmentContextHelper:
 class TestSegmentContextWiring:
     """``run()`` and ``validate()`` re-base per segment but not post_operations."""
 
-    def test_process_rebases_context_for_segment_ops(self):
-        seg = SegmentConfig.model_validate(
-            {"source": "fake.mp4", "start": 10.0, "end": 20.0, "operations": [{"op": "reverse"}]}
-        )
-        abs_tx = _make_transcription([(12.0, 13.0, "a"), (18.0, 19.0, "b")])
-        video = _make_synthetic_video(32, 32, 24, 0.5)
-        captured: dict[str, Any] = {}
-
-        def fake_apply(op: Any, vid: Video, ctx: dict[str, Any] | None) -> Video:
-            captured["ctx"] = ctx
-            return vid
-
-        with patch("videopython.editing.video_edit._apply_with_context", side_effect=fake_apply):
-            out = seg.process(video, {"transcription": abs_tx, "other": 123})
-
-        assert out is video
-        assert captured["ctx"]["other"] == 123
-        assert _word_spans(captured["ctx"]["transcription"]) == [(2.0, 3.0, "a"), (8.0, 9.0, "b")]
-
     def test_validate_rebases_segment_but_not_post_operations(self):
         plan = {
             "segments": [_segment(source="fake.mp4", start=10.0, end=20.0, operations=[{"op": "silence_removal"}])],
@@ -929,7 +918,7 @@ class TestStreamingRequiresGuard:
     context.
     """
 
-    def test_build_streaming_plan_returns_none_for_requires_transform(self, monkeypatch):
+    def test_build_streaming_plan_returns_none_for_non_streamable_requires_transform(self, monkeypatch):
         plan = VideoEdit.from_dict(
             {
                 "segments": [
@@ -943,10 +932,12 @@ class TestStreamingRequiresGuard:
             }
         )
         seg = plan.segments[0]
-        # resize is streamable, so without the guard a plan is built.
         assert plan._build_streaming_plan(seg, None, None, None) is not None
-        # Same streamable transform, now declaring a context requirement -> eager.
+        # A context-requiring transform streams when its compile can consume
+        # the context (silence_removal); without a streaming strategy it
+        # still defers to eager.
         monkeypatch.setattr(Resize, "requires", ("transcription",))
+        monkeypatch.setattr(Resize, "streamable", False)
         assert plan._build_streaming_plan(seg, None, None, None) is None
 
     def test_requires_effect_builds_plan_with_rebased_context(self):
@@ -1037,12 +1028,12 @@ class TestStreamingRequiresGuard:
 
 
 class TestStreamingOpOrderGuard:
-    """A transform after a scheduled effect forces the eager fallback.
+    """Plan-order scheduling across the decode and encode filter stages.
 
-    vf filters run at decode time, before every scheduled effect's
-    process_frame, so an effect-then-transform plan cannot stream in plan
-    order: the effect's frame range and streaming_init dims/fps would be
-    computed against a timeline the later filter changes.
+    Transforms before effects join the decode chain; transforms after
+    effects join the encode chain (FrameEncoder -vf). The one unstreamable
+    order is a frame effect AFTER encode-stage content -- process_frame
+    runs before the encoder, so plan order cannot be preserved.
     """
 
     @staticmethod
@@ -1051,11 +1042,25 @@ class TestStreamingOpOrderGuard:
             {"segments": [_segment(source=SMALL_VIDEO_PATH, start=0.0, end=2.0, operations=operations)]}
         )
 
-    def test_transform_after_effect_returns_none(self):
+    def test_transform_after_effect_joins_encode_stage(self):
         plan = self._plan(
             [
                 {"op": "fade", "mode": "in", "duration": 0.5},
                 {"op": "resize", "width": 64, "height": 64},
+            ]
+        )
+        built = plan._build_streaming_plan(plan.segments[0], None, None, None)
+        assert built is not None
+        assert built.post_vf_filters == ["scale=64:64"]
+        # The pipe (encoder rawvideo input) keeps the pre-transform dims.
+        assert (built.output_width, built.output_height) == (800, 500)
+
+    def test_effect_after_encode_stage_returns_none(self):
+        plan = self._plan(
+            [
+                {"op": "fade", "mode": "in", "duration": 0.5},
+                {"op": "resize", "width": 64, "height": 64},
+                {"op": "color_adjust", "brightness": 0.2},
             ]
         )
         assert plan._build_streaming_plan(plan.segments[0], None, None, None) is None
@@ -1067,7 +1072,9 @@ class TestStreamingOpOrderGuard:
                 {"op": "fade", "mode": "in", "duration": 0.5},
             ]
         )
-        assert plan._build_streaming_plan(plan.segments[0], None, None, None) is not None
+        built = plan._build_streaming_plan(plan.segments[0], None, None, None)
+        assert built is not None
+        assert built.post_vf_filters == []
 
 
 class TestPostOpsGuard:
@@ -1094,9 +1101,9 @@ class TestPostOpsGuard:
             plan.run(context={"transcription": tx})
 
     def test_multi_segment_post_op_without_requires_is_allowed(self):
-        plan = self._plan(2, [{"op": "reverse"}])
+        plan = self._plan(2, [{"op": "vignette"}])
         tx = _make_transcription([(1.0, 2.0, "hello")])
-        # reverse has no `requires`; the transcription is irrelevant to it.
+        # vignette has no `requires`; the transcription is irrelevant to it.
         plan.validate_with_metadata(self._META, context={"transcription": tx})
 
     def test_single_segment_post_op_requiring_context_is_allowed(self):
@@ -1110,10 +1117,10 @@ class TestPostOpsGuard:
 
 
 class TestMetadataChain:
-    def test_reverse_preserves_metadata(self):
+    def test_shape_preserving_chain_preserves_metadata(self):
         plan = {
-            "segments": [_segment(start=0.0, end=3.0, operations=[{"op": "reverse"}])],
-            "post_operations": [{"op": "reverse"}],
+            "segments": [_segment(start=0.0, end=3.0, operations=[{"op": "vignette"}])],
+            "post_operations": [{"op": "vignette"}],
         }
         source_meta = VideoMetadata(height=500, width=800, fps=24, frame_count=240, total_seconds=10.0)
         meta = VideoEdit.from_dict(plan).validate_with_metadata(source_meta)

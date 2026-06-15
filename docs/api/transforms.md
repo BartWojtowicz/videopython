@@ -43,10 +43,9 @@ plan = {
 | `resize` | `Resize` | yes | Resize, optional aspect-preserving |
 | `resample_fps` | `ResampleFPS` | yes | Change frame rate |
 | `crop` | `Crop` | yes | Pixel or normalized 0–1 fractions |
-| `speed_change` | `SpeedChange` | no | Constant or ramping speed |
-| `reverse` | `Reverse` | no | Reverse playback |
-| `freeze_frame` | `FreezeFrame` | no | Hold a frame for a duration |
-| `silence_removal` | `SilenceRemoval` | no | Requires transcription context |
+| `speed_change` | `SpeedChange` | yes | Constant or ramping speed |
+| `freeze_frame` | `FreezeFrame` | yes | Hold a frame for a duration |
+| `silence_removal` | `SilenceRemoval` | yes | Cuts silent gaps; requires transcription context |
 
 ## Crop Coordinates
 
@@ -103,10 +102,6 @@ SilenceRemoval().apply(video, transcription=my_transcription)
 ### SpeedChange
 
 ::: videopython.editing.SpeedChange
-
-### Reverse
-
-::: videopython.editing.Reverse
 
 ### FreezeFrame
 

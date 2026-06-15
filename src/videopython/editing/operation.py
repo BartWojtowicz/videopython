@@ -41,6 +41,7 @@ from pydantic import BaseModel, ConfigDict, Discriminator, Field, TypeAdapter
 from tqdm import tqdm
 
 if TYPE_CHECKING:
+    from videopython.audio import Audio
     from videopython.base.video import Video, VideoMetadata
 
 __all__ = [
@@ -102,6 +103,12 @@ class BoundedTimeField(NamedTuple):
 class FilterCtx:
     """Current pipeline state (post-prior-ops) when compiling to ffmpeg.
 
+    ``frame_count`` is the number of frames entering the filter at this chain
+    position (the plan builder folds ``predict_metadata`` through the chain),
+    so duration-aware compilations (a speed ramp's time-warp expression, a
+    freeze's frame indices) can be exact. ``0`` when unknown -- compilations
+    that need it must return ``None`` (no filter compilation) in that case.
+
     ``context`` carries the resolved, segment-local runtime context (the same
     re-based values ``streaming_init`` receives) so a context-consuming op can
     compile itself into the filter chain (e.g. ``add_subtitles`` consuming the
@@ -110,13 +117,26 @@ class FilterCtx:
     ``owned_files`` collects temp files a compilation creates (the ``.ass``
     file a ``subtitles=`` entry references); the plan runner deletes them once
     streaming finishes or the plan is abandoned.
+
+    ``source_path``/``start_second``/``end_second`` locate the segment on
+    disk, and ``decode_filters`` is the decode-stage filter prefix ahead of
+    this op -- together they let a compilation run its own bounded decode
+    pass over exactly the frames the filter will see (``face_crop``'s
+    detection). ``decode_filters`` is ``None`` when those frames are not
+    reproducible at compile time (the op sits at the encode stage, behind
+    per-frame Python effects); such compilations must return ``None``.
     """
 
     width: int
     height: int
     fps: float
+    frame_count: int = 0
     context: dict[str, Any] = field(default_factory=dict)
     owned_files: list[Path] = field(default_factory=list)
+    source_path: Path | None = None
+    start_second: float = 0.0
+    end_second: float | None = None
+    decode_filters: tuple[str, ...] | None = ()
 
 
 LLM_HIDDEN_KEY = "llm_hidden"
@@ -213,7 +233,7 @@ class Operation(BaseModel):
     ``streamable``, and ``requires`` ClassVars.
 
     The default ``apply`` raises ``NotImplementedError``; ``predict_metadata``
-    defaults to identity; ``to_ffmpeg_filter`` defaults to ``None`` (eager).
+    defaults to identity; ``to_ffmpeg_filter`` defaults to ``None`` (no filter compilation).
     """
 
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
@@ -223,6 +243,22 @@ class Operation(BaseModel):
     category: ClassVar[OpCategory] = OpCategory.SPECIAL
     streamable: ClassVar[bool] = False
     requires: ClassVar[tuple[str, ...]] = ()
+    compiles_from_source: ClassVar[bool] = False
+    """Whether the op's filter compile decodes the source itself (face_crop's
+    detection pass). Such ops cannot sit at the encode stage -- the frames
+    behind per-frame Python effects are not reproducible at compile time --
+    so both the plan builder and the streamability report reject them as
+    UNSTREAMABLE there."""
+    changes_duration: ClassVar[bool] = False
+    """Whether the op's output duration differs from its input (speed, freeze).
+
+    The streaming plan builder folds ``predict_metadata`` through the chain
+    either way; this flag additionally gates time-based *context*: a
+    context-consuming op scheduled after a duration-changing transform would
+    receive timestamps on the wrong timeline, so such plans are rejected as
+    UNSTREAMABLE until context re-mapping exists. The streamability report
+    mirrors the same rule.
+    """
     llm_exposed: ClassVar[bool] = True
     time_fields: ClassVar[tuple[BoundedTimeField, ...]] = ()
     """Time-valued (seconds) fields :meth:`VideoEdit.repair` may clamp into range.
@@ -370,12 +406,28 @@ class Operation(BaseModel):
         return meta
 
     def to_ffmpeg_filter(self, ctx: FilterCtx) -> str | None:
-        """Compile to an ffmpeg ``-vf`` filter expression, or ``None`` for eager.
+        """Compile to an ffmpeg ``-vf`` filter expression, or ``None`` for no filter compilation.
 
         Streamable transforms override this. Effects use ``process_frame``
         instead -- they do not go through ffmpeg filters.
         """
         return None
+
+    def transform_audio(self, audio: Audio, output_duration: float, fps: float, **context: Any) -> Audio:
+        """The op's audio-domain twin for the streaming path.
+
+        Video streams through the ffmpeg filter chain, but segment audio is
+        processed in memory (``_load_segment_audio``); a duration-changing
+        transform must therefore transform the audio to match
+        (``speed_change`` time-stretches, ``freeze_frame`` inserts silence,
+        ``silence_removal`` cuts the same windows). ``output_duration`` is
+        the predicted post-op duration the result must fit; ``context``
+        carries the op's resolved ``requires`` values (segment-local), for
+        twins that need them. Identity by default -- the runner only replays
+        ops that override this. The eager ``apply`` should delegate its audio
+        handling here so the two paths cannot drift.
+        """
+        return audio
 
 
 class Effect(Operation):
@@ -398,6 +450,14 @@ class Effect(Operation):
     """
 
     category: ClassVar[OpCategory] = OpCategory.EFFECT
+    audio_coupled: ClassVar[bool] = False
+    """Whether the effect mutates audio alongside pixels (``_apply_audio``).
+
+    Audio-coupled effects cannot fold as post-operations across segment
+    boundaries: each segment's audio is processed independently, so a gain
+    envelope spanning a concat boundary would restart mid-ramp. The plan
+    builder and the streamability report both consult this.
+    """
 
     window: TimeRange | None = Field(
         None,

@@ -5,13 +5,13 @@ from __future__ import annotations
 import glob
 import tempfile
 from typing import Any
-from unittest.mock import patch
 
 import numpy as np
 import pytest
 from PIL import ImageFont
 
 from tests.test_config import SMALL_VIDEO_PATH
+from videopython.base.exceptions import PlanValidationError
 from videopython.base.fonts import BUNDLED_FONT_FAMILIES, BUNDLED_FONTS, bundled_fonts_dir
 from videopython.base.transcription import Transcription, TranscriptionSegment, TranscriptionWord
 from videopython.base.video import Video
@@ -236,7 +236,7 @@ class TestLibassStreamability:
         ]
         assert report.streamable
 
-    def test_frame_effect_after_encode_stage_subtitles_is_eager(self):
+    def test_frame_effect_after_encode_stage_subtitles_is_unstreamable(self):
         report = _plan(
             [
                 {"op": "fade", "mode": "in", "duration": 0.5},
@@ -245,7 +245,7 @@ class TestLibassStreamability:
             ]
         ).streamability()
         trailing = report.entries[2]
-        assert trailing.streaming_class is StreamingClass.EAGER
+        assert trailing.streaming_class is StreamingClass.UNSTREAMABLE
         assert trailing.reason is not None and "encode-stage" in trailing.reason
         assert not report.streamable
 
@@ -253,9 +253,8 @@ class TestLibassStreamability:
 class TestLibassExecution:
     def test_streams_and_draws_subtitles(self, tmp_path):
         before = set(glob.glob(tempfile.gettempdir() + "/*.ass"))
-        with patch.object(VideoEdit, "_run_to_file_eager", side_effect=AssertionError("eager fallback used")):
-            out = _plan([SUBTITLES]).run_to_file(tmp_path / "subs.mp4", context={"transcription": _transcription()})
-            base = _plan([]).run_to_file(tmp_path / "base.mp4")
+        out = _plan([SUBTITLES]).run_to_file(tmp_path / "subs.mp4", context={"transcription": _transcription()})
+        base = _plan([]).run_to_file(tmp_path / "base.mp4")
         assert set(glob.glob(tempfile.gettempdir() + "/*.ass")) == before
 
         subs = Video.from_path(str(out)).frames
@@ -270,28 +269,23 @@ class TestLibassExecution:
 
     def test_transform_after_libass_subtitles_streams_end_to_end(self, tmp_path):
         plan = _plan([SUBTITLES, {"op": "crop", "width": 400, "height": 300}])
-        with patch.object(VideoEdit, "_run_to_file_eager", side_effect=AssertionError("eager fallback used")):
-            out = plan.run_to_file(tmp_path / "out.mp4", context={"transcription": _transcription()})
+        out = plan.run_to_file(tmp_path / "out.mp4", context={"transcription": _transcription()})
         meta = Video.from_path(str(out))
         assert meta.frames.shape[2] == 400 and meta.frames.shape[1] == 300
 
-    def test_abandoned_build_cleans_up_ass_file(self, tmp_path):
-        """A later non-streamable op abandons the plan; its .ass must not leak."""
+    def test_rejected_plan_leaks_no_ass_file(self, tmp_path):
+        """A plan rejected for an unstreamable op must not leak temp files."""
         before = set(glob.glob(tempfile.gettempdir() + "/*.ass"))
-        plan = _plan([SUBTITLES, {"op": "freeze_frame", "timestamp": 0.5, "duration": 0.2}])
-        with patch.object(
-            VideoEdit, "_run_to_file_eager", autospec=True, side_effect=VideoEdit._run_to_file_eager
-        ) as eager_spy:
+        plan = _plan([SUBTITLES, {"op": "cut", "start": 0.0, "end": 1.0}])
+        with pytest.raises(PlanValidationError, match="cannot stream"):
             plan.run_to_file(tmp_path / "out.mp4", context={"transcription": _transcription()})
-        assert eager_spy.call_count == 1
         assert set(glob.glob(tempfile.gettempdir() + "/*.ass")) == before
 
     def test_subtitles_after_frame_effect_stream_via_encode_stage(self, tmp_path):
         """[fade, add_subtitles] streams: the filter burns at encode time."""
         plan = _plan([{"op": "fade", "mode": "in", "duration": 1.0}, SUBTITLES])
-        with patch.object(VideoEdit, "_run_to_file_eager", side_effect=AssertionError("eager fallback used")):
-            out = plan.run_to_file(tmp_path / "out.mp4", context={"transcription": _transcription()})
-            base = _plan([{"op": "fade", "mode": "in", "duration": 1.0}]).run_to_file(tmp_path / "base.mp4")
+        out = plan.run_to_file(tmp_path / "out.mp4", context={"transcription": _transcription()})
+        base = _plan([{"op": "fade", "mode": "in", "duration": 1.0}]).run_to_file(tmp_path / "base.mp4")
 
         subs = Video.from_path(str(out)).frames
         plain = Video.from_path(str(base)).frames

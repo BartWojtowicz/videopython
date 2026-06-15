@@ -234,11 +234,15 @@ class FrameIterator:
         if self.start_second > 0:
             cmd.extend(["-ss", str(self.start_second)])
 
-        cmd.extend(["-i", str(self.path)])
-
+        # Input-side -t: trim the SOURCE segment before the filter chain. As
+        # an output option it would instead cap the post-filter duration,
+        # silently truncating duration-extending filters (slow-motion setpts,
+        # freeze-frame loop).
         if self.end_second is not None:
             duration = self.end_second - self.start_second
             cmd.extend(["-t", str(duration)])
+
+        cmd.extend(["-i", str(self.path)])
 
         if self._vf_filters:
             cmd.extend(["-vf", ",".join(self._vf_filters)])

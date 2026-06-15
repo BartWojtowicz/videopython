@@ -8,8 +8,9 @@ and the resolved look are baked into an ASS document, and ffmpeg's
 * the streaming path emits one ``-vf`` entry -- decode-stage normally, or
   encode-stage when the op follows frame effects in plan order, so
   ``[fade, add_subtitles]`` keeps streaming in plan order;
-* the eager path (:meth:`TranscriptionOverlay.apply`, used by
-  ``VideoEdit.run``) pipes the in-memory frames through the same filter.
+* the direct per-op path (:meth:`TranscriptionOverlay.apply`) pipes its
+  in-memory frames through the same filter (``VideoEdit.run`` streams them
+  in through the same compiled ``-vf`` entry).
 
 Geometry is resolution-relative (``font_scale``/``region``) and libass wraps
 long cues within the box instead of failing, so there is no fit validation:
@@ -108,8 +109,8 @@ class TranscriptionOverlay(Effect):
     local timeline and delivered at plan-compile time through
     :class:`FilterCtx`; the op compiles to a libass ``subtitles=`` filter
     (:attr:`compiles_to_filter`), so subtitled edits run on the O(1)-memory
-    streaming path at native speed. The eager path pipes frames through the
-    same filter, so both paths share one pixel implementation.
+    streaming path at native speed. The direct per-op ``apply`` pipes frames
+    through the same filter, so both paths share one pixel implementation.
     """
 
     op: Literal["add_subtitles"] = "add_subtitles"
