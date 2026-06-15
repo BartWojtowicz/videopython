@@ -88,6 +88,38 @@ metadata) and only fail at decode.
 BREAKING: the private `_segment_context(context, start, end)` helper gains a
 `source` argument (`_segment_context(context, source, start, end)`).
 
+### Segment transitions (`xfade` / `acrossfade`)
+
+Segment boundaries were hard cuts only. A segment may now carry an optional
+`transition_in` describing how it enters from the previous segment:
+
+```python
+{"source": "b.mp4", "start": 0, "end": 5,
+ "transition_in": {"type": "dissolve", "duration": 0.5}}
+```
+
+`TransitionSpec` exposes a curated catalog (`fade`, `dissolve`,
+`wipeleft/right/up/down`, `slideleft/right`) as a closed enum so the strict
+LLM grammar stays tight, a `duration` (seconds of overlap), and `audio`
+(acrossfade the audio across the same overlap, else a hard butt-join). It
+surfaces automatically in `VideoEdit.json_schema()`. N segments → N-1
+transitions; `segments[0].transition_in` must be `None`.
+
+Streaming-first: each transition-adjacent segment is realized by the existing
+per-segment engine (effects + audio baked), then a native two-decoder
+`xfade`+`acrossfade` pass joins the two finished files. Maximal hard-cut runs
+still `concat -c copy`; only transition seams re-encode. `run()` and
+`run_to_file` share one `xfade` filter-string builder, so the seam pixels
+match. `_assemble_timeline` subtracts each `round(duration*fps)` overlap, so
+predict / `check` / `repair` / streamability all see the shortened output.
+
+A transition that would overlap a whole adjacent segment is a structured
+`TRANSITION_TOO_LONG` error (the constraint is frame-based: `round(D*fps)`
+must be strictly fewer frames than the shorter adjacent segment); `check`
+reports it and `repair` clamps it one frame short of the limit. `post_operations`
+combined with transitions are reported `UNSTREAMABLE` (a post-op envelope
+cannot fold across the separately re-encoded seam).
+
 ## 0.42.0
 
 **Streaming-first migration complete: streaming is the only execution

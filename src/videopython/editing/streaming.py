@@ -105,6 +105,8 @@ class StreamabilityReport:
 def analyze_streamability(
     segment_operations: Sequence[Sequence[Operation]],
     post_operations: Sequence[Operation],
+    *,
+    has_transitions: bool = False,
 ) -> StreamabilityReport:
     """Classify every op in a plan by streaming class, in plan order.
 
@@ -118,6 +120,17 @@ def analyze_streamability(
     guard, and a registry test pins flag-True transforms to an actual
     ``to_ffmpeg_filter`` override. Purely structural: no disk access and no
     runtime context.
+
+    Segment transitions (``SegmentConfig.transition_in``) do not appear here:
+    a transition is a native ffmpeg ``xfade``/``acrossfade`` pass over two
+    realized per-segment files (each segment streams to a temp file exactly as
+    it would without a transition), so it is FILTER-class by construction and
+    never forces an eager render or changes any op's class. The one transition
+    fault that can reject a plan -- an overlap longer than an adjacent
+    segment's predicted post-op duration -- is duration-dependent, so it is
+    reported as ``TRANSITION_TOO_LONG`` by :meth:`VideoEdit.check` (which has
+    the predicted durations) and raised by ``run``/``run_to_file`` before
+    decode, not classified structurally here.
     """
     entries: list[OpStreamability] = []
     segment_has_encode_stage: list[bool] = []
@@ -243,7 +256,26 @@ def analyze_streamability(
     any_encode_stage = any(segment_has_encode_stage)
     for j, op in enumerate(post_operations):
         location = f"post_operations[{j}]"
-        if op.requires:
+        if has_transitions:
+            # Post-operations fold into the per-segment frame schedules, but a
+            # transition re-encodes the overlapped seam in a SEPARATE xfade
+            # pass after those schedules run -- so a post-op envelope spanning
+            # the seam cannot be represented (it would be applied to the
+            # pre-blend frames and then doubled at the overlap). Reject the
+            # combination rather than mis-time it; move the op into a segment.
+            entries.append(
+                OpStreamability(
+                    location,
+                    op.op,
+                    StreamingClass.UNSTREAMABLE,
+                    reason=(
+                        "post-operations cannot fold across a plan that has segment transitions: the "
+                        "overlapped seam is re-encoded in a separate xfade pass, so an envelope across "
+                        "it cannot be represented -- move the op into a segment or drop the transition"
+                    ),
+                )
+            )
+        elif op.requires:
             entries.append(
                 OpStreamability(
                     location,
@@ -733,3 +765,233 @@ def concat_files(segment_files: list[Path], output_path: Path) -> Path:
         return output_path
     finally:
         list_path.unlink(missing_ok=True)
+
+
+# ----------------------------------------------------------------- transitions
+
+# Curated subset of ffmpeg ``xfade`` ``transition=`` modes. The single source
+# of truth for both the ``TransitionSpec.type`` Literal (so the strict LLM
+# grammar stays tight) and the filter builder. Every name here is a literal
+# ffmpeg ``xfade=transition=<name>`` value -- no translation layer.
+TRANSITION_TYPES: tuple[str, ...] = (
+    "fade",
+    "dissolve",
+    "wipeleft",
+    "wiperight",
+    "wipeup",
+    "wipedown",
+    "slideleft",
+    "slideright",
+)
+
+
+def xfade_filter(transition_type: str, duration: float, offset: float, *, in_a: str = "0:v", in_b: str = "1:v") -> str:
+    """Build the one ``xfade`` filter expression shared by both transition paths.
+
+    The single source of the seam pixels: ``run()``'s in-memory twin
+    (:func:`stream_transition_frames`) and ``run_to_file``'s file pass
+    (:func:`stream_transition_pair`) both route through this so they cannot
+    diverge. ``offset`` is in seconds against the LEFT input's exact (probed)
+    duration -- the caller derives it from the realized file, never the
+    prediction, to avoid a one-frame seam.
+    """
+    return f"[{in_a}][{in_b}]xfade=transition={transition_type}:duration={duration}:offset={offset}"
+
+
+def acrossfade_filter(duration: float, *, in_a: str = "0:a", in_b: str = "1:a") -> str:
+    """The ``acrossfade`` companion to :func:`xfade_filter` for the audio seam."""
+    return f"[{in_a}][{in_b}]acrossfade=d={duration}"
+
+
+def stream_transition_pair(
+    left_file: Path,
+    right_file: Path,
+    transition_type: str,
+    duration: float,
+    offset: float,
+    output_path: Path,
+    *,
+    width: int,
+    height: int,
+    fps: float,
+    left_frame_count: int,
+    right_frame_count: int,
+    left_has_audio: bool,
+    right_has_audio: bool,
+    crossfade_audio: bool,
+    format: str = "mp4",
+    preset: str = "medium",
+    crf: int = 23,
+) -> Path:
+    """xfade/acrossfade two realized segment files into one output file.
+
+    The file-path half of the transition mechanism: each input is a finished
+    per-segment render (effects + audio already baked by ``stream_segment``),
+    so this pass is a pure ffmpeg ``filter_complex`` over two decode inputs --
+    no two-decoder-with-Python-effects machinery. ``offset`` is seconds against
+    ``left_file``'s exact duration (``left_total - duration``); the video seam
+    is produced by the shared :func:`xfade_filter` builder. When both inputs
+    carry audio and ``crossfade_audio`` is set the audio is ``acrossfade``-d
+    across the same overlap; otherwise a hard audio butt-join (``concat``)
+    keeps the streams aligned to the shortened video timeline.
+
+    Each video input is normalized to CFR ``fps`` and trimmed to its PROBED
+    ``*_frame_count`` before xfade. A concat-demuxer (``-c copy``) tail can
+    decode one duplicated frame at the join beyond what ffprobe reports, which
+    would inflate the xfade output by that frame; trimming to the probed count
+    pins the output to ``left + right - round(duration*fps)`` so the realized
+    seam matches the predicted shortened timeline exactly.
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Cap each input to its probed frame count, then re-stamp CFR. A
+    # concat-copy duplicate cannot then leak past the prediction (see
+    # docstring). The trailing ``fps`` re-establishes the constant frame rate
+    # xfade requires (``trim`` alone leaves the rate undefined).
+    filters = [
+        f"[0:v]trim=end_frame={left_frame_count},setpts=PTS-STARTPTS,fps={fps}[lv]",
+        f"[1:v]trim=end_frame={right_frame_count},setpts=PTS-STARTPTS,fps={fps}[rv]",
+        f"{xfade_filter(transition_type, duration, offset, in_a='lv', in_b='rv')}[vout]",
+    ]
+    maps = ["-map", "[vout]"]
+    both_audio = left_has_audio and right_has_audio
+    if both_audio and crossfade_audio:
+        filters.append(f"{acrossfade_filter(duration)}[aout]")
+        maps.extend(["-map", "[aout]"])
+    elif both_audio:
+        # Hard audio butt-join over the same overlap: drop the left's last
+        # ``duration`` seconds and concat, so the audio length tracks the
+        # shortened (xfade) video timeline rather than summing.
+        filters.append(f"[0:a]atrim=end={offset},asetpts=PTS-STARTPTS[la]")
+        filters.append("[la][1:a]concat=n=2:v=0:a=1[aout]")
+        maps.extend(["-map", "[aout]"])
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        str(left_file),
+        "-i",
+        str(right_file),
+        "-filter_complex",
+        ";".join(filters),
+        *maps,
+        "-c:v",
+        "libx264",
+        "-preset",
+        preset,
+        "-crf",
+        str(crf),
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        "-vsync",
+        "cfr",
+        "-r",
+        str(fps),
+    ]
+    if "-map" in maps and "[aout]" in maps:
+        cmd.extend(["-c:a", "aac", "-b:a", "192k"])
+    else:
+        cmd.append("-an")
+    cmd.append(str(output_path))
+
+    require_even(width, height)
+    try:
+        _ffmpeg.run(cmd)
+    except Exception:
+        if output_path.exists():
+            output_path.unlink()
+        raise
+    return output_path
+
+
+def stream_transition_frames(
+    left_frames: np.ndarray,
+    right_frames: np.ndarray,
+    transition_type: str,
+    duration: float,
+    fps: float,
+) -> np.ndarray:
+    """In-memory xfade twin: blend two RGB frame stacks over a ``duration`` overlap.
+
+    The view-over-streaming counterpart to :func:`stream_transition_pair`: a
+    lossless rawvideo->rawvideo ``filter_complex`` pass through the SAME
+    :func:`xfade_filter` builder, so ``run()`` and ``run_to_file`` produce
+    identical seam pixels. The overlap is ``round(duration * fps)`` frames; the
+    result has ``len(left) + len(right) - overlap`` frames. ``offset`` is
+    derived from the left stack's exact frame count (``(n_left - overlap) /
+    fps``), the in-memory analogue of probing the realized left file.
+    """
+    if left_frames.shape[1:] != right_frames.shape[1:]:
+        raise ValueError(
+            f"Transition inputs must share frame shape: {left_frames.shape[1:]} vs {right_frames.shape[1:]}"
+        )
+    n_left, height, width = left_frames.shape[:3]
+    n_right = right_frames.shape[0]
+    overlap = round(duration * fps)
+    if overlap >= n_left or overlap >= n_right:
+        raise ValueError(
+            f"Transition overlap ({overlap} frames) must be shorter than both segments (left={n_left}, right={n_right})"
+        )
+    # Offset from the LEFT stack's exact length, the in-memory mirror of
+    # probing the realized left file -- keeps the seam frame-aligned.
+    offset = (n_left - overlap) / fps
+    filter_expr = f"{xfade_filter(transition_type, duration, offset)}[vout]"
+
+    # ffmpeg has a single stdin, so the two raw inputs go through small temp
+    # files and the blended result comes back on stdout. run() already holds
+    # whole frame stacks in memory, so the temp files add no asymptotic cost
+    # and avoid the FIFO ordering deadlock two named pipes invite.
+    tmpdir = Path(tempfile.mkdtemp(prefix="vp_xfade_"))
+    left_path = tmpdir / "a.raw"
+    right_path = tmpdir / "b.raw"
+    try:
+        left_path.write_bytes(left_frames.tobytes())
+        right_path.write_bytes(right_frames.tobytes())
+
+        def _raw_input(path: Path) -> list[str]:
+            return [
+                "-f",
+                "rawvideo",
+                "-pixel_format",
+                "rgb24",
+                "-video_size",
+                f"{width}x{height}",
+                "-framerate",
+                str(fps),
+                "-i",
+                str(path),
+            ]
+
+        cmd = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            *_raw_input(left_path),
+            *_raw_input(right_path),
+            "-filter_complex",
+            filter_expr,
+            "-map",
+            "[vout]",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "pipe:1",
+        ]
+        out = _ffmpeg.run(cmd)
+    finally:
+        left_path.unlink(missing_ok=True)
+        right_path.unlink(missing_ok=True)
+        tmpdir.rmdir()
+
+    frame_size = width * height * 3
+    n_frames = len(out) // frame_size
+    return np.frombuffer(out, dtype=np.uint8)[: n_frames * frame_size].reshape(n_frames, height, width, 3).copy()

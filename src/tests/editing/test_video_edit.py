@@ -17,7 +17,13 @@ from videopython.base.exceptions import PlanErrorCode, PlanValidationError
 from videopython.base.transcription import Transcription, TranscriptionWord
 from videopython.base.video import Video, VideoMetadata
 from videopython.editing.transforms import Resize, SpeedChange
-from videopython.editing.video_edit import SegmentConfig, VideoEdit, _segment_context
+from videopython.editing.video_edit import (
+    SegmentConfig,
+    TransitionSpec,
+    VideoEdit,
+    _assemble_timeline,
+    _segment_context,
+)
 
 
 def _make_synthetic_video(width: int, height: int, fps: float, seconds: float) -> Video:
@@ -231,6 +237,110 @@ class TestJsonSchema:
                 if fname == "op":
                     continue
                 assert fprop.get("description"), f"Op {cls_name!r} field {fname!r} missing description"
+
+    def test_schema_includes_transition_object(self):
+        schema = VideoEdit.json_schema()
+        seg = schema["properties"]["segments"]["items"]
+        assert "transition_in" in seg["properties"]
+        # transition_in is optional -> not in the segment's required list.
+        assert "transition_in" not in seg["required"]
+        any_of = seg["properties"]["transition_in"]["anyOf"]
+        obj = next(o for o in any_of if o.get("type") == "object")
+        assert obj["additionalProperties"] is False
+        assert set(obj["properties"]["type"]["enum"]) == {
+            "fade",
+            "dissolve",
+            "wipeleft",
+            "wiperight",
+            "wipeup",
+            "wipedown",
+            "slideleft",
+            "slideright",
+        }
+        assert obj["properties"]["duration"]["exclusiveMinimum"] == 0
+
+
+# ------------------------------------------------------- transition timeline math
+
+
+class TestTransitionTimelineMath:
+    """`_assemble_timeline` shortens by each boundary's `round(D*fps)` overlap."""
+
+    def _meta(self, frames: int, fps: float = 24.0) -> VideoMetadata:
+        return VideoMetadata(height=64, width=64, fps=fps, frame_count=frames, total_seconds=round(frames / fps, 4))
+
+    def test_sum_without_transitions(self):
+        outs = [self._meta(36), self._meta(36)]
+        assembled = _assemble_timeline(outs)
+        assert assembled.frame_count == 72
+
+    def test_overlap_subtracted_with_transition(self):
+        outs = [self._meta(36), self._meta(36)]
+        transitions = [None, TransitionSpec(type="fade", duration=0.5)]
+        assembled = _assemble_timeline(outs, transitions)
+        assert assembled.frame_count == 72 - round(0.5 * 24.0)
+        assert assembled.total_seconds == round(assembled.frame_count / 24.0, 4)
+
+    def test_multiple_overlaps_subtracted(self):
+        outs = [self._meta(36), self._meta(36), self._meta(36)]
+        transitions = [
+            None,
+            TransitionSpec(type="fade", duration=0.5),
+            TransitionSpec(type="wipeleft", duration=0.25),
+        ]
+        assembled = _assemble_timeline(outs, transitions)
+        assert assembled.frame_count == 108 - round(0.5 * 24.0) - round(0.25 * 24.0)
+
+    def test_validate_with_metadata_reflects_shortened_timeline(self):
+        plan = VideoEdit.from_dict(
+            {
+                "segments": [
+                    {"source": SMALL_VIDEO_PATH, "start": 0, "end": 2.0},
+                    {
+                        "source": SMALL_VIDEO_PATH,
+                        "start": 0,
+                        "end": 2.0,
+                        "transition_in": {"type": "fade", "duration": 0.5},
+                    },
+                ]
+            }
+        )
+        assembled = plan.validate_with_metadata(SMALL_VIDEO_METADATA)
+        fps = SMALL_VIDEO_METADATA.fps
+        per_seg = round(2.0 * fps)
+        assert assembled.frame_count == 2 * per_seg - round(0.5 * fps)
+
+    def test_post_op_window_validated_against_shortened_timeline(self):
+        # The assembled timeline is shorter, so a post-op fade window that would
+        # fit the summed length but overruns the shortened length is rejected.
+        fps = SMALL_VIDEO_METADATA.fps
+        summed = 2 * round(2.0 * fps) / fps  # 4.0s if simply summed
+        shortened = (2 * round(2.0 * fps) - round(1.0 * fps)) / fps  # 3.0s with a 1.0s overlap
+        # A window.stop between the shortened and summed lengths must fail.
+        bad_stop = (shortened + summed) / 2
+        plan = VideoEdit.from_dict(
+            {
+                "segments": [
+                    {"source": SMALL_VIDEO_PATH, "start": 0, "end": 2.0},
+                    {
+                        "source": SMALL_VIDEO_PATH,
+                        "start": 0,
+                        "end": 2.0,
+                        "transition_in": {"type": "fade", "duration": 1.0},
+                    },
+                ],
+                "post_operations": [
+                    {
+                        "op": "blur_effect",
+                        "mode": "constant",
+                        "iterations": 5,
+                        "window": {"start": 0.0, "stop": bad_stop},
+                    },
+                ],
+            }
+        )
+        codes = [e.code for e in plan.check(SMALL_VIDEO_METADATA)]
+        assert PlanErrorCode.EFFECT_WINDOW_EXCEEDS_DURATION in codes
 
 
 # ----------------------------------------------------------------- execution
