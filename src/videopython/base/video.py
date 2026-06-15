@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
@@ -21,6 +24,15 @@ __all__ = [
     "ALLOWED_VIDEO_FORMATS",
     "ALLOWED_VIDEO_PRESETS",
 ]
+
+# Cache of probed VideoMetadata keyed by (resolved path, mtime_ns, size). Every
+# plan traversal (repair -> check -> validate -> run) re-probes the same files
+# per segment; ffprobe is a ~10-50ms subprocess while os.stat is microseconds,
+# so we re-stat on every call and invalidate on mtime_ns/size change. Bounded
+# LRU so a long-lived worker touching many files stays memory-stable.
+_METADATA_CACHE: OrderedDict[tuple[str, int, int], VideoMetadata] = OrderedDict()
+_METADATA_CACHE_LOCK = threading.Lock()
+_METADATA_CACHE_MAXSIZE = 128
 
 
 @dataclass
@@ -66,8 +78,8 @@ class VideoMetadata:
             raise VideoMetadataError(str(e)) from e
 
     @classmethod
-    def from_path(cls, video_path: str | Path) -> VideoMetadata:
-        """Creates VideoMetadata object from video file using ffprobe."""
+    def _probe_uncached(cls, video_path: str | Path) -> VideoMetadata:
+        """Probe a video file with ffprobe and parse it into VideoMetadata, bypassing the cache."""
         if not Path(video_path).exists():
             raise FileNotFoundError(f"Video file not found: {video_path}")
 
@@ -99,6 +111,46 @@ class VideoMetadata:
             raise VideoMetadataError(f"Missing required metadata field: {e}")
         except (TypeError, IndexError) as e:
             raise VideoMetadataError(f"Invalid metadata structure: {e}")
+
+    @classmethod
+    def from_path(cls, video_path: str | Path) -> VideoMetadata:
+        """Creates VideoMetadata object from video file using ffprobe.
+
+        Results are cached per ``(resolved path, mtime_ns, size)`` so repeated
+        probes of the same file in one process collapse to a single ffprobe
+        call. A file modified in place is re-probed automatically (the stat key
+        changes); call :meth:`clear_cache` to force a re-probe after an in-place
+        overwrite that somehow preserved both mtime_ns and size.
+        """
+        try:
+            stat_result = os.stat(video_path)
+        except OSError:
+            raise FileNotFoundError(f"Video file not found: {video_path}")
+
+        key = (os.fspath(Path(video_path).resolve()), stat_result.st_mtime_ns, stat_result.st_size)
+
+        with _METADATA_CACHE_LOCK:
+            cached = _METADATA_CACHE.get(key)
+            if cached is not None:
+                _METADATA_CACHE.move_to_end(key)
+                return cached
+
+        # Probe outside the lock so concurrent probes of different files do not serialize on it.
+        metadata = cls._probe_uncached(video_path)
+
+        with _METADATA_CACHE_LOCK:
+            _METADATA_CACHE[key] = metadata
+            _METADATA_CACHE.move_to_end(key)
+            while len(_METADATA_CACHE) > _METADATA_CACHE_MAXSIZE:
+                _METADATA_CACHE.popitem(last=False)
+
+        return metadata
+
+    @classmethod
+    def clear_cache(cls) -> None:
+        """Clear the probe cache. Mainly for tests and in-place file overwrites."""
+        with _METADATA_CACHE_LOCK:
+            _METADATA_CACHE.clear()
 
     @classmethod
     def from_video(cls, video: Video) -> VideoMetadata:

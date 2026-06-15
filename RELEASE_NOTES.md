@@ -48,6 +48,19 @@ consumers pinning a sub-capability must migrate to the new extra names; a bare
 `[tts]`; `numba`/`scipy`/`scikit-learn`/`ollama`/`hf-transfer` drop to
 transitive-only.
 
+### `VideoMetadata.from_path` caches ffprobe probes
+
+Every plan traversal (`repair` → `check` → `validate` → `run`) re-probed each
+source file per segment; a job that chains those over a handful of clips paid
+dozens of redundant ffprobe subprocesses. Probes are now cached in a bounded
+LRU keyed by `(resolved path, mtime_ns, size)`, so repeated probes of an
+unchanged file in one process collapse to one call, while a file modified in
+place is re-probed automatically (the stat key changes). The lock guards only
+dict access — the ffprobe subprocess runs outside it, so concurrent probes of
+different files never serialize. New `VideoMetadata.clear_cache()` forces a
+re-probe for the rare in-place overwrite that preserves both mtime_ns and size.
+No API or behavior change otherwise.
+
 ## 0.42.0
 
 **Streaming-first migration complete: streaming is the only execution
