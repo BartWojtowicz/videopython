@@ -21,7 +21,7 @@ from typing import Any, get_args
 import numpy as np
 from tqdm import tqdm
 
-from videopython.audio import Audio
+from videopython.audio import Audio, AudioMetadata
 from videopython.base import _ffmpeg
 from videopython.base._dimensions import require_even
 from videopython.base.exceptions import PlanError, PlanErrorCode
@@ -105,6 +105,8 @@ class StreamabilityReport:
 def analyze_streamability(
     segment_operations: Sequence[Sequence[Operation]],
     post_operations: Sequence[Operation],
+    *,
+    has_transitions: bool = False,
 ) -> StreamabilityReport:
     """Classify every op in a plan by streaming class, in plan order.
 
@@ -118,6 +120,17 @@ def analyze_streamability(
     guard, and a registry test pins flag-True transforms to an actual
     ``to_ffmpeg_filter`` override. Purely structural: no disk access and no
     runtime context.
+
+    Segment transitions (``SegmentConfig.transition_in``) do not appear here:
+    a transition is a native ffmpeg ``xfade``/``acrossfade`` pass over two
+    realized per-segment files (each segment streams to a temp file exactly as
+    it would without a transition), so it is FILTER-class by construction and
+    never forces an eager render or changes any op's class. The one transition
+    fault that can reject a plan -- an overlap longer than an adjacent
+    segment's predicted post-op duration -- is duration-dependent, so it is
+    reported as ``TRANSITION_TOO_LONG`` by :meth:`VideoEdit.check` (which has
+    the predicted durations) and raised by ``run``/``run_to_file`` before
+    decode, not classified structurally here.
     """
     entries: list[OpStreamability] = []
     segment_has_encode_stage: list[bool] = []
@@ -243,7 +256,26 @@ def analyze_streamability(
     any_encode_stage = any(segment_has_encode_stage)
     for j, op in enumerate(post_operations):
         location = f"post_operations[{j}]"
-        if op.requires:
+        if has_transitions:
+            # Post-operations fold into the per-segment frame schedules, but a
+            # transition re-encodes the overlapped seam in a SEPARATE xfade
+            # pass after those schedules run -- so a post-op envelope spanning
+            # the seam cannot be represented (it would be applied to the
+            # pre-blend frames and then doubled at the overlap). Reject the
+            # combination rather than mis-time it; move the op into a segment.
+            entries.append(
+                OpStreamability(
+                    location,
+                    op.op,
+                    StreamingClass.UNSTREAMABLE,
+                    reason=(
+                        "post-operations cannot fold across a plan that has segment transitions: the "
+                        "overlapped seam is re-encoded in a separate xfade pass, so an envelope across "
+                        "it cannot be represented -- move the op into a segment or drop the transition"
+                    ),
+                )
+            )
+        elif op.requires:
             entries.append(
                 OpStreamability(
                     location,
@@ -385,19 +417,131 @@ class StreamingSegmentPlan:
     start_second) * output_fps`` wrong. ``0`` means "no transform changed
     duration; derive from the cut".
     """
-    audio_ops: list[tuple[Operation, float, float, dict[str, Any]]] = field(default_factory=list)
-    """Transforms with an audio-domain twin: ``(op, predicted post-op
-    duration, fps at the op's chain position, resolved requires-context)``;
-    ``_load_segment_audio`` replays them in plan order."""
-    post_audio_ops: list[tuple[Operation, float, float, dict[str, Any]]] = field(default_factory=list)
-    """Encode-stage audio twins (transforms ordered after the frame
-    effects), replayed after the effect envelopes."""
+    af_filters: list[str] = field(default_factory=list)
+    """Decode-stage audio filter expressions (the audio twin of
+    ``vf_filters``): each a single-in/single-out ``filter_complex`` fragment
+    compiled from an op's :meth:`Operation.to_ffmpeg_audio_filter`, in plan
+    order. Run on the segment's source audio (a second ``-i`` input) before the
+    effect-stage audio filters. Built at exactly the points ``vf_filters`` is,
+    so audio and video stage placement cannot drift."""
+    post_af_filters: list[str] = field(default_factory=list)
+    """Encode-stage audio filters (twins of transforms/effects ordered after
+    the frame effects), the audio twin of ``post_vf_filters``; appended to the
+    same single audio graph after ``af_filters``."""
+    output_total_seconds: float = 0.0
+    """Predicted output duration in seconds (``output_total_frames /
+    final_fps``), used to pin the audio graph's length to the video timeline
+    (``atrim``+``apad``) so a few-sample codec/PTS drift cannot exceed the A/V
+    tolerance. ``0`` means "derive from the frame count"."""
+
+
+@dataclass(frozen=True)
+class SegmentAudio:
+    """The segment's source-audio input + compiled audio filter graph.
+
+    Replaces the old pre-rendered WAV ``audio_path``: the source file is added
+    as a second ffmpeg input (input-side ``-ss``/``-t`` trimming it to exactly
+    the segment the video decode reads), and its audio stream is routed through
+    a labeled ``filter_complex`` built from the plan's ``af_filters`` /
+    ``post_af_filters``. When the source has no audio stream, silence is
+    synthesised natively via an ``anullsrc`` input (preserving the
+    "no audio -> silent track" contract without a Python round-trip).
+    """
+
+    source_path: Path
+    start_second: float
+    duration: float
+    af_filters: tuple[str, ...]
+    post_af_filters: tuple[str, ...]
+    has_audio_stream: bool
+    output_seconds: float = 0.0
+    """Predicted output duration; pins the audio graph length (``atrim``+``apad``)
+    to the video timeline so AAC/PTS drift cannot exceed the A/V tolerance.
+    ``0`` -> no explicit pin."""
+
+
+def source_has_audio_stream(source_path: Path) -> bool:
+    """True when ``source_path`` carries at least one audio stream.
+
+    Drives the native silent-track contract: a source with no audio stream
+    gets an ``anullsrc`` silence input instead of ``-i source`` audio.
+    """
+    try:
+        info = _ffmpeg.probe(source_path)
+    except Exception:
+        return False
+    return any(s.get("codec_type") == "audio" for s in info.get("streams", []))
+
+
+def build_audio_filter_complex(
+    audio: SegmentAudio, *, input_index: int = 1, sample_rate: int = 44100
+) -> tuple[list[str], list[str], str]:
+    """Compile the per-segment audio inputs + ``filter_complex`` graph.
+
+    Returns ``(input_args, graph_statements, out_label)``:
+
+    - ``input_args`` are the ffmpeg ``-i`` argv for the audio source -- either
+      ``-ss start -t dur -i source`` (real audio) or ``-f lavfi -i anullsrc``
+      (synthesised silence). ``input_index`` is the ffmpeg input index this
+      stream lands at: ``1`` for :class:`FrameEncoder` (after the ``pipe:0``
+      video), ``0`` for the audio-only ``run()`` materialiser.
+    - ``graph_statements`` are the ``;``-joined ``filter_complex`` statements
+      wiring input ``[<i>:a]`` through ``af_filters`` then ``post_af_filters``,
+      a length pin, and an ``aresample`` to a final ``[aout]``.
+    - ``out_label`` is the label to ``-map`` (always ``"[aout]"`` -- the graph
+      always carries at least the length pin + ``aresample``).
+
+    Built as a LABELED graph (not a one-off ``-af`` string) so P1.11 can splice
+    additional inputs/labels (``amix`` music bed, sidechain ducking) onto the
+    same graph: each op fragment is wrapped ``[prev]<fragment>[next]``, so a new
+    input slots in as another labeled source feeding an ``amix`` node.
+    """
+    if audio.has_audio_stream:
+        input_args = [
+            "-ss",
+            f"{audio.start_second:.6f}",
+            "-t",
+            f"{audio.duration:.6f}",
+            "-i",
+            str(audio.source_path),
+        ]
+    else:
+        # Native silent track: an anullsrc of exactly the trimmed duration.
+        input_args = [
+            "-f",
+            "lavfi",
+            "-t",
+            f"{audio.duration:.6f}",
+            "-i",
+            f"anullsrc=channel_layout=stereo:sample_rate={sample_rate}",
+        ]
+
+    stages = list(audio.af_filters) + list(audio.post_af_filters)
+    # Pin the graph to the predicted output length so a few-sample AAC/PTS drift
+    # cannot exceed the A/V tolerance: trim to, then pad up to, output_seconds.
+    if audio.output_seconds > 0:
+        stages.append(f"atrim=end={audio.output_seconds:.6f}")
+        stages.append(f"apad=whole_dur={audio.output_seconds:.6f}")
+    # aresample=async=1 absorbs the input-side -ss / pipe PTS mismatch.
+    stages.append("aresample=async=1")
+
+    statements: list[str] = []
+    prev = f"{input_index}:a"
+    for i, stage in enumerate(stages):
+        out = "aout" if i == len(stages) - 1 else f"a{i}"
+        statements.append(f"[{prev}]{stage}[{out}]")
+        prev = out
+    return input_args, statements, "[aout]"
 
 
 class FrameEncoder:
     """Writes raw RGB frames to an ffmpeg encode process via stdin pipe.
 
     Use as a context manager to ensure proper cleanup of the ffmpeg process.
+    Segment audio rides the SAME ffmpeg invocation: a second ``-i`` input
+    (the original source, input-side trimmed, or an ``anullsrc`` silence)
+    routed through a labeled ``filter_complex`` built from the plan's compiled
+    audio filters. There is no second pass and no pre-rendered WAV.
     """
 
     def __init__(
@@ -406,7 +550,7 @@ class FrameEncoder:
         width: int,
         height: int,
         fps: float,
-        audio_path: Path | None = None,
+        audio: SegmentAudio | None = None,
         format: str = "mp4",
         preset: str = "medium",
         crf: int = 23,
@@ -416,7 +560,7 @@ class FrameEncoder:
         self._width = width
         self._height = height
         self._fps = fps
-        self._audio_path = audio_path
+        self._audio = audio
         self._format = format
         self._preset = preset
         self._crf = crf
@@ -431,7 +575,7 @@ class FrameEncoder:
             "-hide_banner",
             "-loglevel",
             "error",
-            # Raw video input via stdin
+            # Raw video input via stdin (input index 0)
             "-f",
             "rawvideo",
             "-pixel_format",
@@ -443,15 +587,25 @@ class FrameEncoder:
             "-i",
             "pipe:0",
         ]
-        if self._audio_path is not None:
-            cmd.extend(["-i", str(self._audio_path)])
+        audio_graph: list[str] = []
+        audio_map = ""
+        if self._audio is not None:
+            audio_inputs, audio_graph, audio_map = build_audio_filter_complex(self._audio)
+            # Audio source is input index 1.
+            cmd.extend(audio_inputs)
 
+        # The video graph is the encode-stage -vf (frames arrive pre-processed
+        # on pipe:0). The audio graph is a separate filter_complex chain over
+        # input 1; the two never share labels, so -vf and -filter_complex
+        # coexist. The rawvideo pipe's PTS start at zero, so time-based video
+        # filters (subtitles=) see the same segment-local timeline the decode
+        # side uses.
         if self._vf_filters:
-            # Encode-stage filters: run after every per-frame effect (frames
-            # arrive via stdin already processed). The rawvideo pipe's PTS
-            # start at zero, so time-based filters (subtitles=) see the same
-            # segment-local timeline the decode side uses.
             cmd.extend(["-vf", ",".join(self._vf_filters)])
+        if self._audio is not None:
+            cmd.extend(["-filter_complex", ";".join(audio_graph)])
+            cmd.extend(["-map", "0:v", "-map", audio_map])
+
         cmd.extend(
             [
                 "-c:v",
@@ -468,7 +622,7 @@ class FrameEncoder:
                 "cfr",
             ]
         )
-        if self._audio_path is not None:
+        if self._audio is not None:
             cmd.extend(["-c:a", "aac", "-b:a", "192k"])
         else:
             cmd.extend(["-an"])
@@ -502,10 +656,68 @@ class FrameEncoder:
         return stack.__exit__(exc_type, exc_val, exc_tb)
 
 
+def segment_audio_from_plan(plan: StreamingSegmentPlan) -> SegmentAudio:
+    """Build the segment's :class:`SegmentAudio` from its compiled plan.
+
+    Trims the source on the input side to exactly the cut the video decode
+    reads (``-ss start_second -t (end-start)``), so the source audio and the
+    rawvideo pipe see the same segment, and probes the source once for the
+    silent-track decision. The compiled ``af_filters`` / ``post_af_filters``
+    ride this graph in the single FrameEncoder invocation -- no WAV round-trip.
+    """
+    out_seconds = plan.output_total_seconds
+    if out_seconds <= 0 and plan.output_total_frames > 0:
+        out_seconds = plan.output_total_frames / (plan.final_fps or plan.output_fps)
+    return SegmentAudio(
+        source_path=plan.source_path,
+        start_second=plan.start_second,
+        duration=plan.end_second - plan.start_second,
+        af_filters=tuple(plan.af_filters),
+        post_af_filters=tuple(plan.post_af_filters),
+        has_audio_stream=source_has_audio_stream(plan.source_path),
+        output_seconds=out_seconds,
+    )
+
+
+def stream_segment_audio_to_array(plan: StreamingSegmentPlan, *, sample_rate: int = 44100) -> Audio:
+    """Decode the segment's compiled audio graph into an in-memory :class:`Audio`.
+
+    The audio counterpart of :func:`stream_segment_to_frames`: ``run()`` is
+    "stream into memory", so it still produces an ``Audio`` for ``video.audio``.
+    Runs the SAME ``af_filters`` / ``post_af_filters`` graph the file path bakes
+    into the segment (so ``run()`` and ``run_to_file`` cannot diverge) and reads
+    the result back as float32 PCM -- O(output-duration) memory, materialised
+    only for the in-memory view, never for ``run_to_file``. A source with no
+    audio stream yields a native ``anullsrc`` silent track.
+    """
+    audio = segment_audio_from_plan(plan)
+    # The audio source is the ONLY input here (no video pipe), so it sits at
+    # input index 0 -- the graph builder labels [0:a] accordingly.
+    input_args, graph, out_label = build_audio_filter_complex(audio, input_index=0, sample_rate=sample_rate)
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", *input_args]
+    cmd.extend(["-filter_complex", ";".join(graph), "-map", out_label])
+    cmd.extend(["-ac", "2", "-ar", str(sample_rate), "-f", "f32le", "pipe:1"])
+    raw = _ffmpeg.run(cmd)
+
+    data = np.frombuffer(raw, dtype=np.float32)
+    if data.size % 2 != 0:
+        data = data[: data.size - 1]
+    data = data.reshape(-1, 2).copy()
+    np.clip(data, -1.0, 1.0, out=data)
+    metadata = AudioMetadata(
+        sample_rate=sample_rate,
+        channels=2,
+        sample_width=2,
+        duration_seconds=data.shape[0] / sample_rate,
+        frame_count=data.shape[0],
+    )
+    return Audio(data, metadata)
+
+
 def stream_segment(
     plan: StreamingSegmentPlan,
     output_path: Path,
-    audio: Audio | None = None,
+    with_audio: bool = True,
     format: str = "mp4",
     preset: str = "medium",
     crf: int = 23,
@@ -514,11 +726,14 @@ def stream_segment(
 
     Reads frames from source via ffmpeg, applies effects per-frame, and
     writes directly to output via ffmpeg encode. Peak memory is ~2 frames.
+    Segment audio is compiled into the SAME ffmpeg invocation (a second
+    ``-i`` input through ``-filter_complex``) -- no pre-rendered WAV.
 
     Args:
-        plan: Streaming segment plan describing source, effects, and output params.
+        plan: Streaming segment plan describing source, effects, audio filters, and output params.
         output_path: Destination file path.
-        audio: Pre-processed audio to mux with the output. If None, output has no audio.
+        with_audio: When True (default) the output carries the compiled audio
+            track; False writes a video-only file.
         format: Output container format.
         preset: x264 encoding preset.
         crf: Constant rate factor.
@@ -554,13 +769,7 @@ def stream_segment(
             n_effect_frames, plan.output_fps, plan.output_width, plan.output_height, **entry.context
         )
 
-    # Save audio to temp file for muxing
-    audio_path = None
-    temp_audio_file = None
-    if audio is not None:
-        temp_audio_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-        audio.save(temp_audio_file.name, format="wav")
-        audio_path = Path(temp_audio_file.name)
+    audio = segment_audio_from_plan(plan) if with_audio else None
 
     try:
         with FrameIterator(
@@ -577,7 +786,7 @@ def stream_segment(
                 width=plan.output_width,
                 height=plan.output_height,
                 fps=plan.output_fps,
-                audio_path=audio_path,
+                audio=audio,
                 format=format,
                 preset=preset,
                 crf=crf,
@@ -607,9 +816,6 @@ def stream_segment(
         if output_path.exists():
             output_path.unlink()
         raise
-    finally:
-        if temp_audio_file is not None:
-            Path(temp_audio_file.name).unlink(missing_ok=True)
 
 
 def stream_segment_to_frames(plan: StreamingSegmentPlan) -> np.ndarray:
@@ -733,3 +939,233 @@ def concat_files(segment_files: list[Path], output_path: Path) -> Path:
         return output_path
     finally:
         list_path.unlink(missing_ok=True)
+
+
+# ----------------------------------------------------------------- transitions
+
+# Curated subset of ffmpeg ``xfade`` ``transition=`` modes. The single source
+# of truth for both the ``TransitionSpec.type`` Literal (so the strict LLM
+# grammar stays tight) and the filter builder. Every name here is a literal
+# ffmpeg ``xfade=transition=<name>`` value -- no translation layer.
+TRANSITION_TYPES: tuple[str, ...] = (
+    "fade",
+    "dissolve",
+    "wipeleft",
+    "wiperight",
+    "wipeup",
+    "wipedown",
+    "slideleft",
+    "slideright",
+)
+
+
+def xfade_filter(transition_type: str, duration: float, offset: float, *, in_a: str = "0:v", in_b: str = "1:v") -> str:
+    """Build the one ``xfade`` filter expression shared by both transition paths.
+
+    The single source of the seam pixels: ``run()``'s in-memory twin
+    (:func:`stream_transition_frames`) and ``run_to_file``'s file pass
+    (:func:`stream_transition_pair`) both route through this so they cannot
+    diverge. ``offset`` is in seconds against the LEFT input's exact (probed)
+    duration -- the caller derives it from the realized file, never the
+    prediction, to avoid a one-frame seam.
+    """
+    return f"[{in_a}][{in_b}]xfade=transition={transition_type}:duration={duration}:offset={offset}"
+
+
+def acrossfade_filter(duration: float, *, in_a: str = "0:a", in_b: str = "1:a") -> str:
+    """The ``acrossfade`` companion to :func:`xfade_filter` for the audio seam."""
+    return f"[{in_a}][{in_b}]acrossfade=d={duration}"
+
+
+def stream_transition_pair(
+    left_file: Path,
+    right_file: Path,
+    transition_type: str,
+    duration: float,
+    offset: float,
+    output_path: Path,
+    *,
+    width: int,
+    height: int,
+    fps: float,
+    left_frame_count: int,
+    right_frame_count: int,
+    left_has_audio: bool,
+    right_has_audio: bool,
+    crossfade_audio: bool,
+    format: str = "mp4",
+    preset: str = "medium",
+    crf: int = 23,
+) -> Path:
+    """xfade/acrossfade two realized segment files into one output file.
+
+    The file-path half of the transition mechanism: each input is a finished
+    per-segment render (effects + audio already baked by ``stream_segment``),
+    so this pass is a pure ffmpeg ``filter_complex`` over two decode inputs --
+    no two-decoder-with-Python-effects machinery. ``offset`` is seconds against
+    ``left_file``'s exact duration (``left_total - duration``); the video seam
+    is produced by the shared :func:`xfade_filter` builder. When both inputs
+    carry audio and ``crossfade_audio`` is set the audio is ``acrossfade``-d
+    across the same overlap; otherwise a hard audio butt-join (``concat``)
+    keeps the streams aligned to the shortened video timeline.
+
+    Each video input is normalized to CFR ``fps`` and trimmed to its PROBED
+    ``*_frame_count`` before xfade. A concat-demuxer (``-c copy``) tail can
+    decode one duplicated frame at the join beyond what ffprobe reports, which
+    would inflate the xfade output by that frame; trimming to the probed count
+    pins the output to ``left + right - round(duration*fps)`` so the realized
+    seam matches the predicted shortened timeline exactly.
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Cap each input to its probed frame count, then re-stamp CFR. A
+    # concat-copy duplicate cannot then leak past the prediction (see
+    # docstring). The trailing ``fps`` re-establishes the constant frame rate
+    # xfade requires (``trim`` alone leaves the rate undefined).
+    filters = [
+        f"[0:v]trim=end_frame={left_frame_count},setpts=PTS-STARTPTS,fps={fps}[lv]",
+        f"[1:v]trim=end_frame={right_frame_count},setpts=PTS-STARTPTS,fps={fps}[rv]",
+        f"{xfade_filter(transition_type, duration, offset, in_a='lv', in_b='rv')}[vout]",
+    ]
+    maps = ["-map", "[vout]"]
+    both_audio = left_has_audio and right_has_audio
+    if both_audio and crossfade_audio:
+        filters.append(f"{acrossfade_filter(duration)}[aout]")
+        maps.extend(["-map", "[aout]"])
+    elif both_audio:
+        # Hard audio butt-join over the same overlap: drop the left's last
+        # ``duration`` seconds and concat, so the audio length tracks the
+        # shortened (xfade) video timeline rather than summing.
+        filters.append(f"[0:a]atrim=end={offset},asetpts=PTS-STARTPTS[la]")
+        filters.append("[la][1:a]concat=n=2:v=0:a=1[aout]")
+        maps.extend(["-map", "[aout]"])
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        str(left_file),
+        "-i",
+        str(right_file),
+        "-filter_complex",
+        ";".join(filters),
+        *maps,
+        "-c:v",
+        "libx264",
+        "-preset",
+        preset,
+        "-crf",
+        str(crf),
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        "-vsync",
+        "cfr",
+        "-r",
+        str(fps),
+    ]
+    if "-map" in maps and "[aout]" in maps:
+        cmd.extend(["-c:a", "aac", "-b:a", "192k"])
+    else:
+        cmd.append("-an")
+    cmd.append(str(output_path))
+
+    require_even(width, height)
+    try:
+        _ffmpeg.run(cmd)
+    except Exception:
+        if output_path.exists():
+            output_path.unlink()
+        raise
+    return output_path
+
+
+def stream_transition_frames(
+    left_frames: np.ndarray,
+    right_frames: np.ndarray,
+    transition_type: str,
+    duration: float,
+    fps: float,
+) -> np.ndarray:
+    """In-memory xfade twin: blend two RGB frame stacks over a ``duration`` overlap.
+
+    The view-over-streaming counterpart to :func:`stream_transition_pair`: a
+    lossless rawvideo->rawvideo ``filter_complex`` pass through the SAME
+    :func:`xfade_filter` builder, so ``run()`` and ``run_to_file`` produce
+    identical seam pixels. The overlap is ``round(duration * fps)`` frames; the
+    result has ``len(left) + len(right) - overlap`` frames. ``offset`` is
+    derived from the left stack's exact frame count (``(n_left - overlap) /
+    fps``), the in-memory analogue of probing the realized left file.
+    """
+    if left_frames.shape[1:] != right_frames.shape[1:]:
+        raise ValueError(
+            f"Transition inputs must share frame shape: {left_frames.shape[1:]} vs {right_frames.shape[1:]}"
+        )
+    n_left, height, width = left_frames.shape[:3]
+    n_right = right_frames.shape[0]
+    overlap = round(duration * fps)
+    if overlap >= n_left or overlap >= n_right:
+        raise ValueError(
+            f"Transition overlap ({overlap} frames) must be shorter than both segments (left={n_left}, right={n_right})"
+        )
+    # Offset from the LEFT stack's exact length, the in-memory mirror of
+    # probing the realized left file -- keeps the seam frame-aligned.
+    offset = (n_left - overlap) / fps
+    filter_expr = f"{xfade_filter(transition_type, duration, offset)}[vout]"
+
+    # ffmpeg has a single stdin, so the two raw inputs go through small temp
+    # files and the blended result comes back on stdout. run() already holds
+    # whole frame stacks in memory, so the temp files add no asymptotic cost
+    # and avoid the FIFO ordering deadlock two named pipes invite.
+    tmpdir = Path(tempfile.mkdtemp(prefix="vp_xfade_"))
+    left_path = tmpdir / "a.raw"
+    right_path = tmpdir / "b.raw"
+    try:
+        left_path.write_bytes(left_frames.tobytes())
+        right_path.write_bytes(right_frames.tobytes())
+
+        def _raw_input(path: Path) -> list[str]:
+            return [
+                "-f",
+                "rawvideo",
+                "-pixel_format",
+                "rgb24",
+                "-video_size",
+                f"{width}x{height}",
+                "-framerate",
+                str(fps),
+                "-i",
+                str(path),
+            ]
+
+        cmd = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            *_raw_input(left_path),
+            *_raw_input(right_path),
+            "-filter_complex",
+            filter_expr,
+            "-map",
+            "[vout]",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "pipe:1",
+        ]
+        out = _ffmpeg.run(cmd)
+    finally:
+        left_path.unlink(missing_ok=True)
+        right_path.unlink(missing_ok=True)
+        tmpdir.rmdir()
+
+    frame_size = width * height * 3
+    n_frames = len(out) // frame_size
+    return np.frombuffer(out, dtype=np.uint8)[: n_frames * frame_size].reshape(n_frames, height, width, 3).copy()

@@ -19,35 +19,59 @@ Wire format::
 
 from __future__ import annotations
 
+import dataclasses
 import json
-import subprocess
 import tempfile
-import warnings
 from pathlib import Path
-from typing import Annotated, Any, Literal, Protocol, runtime_checkable
+from typing import Annotated, Any, Literal, Protocol, get_args, runtime_checkable
 
+import numpy as np
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SerializeAsAny
 
-from videopython.audio import Audio, AudioLoadError
+from videopython.audio import Audio, AudioMetadata
+from videopython.base import _ffmpeg
 from videopython.base.exceptions import PlanError, PlanErrorCode, PlanRepair, PlanValidationError
 from videopython.base.video import ALLOWED_VIDEO_FORMATS, ALLOWED_VIDEO_PRESETS, Video, VideoMetadata
-from videopython.editing.effects import Effect, Fade, VolumeAdjust
+from videopython.editing.audio_ops import MusicBed, build_music_bed_filter_complex
+from videopython.editing.effects import Effect
 from videopython.editing.operation import FilterCtx, Operation, _to_strict_schema
 from videopython.editing.streaming import (
+    TRANSITION_TYPES,
     EffectScheduleEntry,
     StreamabilityReport,
     StreamingSegmentPlan,
     analyze_streamability,
     concat_files,
+    source_has_audio_stream,
     stream_segment,
+    stream_segment_audio_to_array,
     stream_segment_to_frames,
+    stream_transition_frames,
+    stream_transition_pair,
 )
-from videopython.editing.transforms import DURATION_EPS, CutSeconds, Resize
+from videopython.editing.transforms import DURATION_EPS, CutSeconds, Resize, speech_windows
 
 __all__ = [
+    "MusicBed",
     "SegmentConfig",
+    "TransitionSpec",
     "VideoEdit",
 ]
+
+# A Literal mirroring streaming.TRANSITION_TYPES so the LLM/strict grammar is
+# constrained to the curated catalog. Asserted equal to TRANSITION_TYPES below
+# so the two cannot drift.
+TransitionType = Literal[
+    "fade",
+    "dissolve",
+    "wipeleft",
+    "wiperight",
+    "wipeup",
+    "wipedown",
+    "slideleft",
+    "slideright",
+]
+assert set(get_args(TransitionType)) == set(TRANSITION_TYPES), "TransitionType Literal drifted from TRANSITION_TYPES"
 
 # A located, human-readable validation failure: (message, structured PlanError).
 # Helpers return these so the validation walker can either raise the first
@@ -103,26 +127,74 @@ class SegmentRebaseable(Protocol):
 
 
 def _rebaseable_keys(context: dict[str, Any] | None) -> set[str]:
-    """Context keys whose value carries a re-baseable source-absolute timeline."""
+    """Context keys whose value carries a re-baseable source-absolute timeline.
+
+    Recognizes both a bare rebaseable value and a per-source ``dict`` map (see
+    :func:`_resolve_source_context`) whose values are all rebaseable.
+    """
     if not context:
         return set()
-    return {k for k, v in context.items() if isinstance(v, SegmentRebaseable)}
+    keys: set[str] = set()
+    for k, v in context.items():
+        if isinstance(v, SegmentRebaseable):
+            keys.add(k)
+        elif isinstance(v, dict) and v and all(isinstance(sv, SegmentRebaseable) for sv in v.values()):
+            keys.add(k)
+    return keys
+
+
+def _resolve_source_context(context: dict[str, Any] | None, source: str) -> dict[str, Any] | None:
+    """Collapse per-source context maps to a single segment source's values.
+
+    A context value that is a plain ``dict`` is treated as a per-source map
+    keyed by ``str(segment.source)`` -- mirroring
+    :meth:`VideoEdit._resolve_source_metas`, so runtime metadata and runtime
+    context share one mental model. Its entry for ``source`` is selected; when
+    ``source`` is absent the key is dropped so the consuming op raises its own
+    clear "requires ..." error (or surfaces as ``CONTEXT_SOURCE_MISSING`` in
+    :meth:`VideoEdit.check`). Any non-dict value is a broadcast value shared by
+    every segment and passes through unchanged (the pre-0.43 behavior).
+    """
+    if not context:
+        return context
+    if not any(isinstance(v, dict) for v in context.values()):
+        return context  # no per-source maps -> nothing to resolve, keep identity
+    resolved: dict[str, Any] = {}
+    for key, value in context.items():
+        if isinstance(value, dict):
+            if source in value:
+                resolved[key] = value[source]
+            # else: drop -- this segment's source is not in the per-source map.
+        else:
+            resolved[key] = value
+    return resolved
 
 
 def _segment_context(
     context: dict[str, Any] | None,
+    source: str,
     start: float,
     end: float,
 ) -> dict[str, Any] | None:
-    """Re-base time-based context entries onto a cut segment's local timeline.
+    """Resolve per-source context, then re-base it onto a cut segment's local timeline.
 
-    A cut segment is decoded 0-based -- its first frame is ``t=0`` -- but
-    context values may carry source-absolute timestamps. Every value
-    implementing :class:`SegmentRebaseable` (e.g. a ``Transcription``) is
-    sliced to ``[start, end)`` and shifted by ``-start`` so segment operations
-    (``add_subtitles``, ``silence_removal``) see segment-local time. Without
-    this, subtitles on a segment cut from the middle of a video render blank.
-    Values that don't implement the protocol pass through untouched.
+    Two stages, run at the single chokepoint every per-segment site funnels
+    through:
+
+    1. **Per-source resolution** (:func:`_resolve_source_context`): a context
+       value may be a per-source ``dict`` keyed by ``str(segment.source)``;
+       it collapses to this segment's source. A bare value broadcasts to all
+       segments (the pre-0.43 behavior). This lets a multi-clip plan carry
+       ``{"transcription": {"a.mp4": tx_a, "b.mp4": tx_b}}`` and feed each
+       segment its OWN transcription.
+    2. **Re-basing**: a cut segment is decoded 0-based -- its first frame is
+       ``t=0`` -- but context values may carry source-absolute timestamps.
+       Every value implementing :class:`SegmentRebaseable` (e.g. a
+       ``Transcription``) is sliced to ``[start, end)`` and shifted by
+       ``-start`` so segment operations (``add_subtitles``,
+       ``silence_removal``) see segment-local time. Without this, subtitles on
+       a segment cut from the middle of a video render blank. Values that don't
+       implement the protocol pass through untouched.
 
     Slicing always runs (even for ``start == 0``) so out-of-range entries do
     not bleed in. When ``slice`` yields nothing the key is dropped rather than
@@ -137,10 +209,13 @@ def _segment_context(
     """
     if not context:
         return context
-    rebaseable = {k: v for k, v in context.items() if isinstance(v, SegmentRebaseable)}
+    resolved = _resolve_source_context(context, source)
+    if not resolved:
+        return resolved
+    rebaseable = {k: v for k, v in resolved.items() if isinstance(v, SegmentRebaseable)}
     if not rebaseable:
-        return context
-    rebased = dict(context)
+        return resolved
+    rebased = dict(resolved)
     for key, value in rebaseable.items():
         sliced = value.slice(start, end)
         if sliced is None:
@@ -148,6 +223,47 @@ def _segment_context(
         else:
             rebased[key] = sliced.offset(-start)
     return rebased
+
+
+def _missing_source_context_errors(
+    context: dict[str, Any] | None,
+    index: int,
+    segment: SegmentConfig,
+) -> list[_LocatedError]:
+    """``CONTEXT_SOURCE_MISSING`` errors for ops needing a per-source key that omits this source.
+
+    Fires only for the new failure mode P1.9 introduces: a per-source context
+    map (a plain ``dict``) is supplied for a key an op ``requires``, but it has
+    no entry for this segment's source. A bare broadcast value or a fully
+    absent key is left to the existing missing-context path. Surfacing it in
+    :meth:`VideoEdit.check` matters because an ``add_subtitles`` plan would
+    otherwise pass ``check`` (subtitles do not change predicted metadata) and
+    only fail at decode.
+    """
+    if not context:
+        return []
+    source = str(segment.source)
+    out: list[_LocatedError] = []
+    for op_index, op in enumerate(segment.operations):
+        for key in op.requires:
+            value = context.get(key)
+            if isinstance(value, dict) and source not in value:
+                available = sorted(str(k) for k in value)
+                message = (
+                    f"Segment {index}: operation '{op.op}' requires context '{key}' for source "
+                    f"'{source}', but the per-source map has no entry for it. Available: {available}."
+                )
+                out.append(
+                    (
+                        message,
+                        PlanError(
+                            PlanErrorCode.CONTEXT_SOURCE_MISSING,
+                            location=f"segments[{index}].operations[{op_index}]",
+                            op=op.op,
+                        ),
+                    )
+                )
+    return out
 
 
 def _predict_with_context(
@@ -334,22 +450,114 @@ def _concat_errors(metas: list[VideoMetadata]) -> list[_LocatedError]:
     return out
 
 
-def _assemble_timeline(outputs: list[VideoMetadata]) -> VideoMetadata:
+def _transition_structure_errors(segments: list[SegmentConfig]) -> list[_LocatedError]:
+    """``TRANSITION_TOO_LONG`` for a transition on the first segment.
+
+    A transition describes how a segment enters from the PREVIOUS one, so
+    ``segments[0].transition_in`` has no predecessor and is rejected up front
+    (independent of any duration). Per-boundary duration overruns are reported
+    separately by :func:`_transition_duration_errors`, which needs the
+    predicted post-op durations.
+    """
+    out: list[_LocatedError] = []
+    if segments and segments[0].transition_in is not None:
+        out.append(
+            (
+                "Segment 0: transition_in is not allowed on the first segment (no previous segment to "
+                "transition from).",
+                PlanError(
+                    code=PlanErrorCode.TRANSITION_TOO_LONG,
+                    location="segments[0]",
+                    field="transition_in",
+                ),
+            )
+        )
+    return out
+
+
+def _transition_duration_errors(
+    segments: list[SegmentConfig],
+    outputs: list[VideoMetadata],
+) -> list[_LocatedError]:
+    """``TRANSITION_TOO_LONG`` for an overlap that consumes a whole adjacent segment.
+
+    A transition consumes its ``round(duration * fps)`` overlap from the END of
+    the left segment's predicted post-op output and the START of the right's,
+    so the overlap must be *strictly fewer frames* than either adjacent
+    segment. The constraint is frame-based to match the streaming pass exactly
+    (:func:`videopython.editing.streaming.stream_transition_frames` raises on
+    ``overlap >= n_frames``); a seconds comparison rounds differently and
+    admits a near-full-overlap sliver that crashes ``run`` while
+    ``run_to_file`` degrades. A clean ``check`` guarantees the xfade pass will
+    not fail at decode. ``repair`` clamps the same boundary mechanically.
+    """
+    out: list[_LocatedError] = []
+    for i in range(1, len(segments)):
+        spec = segments[i].transition_in
+        if spec is None:
+            continue
+        fps = outputs[i].fps
+        overlap = _transition_overlap_frames(spec, fps)
+        limit_frames = min(outputs[i - 1].frame_count, outputs[i].frame_count)
+        if overlap >= limit_frames:
+            limit_seconds = round(limit_frames / fps, 4) if fps else 0.0
+            out.append(
+                (
+                    f"Segment {i}: transition_in overlaps {overlap} frames ({spec.duration}s) but must overlap "
+                    f"fewer frames than the shorter adjacent segment ({limit_frames} frames, {limit_seconds}s); "
+                    "a transition cannot consume a whole segment.",
+                    PlanError(
+                        code=PlanErrorCode.TRANSITION_TOO_LONG,
+                        location=f"segments[{i}]",
+                        field="transition_in.duration",
+                        value=spec.duration,
+                        limit=limit_seconds,
+                        predicted_duration=limit_seconds,
+                    ),
+                )
+            )
+    return out
+
+
+def _transition_overlap_frames(spec: TransitionSpec, fps: float) -> int:
+    """The number of frames a transition overlaps two segments: ``round(D*fps)``.
+
+    The single source of the overlap frame count, used by the timeline math
+    (:func:`_assemble_timeline`), the per-boundary streaming pass, and the
+    in-memory twin, so they cannot disagree on how much the seam shortens.
+    """
+    return round(spec.duration * fps)
+
+
+def _assemble_timeline(
+    outputs: list[VideoMetadata],
+    transitions: list[TransitionSpec | None] | None = None,
+) -> VideoMetadata:
     """The concatenated-output metadata for a list of per-segment outputs.
 
     Segment 0 fixes height/width/fps (matching/normalization already made them
-    uniform); ``frame_count`` and ``total_seconds`` sum. This is the
-    prediction-side model of ``run()``'s ``result + video`` concat -- shared by
-    :meth:`_collect` (validates post-ops against it) and :meth:`repair` (clamps
-    post-ops against it) so the two can never disagree on the post-op duration.
+    uniform). Without transitions ``frame_count`` and ``total_seconds`` simply
+    sum -- the prediction-side model of ``run()``'s ``result + video`` concat.
+    With transitions (``transitions[i]`` is segment ``i``'s ``transition_in``),
+    each boundary overlaps ``round(D*fps)`` frames, so the assembled total is
+    ``sum(durations) - sum(overlaps)``: every post-op window, ``predict``,
+    ``repair``, and the streamability report see the true shortened output.
+    Shared by :meth:`_collect` (validates post-ops against it) and
+    :meth:`repair` (clamps post-ops against it) so the two can never disagree.
     """
     first = outputs[0]
+    frame_count = sum(m.frame_count for m in outputs)
+    if transitions is not None:
+        for i, spec in enumerate(transitions):
+            if spec is not None and i > 0:
+                frame_count -= _transition_overlap_frames(spec, first.fps)
+    total_seconds = round(frame_count / first.fps, 4) if first.fps else round(sum(m.total_seconds for m in outputs), 4)
     return VideoMetadata(
         height=first.height,
         width=first.width,
         fps=first.fps,
-        frame_count=sum(m.frame_count for m in outputs),
-        total_seconds=round(sum(m.total_seconds for m in outputs), 4),
+        frame_count=frame_count,
+        total_seconds=total_seconds,
     )
 
 
@@ -493,6 +701,35 @@ def _repair_op_chain(
     return new_ops, repairs, running
 
 
+class TransitionSpec(BaseModel):
+    """How one segment enters from the previous one: a native ffmpeg crossfade.
+
+    A transition describes the boundary on its INCOMING side -- it lives on
+    ``SegmentConfig.transition_in`` of segment ``i`` and overlaps the last
+    ``duration`` seconds of segment ``i-1`` with the first ``duration`` of
+    segment ``i``. ``type`` is a literal ffmpeg ``xfade`` ``transition=`` mode
+    from a curated catalog; ``duration`` is the overlap in seconds (the
+    assembled timeline shortens by it); ``audio`` ``acrossfade``-s the audio
+    across the same overlap when both adjacent segments carry audio, else the
+    audio hard butt-joins. Frozen and closed so it surfaces as a constrained
+    object in :meth:`VideoEdit.json_schema`.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    type: TransitionType = Field(
+        description="Crossfade style: an ffmpeg xfade transition mode from the curated catalog."
+    )
+    duration: float = Field(gt=0, description="Overlap duration in seconds; the assembled timeline shortens by it.")
+    audio: bool = Field(
+        True,
+        description=(
+            "Crossfade (acrossfade) the audio across the same overlap when both adjacent "
+            "segments have audio; otherwise the audio hard butt-joins at the seam."
+        ),
+    )
+
+
 class SegmentConfig(BaseModel):
     """A single source segment with its operation chain."""
 
@@ -509,6 +746,13 @@ class SegmentConfig(BaseModel):
         description=(
             "Ordered list of operations to run against this segment. "
             "Each item is an Operation discriminated by its `op` field."
+        ),
+    )
+    transition_in: TransitionSpec | None = Field(
+        default=None,
+        description=(
+            "Optional crossfade from the previous segment into this one. Must be null on the "
+            "first segment (there is no previous segment to transition from)."
         ),
     )
 
@@ -578,6 +822,14 @@ class VideoEdit(BaseModel):
             "mismatched dimensions raise during validation."
         ),
     )
+    music_bed: MusicBed | None = Field(
+        default=None,
+        description=(
+            "Optional music bed mixed under the whole assembled program in a final pass "
+            "(after segment concat / transitions). Set `duck` on it to lower the bed under "
+            "transcription-derived speech (single-segment plans only)."
+        ),
+    )
 
     # ------------------------------------------------------------------ I/O
 
@@ -644,6 +896,33 @@ class VideoEdit(BaseModel):
             prop["default"] = []
             return prop
 
+        def _transition_field() -> dict[str, Any]:
+            # `transition_in` is `TransitionSpec | None`; Pydantic emits it as an
+            # `anyOf` with a `$ref` to a buried `$defs/TransitionSpec`. Inline a
+            # self-contained closed object (titles dropped, descriptions kept) so
+            # the field needs no external `$defs` -- the same self-containment
+            # the op union relies on.
+            ts = TransitionSpec.model_json_schema()
+            ts.pop("title", None)
+            ts.pop("$defs", None)
+            for sub in ts.get("properties", {}).values():
+                sub.pop("title", None)
+            prop = _field(SegmentConfig, "transition_in")
+            prop["anyOf"] = [ts, {"type": "null"}]
+            return prop
+
+        def _music_bed_field() -> dict[str, Any]:
+            # `music_bed` is `MusicBed | None`; like `transition_in`, inline a
+            # self-contained closed object so the field needs no external `$defs`.
+            mb = MusicBed.model_json_schema()
+            mb.pop("title", None)
+            mb.pop("$defs", None)
+            for sub in mb.get("properties", {}).values():
+                sub.pop("title", None)
+            prop = _field(cls, "music_bed")
+            prop["anyOf"] = [mb, {"type": "null"}]
+            return prop
+
         segment_schema: dict[str, Any] = {
             "type": "object",
             "description": SegmentConfig.__doc__,
@@ -652,6 +931,7 @@ class VideoEdit(BaseModel):
                 "start": _field(SegmentConfig, "start"),
                 "end": _field(SegmentConfig, "end"),
                 "operations": _array(SegmentConfig, "operations", op_schema),
+                "transition_in": _transition_field(),
             },
             "required": ["source", "start", "end"],
             "additionalProperties": False,
@@ -667,6 +947,7 @@ class VideoEdit(BaseModel):
                 "post_operations": _array(cls, "post_operations", op_schema),
                 "match_to_lowest_fps": _field(cls, "match_to_lowest_fps"),
                 "match_to_lowest_resolution": _field(cls, "match_to_lowest_resolution"),
+                "music_bed": _music_bed_field(),
             },
             "required": ["segments"],
             "additionalProperties": False,
@@ -770,6 +1051,7 @@ class VideoEdit(BaseModel):
         return analyze_streamability(
             [list(seg.operations) for seg in self.segments],
             list(self.post_operations),
+            has_transitions=any(seg.transition_in is not None for seg in self.segments),
         )
 
     def repair(
@@ -837,7 +1119,7 @@ class VideoEdit(BaseModel):
                 final_segments.append(seg)
                 seg_output_metas.append(None)
                 continue
-            seg_context = _segment_context(context, seg.start, seg.end)
+            seg_context = _segment_context(context, str(seg.source), seg.start, seg.end)
             new_ops, op_repairs, out_meta = _repair_op_chain(
                 list(seg.operations),
                 seg_meta,
@@ -849,6 +1131,42 @@ class VideoEdit(BaseModel):
             final_segments.append(seg.model_copy(update={"operations": new_ops}))
             seg_output_metas.append(out_meta)
 
+        # Pass 2b: clamp each transition's overlap down to one frame short of the
+        # shorter adjacent segment -- the mechanical TRANSITION_TOO_LONG repair,
+        # mirroring the window clamps. The clamp is frame-safe: it targets
+        # `limit_frames - 1` overlap frames so the repaired plan satisfies the
+        # strict `overlap < min(frames)` streaming constraint and actually runs
+        # (a seconds clamp to the segment length lands on `overlap == frames`,
+        # which passes check but crashes run). Only fires when both adjacent
+        # segments predicted; a segment too short for any transition
+        # (limit_frames <= 1) is left for check. A first-segment transition is a
+        # structural fault, deliberately left for check.
+        if clamp_op_params:
+            for i in range(1, len(final_segments)):
+                spec = final_segments[i].transition_in
+                if spec is None:
+                    continue
+                left_meta = seg_output_metas[i - 1]
+                right_meta = seg_output_metas[i]
+                if left_meta is None or right_meta is None:
+                    continue
+                fps = right_meta.fps
+                overlap = _transition_overlap_frames(spec, fps)
+                limit_frames = min(left_meta.frame_count, right_meta.frame_count)
+                if overlap >= limit_frames and limit_frames > 1 and fps:
+                    new_dur = round((limit_frames - 1) / fps, 4)
+                    repairs.append(
+                        PlanRepair(
+                            f"segments[{i}]",
+                            "transition_in.duration",
+                            spec.duration,
+                            new_dur,
+                            PlanErrorCode.TRANSITION_TOO_LONG,
+                        )
+                    )
+                    new_spec = spec.model_copy(update={"duration": new_dur})
+                    final_segments[i] = final_segments[i].model_copy(update={"transition_in": new_spec})
+
         # Pass 3: clamp post-op windows / time-fields against the assembled
         # timeline -- but only when every segment predicted (else its duration is
         # unknown). A negative post_operations window is the canonical attempt-3
@@ -856,7 +1174,8 @@ class VideoEdit(BaseModel):
         update: dict[str, Any] = {"segments": final_segments}
         outputs = [m for m in seg_output_metas if m is not None]
         if self.post_operations and len(outputs) == len(self.segments):
-            assembled = _assemble_timeline(outputs)
+            transitions = [seg.transition_in for seg in final_segments]
+            assembled = _assemble_timeline(outputs, transitions)
             new_post, post_repairs, _ = _repair_op_chain(
                 list(self.post_operations),
                 assembled,
@@ -1009,6 +1328,77 @@ class VideoEdit(BaseModel):
             message, err = errs[0]
             raise PlanValidationError(message, [err])
 
+    def _music_bed_errors(self) -> list[_LocatedError]:
+        """Validate :attr:`music_bed`: readable source, and duck on a single segment.
+
+        Two checks, both fail-fast (before any decode): the bed ``source`` must
+        be a readable audio file (``SOURCE_UNREADABLE``, a cheap ffprobe header
+        probe like :class:`ImageOverlay`'s); and transcription-derived ducking is
+        only well-defined when the assembled timeline is a single segment's
+        timeline -- a multi-segment plan with ``duck`` set is rejected
+        (``MUSIC_BED_DUCK_MULTISEGMENT``), since the assembled-timeline
+        transcription mapping across cuts is out of scope. A non-ducked bed on a
+        multi-segment plan is fine.
+        """
+        bed = self.music_bed
+        if bed is None:
+            return []
+        out: list[_LocatedError] = []
+        if bed.duck is not None and len(self.segments) > 1:
+            message = (
+                f"music_bed.duck is set, but the plan has {len(self.segments)} segments. "
+                "Transcription-derived ducking is only supported on a single-segment plan "
+                "(the assembled-timeline transcription mapping across cuts is out of scope); "
+                "drop the duck or use a single-segment plan."
+            )
+            out.append(
+                (
+                    message,
+                    PlanError(PlanErrorCode.MUSIC_BED_DUCK_MULTISEGMENT, location="music_bed", field="duck"),
+                )
+            )
+        try:
+            bed.validate_source()
+        except PlanValidationError as e:
+            for err in e.errors:
+                err.location = "music_bed"
+            out.append((str(e), e.errors[0]))
+        return out
+
+    def _assert_music_bed_supported(self) -> None:
+        """Raising guard used by ``run``/``run_to_file`` (see :meth:`_music_bed_errors`)."""
+        errs = self._music_bed_errors()
+        if errs:
+            message, err = errs[0]
+            raise PlanValidationError(message, [err])
+
+    def _music_bed_speech_windows(self, context: dict[str, Any] | None) -> list[tuple[float, float]] | None:
+        """Speech windows for the music-bed duck, on the single segment's timeline.
+
+        Only reached for a single-segment plan (the duck-multisegment guard
+        rejects the rest), so the assembled timeline == the segment's timeline:
+        the rebased context transcription maps directly. Resolves the
+        segment-local transcription exactly as the per-segment ops do
+        (:func:`_segment_context`), then derives padded speech windows via the
+        shared :func:`speech_windows` helper. ``None`` when the bed is not
+        ducked or there is no transcription to derive windows from -- a non-ducked
+        (or context-less) bed mixes flat.
+        """
+        bed = self.music_bed
+        if bed is None or bed.duck is None:
+            return None
+        from videopython.base.transcription import Transcription
+
+        segment = self.segments[0]
+        seg_context = _segment_context(context, str(segment.source), segment.start, segment.end)
+        transcription = (seg_context or {}).get("transcription")
+        if not isinstance(transcription, Transcription):
+            return None
+        # The bed's padding mirrors silence_removal's default breathing room so
+        # the duck eases around speech rather than clipping each word tightly.
+        total = segment.end - segment.start
+        return speech_windows(transcription.words, 0.15, total)
+
     def _validate(
         self,
         source_metas: list[VideoMetadata],
@@ -1052,6 +1442,16 @@ class VideoEdit(BaseModel):
         for message, err in self._post_op_context_errors(context):
             emit(message, err)
 
+        for message, err in self._music_bed_errors():
+            emit(message, err)
+
+        for message, err in _transition_structure_errors(list(self.segments)):
+            emit(message, err)
+
+        for i, seg in enumerate(self.segments):
+            for message, err in _missing_source_context_errors(context, i, seg):
+                emit(message, err)
+
         # Cut each segment against its own source metadata. A bad range isolates
         # that segment (no cut meta -> its op chain is skipped below).
         cut_metas: list[VideoMetadata | None] = []
@@ -1075,7 +1475,7 @@ class VideoEdit(BaseModel):
             seg_meta = matched_by_index.get(i)
             if seg_meta is None:
                 continue
-            seg_context = _segment_context(context, seg.start, seg.end)
+            seg_context = _segment_context(context, str(seg.source), seg.start, seg.end)
             failed = False
             for op_index, op in enumerate(seg.operations):
                 location = f"segments[{i}].operations[{op_index}]"
@@ -1106,8 +1506,11 @@ class VideoEdit(BaseModel):
         outputs = [seg_outputs[i] for i in range(len(self.segments))]
         for message, err in _concat_errors(outputs):
             emit(message, err)
+        for message, err in _transition_duration_errors(list(self.segments), outputs):
+            emit(message, err)
 
-        assembled = _assemble_timeline(outputs)
+        transitions = [seg.transition_in for seg in self.segments]
+        assembled = _assemble_timeline(outputs, transitions)
         for j, op in enumerate(self.post_operations):
             location = f"post_operations[{j}]"
             for message, err in _window_errors(op, assembled.total_seconds, location):
@@ -1138,7 +1541,7 @@ class VideoEdit(BaseModel):
         dimensions). :meth:`_collect` has its own per-op loop because it must
         also accumulate, clamp windows, and isolate failures per segment.
         """
-        seg_context = _segment_context(context, segment.start, segment.end)
+        seg_context = _segment_context(context, str(segment.source), segment.start, segment.end)
         for op_index, op in enumerate(segment.operations):
             location = f"segments[{index}].operations[{op_index}]"
             for message, err in _window_errors(op, meta.total_seconds, location):
@@ -1189,23 +1592,134 @@ class VideoEdit(BaseModel):
         ``STREAMING_FALLBACK`` errors as :meth:`run_to_file`.
         """
         plans = self._compile_streaming_plans(context)
+        self._assert_music_bed_supported()
         try:
+            self._assert_transitions_runnable(plans)
             videos: list[Video] = []
-            for segment, plan in zip(self.segments, plans):
+            for plan in plans:
                 frames = stream_segment_to_frames(plan)
                 video = Video.from_frames(frames, fps=plan.final_fps or plan.output_fps)
-                audio = self._load_segment_audio(segment, plan)
-                if audio is not None:
-                    video.audio = audio
+                # run() is "stream into memory": decode the SAME compiled audio
+                # graph the file path bakes into the segment to a PCM buffer
+                # (O(output-duration) memory, only for the in-memory view) so
+                # run()/run_to_file cannot diverge.
+                video.audio = stream_segment_audio_to_array(plan)
                 videos.append(video)
             result = videos[0]
-            for video in videos[1:]:
-                result = result + video
+            for i in range(1, len(videos)):
+                spec = self.segments[i].transition_in
+                if spec is None:
+                    result = result + videos[i]
+                else:
+                    # Decide crossfade-vs-butt-join by source-stream presence, the
+                    # SAME heuristic run_to_file uses (the entering segments'
+                    # sources), so the two paths cannot disagree on the seam audio.
+                    both_audible = source_has_audio_stream(plans[i - 1].source_path) and source_has_audio_stream(
+                        plans[i].source_path
+                    )
+                    result = self._join_transition_in_memory(result, videos[i], spec, both_audible)
+            if self.music_bed is not None:
+                # Final post-assembly bed mix, the in-memory twin of
+                # run_to_file's: route the assembled program audio + the bed
+                # through the SAME build_music_bed_filter_complex builder.
+                speech = self._music_bed_speech_windows(context)
+                result.audio = self._mix_music_bed_in_memory(result, speech)
             return result
         finally:
             for plan in plans:
                 for f in plan.owned_temp_files:
                     f.unlink(missing_ok=True)
+
+    def _mix_music_bed_in_memory(self, result: Video, speech: list[tuple[float, float]] | None) -> Audio:
+        """Mix the music bed under the assembled program audio for ``run()``.
+
+        The in-memory twin of :meth:`_mix_music_bed_to_file`: the assembled
+        program's PCM audio is written to a temp WAV (input 0), the bed added as
+        a second ``-i`` input, and :func:`build_music_bed_filter_complex` (the
+        SAME builder the file path uses) compiles the ``amix`` graph, decoded
+        back to a float32 :class:`Audio`. The program duration is the assembled
+        video's exact timeline so the bed's loop/trim pin matches.
+        """
+        bed = self.music_bed
+        assert bed is not None
+        program_seconds = result.total_seconds
+        bed_inputs, graph, out_label = build_music_bed_filter_complex(
+            bed, program_seconds, speech=speech, bed_input_index=1, prog_label="0:a"
+        )
+        sample_rate = result.audio.metadata.sample_rate
+        tmpdir = Path(tempfile.mkdtemp(prefix="vp_bed_"))
+        prog_wav = tmpdir / "prog.wav"
+        try:
+            result.audio.save(prog_wav, format="wav")
+            cmd = [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                str(prog_wav),
+                *bed_inputs,
+                "-filter_complex",
+                ";".join(graph),
+                "-map",
+                out_label,
+                "-ac",
+                "2",
+                "-ar",
+                str(sample_rate),
+                "-f",
+                "f32le",
+                "pipe:1",
+            ]
+            raw = _ffmpeg.run(cmd)
+        finally:
+            prog_wav.unlink(missing_ok=True)
+            tmpdir.rmdir()
+
+        data = np.frombuffer(raw, dtype=np.float32)
+        if data.size % 2 != 0:
+            data = data[: data.size - 1]
+        data = data.reshape(-1, 2).copy()
+        np.clip(data, -1.0, 1.0, out=data)
+        metadata = AudioMetadata(
+            sample_rate=sample_rate,
+            channels=2,
+            sample_width=2,
+            duration_seconds=data.shape[0] / sample_rate,
+            frame_count=data.shape[0],
+        )
+        return Audio(data, metadata)
+
+    def _join_transition_in_memory(self, left: Video, right: Video, spec: TransitionSpec, both_audible: bool) -> Video:
+        """xfade ``right`` onto the running ``left`` video for ``run()``.
+
+        The in-memory twin of the file path's :func:`stream_transition_pair`:
+        blends the frames through the SAME shared :func:`xfade_filter` builder
+        (so the seam pixels match ``run_to_file``), then joins the audio --
+        ``acrossfade`` when ``both_audible`` and ``spec.audio`` is set, else a
+        hard butt-join over the same overlap -- and fits it to the shortened
+        video duration so the mux cannot drift. ``both_audible`` is the caller's
+        source-stream-presence decision (the same heuristic ``run_to_file``
+        uses), so the two paths agree even for a silent-but-present audio
+        stream. xfade requires matching geometry/fps; the per-segment realize
+        already normalized both to the matched targets.
+        """
+        fps = left.fps
+        blended = stream_transition_frames(left.frames, right.frames, spec.type, spec.duration, fps)
+        out = Video.from_frames(blended, fps=fps)
+
+        if spec.audio and both_audible:
+            # Crossfade over the overlap (acrossfade twin). The transition guard
+            # ensured each side is at least `duration` long, so this is safe.
+            joined_audio = left.audio.concat(right.audio, crossfade=spec.duration)
+        else:
+            # Hard butt-join over the same overlap, mirroring the file path:
+            # drop the left tail's `duration` seconds, then append the full
+            # right, so the audio tracks the shortened video timeline.
+            left_keep = max(0.0, left.audio.metadata.duration_seconds - spec.duration)
+            joined_audio = left.audio.slice(0.0, left_keep).concat(right.audio)
+        out.audio = joined_audio.fit_to_duration(out.total_seconds)
+        return out
 
     def run_to_file(
         self,
@@ -1229,27 +1743,220 @@ class VideoEdit(BaseModel):
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         plans = self._compile_streaming_plans(context)
+        self._assert_music_bed_supported()
+        # With a music bed, segment assembly writes to an intermediate file and
+        # the bed is mixed into `output_path` in a final post-assembly pass;
+        # without one, assembly writes straight to `output_path`.
+        bed_tmp: Path | None = None
+        if self.music_bed is not None:
+            tmp = tempfile.NamedTemporaryFile(suffix=f".{format}", delete=False)
+            tmp.close()
+            bed_tmp = Path(tmp.name)
+        assemble_target = bed_tmp if bed_tmp is not None else output_path
         try:
+            self._assert_transitions_runnable(plans)
             if len(plans) == 1:
-                plan = plans[0]
-                audio = self._load_segment_audio(self.segments[0], plan)
-                return stream_segment(plan, output_path, audio=audio, format=format, preset=preset, crf=crf)
+                assembled = stream_segment(plans[0], assemble_target, format=format, preset=preset, crf=crf)
+            else:
+                # Realize each segment to its own temp file (effects + audio
+                # already baked by stream_segment's filter_complex), capturing
+                # per-segment audibility for the crossfade-vs-butt-join decision
+                # at any transition seam. Audibility is the source's audio-stream
+                # presence: a source with no audio gets a native silent track
+                # (anullsrc), so it never crossfades -- the same decision the old
+                # materialized is_silent made for the no-audio case, without
+                # decoding audio.
+                temp_files: list[Path] = []
+                audible: list[bool] = []
+                try:
+                    for plan in plans:
+                        tmp = tempfile.NamedTemporaryFile(suffix=f".{format}", delete=False)
+                        tmp.close()
+                        audible.append(source_has_audio_stream(plan.source_path))
+                        stream_segment(plan, Path(tmp.name), with_audio=True, format=format, preset=preset, crf=crf)
+                        temp_files.append(Path(tmp.name))
 
-            temp_files: list[Path] = []
-            try:
-                for segment, plan in zip(self.segments, plans):
-                    tmp = tempfile.NamedTemporaryFile(suffix=f".{format}", delete=False)
-                    tmp.close()
-                    audio = self._load_segment_audio(segment, plan)
-                    stream_segment(plan, Path(tmp.name), audio=audio, format=format, preset=preset, crf=crf)
-                    temp_files.append(Path(tmp.name))
-                return concat_files(temp_files, output_path)
-            finally:
-                for f in temp_files:
-                    f.unlink(missing_ok=True)
+                    if all(seg.transition_in is None for seg in self.segments):
+                        assembled = concat_files(temp_files, assemble_target)
+                    else:
+                        assembled = self._assemble_with_transitions(
+                            temp_files, audible, assemble_target, format=format, preset=preset, crf=crf
+                        )
+                finally:
+                    for f in temp_files:
+                        f.unlink(missing_ok=True)
+
+            if self.music_bed is None:
+                return assembled
+            # Final post-assembly pass: mix the bed under the assembled program.
+            speech = self._music_bed_speech_windows(context)
+            return self._mix_music_bed_to_file(assembled, output_path, speech, format=format, preset=preset, crf=crf)
         finally:
+            if bed_tmp is not None:
+                bed_tmp.unlink(missing_ok=True)
             for plan in plans:
                 for f in plan.owned_temp_files:
+                    f.unlink(missing_ok=True)
+
+    def _mix_music_bed_to_file(
+        self,
+        assembled: Path,
+        output_path: Path,
+        speech: list[tuple[float, float]] | None,
+        *,
+        format: str,
+        preset: str,
+        crf: int,
+    ) -> Path:
+        """Mix the music bed under an assembled program file in one ffmpeg pass.
+
+        The file half of the bed mix: the assembled program is input 0, the bed
+        a second ``-i`` input, and :func:`build_music_bed_filter_complex` (shared
+        with ``run()``) compiles the ``amix`` graph. The program duration is the
+        assembled file's PROBED length so the bed's loop/trim pin matches the
+        realized timeline exactly. The video stream is copied (``-c:v copy`` --
+        the bed touches only audio); the mixed audio is re-encoded to AAC.
+        """
+        bed = self.music_bed
+        assert bed is not None
+        meta = VideoMetadata.from_path(str(assembled))
+        program_seconds = meta.total_seconds
+        bed_inputs, graph, out_label = build_music_bed_filter_complex(
+            bed, program_seconds, speech=speech, bed_input_index=1, prog_label="0:a"
+        )
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(assembled),
+            *bed_inputs,
+            "-filter_complex",
+            ";".join(graph),
+            "-map",
+            "0:v",
+            "-map",
+            out_label,
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-movflags",
+            "+faststart",
+            str(output_path),
+        ]
+        try:
+            _ffmpeg.run(cmd)
+        except Exception:
+            if output_path.exists():
+                output_path.unlink()
+            raise
+        return output_path
+
+    def _assemble_with_transitions(
+        self,
+        seg_files: list[Path],
+        audible: list[bool],
+        output_path: Path,
+        *,
+        format: str,
+        preset: str,
+        crf: int,
+    ) -> Path:
+        """Boundary-aware assembly: concat-copy hard-cut runs, xfade transitions.
+
+        Walks segments left to right. Maximal runs of hard-cut (``transition_in
+        is None``) boundaries are grouped and joined with ``concat_files``
+        (``-c copy``, no re-encode), so only transition seams pay an encode.
+        Each transition then xfade-joins the running tail with the next group:
+        ``offset`` is derived from the realized TAIL's PROBED duration (not the
+        prediction) so the seam is frame-aligned, the video blend goes through
+        the shared :func:`xfade_filter` builder (matching ``run()``), and the
+        audio is ``acrossfade``-d when ``spec.audio`` and both boundary
+        segments are audible, else hard butt-joined.
+
+        Note xfade re-encodes the whole left tail at each seam, so a
+        transition-heavy reel re-encodes its cumulative tail repeatedly; a
+        mixed reel only re-encodes at the seams (the hard-cut runs stay copies).
+        """
+        # Partition into hard-cut groups; a new group starts at each segment
+        # whose transition_in is set. Each group concat-copies to one file.
+        groups: list[list[int]] = [[0]]
+        for i in range(1, len(self.segments)):
+            if self.segments[i].transition_in is None:
+                groups[-1].append(i)
+            else:
+                groups.append([i])
+
+        owned: list[Path] = []
+
+        def _group_file(indices: list[int]) -> Path:
+            if len(indices) == 1:
+                return seg_files[indices[0]]
+            tmp = tempfile.NamedTemporaryFile(suffix=f".{format}", delete=False)
+            tmp.close()
+            owned.append(Path(tmp.name))
+            return concat_files([seg_files[i] for i in indices], Path(tmp.name))
+
+        try:
+            tail = _group_file(groups[0])
+            tail_left_audible = audible[groups[0][-1]]
+            for g in range(1, len(groups)):
+                right_indices = groups[g]
+                right_file = _group_file(right_indices)
+                first_idx = right_indices[0]
+                spec = self.segments[first_idx].transition_in
+                assert spec is not None  # a group (after the first) always opens on a transition
+                meta = VideoMetadata.from_path(str(tail))
+                right_meta = VideoMetadata.from_path(str(right_file))
+                # Offset from the realized tail's PROBED frame count (matching
+                # the xfade input trim), not the prediction, so the seam is
+                # frame-aligned -- the file mirror of the in-memory twin's
+                # ``(n_left - overlap) / fps``.
+                overlap = _transition_overlap_frames(spec, meta.fps)
+                offset = round((meta.frame_count - overlap) / meta.fps, 6)
+                crossfade_audio = bool(spec.audio and tail_left_audible and audible[first_idx])
+
+                is_last = g == len(groups) - 1
+                if is_last:
+                    target = output_path
+                else:
+                    tmp = tempfile.NamedTemporaryFile(suffix=f".{format}", delete=False)
+                    tmp.close()
+                    target = Path(tmp.name)
+                    owned.append(target)
+                new_tail = stream_transition_pair(
+                    tail,
+                    right_file,
+                    spec.type,
+                    spec.duration,
+                    offset,
+                    target,
+                    width=meta.width,
+                    height=meta.height,
+                    fps=meta.fps,
+                    left_frame_count=meta.frame_count,
+                    right_frame_count=right_meta.frame_count,
+                    left_has_audio=True,
+                    right_has_audio=True,
+                    crossfade_audio=crossfade_audio,
+                    format=format,
+                    preset=preset,
+                    crf=crf,
+                )
+                # Once we xfade past a seam the new tail's trailing content is
+                # the right group's, so the next seam's audibility is that
+                # group's last segment.
+                tail = new_tail
+                tail_left_audible = audible[right_indices[-1]]
+            return output_path
+        finally:
+            for f in owned:
+                if f != output_path:
                     f.unlink(missing_ok=True)
 
     def _compile_streaming_plans(self, context: dict[str, Any] | None) -> list[StreamingSegmentPlan]:
@@ -1383,7 +2090,7 @@ class VideoEdit(BaseModel):
         # _apply_with_context). Like _segment_context's eager consumers, a
         # missing/empty key is passed as absent so the effect raises its own
         # clear "requires ..." error -- before that segment's decode.
-        seg_context = _segment_context(context, segment.start, segment.end)
+        seg_context = _segment_context(context, str(segment.source), segment.start, segment.end)
 
         owned_files: list[Path] = []
 
@@ -1394,9 +2101,27 @@ class VideoEdit(BaseModel):
 
         effect_schedule: list[EffectScheduleEntry] = []
         post_vf_filters: list[str] = []
-        audio_ops: list[tuple[Operation, float, float, dict[str, Any]]] = []
-        post_audio_ops: list[tuple[Operation, float, float, dict[str, Any]]] = []
+        af_filters: list[str] = []
+        post_af_filters: list[str] = []
+        audio_idx = 0
         duration_changed = False
+
+        def compile_audio_twin(op: Operation, ctx: FilterCtx, encode_stage: bool) -> None:
+            """Append the op's audio-domain filter at the same stage the video
+            filter landed, keeping audio and video stage placement coupled.
+
+            ``ctx`` is the SAME FilterCtx the video side compiled this op with
+            (pre-op ``running``), plus a per-op ``audio_label`` so a
+            multi-statement fragment (freeze_frame's splice) cannot collide with
+            another op's internal labels."""
+            nonlocal audio_idx
+            audio_ctx = dataclasses.replace(ctx, audio_label=f"f{audio_idx}")
+            af = op.to_ffmpeg_audio_filter(audio_ctx)
+            audio_idx += 1
+            if af is None:
+                return
+            (post_af_filters if encode_stage else af_filters).append(af)
+
         # The pipe stage: dims/fps/frame-count of the frames flowing through
         # process_frame and into the encoder's rawvideo stdin. Frozen the
         # moment encode-stage content appears (a scheduled effect or any
@@ -1445,6 +2170,9 @@ class VideoEdit(BaseModel):
                                 post_vf_filters.append(filter_expr)
                             else:
                                 vf_filters.append(filter_expr)
+                            # Audio twin at the same stage (add_subtitles has
+                            # none today; kept coupled for extensibility).
+                            compile_audio_twin(op, ctx, encode_stage_effect)
                             continue
                     if post_vf_filters:
                         # A frame effect after an encode-stage filter would run
@@ -1459,6 +2187,22 @@ class VideoEdit(BaseModel):
                     pipe_meta = pipe_meta or running
                     start_f, end_f = _effect_frame_range(op, running.fps, running.frame_count)
                     effect_schedule.append(EffectScheduleEntry(op, start_f, end_f, op_context))
+                    # Audio-coupled frame effects (fade/volume_adjust) express
+                    # their gain on the audio graph. A frame effect always sits
+                    # at the decode stage (one after an encode-stage filter is
+                    # rejected above), so its audio twin joins af_filters; its
+                    # window resolves against this position's running metadata.
+                    effect_ctx = FilterCtx(
+                        width=running.width,
+                        height=running.height,
+                        fps=running.fps,
+                        frame_count=running.frame_count,
+                        context=seg_context or {},
+                        source_path=segment.source,
+                        start_second=segment.start,
+                        end_second=segment.end,
+                    )
+                    compile_audio_twin(op, effect_ctx, encode_stage=False)
                     continue
                 if op.requires and (duration_changed or not op.streamable):
                     # A context-requiring transform can stream only when its
@@ -1514,20 +2258,14 @@ class VideoEdit(BaseModel):
                     post_vf_filters.append(filter_expr)
                 else:
                     vf_filters.append(filter_expr)
+                # Audio twin compiled from the SAME pre-op ctx, appended to the
+                # same stage the video filter landed -- so audio and video
+                # stage placement cannot drift (speed->atempo, freeze->silence
+                # splice, silence_removal->aselect keep windows).
+                compile_audio_twin(op, ctx, encode_stage)
                 running = _predict_with_context(op, running, seg_context)
                 if op.changes_duration:
                     duration_changed = True
-                if type(op).transform_audio is not Operation.transform_audio:
-                    # The op has an audio-domain twin; _load_segment_audio
-                    # replays it (with the predicted post-op duration and the
-                    # op's resolved context) so the in-memory audio follows
-                    # the video's filter chain. Encode-stage twins replay
-                    # after the effect envelopes, matching plan order.
-                    twin_context: dict[str, Any] = {}
-                    if op.requires and seg_context:
-                        twin_context = {k: seg_context[k] for k in op.requires if k in seg_context}
-                    entry = (op, running.total_seconds, running.fps, twin_context)
-                    (post_audio_ops if encode_stage else audio_ops).append(entry)
         except BaseException:
             # A raising compile or prediction (e.g. missing subtitle context,
             # crop exceeding source) must not leak earlier ops' temp files.
@@ -1535,6 +2273,12 @@ class VideoEdit(BaseModel):
             raise
 
         pipe = pipe_meta or running
+        # Final output duration after every transform (decode + encode stage),
+        # used to pin the audio graph length to the video timeline. `running`
+        # is folded through the whole chain, so this is the encoded output's
+        # duration even when an encode-stage transform (post_vf speed) shortens
+        # it below the pipe frame count.
+        output_total_seconds = running.frame_count / running.fps if running.fps else 0.0
         return StreamingSegmentPlan(
             source_path=segment.source,
             start_second=segment.start,
@@ -1547,46 +2291,78 @@ class VideoEdit(BaseModel):
             post_vf_filters=post_vf_filters,
             owned_temp_files=owned_files,
             output_total_frames=pipe.frame_count,
-            audio_ops=audio_ops,
-            post_audio_ops=post_audio_ops,
+            af_filters=af_filters,
+            post_af_filters=post_af_filters,
+            output_total_seconds=output_total_seconds,
             final_fps=running.fps,
             final_width=running.width,
             final_height=running.height,
         )
 
-    def _load_segment_audio(
-        self,
-        segment: SegmentConfig,
-        plan: StreamingSegmentPlan,
-    ) -> Audio | None:
-        try:
-            audio = Audio.from_path(str(segment.source))
-            audio = audio.slice(segment.start, segment.end)
-        except (AudioLoadError, FileNotFoundError, subprocess.CalledProcessError):
-            warnings.warn(f"No audio found for `{segment.source}`, using silent track.")
-            audio = Audio.create_silent(duration_seconds=round(segment.duration, 2), stereo=True, sample_rate=44100)
+    def _assert_transitions_runnable(self, plans: list[StreamingSegmentPlan]) -> None:
+        """Raise before decode if any transition is structurally invalid or too long.
 
-        # Replay duration-changing transforms' audio twins in plan order
-        # (speed_change stretches, freeze_frame inserts silence), each fit to
-        # its predicted post-op duration -- the audio mirror of the video
-        # filter chain. Runs before the effect envelopes, whose frame ranges
-        # already live on the post-transform output timeline.
-        for op, out_duration, op_fps, op_context in plan.audio_ops:
-            audio = op.transform_audio(audio, out_duration, op_fps, **op_context)
+        Mirrors :func:`_transition_structure_errors` /
+        :func:`_transition_duration_errors` but measures each segment against
+        its compiled plan's predicted post-op duration -- the exact length the
+        per-segment realize pass produces -- so a plan that passes here cannot
+        fail the xfade pass at decode. Called by both ``run`` and
+        ``run_to_file`` after plan compilation (no frames decoded yet).
+        ``repair`` clamps these mechanically; here they hard-raise.
+        """
+        for message, err in _transition_structure_errors(list(self.segments)):
+            raise PlanValidationError(message, [err])
+        for i in range(1, len(self.segments)):
+            spec = self.segments[i].transition_in
+            if spec is None:
+                continue
+            left_frames, left_fps = _plan_output_frames(plans[i - 1])
+            right_frames, right_fps = _plan_output_frames(plans[i])
+            fps = right_fps or left_fps
+            overlap = _transition_overlap_frames(spec, fps)
+            limit_frames = min(left_frames, right_frames)
+            if overlap >= limit_frames:
+                limit_seconds = round(limit_frames / fps, 4) if fps else 0.0
+                message = (
+                    f"Segment {i}: transition_in overlaps {overlap} frames ({spec.duration}s) but must overlap "
+                    f"fewer frames than the shorter adjacent segment ({limit_frames} frames, {limit_seconds}s); "
+                    "repair the plan or shorten the transition."
+                )
+                raise PlanValidationError(
+                    message,
+                    [
+                        PlanError(
+                            code=PlanErrorCode.TRANSITION_TOO_LONG,
+                            location=f"segments[{i}]",
+                            field="transition_in.duration",
+                            value=spec.duration,
+                            limit=limit_seconds,
+                            predicted_duration=limit_seconds,
+                        )
+                    ],
+                )
 
-        for entry in plan.effect_schedule:
-            effect = entry.effect
-            if isinstance(effect, (Fade, VolumeAdjust)) and not audio.is_silent:
-                start_s = entry.start_frame / plan.output_fps
-                stop_s = entry.end_frame / plan.output_fps
-                effect._apply_audio(audio, start_s, stop_s)
 
-        # Encode-stage twins (transforms that follow the effects in plan
-        # order) replay after the envelopes, mirroring the video chain.
-        for op, out_duration, op_fps, op_context in plan.post_audio_ops:
-            audio = op.transform_audio(audio, out_duration, op_fps, **op_context)
+def _plan_output_frames(plan: StreamingSegmentPlan) -> tuple[int, float]:
+    """A compiled segment plan's predicted post-op ``(frame_count, fps)``.
 
-        return audio
+    ``output_total_frames`` is the prediction folded through every transform,
+    over ``final_fps`` (the rate after encode-stage resamplers; falls back to
+    ``output_fps``). The transition guard measures overlap in *frames* against
+    this -- the exact length the per-segment realize pass produces -- so a plan
+    that passes the guard cannot fail the frame-based xfade constraint.
+    """
+    fps = plan.final_fps or plan.output_fps
+    frames = plan.output_total_frames
+    if frames <= 0:
+        frames = round((plan.end_second - plan.start_second) * fps)
+    return frames, fps
+
+
+def _plan_output_seconds(plan: StreamingSegmentPlan) -> float:
+    """A compiled segment plan's predicted post-op duration in seconds."""
+    frames, fps = _plan_output_frames(plan)
+    return frames / fps if fps else 0.0
 
 
 def _effect_frame_range(op: Effect, fps: float, total_frames: int) -> tuple[int, int]:

@@ -19,7 +19,10 @@ class TextToImage:
     def _init_local(self) -> None:
         """Initialize local diffusion pipeline."""
         import torch
-        from diffusers import DiffusionPipeline
+
+        from videopython.ai._optional import require
+
+        DiffusionPipeline = require("diffusers", "generation", feature="TextToImage").DiffusionPipeline
 
         requested_device = self.device
         device = select_device(self.device, mps_allowed=True)

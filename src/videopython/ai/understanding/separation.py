@@ -72,7 +72,9 @@ class AudioSeparator:
 
     def _init_local(self) -> None:
         """Initialize local Demucs model."""
-        from demucs.pretrained import get_model
+        from videopython.ai._optional import require
+
+        get_model = require("demucs.pretrained", "separation", feature="AudioSeparator").get_model
 
         requested_device = self.device
         device = select_device(self.device, mps_allowed=False)

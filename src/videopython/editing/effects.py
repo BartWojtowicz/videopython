@@ -32,7 +32,7 @@ from videopython.base.description import BoundingBox
 from videopython.base.exceptions import PlanError, PlanErrorCode, PlanValidationError
 from videopython.base.fonts import load_font
 from videopython.editing._easing import ease, ease_out
-from videopython.editing.operation import Effect
+from videopython.editing.operation import Effect, FilterCtx
 
 if TYPE_CHECKING:
     from videopython.audio import Audio
@@ -493,10 +493,65 @@ class Fade(Effect):
             )
 
         if video.audio is not None and not video.audio.is_silent:
-            self._apply_audio(video.audio, start_s, stop_s)
+            self._audio_apply(video.audio, start_s, stop_s)
         return video
 
-    def _apply_audio(self, audio: Audio, start_s: float, stop_s: float) -> None:
+    def _curve_expr(self, progress: str) -> str:
+        """ffmpeg gain sub-expression for a 0->1 ramp ``progress``, per ``self.curve``.
+
+        Mirrors :func:`_compute_curve` (``sqrt`` -> ``sqrt(p)``, ``exponential``
+        -> ``p*p``, ``linear`` -> ``p``). Native shape, not bit-identical to the
+        numpy ramp -- audio has no pixel sign-off (the libass precedent).
+        """
+        if self.curve == "sqrt":
+            return f"sqrt({progress})"
+        if self.curve == "exponential":
+            return f"({progress})*({progress})"
+        return f"({progress})"
+
+    def to_ffmpeg_audio_filter(self, ctx: FilterCtx) -> str | None:
+        """Express the fade's gain envelope as a windowed ``volume`` expression.
+
+        The audio twin of the video fade (which scales pixels by the same alpha
+        envelope). It must mirror :func:`_fade_envelope` / :meth:`_audio_apply`:
+        the ramp applies only WITHIN ``[start, stop]`` and the gain is 1.0
+        everywhere else -- so a *windowed* fade-out returns to full volume after
+        the window (matching the video, which resumes full brightness), instead
+        of staying muted. Native ``afade`` cannot express this (it holds 0
+        outside the ramp), so the gain is a piecewise ``volume=...:eval=frame``
+        expression, like :class:`VolumeAdjust`. ``None`` when the window is
+        degenerate.
+        """
+        if ctx.fps <= 0 or ctx.frame_count <= 0:
+            return None
+        total_seconds = ctx.frame_count / ctx.fps
+        win = self.window
+        start_s = 0.0 if win is None or win.start is None else min(float(win.start), total_seconds)
+        stop_s = total_seconds if win is None or win.stop is None else min(float(win.stop), total_seconds)
+        if stop_s <= start_s:
+            return None
+        window_len = stop_s - start_s
+        # Halve the ramp for in_out so the lead and trailing ramps cannot overlap
+        # (the eager path takes their min; a clamped half-window avoids it).
+        both = self.mode == "in_out"
+        ramp = min(self.duration, window_len / 2 if both else window_len)
+        if ramp <= 0:
+            return None
+        # Build nested if()s: each ramp region uses its curve; gain is 1 outside.
+        terms: list[tuple[str, str]] = []
+        if self.mode in ("in", "in_out"):
+            in_end = start_s + ramp
+            terms.append((f"between(t,{start_s:.6f},{in_end:.6f})", self._curve_expr(f"(t-{start_s:.6f})/{ramp:.6f}")))
+        if self.mode in ("out", "in_out"):
+            out_start = stop_s - ramp
+            terms.append((f"between(t,{out_start:.6f},{stop_s:.6f})", self._curve_expr(f"({stop_s:.6f}-t)/{ramp:.6f}")))
+        expr = "1"
+        for cond, gain in reversed(terms):
+            expr = f"if({cond},{gain},{expr})"
+        return f"volume=volume='{expr}':eval=frame"
+
+    def _audio_apply(self, audio: Audio, start_s: float, stop_s: float) -> None:
+        """Eager (in-memory) fade for ``Video.apply``; streaming uses ``afade``."""
         sample_rate = audio.metadata.sample_rate
         audio_start = round(start_s * sample_rate)
         audio_end = min(round(stop_s * sample_rate), len(audio.data))
@@ -533,10 +588,52 @@ class VolumeAdjust(Effect):
     def apply(self, video: Video, **context: Any) -> Video:
         start_s, stop_s = self._resolved_window(video.total_seconds)
         if video.audio is not None and not video.audio.is_silent:
-            self._apply_audio(video.audio, start_s, stop_s)
+            self._audio_apply(video.audio, start_s, stop_s)
         return video
 
-    def _apply_audio(self, audio: Audio, start_s: float, stop_s: float) -> None:
+    def to_ffmpeg_audio_filter(self, ctx: FilterCtx) -> str | None:
+        """Apply the volume change over the window via the ``volume`` filter.
+
+        The audio twin of the (pixel-passthrough) volume effect. A flat
+        multiplier compiles to ``volume=<v>:enable='between(t,start,stop)'``.
+        When ``ramp_duration>0`` the gain is a time-piecewise expression
+        (``volume=eval=frame``) that ramps ``1 -> volume`` over the first
+        ``ramp_duration`` of the window and back over the last, mirroring the
+        eager ``1 + (volume-1)*sqrt(t)`` edge ramps. The window resolves
+        against the segment duration (``ctx.frame_count / ctx.fps``); ``None``
+        for a degenerate window or a no-op (``volume == 1`` with no ramp).
+        """
+        if ctx.fps <= 0 or ctx.frame_count <= 0:
+            return None
+        total_seconds = ctx.frame_count / ctx.fps
+        win = self.window
+        start_s = 0.0 if win is None or win.start is None else min(float(win.start), total_seconds)
+        stop_s = total_seconds if win is None or win.stop is None else min(float(win.stop), total_seconds)
+        if stop_s <= start_s:
+            return None
+        window_len = stop_s - start_s
+        ramp = min(self.ramp_duration, window_len / 2)
+        if ramp <= 0:
+            if abs(self.volume - 1.0) < 1e-9:
+                return None
+            return f"volume={self.volume:.6f}:enable='between(t,{start_s:.6f},{stop_s:.6f})'"
+        # Piecewise gain: 1 -> volume (sqrt ease) over the leading ramp, hold,
+        # then volume -> 1 over the trailing ramp; 1 (no change) outside the
+        # window. `eval=frame` re-evaluates the expression per sample-frame.
+        v = self.volume
+        up_end = start_s + ramp
+        down_start = stop_s - ramp
+        up = f"(1+({v:.6f}-1)*sqrt((t-{start_s:.6f})/{ramp:.6f}))"
+        down = f"(1+({v:.6f}-1)*sqrt(({stop_s:.6f}-t)/{ramp:.6f}))"
+        expr = (
+            f"if(between(t,{start_s:.6f},{up_end:.6f}),{up},"
+            f"if(between(t,{up_end:.6f},{down_start:.6f}),{v:.6f},"
+            f"if(between(t,{down_start:.6f},{stop_s:.6f}),{down},1)))"
+        )
+        return f"volume=volume='{expr}':eval=frame"
+
+    def _audio_apply(self, audio: Audio, start_s: float, stop_s: float) -> None:
+        """Eager (in-memory) volume change for ``Video.apply``; streaming uses ``volume``."""
         sample_rate = audio.metadata.sample_rate
         start_sample = round(start_s * sample_rate)
         end_sample = min(round(stop_s * sample_rate), len(audio.data))

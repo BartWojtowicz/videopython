@@ -1,5 +1,173 @@
 # Release Notes
 
+## 0.43.0
+
+The P1 roadmap items, shipped as one
+release. Highlights: dubbing dependency isolation, multi-clip per-source
+context, and an ffprobe probe cache.
+
+### Dubbing dependency isolation: granular `[ai]` extras + a pluggable TTS backend
+
+The monolithic `[ai]` extra is split into per-capability extras so a consumer
+can build a slim, conflict-free image per capability instead of pulling the
+entire ML stack (and `chatterbox-tts`'s strict pins) for one feature:
+
+| Extra | Covers |
+|---|---|
+| `asr` | transcription / diarization (`understanding/audio.py`) |
+| `vision` | detection, scene/temporal, VLM (`understanding/{faces,objects,temporal,image}.py`, `video_analysis`) |
+| `separation` | source separation (`understanding/separation.py`) |
+| `translation` | MarianMT + Qwen3 GGUF (`generation/{translation,qwen3}.py`) |
+| `tts` | Chatterbox voice cloning (`generation/audio.py`) — isolated |
+| `generation` | SDXL / CogVideoX / MusicGen (`generation/*`) |
+| `dub` | the dubbing pipeline (`asr + separation + translation + pyloudnorm`) |
+| `ai` | convenience aggregate of every extra (PEP 685 self-references) |
+
+**`[dub]` deliberately excludes `chatterbox-tts`.** The blocker that made the
+dubbing wedge undeployable was chatterbox's `torch==2.6.0` pin conflicting with
+`pyannote-audio` (`torch>=2.8`) and CogVideoX (`diffusers>=0.30`). Local
+synthesis now runs through a new `runtime_checkable` `SpeechBackend` protocol
+(`ai/generation/_tts_backend.py`): `VideoDubber` / `LocalDubbingPipeline` accept
+a `tts_backend=` injection, so a consumer can run TTS in its own image/function
+(install `[tts]` there, or inject a remote backend) while a `[dub]` image
+co-resolves cleanly **without** chatterbox. `[tts]` installs standalone on
+chatterbox's own pins. The `[tool.uv].override-dependencies` block is now
+load-bearing only for the all-in `[ai]` resolve.
+
+**Lazy `ai` imports.** `ai/__init__.py` and the `generation`/`understanding`/
+`dubbing` sub-packages are PEP 562 `__getattr__` lazy re-exports, and every
+heavy import is guarded by `ai/_optional.require(module, extra)`, which raises
+a clear `pip install 'videopython[<extra>]'` hint on a missing dependency.
+`import videopython.ai` (and importing a single leaf class) no longer drags in
+sibling heavy modules — verified in `test_packaging_extras.py`, which also
+drift-guards `union(granular) == [ai]` so the dep lists never hand-desync.
+
+BREAKING: `pip install videopython[ai]` still installs everything, but
+consumers pinning a sub-capability must migrate to the new extra names; a bare
+`[dub]` install that reaches local synthesis raises an ImportError pointing at
+`[tts]`; `numba`/`scipy`/`scikit-learn`/`ollama`/`hf-transfer` drop to
+transitive-only.
+
+### `VideoMetadata.from_path` caches ffprobe probes
+
+Every plan traversal (`repair` → `check` → `validate` → `run`) re-probed each
+source file per segment; a job that chains those over a handful of clips paid
+dozens of redundant ffprobe subprocesses. Probes are now cached in a bounded
+LRU keyed by `(resolved path, mtime_ns, size)`, so repeated probes of an
+unchanged file in one process collapse to one call, while a file modified in
+place is re-probed automatically (the stat key changes). The lock guards only
+dict access — the ffprobe subprocess runs outside it, so concurrent probes of
+different files never serialize. New `VideoMetadata.clear_cache()` forces a
+re-probe for the rare in-place overwrite that preserves both mtime_ns and size.
+No API or behavior change otherwise.
+
+### Per-source runtime context for multi-clip plans
+
+A runtime context value may now be a per-source map keyed by
+`str(segment.source)`, so a plan that cuts from several sources can feed each
+segment its OWN transcription:
+
+```python
+edit.run_to_file(out, context={"transcription": {"a.mp4": tx_a, "b.mp4": tx_b}})
+```
+
+A bare value still broadcasts to every segment (unchanged), mirroring the
+existing `VideoMetadata | dict[str, VideoMetadata]` precedent in
+`_resolve_source_metas` — runtime metadata and runtime context now share one
+mental model. Resolution happens at the single `_segment_context` chokepoint
+(per-source select, then the existing per-segment re-basing), so nothing
+downstream changed. This lifts the block on subtitles in multi-clip project
+edits, where a single global transcription was wrong for every segment past
+the first.
+
+`check()` now reports a structured `CONTEXT_SOURCE_MISSING` error when an op
+requires a per-source key whose map omits that segment's source — otherwise an
+`add_subtitles` plan would pass validation (subtitles do not change predicted
+metadata) and only fail at decode.
+
+BREAKING: the private `_segment_context(context, start, end)` helper gains a
+`source` argument (`_segment_context(context, source, start, end)`).
+
+### Segment transitions (`xfade` / `acrossfade`)
+
+Segment boundaries were hard cuts only. A segment may now carry an optional
+`transition_in` describing how it enters from the previous segment:
+
+```python
+{"source": "b.mp4", "start": 0, "end": 5,
+ "transition_in": {"type": "dissolve", "duration": 0.5}}
+```
+
+`TransitionSpec` exposes a curated catalog (`fade`, `dissolve`,
+`wipeleft/right/up/down`, `slideleft/right`) as a closed enum so the strict
+LLM grammar stays tight, a `duration` (seconds of overlap), and `audio`
+(acrossfade the audio across the same overlap, else a hard butt-join). It
+surfaces automatically in `VideoEdit.json_schema()`. N segments → N-1
+transitions; `segments[0].transition_in` must be `None`.
+
+Streaming-first: each transition-adjacent segment is realized by the existing
+per-segment engine (effects + audio baked), then a native two-decoder
+`xfade`+`acrossfade` pass joins the two finished files. Maximal hard-cut runs
+still `concat -c copy`; only transition seams re-encode. `run()` and
+`run_to_file` share one `xfade` filter-string builder, so the seam pixels
+match. `_assemble_timeline` subtracts each `round(duration*fps)` overlap, so
+predict / `check` / `repair` / streamability all see the shortened output.
+
+A transition that would overlap a whole adjacent segment is a structured
+`TRANSITION_TOO_LONG` error (the constraint is frame-based: `round(D*fps)`
+must be strictly fewer frames than the shorter adjacent segment); `check`
+reports it and `repair` clamps it one frame short of the limit. `post_operations`
+combined with transitions are reported `UNSTREAMABLE` (a post-op envelope
+cannot fold across the separately re-encoded seam).
+
+### Audio in the filter graph
+
+Segment audio moved off the in-memory path into the ffmpeg graph: the original
+source is a second `-i` input routed through `-filter_complex` in the **same**
+per-segment invocation as the video (no more whole-source `Audio` decode, no
+temp-WAV mux). This closes the one honest caveat on "streaming-only" — segment
+audio was the last fully-in-memory stage (~1.2 GB/hour stereo). Each
+audio-affecting op compiles an `to_ffmpeg_audio_filter` twin at the same plan
+stage as its video filter: `speed_change` → `atempo`, `freeze_frame` → silence
+splice, `silence_removal` → sample-accurate `atrim`+`concat` keep-windows,
+`fade` → a windowed `volume` envelope, `volume_adjust` → `volume`. A
+length-pin (`atrim`+`apad` to the folded output duration) plus
+`aresample=async=1` hold A/V sync within the existing 0.15s tolerance; a source
+with no audio stream gets a native `anullsrc` silent track.
+
+`run()` stays a view over the same compiled graph — it decodes the audio graph
+to a PCM buffer for `video.audio` (O(output-duration) memory, in-memory view
+only), so `run()` and `run_to_file` cannot diverge.
+
+BREAKING: `Operation.transform_audio` → `to_ffmpeg_audio_filter`;
+`StreamingSegmentPlan.audio_ops`/`post_audio_ops` → `af_filters`/`post_af_filters`;
+`VideoEdit._load_segment_audio` removed; audio fade/volume curves are now native
+ffmpeg (`afade`/`volume`-shaped), not bit-identical to the old numpy ramps (the
+libass precedent).
+
+### Music bed + transcription-derived ducking
+
+A plan can now carry a `VideoEdit.music_bed` (a frozen `MusicBed`: `source`,
+`gain`, `loop`, `fade_in`/`fade_out`, and an optional `duck`). The bed is mixed
+under the **whole assembled** program in a final `amix` pass after concat /
+transitions — `run()` and `run_to_file` share one bed-mix filter builder, so
+they cannot diverge. `amix=duration=first` clamps the output to the program
+length (a short bed loops, a long bed is trimmed) and `normalize=0` keeps the
+program dialogue at full level. An unreadable bed source fails `validate`/`check`
+with `SOURCE_UNREADABLE` before any decode.
+
+`music_bed.duck` lowers the bed under speech using deterministic,
+transcription-derived `volume` automation (no live key signal): the speech
+windows come from a shared `speech_windows()` helper that `silence_removal` also
+uses. Ducking is single-segment only (the assembled timeline maps cleanly to one
+segment's re-based transcription); a multi-segment plan with `duck` set raises a
+structured `MUSIC_BED_DUCK_MULTISEGMENT` error (a non-ducked bed on a
+multi-segment plan is fine).
+
+Per-segment / per-window **gain** already shipped with the audio-graph migration
+above (`volume_adjust` compiles to a `volume` node), so no separate op was
+needed.
+
 ## 0.42.0
 
 **Streaming-first migration complete: streaming is the only execution

@@ -33,7 +33,11 @@ class TextToSpeech:
         self._model: Any = None
 
     def _init_local(self) -> None:
-        from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+        from videopython.ai._optional import require
+
+        ChatterboxMultilingualTTS = require(
+            "chatterbox.mtl_tts", "tts", feature="TextToSpeech"
+        ).ChatterboxMultilingualTTS
 
         requested_device = self.device
         device = select_device(self.device, mps_allowed=False)
@@ -154,7 +158,11 @@ class TextToMusic:
         """Initialize local MusicGen model."""
         import os
 
-        from transformers import AutoProcessor, MusicgenForConditionalGeneration
+        from videopython.ai._optional import require
+
+        _transformers = require("transformers", "generation", feature="TextToMusic")
+        AutoProcessor = _transformers.AutoProcessor
+        MusicgenForConditionalGeneration = _transformers.MusicgenForConditionalGeneration
 
         os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 

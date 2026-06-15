@@ -148,6 +148,52 @@ class TestStreamabilityReport:
         assert err.detail is not None and "encode-stage" in err.detail
 
 
+class TestTransitionStreamability:
+    """A transition is FILTER-class by construction; it does not appear as an op.
+
+    But a post-operation cannot fold across a plan that has transitions (the
+    overlapped seam re-encodes in a separate xfade pass), so that combination
+    is rejected.
+    """
+
+    def _transition_plan(self, post_operations: list[dict[str, Any]] | None = None) -> VideoEdit:
+        return VideoEdit.model_validate(
+            {
+                "segments": [
+                    {"source": SMALL_VIDEO_PATH, "start": 0.0, "end": 2.0},
+                    {
+                        "source": SMALL_VIDEO_PATH,
+                        "start": 0.0,
+                        "end": 2.0,
+                        "transition_in": {"type": "fade", "duration": 0.5},
+                    },
+                ],
+                "post_operations": post_operations or [],
+            }
+        )
+
+    def test_plain_transition_plan_streams(self):
+        report = self._transition_plan().streamability()
+        # Transitions add no op entries and never force eager.
+        assert report.entries == ()
+        assert report.streamable is True
+
+    def test_post_op_with_transition_is_unstreamable(self):
+        plan = self._transition_plan(post_operations=[{"op": "blur_effect", "mode": "constant", "iterations": 5}])
+        report = plan.streamability()
+        (entry,) = report.entries
+        assert entry.streaming_class is StreamingClass.UNSTREAMABLE
+        assert entry.reason is not None and "transition" in entry.reason
+        assert report.streamable is False
+
+    def test_has_transitions_flag_rejects_post_ops_directly(self):
+        from videopython.editing.streaming import analyze_streamability
+
+        report = analyze_streamability([[], []], [Fade(mode="in", duration=0.3)], has_transitions=True)
+        (entry,) = report.entries
+        assert entry.streaming_class is StreamingClass.UNSTREAMABLE
+
+
 class TestRegistryAlignment:
     def test_streamable_flag_matches_filter_compilation(self):
         """Every registered transform must declare ``streamable`` coherently.

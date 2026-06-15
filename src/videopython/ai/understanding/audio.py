@@ -55,9 +55,11 @@ def _build_initial_prompt(vocabulary: list[str]) -> str | None:
     if not vocabulary:
         return None
 
-    import whisper.tokenizer
+    from videopython.ai._optional import require
 
-    tokenizer = whisper.tokenizer.get_tokenizer(multilingual=True, task="transcribe")
+    whisper_tokenizer = require("whisper.tokenizer", "asr", feature="AudioToText")
+
+    tokenizer = whisper_tokenizer.get_tokenizer(multilingual=True, task="transcribe")
     kept = list(vocabulary)
     while kept and len(tokenizer.encode(_render_initial_prompt(kept))) > _INITIAL_PROMPT_TOKEN_BUDGET:
         kept.pop()
@@ -181,14 +183,19 @@ class AudioToText:
 
     def _init_local(self) -> None:
         """Initialize local Whisper model."""
-        import whisper
+        from videopython.ai._optional import require
+
+        whisper = require("whisper", "asr", feature="AudioToText")
 
         self._model = whisper.load_model(name=self.model_name, device=self.device)
 
     def _init_diarization(self) -> None:
         """Initialize pyannote speaker diarization pipeline."""
         import torch
-        from pyannote.audio import Pipeline
+
+        from videopython.ai._optional import require
+
+        Pipeline = require("pyannote.audio", "asr", feature="AudioToText diarization").Pipeline
 
         self._diarization_pipeline = Pipeline.from_pretrained(self.PYANNOTE_DIARIZATION_MODEL)
         self._diarization_pipeline.to(torch.device(self.device))
@@ -200,7 +207,9 @@ class AudioToText:
         it on CPU regardless of ``self.device`` since dispatch overhead would
         outweigh inference cost.
         """
-        from silero_vad import load_silero_vad
+        from videopython.ai._optional import require
+
+        load_silero_vad = require("silero_vad", "asr", feature="AudioToText VAD").load_silero_vad
 
         self._vad_model = load_silero_vad()
 
@@ -511,7 +520,11 @@ class AudioClassifier:
 
     def _init_local(self) -> None:
         """Initialize local AST model from HuggingFace."""
-        from transformers import ASTFeatureExtractor, ASTForAudioClassification
+        from videopython.ai._optional import require
+
+        _transformers = require("transformers", "vision", feature="AudioClassifier")
+        ASTFeatureExtractor = _transformers.ASTFeatureExtractor
+        ASTForAudioClassification = _transformers.ASTForAudioClassification
 
         self._processor = ASTFeatureExtractor.from_pretrained(self.model_name)
         self._model = ASTForAudioClassification.from_pretrained(self.model_name)

@@ -92,8 +92,10 @@ Translate speech, clone the original voice, and re-time the dub onto the source 
 
 ```bash
 pip install videopython          # core editing
-pip install "videopython[ai]"    # + local AI features (GPU recommended)
+pip install "videopython[ai]"    # + ALL local AI features (GPU recommended)
 ```
+
+`[ai]` installs everything; granular extras (`[asr]`, `[vision]`, `[separation]`, `[translation]`, `[tts]`, `[generation]`, `[dub]`) install only one capability each.
 
 Python `>=3.11, <3.14`. AI features run locally -- no cloud API keys required.
 

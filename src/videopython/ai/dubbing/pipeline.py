@@ -22,6 +22,7 @@ from videopython.ai.generation.translation import (
 
 if TYPE_CHECKING:
     from videopython.ai.dubbing.models import TranslatedSegment
+    from videopython.ai.generation._tts_backend import SpeechBackend
     from videopython.audio import Audio
     from videopython.base.transcription import Transcription
 
@@ -38,16 +39,29 @@ class LocalDubbingPipeline:
     with <=12GB VRAM or hosts with <32GB RAM.
     """
 
-    def __init__(self, config: DubbingConfig | None = None, **kwargs: Any):
+    def __init__(
+        self,
+        config: DubbingConfig | None = None,
+        *,
+        tts_backend: SpeechBackend | None = None,
+        **kwargs: Any,
+    ):
         # ``DubbingConfig`` consolidates the nine knobs that used to be
         # constructor kwargs. Either ``config=`` or the flat kwargs are
         # accepted (not both) so existing callers don't need to change.
         if config is not None and kwargs:
             raise TypeError("Pass either `config=` or knob kwargs, not both")
         self.config = config or DubbingConfig(**kwargs)
+        # Injected speech backend (a SpeechBackend, e.g. a remote/out-of-process
+        # synthesizer). When None, _init_tts lazily constructs the local
+        # chatterbox-backed TextToSpeech — which requires the [tts] extra.
+        # Supplying a backend lets dubbing run with only [dub] installed (no
+        # chatterbox in the process).
+        self._tts_backend = tts_backend
         logger.info(
-            "LocalDubbingPipeline initialized with %s",
+            "LocalDubbingPipeline initialized with %s%s",
             " ".join(f"{k}={v}" for k, v in self.config.init_log_fields().items()),
+            " tts_backend=injected" if tts_backend is not None else "",
         )
 
         self._transcriber: Any = None
@@ -250,7 +264,18 @@ class LocalDubbingPipeline:
         raise UnsupportedLanguageError(source_lang, target_lang)
 
     def _init_tts(self, language: str = "en") -> None:
-        """Initialize the text-to-speech model."""
+        """Resolve the text-to-speech backend for ``language``.
+
+        When a ``tts_backend`` was injected at construction it is used as-is
+        (it owns its own language handling). Otherwise the local
+        chatterbox-backed :class:`TextToSpeech` is constructed for ``language``
+        — importing it requires the ``[tts]`` extra; a bare ``[dub]`` install
+        raises a clear ``[tts]``-pointing ``ImportError`` at this point.
+        """
+        if self._tts_backend is not None:
+            self._tts = self._tts_backend
+            return
+
         from videopython.ai.generation.audio import TextToSpeech
 
         self._tts = TextToSpeech(device=self.config.device, language=language)

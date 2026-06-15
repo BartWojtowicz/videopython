@@ -1,4 +1,6 @@
+import shutil
 import tempfile
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -13,7 +15,16 @@ from tests.test_config import (
     TEST_AUDIO_PATH,
     TEST_IMAGE_PATH,
 )
+from videopython.base import video as _video_mod
 from videopython.base.video import Video, VideoMetadata
+
+
+@pytest.fixture(autouse=True)
+def _clear_metadata_cache():
+    """Keep the module-global probe cache from leaking across tests."""
+    VideoMetadata.clear_cache()
+    yield
+    VideoMetadata.clear_cache()
 
 
 @pytest.mark.parametrize(
@@ -143,3 +154,84 @@ def test_save_rejects_odd_dimensions_with_clear_error():
     with tempfile.TemporaryDirectory() as temp_dir:
         with pytest.raises(ValueError, match="requires even frame dimensions.*100x101"):
             odd_video.save(Path(temp_dir) / "odd_dims.mp4")
+
+
+def _count_probes(monkeypatch) -> dict[str, int]:
+    """Patch VideoMetadata._run_ffprobe with a passthrough counter; returns the counter dict."""
+    calls = {"n": 0}
+    original = VideoMetadata._run_ffprobe
+
+    def counted(video_path):
+        calls["n"] += 1
+        return original(video_path)
+
+    monkeypatch.setattr(VideoMetadata, "_run_ffprobe", staticmethod(counted))
+    return calls
+
+
+def test_from_path_caches_probe(monkeypatch):
+    """A repeated probe of the same unchanged file hits the cache and skips ffprobe."""
+    calls = _count_probes(monkeypatch)
+    first = VideoMetadata.from_path(SMALL_VIDEO_PATH)
+    second = VideoMetadata.from_path(SMALL_VIDEO_PATH)
+    assert calls["n"] == 1
+    assert first == second == SMALL_VIDEO_METADATA
+
+
+def test_from_path_reprobes_when_file_changes(monkeypatch, tmp_path):
+    """Overwriting a file in place invalidates its cache entry (mtime_ns/size change)."""
+    calls = _count_probes(monkeypatch)
+    target = tmp_path / "clip.mp4"
+    shutil.copy(SMALL_VIDEO_PATH, target)
+    first = VideoMetadata.from_path(target)
+    assert first == SMALL_VIDEO_METADATA
+
+    shutil.copy(BIG_VIDEO_PATH, target)  # different content -> different size and mtime
+    second = VideoMetadata.from_path(target)
+    assert calls["n"] == 2
+    assert second != first
+
+
+def test_clear_cache_forces_reprobe(monkeypatch):
+    calls = _count_probes(monkeypatch)
+    VideoMetadata.from_path(SMALL_VIDEO_PATH)
+    VideoMetadata.clear_cache()
+    VideoMetadata.from_path(SMALL_VIDEO_PATH)
+    assert calls["n"] == 2
+
+
+def test_missing_file_raises_and_is_not_cached():
+    with pytest.raises(FileNotFoundError):
+        VideoMetadata.from_path("/no/such/file.mp4")
+    assert len(_video_mod._METADATA_CACHE) == 0
+
+
+def test_cache_is_lru_bounded(monkeypatch, tmp_path):
+    monkeypatch.setattr(_video_mod, "_METADATA_CACHE_MAXSIZE", 2)
+    for i in range(3):
+        path = tmp_path / f"clip_{i}.mp4"
+        shutil.copy(SMALL_VIDEO_PATH, path)
+        VideoMetadata.from_path(path)
+    assert len(_video_mod._METADATA_CACHE) <= 2
+
+
+def test_from_path_is_threadsafe():
+    """Concurrent probes of the same and different files must not race the LRU dict."""
+    paths = [SMALL_VIDEO_PATH, BIG_VIDEO_PATH]
+    results: list[VideoMetadata] = []
+    errors: list[Exception] = []
+
+    def worker(path: str):
+        try:
+            results.append(VideoMetadata.from_path(path))
+        except Exception as exc:  # noqa: BLE001 - surfaced via the errors list
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(paths[i % 2],)) for i in range(16)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert not errors
+    assert all(result in (SMALL_VIDEO_METADATA, BIG_VIDEO_METADATA) for result in results)

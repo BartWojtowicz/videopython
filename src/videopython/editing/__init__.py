@@ -36,7 +36,7 @@ from .transforms import (
     SilenceRemoval,
     SpeedChange,
 )
-from .video_edit import SegmentConfig, VideoEdit
+from .video_edit import SegmentConfig, TransitionSpec, VideoEdit
 
 __all__ = [
     # Operation foundation
@@ -82,6 +82,7 @@ __all__ = [
     # Plan runner
     "VideoEdit",
     "SegmentConfig",
+    "TransitionSpec",
     # Subtitle placement
     "AnchorPoint",
     # Streamability report

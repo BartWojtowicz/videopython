@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from tests.test_config import SMALL_VIDEO_PATH
+from tests.test_config import BIG_VIDEO_PATH, SMALL_VIDEO_PATH
 from videopython.base.transcription import Transcription, TranscriptionWord
 from videopython.base.video import Video, VideoMetadata
 from videopython.editing import VideoEdit
@@ -686,6 +686,67 @@ class TestContextStreaming:
             eager_video.frames[active].astype(np.float32) - streamed_video.frames[active].astype(np.float32)
         ).mean()
         assert mae < 15, f"Mean absolute error too high: {mae}"
+
+
+class TestPerSourceContextStreaming:
+    """A per-source transcription map feeds each segment its OWN transcription.
+
+    The two segments cut from different sources; the pre-0.43 global context
+    would apply one transcription to both. These tests pin per-source keying
+    end-to-end through the streaming engine.
+    """
+
+    @staticmethod
+    def _plan():
+        return {
+            "segments": [
+                {
+                    "source": SMALL_VIDEO_PATH,
+                    "start": 4.0,
+                    "end": 8.0,
+                    "operations": [{"op": "add_subtitles", "font_scale": 0.1}],
+                },
+                {
+                    "source": BIG_VIDEO_PATH,
+                    "start": 2.0,
+                    "end": 6.0,
+                    "operations": [{"op": "add_subtitles", "font_scale": 0.1}],
+                },
+            ],
+        }
+
+    def test_missing_source_in_map_raises_for_that_segment(self, tmp_path):
+        """The map supplies only segment 0's source; segment 1 must not inherit it."""
+        tx = Transcription(words=[TranscriptionWord(start=4.5, end=5.5, word="hi")])
+        context = {"transcription": {SMALL_VIDEO_PATH: tx}}
+        with pytest.raises(ValueError, match="requires transcription data"):
+            VideoEdit.from_dict(self._plan()).run_to_file(tmp_path / "out.mp4", context=context)
+
+    def test_per_source_map_renders_both_segments(self, tmp_path):
+        """Both sources keyed -> the multi-clip plan streams end to end."""
+        context = {
+            "transcription": {
+                SMALL_VIDEO_PATH: Transcription(words=[TranscriptionWord(start=4.5, end=5.5, word="hi")]),
+                BIG_VIDEO_PATH: Transcription(words=[TranscriptionWord(start=2.5, end=3.5, word="yo")]),
+            }
+        }
+        out = tmp_path / "out.mp4"
+        VideoEdit.from_dict(self._plan()).run_to_file(out, context=context)
+        assert out.exists()
+        assert Video.from_path(str(out)).frames.shape[0] > 0
+
+    def test_broadcast_value_applies_to_all_sources(self, tmp_path):
+        """A bare (non-dict) transcription still broadcasts to every segment (back-compat)."""
+        tx = Transcription(
+            words=[
+                TranscriptionWord(start=4.5, end=5.5, word="hi"),
+                TranscriptionWord(start=2.5, end=3.5, word="yo"),
+            ]
+        )
+        out = tmp_path / "out.mp4"
+        VideoEdit.from_dict(self._plan()).run_to_file(out, context={"transcription": tx})
+        assert out.exists()
+        assert Video.from_path(str(out)).frames.shape[0] > 0
 
 
 class TestTrailingFrameSchedule:

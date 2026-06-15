@@ -10,6 +10,7 @@ from videopython.ai.dubbing.config import DubbingConfig
 from videopython.ai.dubbing.models import DubbingResult, RevoiceResult
 
 if TYPE_CHECKING:
+    from videopython.ai.generation._tts_backend import SpeechBackend
     from videopython.base.video import Video
 
 logger = logging.getLogger(__name__)
@@ -24,10 +25,20 @@ class VideoDubber:
     :class:`DubbingConfig` for the full knob list and defaults.
     """
 
-    def __init__(self, config: DubbingConfig | None = None, **kwargs: Any):
+    def __init__(
+        self,
+        config: DubbingConfig | None = None,
+        *,
+        tts_backend: SpeechBackend | None = None,
+        **kwargs: Any,
+    ):
         if config is not None and kwargs:
             raise TypeError("Pass either `config=` or knob kwargs, not both")
         self.config = config or DubbingConfig(**kwargs)
+        # Optional injected speech backend. None -> the pipeline lazily builds
+        # the local chatterbox-backed TextToSpeech (requires the [tts] extra).
+        # Inject a SpeechBackend to dub with only [dub] installed.
+        self._tts_backend = tts_backend
         self._local_pipeline: Any = None
         logger.info(
             "VideoDubber initialized with %s",
@@ -37,7 +48,7 @@ class VideoDubber:
     def _init_local_pipeline(self) -> None:
         from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
 
-        self._local_pipeline = LocalDubbingPipeline(config=self.config)
+        self._local_pipeline = LocalDubbingPipeline(config=self.config, tts_backend=self._tts_backend)
 
     def dub(
         self,
