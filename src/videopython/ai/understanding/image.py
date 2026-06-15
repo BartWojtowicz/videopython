@@ -12,6 +12,8 @@ import numpy as np
 from PIL import Image
 
 from videopython.ai._device import log_device_initialization, release_device_memory, select_device
+from videopython.ai._predictor import ManagedPredictor
+from videopython.ai._revisions import pinned
 from videopython.base.description import SceneDescription
 
 logger = logging.getLogger(__name__)
@@ -74,7 +76,7 @@ _RETRY_PROMPT = (
 )
 
 
-class SceneVLM:
+class SceneVLM(ManagedPredictor):
     """Generates structured scene descriptions with local Qwen3.5.
 
     ``model_size`` maps to Qwen3.5 dense vision-capable variants:
@@ -162,13 +164,15 @@ class SceneVLM:
         requested_device = self.device
         resolved_device = select_device(self.device, mps_allowed=True)
 
-        self._processor = AutoProcessor.from_pretrained(self.model_name)
+        self._processor = AutoProcessor.from_pretrained(self.model_name, revision=pinned(self.model_name))
         # Save and restore default dtype -- transformers torch_dtype="auto" can
         # mutate torch.get_default_dtype(), which breaks concurrent models
         # (e.g. Whisper) that expect float32.
         saved_dtype = torch.get_default_dtype()
         try:
-            self._model = AutoModelForImageTextToText.from_pretrained(self.model_name, torch_dtype="auto")
+            self._model = AutoModelForImageTextToText.from_pretrained(
+                self.model_name, torch_dtype="auto", revision=pinned(self.model_name)
+            )
         finally:
             torch.set_default_dtype(saved_dtype)
         self._model.to(resolved_device)

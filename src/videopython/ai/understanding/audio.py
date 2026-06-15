@@ -6,6 +6,8 @@ import logging
 from typing import Any, Literal
 
 from videopython.ai._device import log_device_initialization, release_device_memory, select_device
+from videopython.ai._predictor import ManagedPredictor
+from videopython.ai._revisions import pinned
 from videopython.audio import Audio
 from videopython.base.description import AudioClassification, AudioEvent
 from videopython.base.transcription import Transcription, TranscriptionSegment, TranscriptionWord
@@ -105,7 +107,7 @@ def _attach_confidence_by_overlap(
             tgt.compression_ratio = best_src.compression_ratio
 
 
-class AudioToText:
+class AudioToText(ManagedPredictor):
     """Transcription service for audio and video using local Whisper models.
 
     Uses openai-whisper for transcription (with word-level timestamps) and
@@ -187,6 +189,9 @@ class AudioToText:
 
         whisper = require("whisper", "asr", feature="AudioToText")
 
+        # No revision pin: openai-whisper downloads weights by name from OpenAI's
+        # own CDN, not via a HF from_pretrained repo, so there is no HF commit
+        # SHA to pin (see videopython.ai._revisions module docstring).
         self._model = whisper.load_model(name=self.model_name, device=self.device)
 
     def _init_diarization(self) -> None:
@@ -197,7 +202,9 @@ class AudioToText:
 
         Pipeline = require("pyannote.audio", "asr", feature="AudioToText diarization").Pipeline
 
-        self._diarization_pipeline = Pipeline.from_pretrained(self.PYANNOTE_DIARIZATION_MODEL)
+        self._diarization_pipeline = Pipeline.from_pretrained(
+            self.PYANNOTE_DIARIZATION_MODEL, revision=pinned(self.PYANNOTE_DIARIZATION_MODEL)
+        )
         self._diarization_pipeline.to(torch.device(self.device))
 
     def _init_vad(self) -> None:
@@ -486,7 +493,7 @@ class AudioToText:
         return self._transcribe_local(audio, effective_vocab)
 
 
-class AudioClassifier:
+class AudioClassifier(ManagedPredictor):
     """Audio event and sound classification using AST."""
 
     SUPPORTED_MODELS: list[str] = ["MIT/ast-finetuned-audioset-10-10-0.4593"]
@@ -526,8 +533,8 @@ class AudioClassifier:
         ASTFeatureExtractor = _transformers.ASTFeatureExtractor
         ASTForAudioClassification = _transformers.ASTForAudioClassification
 
-        self._processor = ASTFeatureExtractor.from_pretrained(self.model_name)
-        self._model = ASTForAudioClassification.from_pretrained(self.model_name)
+        self._processor = ASTFeatureExtractor.from_pretrained(self.model_name, revision=pinned(self.model_name))
+        self._model = ASTForAudioClassification.from_pretrained(self.model_name, revision=pinned(self.model_name))
         self._model.to(self.device)
         self._model.eval()
 

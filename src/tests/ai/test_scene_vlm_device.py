@@ -20,7 +20,7 @@ def _install_fake_transformers(
 
     class FakeProcessor:
         @classmethod
-        def from_pretrained(cls, _name):
+        def from_pretrained(cls, _name, **kwargs):
             return cls()
 
     class FakeModel:

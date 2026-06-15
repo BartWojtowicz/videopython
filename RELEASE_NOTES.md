@@ -1,5 +1,56 @@
 # Release Notes
 
+## 0.43.1
+
+Four low-risk consumer wins (P2.14 + P3), all additive or bugfix -- no breaking
+changes.
+
+### `PlanError.to_prompt_line()` (P2.14)
+
+A structured `PlanError` can now render itself as a single actionable line for
+an LLM refine loop, composed from its fields:
+`<CODE> [at <location>] [(op '<op>')][: <clauses>][ -- <detail>]`. Every
+`PlanErrorCode` renders a non-empty line and `None` fields are omitted cleanly;
+`PlanValidationError.prompt_feedback()` newline-joins the lines over its errors.
+Purely additive -- existing per-site messages and `PlanError` fields are
+unchanged.
+
+### Predictor context managers
+
+A small `ManagedPredictor` mixin (`videopython.ai._predictor`) gives every
+predictor that defines `unload()` an `__enter__`/`__exit__`, so VRAM is released
+on block exit:
+
+```python
+with SceneVLM() as vlm:
+    vlm.detect(frame)
+# unload() fires here, on success or exception
+```
+
+Mixed into 12 predictors across `ai/understanding` and `ai/generation`;
+`__exit__` never suppresses exceptions. Replaces the manual `.unload()`
+discipline between Modal pipeline stages.
+
+### Pinned model revisions
+
+HuggingFace loads now pin a commit SHA via a central registry
+(`videopython.ai._revisions`, `pinned(model_id) -> str | None`), so silent
+upstream weight changes can't alter production analysis. 11 fixed repos are
+pinned (Qwen3.5 VLM sizes, pyannote diarization, AST classifier, YOLOv8-face,
+Qwen3 GGUF, MusicGen, SDXL, CogVideoX t2v/i2v). Loaders with no fixed HF repo
+are left unpinned by design and documented inline: the ultralytics YOLO asset,
+dynamic Marian language-pair models, Chatterbox's internal load, and the
+openai-whisper CDN download. `pinned()` returns `None` for those (the library
+default). Refresh SHAs per the registry docstring.
+
+### `Video.add_audio()` sample-rate negotiation
+
+Fixed a correctness bug: overlaying audio onto a non-silent track at a different
+sample rate previously raised or produced silent A/V drift. Incoming audio is
+now resampled to the existing track's rate (the rate encoded into the video)
+before any length math, via the existing `Audio.resample()`. Pure attach /
+replace keep the incoming rate. Behavior-only fix; signature unchanged.
+
 ## 0.43.0
 
 The P1 roadmap items, shipped as one

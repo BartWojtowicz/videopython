@@ -7,9 +7,11 @@ from typing import Any
 from PIL import Image
 
 from videopython.ai._device import log_device_initialization, release_device_memory, select_device
+from videopython.ai._predictor import ManagedPredictor
+from videopython.ai._revisions import pinned
 
 
-class TextToImage:
+class TextToImage(ManagedPredictor):
     """Generates images from text descriptions using local models."""
 
     def __init__(self, device: str | None = None):
@@ -32,6 +34,7 @@ class TextToImage:
         model_name = "stabilityai/stable-diffusion-xl-base-1.0"
         self._pipeline = DiffusionPipeline.from_pretrained(
             model_name,
+            revision=pinned(model_name),
             torch_dtype=dtype,
             variant=variant,
             use_safetensors=True,

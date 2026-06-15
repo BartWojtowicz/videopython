@@ -17,6 +17,7 @@ from typing import Any, Literal
 import numpy as np
 
 from videopython.ai._device import select_device
+from videopython.ai._revisions import pinned
 from videopython.base.description import BoundingBox, DetectedFace, FaceTrack
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,7 @@ class _FaceDetector:
         model_path = hf_hub_download(
             repo_id="arnabdhar/YOLOv8-Face-Detection",
             filename="model.pt",
+            revision=pinned("arnabdhar/YOLOv8-Face-Detection"),
         )
         self._yolo_model = YOLO(model_path)
 

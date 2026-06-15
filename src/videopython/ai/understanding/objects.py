@@ -87,6 +87,9 @@ class ObjectDetector:
 
         YOLO = require("ultralytics", "vision", feature="ObjectDetector").YOLO
 
+        # No revision pin: ultralytics resolves/downloads this asset from its own
+        # GitHub release assets, not a HF repo, and YOLO() takes no revision arg
+        # (see videopython.ai._revisions module docstring).
         self._yolo_model = YOLO(self.model_name)
         self._class_names = dict(self._yolo_model.names)
 

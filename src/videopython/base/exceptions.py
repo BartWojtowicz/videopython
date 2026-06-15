@@ -119,6 +119,62 @@ class PlanError:
     predicted_duration: float | None = None
     detail: str | None = None
 
+    def to_prompt_line(self) -> str:
+        """Render this error as one deterministic, actionable feedback line.
+
+        Composes a single line from the structured fields so a *standalone*
+        :class:`PlanError` can reproduce a human message without the ad-hoc
+        prose built at the validation call sites. Intended for an LLM
+        refine-loop: feed these lines back so the model can repair the plan.
+
+        Format (each clause is appended only when its field is populated;
+        ``None`` fields are skipped)::
+
+            <CODE_NAME> [at <location>] [(op '<op>')]: [<field>=<value>]
+            [(limit <limit>)] [(predicted duration <predicted_duration>s)]
+            [-- <detail>]
+
+        Every :class:`PlanErrorCode` yields a non-empty line: the code name is
+        always present, so a code carrying no other fields still renders
+        (e.g. ``"SOURCE_UNREADABLE"``). Numeric fields are formatted with
+        :func:`_fmt_num`, which drops trailing zeros for readability.
+        """
+        line = self.code.name
+        if self.location is not None:
+            line += f" at {self.location}"
+        if self.op is not None:
+            line += f" (op '{self.op}')"
+
+        clauses: list[str] = []
+        if self.field is not None:
+            if self.value is not None:
+                clauses.append(f"{self.field}={_fmt_num(self.value)}")
+            else:
+                clauses.append(self.field)
+        elif self.value is not None:
+            clauses.append(f"value={_fmt_num(self.value)}")
+        if self.limit is not None:
+            clauses.append(f"limit {_fmt_num(self.limit)}")
+        if self.predicted_duration is not None:
+            clauses.append(f"predicted duration {_fmt_num(self.predicted_duration)}s")
+
+        if clauses:
+            line += ": " + ", ".join(clauses)
+        if self.detail is not None:
+            line += f" -- {self.detail}"
+        return line
+
+
+def _fmt_num(value: float) -> str:
+    """Format a numeric field readably: integers lose the ``.0``, floats keep it.
+
+    Keeps :meth:`PlanError.to_prompt_line` deterministic and free of noisy
+    trailing zeros (``3`` not ``3.0``, but ``2.5`` stays ``2.5``).
+    """
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
 
 @dataclass
 class PlanRepair:
@@ -156,3 +212,12 @@ class PlanValidationError(ValueError):
     def __init__(self, message: str, errors: list[PlanError]):
         super().__init__(message)
         self.errors = errors
+
+    def prompt_feedback(self) -> str:
+        """Every carried :class:`PlanError` as newline-joined feedback lines.
+
+        Joins :meth:`PlanError.to_prompt_line` over :attr:`errors`, one per
+        line -- a ready-to-feed block for an LLM refine loop. Returns an empty
+        string when no structured errors are attached.
+        """
+        return "\n".join(e.to_prompt_line() for e in self.errors)

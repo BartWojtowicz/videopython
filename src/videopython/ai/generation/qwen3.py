@@ -22,6 +22,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 from videopython.ai._device import release_device_memory, select_device
+from videopython.ai._predictor import ManagedPredictor
+from videopython.ai._revisions import pinned
 from videopython.ai.generation.translation import (
     LANGUAGE_NAMES,
     MarianTranslator,
@@ -208,7 +210,7 @@ def _parse_jsonl_response(raw: str) -> dict[int, str]:
     return parsed
 
 
-class Qwen3Translator:
+class Qwen3Translator(ManagedPredictor):
     """Qwen3-Instruct translation via llama-cpp-python (GGUF).
 
     Args:
@@ -277,7 +279,7 @@ class Qwen3Translator:
             )
 
         logger.info("Qwen3Translator: loading %s", self.filename)
-        model_path = Path(hf_hub_download(repo_id=self.repo_id, filename=self.filename))
+        model_path = Path(hf_hub_download(repo_id=self.repo_id, filename=self.filename, revision=pinned(self.repo_id)))
 
         # n_gpu_layers=-1 offloads everything to GPU when one is available;
         # 0 forces CPU. llama-cpp-python's Metal/CUDA support detects and
