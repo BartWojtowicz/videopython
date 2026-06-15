@@ -50,14 +50,29 @@ def pytest_collection_modifyitems(config, items):
                 )
 
 
+# Load each sample video once per session, but hand every test a fresh copy:
+# many tests mutate the Video in place (``.apply`` reassigns ``video.frames``),
+# so a shared session-scoped instance leaks state across tests (a transforms
+# test could shrink it to 0 frames and break a later effect test). The
+# session loader keeps disk I/O once; the per-test copy keeps tests isolated.
 @pytest.fixture(scope="session")
-def big_video():
+def _big_video_source():
     return Video.from_path(BIG_VIDEO_PATH)
 
 
+@pytest.fixture
+def big_video(_big_video_source):
+    return _big_video_source.copy()
+
+
 @pytest.fixture(scope="session")
-def small_video():
+def _small_video_source():
     return Video.from_path(SMALL_VIDEO_PATH)
+
+
+@pytest.fixture
+def small_video(_small_video_source):
+    return _small_video_source.copy()
 
 
 @pytest.fixture

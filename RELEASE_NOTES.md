@@ -120,6 +120,31 @@ reports it and `repair` clamps it one frame short of the limit. `post_operations
 combined with transitions are reported `UNSTREAMABLE` (a post-op envelope
 cannot fold across the separately re-encoded seam).
 
+### Audio in the filter graph
+
+Segment audio moved off the in-memory path into the ffmpeg graph: the original
+source is a second `-i` input routed through `-filter_complex` in the **same**
+per-segment invocation as the video (no more whole-source `Audio` decode, no
+temp-WAV mux). This closes the one honest caveat on "streaming-only" — segment
+audio was the last fully-in-memory stage (~1.2 GB/hour stereo). Each
+audio-affecting op compiles an `to_ffmpeg_audio_filter` twin at the same plan
+stage as its video filter: `speed_change` → `atempo`, `freeze_frame` → silence
+splice, `silence_removal` → sample-accurate `atrim`+`concat` keep-windows,
+`fade` → a windowed `volume` envelope, `volume_adjust` → `volume`. A
+length-pin (`atrim`+`apad` to the folded output duration) plus
+`aresample=async=1` hold A/V sync within the existing 0.15s tolerance; a source
+with no audio stream gets a native `anullsrc` silent track.
+
+`run()` stays a view over the same compiled graph — it decodes the audio graph
+to a PCM buffer for `video.audio` (O(output-duration) memory, in-memory view
+only), so `run()` and `run_to_file` cannot diverge.
+
+BREAKING: `Operation.transform_audio` → `to_ffmpeg_audio_filter`;
+`StreamingSegmentPlan.audio_ops`/`post_audio_ops` → `af_filters`/`post_af_filters`;
+`VideoEdit._load_segment_audio` removed; audio fade/volume curves are now native
+ffmpeg (`afade`/`volume`-shaped), not bit-identical to the old numpy ramps (the
+libass precedent).
+
 ## 0.42.0
 
 **Streaming-first migration complete: streaming is the only execution

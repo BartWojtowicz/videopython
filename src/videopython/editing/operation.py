@@ -41,7 +41,6 @@ from pydantic import BaseModel, ConfigDict, Discriminator, Field, TypeAdapter
 from tqdm import tqdm
 
 if TYPE_CHECKING:
-    from videopython.audio import Audio
     from videopython.base.video import Video, VideoMetadata
 
 __all__ = [
@@ -137,6 +136,13 @@ class FilterCtx:
     start_second: float = 0.0
     end_second: float | None = None
     decode_filters: tuple[str, ...] | None = ()
+    audio_label: str = "a"
+    """A unique-within-the-graph prefix an audio-filter compilation can use to
+    name internal ``filter_complex`` labels (``freeze_frame``'s split/concat
+    splice). The plan builder sets a distinct value per op so a multi-statement
+    audio fragment cannot collide with another op's internal labels. The
+    surrounding ``[in]<chain>[out]`` wrapper labels are owned by the builder;
+    this names only the op's *internal* intermediate streams."""
 
 
 LLM_HIDDEN_KEY = "llm_hidden"
@@ -413,21 +419,30 @@ class Operation(BaseModel):
         """
         return None
 
-    def transform_audio(self, audio: Audio, output_duration: float, fps: float, **context: Any) -> Audio:
-        """The op's audio-domain twin for the streaming path.
+    def to_ffmpeg_audio_filter(self, ctx: FilterCtx) -> str | None:
+        """Compile the op's audio-domain twin to an ffmpeg audio-filter expression.
 
-        Video streams through the ffmpeg filter chain, but segment audio is
-        processed in memory (``_load_segment_audio``); a duration-changing
-        transform must therefore transform the audio to match
-        (``speed_change`` time-stretches, ``freeze_frame`` inserts silence,
-        ``silence_removal`` cuts the same windows). ``output_duration`` is
-        the predicted post-op duration the result must fit; ``context``
-        carries the op's resolved ``requires`` values (segment-local), for
-        twins that need them. Identity by default -- the runner only replays
-        ops that override this. The eager ``apply`` should delegate its audio
-        handling here so the two paths cannot drift.
+        The audio analogue of :meth:`to_ffmpeg_filter`: segment audio now
+        streams through the SAME ffmpeg process as the video (a second
+        ``-i source`` input routed through ``-filter_complex``), so a
+        duration-changing transform expresses its audio effect as a filter on
+        that graph instead of mutating an in-memory ``Audio`` array
+        (``speed_change`` -> ``atempo``, ``freeze_frame`` -> silence splice,
+        ``silence_removal`` -> ``aselect`` keep windows, ``fade`` -> ``afade``,
+        ``volume_adjust`` -> ``volume``).
+
+        ``ctx`` is the SAME :class:`FilterCtx` the video side builds at this
+        op's plan position -- ``ctx.fps``/``ctx.frame_count`` are the
+        already-folded values, ``ctx.context`` carries the resolved,
+        segment-local ``requires`` -- so the audio chain stays in lockstep
+        with the video chain. The returned expression is a comma-joined
+        single-input/single-output filter sub-chain (e.g. ``"atempo=2.0"``);
+        the plan builder appends it to the segment's labeled audio graph at
+        the same stage (decode/encode) it appends the video filter. ``None``
+        means "no audio effect" -- the default, so the builder only emits a
+        filter for the four audio-affecting ops.
         """
-        return audio
+        return None
 
 
 class Effect(Operation):
@@ -451,7 +466,7 @@ class Effect(Operation):
 
     category: ClassVar[OpCategory] = OpCategory.EFFECT
     audio_coupled: ClassVar[bool] = False
-    """Whether the effect mutates audio alongside pixels (``_apply_audio``).
+    """Whether the effect mutates audio alongside pixels (``afade``/``volume``).
 
     Audio-coupled effects cannot fold as post-operations across segment
     boundaries: each segment's audio is processed independently, so a gain

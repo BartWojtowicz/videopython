@@ -19,19 +19,17 @@ Wire format::
 
 from __future__ import annotations
 
+import dataclasses
 import json
-import subprocess
 import tempfile
-import warnings
 from pathlib import Path
 from typing import Annotated, Any, Literal, Protocol, get_args, runtime_checkable
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SerializeAsAny
 
-from videopython.audio import Audio, AudioLoadError
 from videopython.base.exceptions import PlanError, PlanErrorCode, PlanRepair, PlanValidationError
 from videopython.base.video import ALLOWED_VIDEO_FORMATS, ALLOWED_VIDEO_PRESETS, Video, VideoMetadata
-from videopython.editing.effects import Effect, Fade, VolumeAdjust
+from videopython.editing.effects import Effect
 from videopython.editing.operation import FilterCtx, Operation, _to_strict_schema
 from videopython.editing.streaming import (
     TRANSITION_TYPES,
@@ -40,7 +38,9 @@ from videopython.editing.streaming import (
     StreamingSegmentPlan,
     analyze_streamability,
     concat_files,
+    source_has_audio_stream,
     stream_segment,
+    stream_segment_audio_to_array,
     stream_segment_to_frames,
     stream_transition_frames,
     stream_transition_pair,
@@ -1495,12 +1495,14 @@ class VideoEdit(BaseModel):
         try:
             self._assert_transitions_runnable(plans)
             videos: list[Video] = []
-            for segment, plan in zip(self.segments, plans):
+            for plan in plans:
                 frames = stream_segment_to_frames(plan)
                 video = Video.from_frames(frames, fps=plan.final_fps or plan.output_fps)
-                audio = self._load_segment_audio(segment, plan)
-                if audio is not None:
-                    video.audio = audio
+                # run() is "stream into memory": decode the SAME compiled audio
+                # graph the file path bakes into the segment to a PCM buffer
+                # (O(output-duration) memory, only for the in-memory view) so
+                # run()/run_to_file cannot diverge.
+                video.audio = stream_segment_audio_to_array(plan)
                 videos.append(video)
             result = videos[0]
             for i in range(1, len(videos)):
@@ -1508,30 +1510,37 @@ class VideoEdit(BaseModel):
                 if spec is None:
                     result = result + videos[i]
                 else:
-                    result = self._join_transition_in_memory(result, videos[i], spec)
+                    # Decide crossfade-vs-butt-join by source-stream presence, the
+                    # SAME heuristic run_to_file uses (the entering segments'
+                    # sources), so the two paths cannot disagree on the seam audio.
+                    both_audible = source_has_audio_stream(plans[i - 1].source_path) and source_has_audio_stream(
+                        plans[i].source_path
+                    )
+                    result = self._join_transition_in_memory(result, videos[i], spec, both_audible)
             return result
         finally:
             for plan in plans:
                 for f in plan.owned_temp_files:
                     f.unlink(missing_ok=True)
 
-    def _join_transition_in_memory(self, left: Video, right: Video, spec: TransitionSpec) -> Video:
+    def _join_transition_in_memory(self, left: Video, right: Video, spec: TransitionSpec, both_audible: bool) -> Video:
         """xfade ``right`` onto the running ``left`` video for ``run()``.
 
         The in-memory twin of the file path's :func:`stream_transition_pair`:
         blends the frames through the SAME shared :func:`xfade_filter` builder
         (so the seam pixels match ``run_to_file``), then joins the audio --
-        ``acrossfade`` when both sides are audible and ``spec.audio`` is set,
-        else a hard butt-join over the same overlap -- and fits it to the
-        shortened video duration so the mux cannot drift. xfade requires
-        matching geometry/fps; the per-segment realize already normalized both
-        to the matched targets.
+        ``acrossfade`` when ``both_audible`` and ``spec.audio`` is set, else a
+        hard butt-join over the same overlap -- and fits it to the shortened
+        video duration so the mux cannot drift. ``both_audible`` is the caller's
+        source-stream-presence decision (the same heuristic ``run_to_file``
+        uses), so the two paths agree even for a silent-but-present audio
+        stream. xfade requires matching geometry/fps; the per-segment realize
+        already normalized both to the matched targets.
         """
         fps = left.fps
         blended = stream_transition_frames(left.frames, right.frames, spec.type, spec.duration, fps)
         out = Video.from_frames(blended, fps=fps)
 
-        both_audible = not left.audio.is_silent and not right.audio.is_silent
         if spec.audio and both_audible:
             # Crossfade over the overlap (acrossfade twin). The transition guard
             # ensured each side is at least `duration` long, so this is safe.
@@ -1570,22 +1579,23 @@ class VideoEdit(BaseModel):
         try:
             self._assert_transitions_runnable(plans)
             if len(plans) == 1:
-                plan = plans[0]
-                audio = self._load_segment_audio(self.segments[0], plan)
-                return stream_segment(plan, output_path, audio=audio, format=format, preset=preset, crf=crf)
+                return stream_segment(plans[0], output_path, format=format, preset=preset, crf=crf)
 
             # Realize each segment to its own temp file (effects + audio already
-            # baked by stream_segment), capturing per-segment audibility for the
-            # crossfade-vs-butt-join decision at any transition seam.
+            # baked by stream_segment's filter_complex), capturing per-segment
+            # audibility for the crossfade-vs-butt-join decision at any
+            # transition seam. Audibility is the source's audio-stream presence:
+            # a source with no audio gets a native silent track (anullsrc), so
+            # it never crossfades -- the same decision the old materialized
+            # is_silent made for the no-audio case, without decoding audio.
             temp_files: list[Path] = []
             audible: list[bool] = []
             try:
-                for segment, plan in zip(self.segments, plans):
+                for plan in plans:
                     tmp = tempfile.NamedTemporaryFile(suffix=f".{format}", delete=False)
                     tmp.close()
-                    audio = self._load_segment_audio(segment, plan)
-                    audible.append(audio is not None and not audio.is_silent)
-                    stream_segment(plan, Path(tmp.name), audio=audio, format=format, preset=preset, crf=crf)
+                    audible.append(source_has_audio_stream(plan.source_path))
+                    stream_segment(plan, Path(tmp.name), with_audio=True, format=format, preset=preset, crf=crf)
                     temp_files.append(Path(tmp.name))
 
                 if all(seg.transition_in is None for seg in self.segments):
@@ -1845,9 +1855,27 @@ class VideoEdit(BaseModel):
 
         effect_schedule: list[EffectScheduleEntry] = []
         post_vf_filters: list[str] = []
-        audio_ops: list[tuple[Operation, float, float, dict[str, Any]]] = []
-        post_audio_ops: list[tuple[Operation, float, float, dict[str, Any]]] = []
+        af_filters: list[str] = []
+        post_af_filters: list[str] = []
+        audio_idx = 0
         duration_changed = False
+
+        def compile_audio_twin(op: Operation, ctx: FilterCtx, encode_stage: bool) -> None:
+            """Append the op's audio-domain filter at the same stage the video
+            filter landed, keeping audio and video stage placement coupled.
+
+            ``ctx`` is the SAME FilterCtx the video side compiled this op with
+            (pre-op ``running``), plus a per-op ``audio_label`` so a
+            multi-statement fragment (freeze_frame's splice) cannot collide with
+            another op's internal labels."""
+            nonlocal audio_idx
+            audio_ctx = dataclasses.replace(ctx, audio_label=f"f{audio_idx}")
+            af = op.to_ffmpeg_audio_filter(audio_ctx)
+            audio_idx += 1
+            if af is None:
+                return
+            (post_af_filters if encode_stage else af_filters).append(af)
+
         # The pipe stage: dims/fps/frame-count of the frames flowing through
         # process_frame and into the encoder's rawvideo stdin. Frozen the
         # moment encode-stage content appears (a scheduled effect or any
@@ -1896,6 +1924,9 @@ class VideoEdit(BaseModel):
                                 post_vf_filters.append(filter_expr)
                             else:
                                 vf_filters.append(filter_expr)
+                            # Audio twin at the same stage (add_subtitles has
+                            # none today; kept coupled for extensibility).
+                            compile_audio_twin(op, ctx, encode_stage_effect)
                             continue
                     if post_vf_filters:
                         # A frame effect after an encode-stage filter would run
@@ -1910,6 +1941,22 @@ class VideoEdit(BaseModel):
                     pipe_meta = pipe_meta or running
                     start_f, end_f = _effect_frame_range(op, running.fps, running.frame_count)
                     effect_schedule.append(EffectScheduleEntry(op, start_f, end_f, op_context))
+                    # Audio-coupled frame effects (fade/volume_adjust) express
+                    # their gain on the audio graph. A frame effect always sits
+                    # at the decode stage (one after an encode-stage filter is
+                    # rejected above), so its audio twin joins af_filters; its
+                    # window resolves against this position's running metadata.
+                    effect_ctx = FilterCtx(
+                        width=running.width,
+                        height=running.height,
+                        fps=running.fps,
+                        frame_count=running.frame_count,
+                        context=seg_context or {},
+                        source_path=segment.source,
+                        start_second=segment.start,
+                        end_second=segment.end,
+                    )
+                    compile_audio_twin(op, effect_ctx, encode_stage=False)
                     continue
                 if op.requires and (duration_changed or not op.streamable):
                     # A context-requiring transform can stream only when its
@@ -1965,20 +2012,14 @@ class VideoEdit(BaseModel):
                     post_vf_filters.append(filter_expr)
                 else:
                     vf_filters.append(filter_expr)
+                # Audio twin compiled from the SAME pre-op ctx, appended to the
+                # same stage the video filter landed -- so audio and video
+                # stage placement cannot drift (speed->atempo, freeze->silence
+                # splice, silence_removal->aselect keep windows).
+                compile_audio_twin(op, ctx, encode_stage)
                 running = _predict_with_context(op, running, seg_context)
                 if op.changes_duration:
                     duration_changed = True
-                if type(op).transform_audio is not Operation.transform_audio:
-                    # The op has an audio-domain twin; _load_segment_audio
-                    # replays it (with the predicted post-op duration and the
-                    # op's resolved context) so the in-memory audio follows
-                    # the video's filter chain. Encode-stage twins replay
-                    # after the effect envelopes, matching plan order.
-                    twin_context: dict[str, Any] = {}
-                    if op.requires and seg_context:
-                        twin_context = {k: seg_context[k] for k in op.requires if k in seg_context}
-                    entry = (op, running.total_seconds, running.fps, twin_context)
-                    (post_audio_ops if encode_stage else audio_ops).append(entry)
         except BaseException:
             # A raising compile or prediction (e.g. missing subtitle context,
             # crop exceeding source) must not leak earlier ops' temp files.
@@ -1986,6 +2027,12 @@ class VideoEdit(BaseModel):
             raise
 
         pipe = pipe_meta or running
+        # Final output duration after every transform (decode + encode stage),
+        # used to pin the audio graph length to the video timeline. `running`
+        # is folded through the whole chain, so this is the encoded output's
+        # duration even when an encode-stage transform (post_vf speed) shortens
+        # it below the pipe frame count.
+        output_total_seconds = running.frame_count / running.fps if running.fps else 0.0
         return StreamingSegmentPlan(
             source_path=segment.source,
             start_second=segment.start,
@@ -1998,8 +2045,9 @@ class VideoEdit(BaseModel):
             post_vf_filters=post_vf_filters,
             owned_temp_files=owned_files,
             output_total_frames=pipe.frame_count,
-            audio_ops=audio_ops,
-            post_audio_ops=post_audio_ops,
+            af_filters=af_filters,
+            post_af_filters=post_af_filters,
+            output_total_seconds=output_total_seconds,
             final_fps=running.fps,
             final_width=running.width,
             final_height=running.height,
@@ -2047,40 +2095,6 @@ class VideoEdit(BaseModel):
                         )
                     ],
                 )
-
-    def _load_segment_audio(
-        self,
-        segment: SegmentConfig,
-        plan: StreamingSegmentPlan,
-    ) -> Audio | None:
-        try:
-            audio = Audio.from_path(str(segment.source))
-            audio = audio.slice(segment.start, segment.end)
-        except (AudioLoadError, FileNotFoundError, subprocess.CalledProcessError):
-            warnings.warn(f"No audio found for `{segment.source}`, using silent track.")
-            audio = Audio.create_silent(duration_seconds=round(segment.duration, 2), stereo=True, sample_rate=44100)
-
-        # Replay duration-changing transforms' audio twins in plan order
-        # (speed_change stretches, freeze_frame inserts silence), each fit to
-        # its predicted post-op duration -- the audio mirror of the video
-        # filter chain. Runs before the effect envelopes, whose frame ranges
-        # already live on the post-transform output timeline.
-        for op, out_duration, op_fps, op_context in plan.audio_ops:
-            audio = op.transform_audio(audio, out_duration, op_fps, **op_context)
-
-        for entry in plan.effect_schedule:
-            effect = entry.effect
-            if isinstance(effect, (Fade, VolumeAdjust)) and not audio.is_silent:
-                start_s = entry.start_frame / plan.output_fps
-                stop_s = entry.end_frame / plan.output_fps
-                effect._apply_audio(audio, start_s, stop_s)
-
-        # Encode-stage twins (transforms that follow the effects in plan
-        # order) replay after the envelopes, mirroring the video chain.
-        for op, out_duration, op_fps, op_context in plan.post_audio_ops:
-            audio = op.transform_audio(audio, out_duration, op_fps, **op_context)
-
-        return audio
 
 
 def _plan_output_frames(plan: StreamingSegmentPlan) -> tuple[int, float]:

@@ -16,6 +16,35 @@ if TYPE_CHECKING:
     from videopython.audio.analysis import AudioLevels, AudioSegment, AudioSegmentType, SilentSegment
 
 
+def atempo_chain(speed: float) -> list[str]:
+    """Build the ``atempo`` filter chain that time-stretches audio by ``speed``.
+
+    ffmpeg's ``atempo`` filter only accepts a factor in ``[0.5, 2.0]``, so a
+    factor outside that range is decomposed into a chain of capped stages
+    (``atempo=2.0`` repeated for speedups, ``atempo=0.5`` for slowdowns) times
+    a final remainder stage. The single source of truth shared by
+    :meth:`Audio.time_stretch` (the in-memory WAV round-trip used by the eager
+    ``apply`` path) and ``SpeedChange.to_ffmpeg_audio_filter`` (the streaming
+    filter graph), so both stretch by exactly the same chain. Returns an empty
+    list for ``speed == 1`` (a no-op the caller maps to ``anull``).
+    """
+    if speed <= 0:
+        raise ValueError("Speed must be positive")
+    if abs(speed - 1.0) < 0.001:
+        return []
+    filters: list[str] = []
+    remaining = speed
+    while remaining > 2.0:
+        filters.append("atempo=2.0")
+        remaining /= 2.0
+    while remaining < 0.5:
+        filters.append("atempo=0.5")
+        remaining /= 0.5
+    if abs(remaining - 1.0) > 0.001:
+        filters.append(f"atempo={remaining}")
+    return filters
+
+
 @dataclass
 class AudioMetadata:
     """Stores metadata for audio files"""
@@ -654,21 +683,9 @@ class Audio:
             # No change needed
             return Audio(self.data.copy(), self.metadata)
 
-        # Build atempo filter string, chaining for extreme speeds
-        # atempo only supports range [0.5, 2.0], so we chain multiple filters
-        filters = []
-        remaining_speed = speed
-
-        while remaining_speed > 2.0:
-            filters.append("atempo=2.0")
-            remaining_speed /= 2.0
-        while remaining_speed < 0.5:
-            filters.append("atempo=0.5")
-            remaining_speed /= 0.5
-
-        if abs(remaining_speed - 1.0) > 0.001:
-            filters.append(f"atempo={remaining_speed}")
-
+        # Chain atempo stages for speeds outside [0.5, 2.0] -- the same
+        # decomposition the streaming filter graph uses (single source of truth).
+        filters = atempo_chain(speed)
         filter_str = ",".join(filters) if filters else "anull"
 
         # Save current audio to temp WAV, process with ffmpeg, read back

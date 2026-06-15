@@ -301,11 +301,14 @@ class TestAudio:
         audio = Audio.from_path(str(out))
         assert abs(audio.metadata.duration_seconds - vmeta.total_seconds) < 0.1
 
-    def test_silent_segment_butt_joins(self, tmp_path):
-        # One silent segment -> no crossfade even with audio=True; still fits.
+    def test_silent_stream_segment_consistent_across_paths(self, tmp_path):
+        # A muxed-but-silent audio stream counts as "has audio" under the
+        # stream-presence heuristic, so run() and run_to_file make the SAME
+        # crossfade decision (the fix for the is_silent-vs-source_has_audio_stream
+        # divergence). Both fit the seam audio to the shortened timeline.
         red = tmp_path / "red.mp4"
         blue = tmp_path / "blue.mp4"
-        _solid((255, 0, 0), 1.5).save(str(red))  # silent
+        _solid((255, 0, 0), 1.5).save(str(red))  # silent stream (still present)
         _solid((0, 0, 255), 1.5, tone_hz=880).save(str(blue))
         plan = VideoEdit.from_dict(
             {
@@ -322,6 +325,11 @@ class TestAudio:
         )
         result = plan.run()
         assert abs(result.audio.metadata.duration_seconds - result.total_seconds) < 1e-3
+
+        out = plan.run_to_file(tmp_path / "out.mp4")
+        file_audio = Audio.from_path(str(out))
+        # The two engines agree on the seam audio length (within AAC priming).
+        assert abs(file_audio.metadata.duration_seconds - result.audio.metadata.duration_seconds) < 0.1
 
 
 # --------------------------------------------------------------------- assembly

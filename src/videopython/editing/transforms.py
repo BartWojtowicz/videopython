@@ -19,6 +19,7 @@ from pydantic import Field, model_validator
 from tqdm import tqdm
 
 from videopython.audio import Audio
+from videopython.audio.audio import atempo_chain
 from videopython.base._dimensions import floor_to_even, round_to_even
 from videopython.base.exceptions import PlanError, PlanErrorCode, PlanValidationError
 from videopython.base.video import Video
@@ -380,11 +381,26 @@ class SpeedChange(Operation):
             resample = f"fps={ctx.fps:.10g}"
         return f"{retime},{resample}"
 
-    def transform_audio(self, audio: Audio, output_duration: float, fps: float, **_context: Any) -> Audio:
-        """Time-stretch by the (average) speed, then fit the predicted duration.
+    def to_ffmpeg_audio_filter(self, ctx: FilterCtx) -> str | None:
+        """Time-stretch the audio by the (average) speed via an ``atempo`` chain.
 
-        Ramps are approximated with a single constant stretch -- the same
-        approximation the eager path has always used, so the two paths agree.
+        The audio twin of :meth:`to_ffmpeg_filter`: streams in the same ffmpeg
+        process as the video. Ramps are approximated with a single constant
+        stretch at the average speed -- the same approximation the eager path
+        uses, so the two paths agree. ``adjust_audio=False`` leaves the audio
+        untouched (the ``atrim`` to the predicted output duration is applied by
+        the encoder graph's tail). Returns ``None`` when no stretch is needed.
+        """
+        if not self.adjust_audio:
+            return None
+        filters = atempo_chain(self._eff_speed())
+        return ",".join(filters) if filters else None
+
+    def _audio_apply(self, audio: Audio, output_duration: float) -> Audio:
+        """Eager (in-memory) audio time-stretch for ``Video.apply``.
+
+        The friendly ``Video`` API still mutates an in-memory ``Audio`` array;
+        the streaming engine uses :meth:`to_ffmpeg_audio_filter` instead.
         """
         if not audio.is_silent and self.adjust_audio:
             audio = audio.time_stretch(self._eff_speed())
@@ -431,7 +447,7 @@ class SpeedChange(Operation):
 
         target_duration = len(video.frames) / video.fps
         if video.audio is not None:
-            video.audio = self.transform_audio(video.audio, target_duration, video.fps)
+            video.audio = self._audio_apply(video.audio, target_duration)
         return video
 
     def predict_metadata(self, meta: VideoMetadata) -> VideoMetadata:
@@ -497,7 +513,7 @@ class FreezeFrame(Operation):
 
         if video.audio is not None:
             target_duration = len(video.frames) / video.fps
-            video.audio = self.transform_audio(video.audio, target_duration, video.fps)
+            video.audio = self._audio_apply(video.audio, target_duration, video.fps)
         return video
 
     def to_ffmpeg_filter(self, ctx: FilterCtx) -> str | None:
@@ -541,8 +557,48 @@ class FreezeFrame(Operation):
             chain += f",select='not(between(n,{drop_from},{drop_to}))'"
         return chain + f",setpts=N/FRAME_RATE/TB,{resample}"
 
-    def transform_audio(self, audio: Audio, output_duration: float, fps: float, **_context: Any) -> Audio:
-        """Insert the freeze's silence at the held position, then fit the duration."""
+    def to_ffmpeg_audio_filter(self, ctx: FilterCtx) -> str | None:
+        """Splice the freeze's silence into the audio at the held position.
+
+        The audio twin of :meth:`to_ffmpeg_filter`: where the video ``loop``
+        duplicates the held frame, the audio inserts ``duration`` seconds of
+        silence at the same time. Expressed as a self-contained
+        ``filter_complex`` splice that needs no extra input -- the input is
+        ``asplit`` into head / silence / tail streams, the silence stream is a
+        ``duration``-long slice zeroed by ``volume=0``, and ``concat`` rejoins
+        them. ``after`` inserts at ``timestamp + 1/fps`` (mirroring the eager
+        sample math), ``before`` at ``timestamp``, ``replace`` drops the covered
+        original audio (tail starts at ``timestamp + duration``).
+
+        Returns a ``;``-joined fragment using ``ctx.audio_label``-prefixed
+        internal labels; the plan builder wraps it in ``[in]<frag>[out]``.
+        ``None`` when the freeze is sub-sample (a zero-length insert).
+        """
+        if self.duration <= 0:
+            return None
+        p = ctx.audio_label
+        head_end = self.timestamp + (1.0 / ctx.fps if self.position == "after" else 0.0)
+        head_end = max(0.0, head_end)
+        if self.position == "replace":
+            tail_start = self.timestamp + self.duration
+        else:
+            tail_start = head_end
+        # asplit feeds three copies; head/tail are trimmed slices, the middle
+        # copy is trimmed to `duration` and zeroed into the inserted silence.
+        return (
+            f"asplit=3[{p}h][{p}s][{p}t];"
+            f"[{p}h]atrim=end={head_end:.6f},asetpts=N/SR/TB[{p}hh];"
+            f"[{p}s]atrim=duration={self.duration:.6f},asetpts=N/SR/TB,volume=0[{p}ss];"
+            f"[{p}t]atrim=start={tail_start:.6f},asetpts=N/SR/TB[{p}tt];"
+            f"[{p}hh][{p}ss][{p}tt]concat=n=3:v=0:a=1"
+        )
+
+    def _audio_apply(self, audio: Audio, output_duration: float, fps: float) -> Audio:
+        """Eager (in-memory) silence splice for ``Video.apply``.
+
+        The friendly ``Video`` API still mutates an in-memory ``Audio`` array;
+        the streaming engine uses :meth:`to_ffmpeg_audio_filter` instead.
+        """
         sample_rate = audio.metadata.sample_rate
         channels = audio.metadata.channels
         silence_samples = round(self.duration * sample_rate)
@@ -678,9 +734,7 @@ class SilenceRemoval(Operation):
             return video
         video.frames = np.concatenate([video.frames[s:e] for s, e in keep], axis=0)
         if video.audio is not None:
-            video.audio = self.transform_audio(
-                video.audio, len(video.frames) / video.fps, video.fps, transcription=transcription
-            )
+            video.audio = self._audio_apply(video.audio, len(video.frames) / video.fps, video.fps, transcription)
         return video
 
     def to_ffmpeg_filter(self, ctx: FilterCtx) -> str | None:
@@ -704,9 +758,46 @@ class SilenceRemoval(Operation):
         # Trailing resampler: see FreezeFrame.to_ffmpeg_filter.
         return f"select='{terms}',setpts=N/FRAME_RATE/TB,fps={ctx.fps:.10g}"
 
-    def transform_audio(self, audio: Audio, output_duration: float, fps: float, **context: Any) -> Audio:
-        """Cut the same keep windows out of the audio, then fit the duration."""
-        transcription = context.get("transcription")
+    def to_ffmpeg_audio_filter(self, ctx: FilterCtx) -> str | None:
+        """Cut the same keep windows out of the audio via ``atrim`` + ``concat``.
+
+        The audio twin of :meth:`to_ffmpeg_filter`: keeps exactly the windows
+        the video ``select`` keeps, computed from the SAME ``_keep_frame_ranges``.
+        ``aselect`` selects whole audio *frames* (packets), not samples, so it
+        cannot reproduce the sample-accurate cut; instead the input is
+        ``asplit`` into one copy per window, each ``atrim``-ed to its
+        ``[start, end)`` time span (``atrim`` cuts on the sample boundary), then
+        ``concat``-ed in order -- the audio analogue of the frame-slice the
+        eager path does. No silences -> ``None`` (identity).
+        """
+        from videopython.base.transcription import Transcription as _Transcription
+
+        transcription = ctx.context.get("transcription")
+        if not isinstance(transcription, _Transcription):
+            raise ValueError(self._MISSING_CONTEXT)
+        if ctx.frame_count <= 0:
+            return None
+        keep = self._keep_frame_ranges(transcription, ctx.frame_count / ctx.fps, ctx.fps, ctx.frame_count)
+        if keep is None:
+            return None
+        p = ctx.audio_label
+        n = len(keep)
+        # One asplit branch per kept window; each branch trims to its time span,
+        # then concat in order. asetpts re-stamps each kept chunk to a
+        # continuous timeline so concat does not leave gaps.
+        stmts = [f"asplit={n}{''.join(f'[{p}i{i}]' for i in range(n))}"]
+        for i, (s, e) in enumerate(keep):
+            stmts.append(f"[{p}i{i}]atrim=start={s / ctx.fps:.6f}:end={e / ctx.fps:.6f},asetpts=N/SR/TB[{p}k{i}]")
+        joined = "".join(f"[{p}k{i}]" for i in range(n))
+        stmts.append(f"{joined}concat=n={n}:v=0:a=1")
+        return ";".join(stmts)
+
+    def _audio_apply(self, audio: Audio, output_duration: float, fps: float, transcription: Any) -> Audio:
+        """Eager (in-memory) keep-window cut for ``Video.apply``.
+
+        The friendly ``Video`` API still mutates an in-memory ``Audio`` array;
+        the streaming engine uses :meth:`to_ffmpeg_audio_filter` instead.
+        """
         if transcription is None:
             raise ValueError(self._MISSING_CONTEXT)
         total_seconds = audio.metadata.duration_seconds
