@@ -25,10 +25,14 @@ import tempfile
 from pathlib import Path
 from typing import Annotated, Any, Literal, Protocol, get_args, runtime_checkable
 
+import numpy as np
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SerializeAsAny
 
+from videopython.audio import Audio, AudioMetadata
+from videopython.base import _ffmpeg
 from videopython.base.exceptions import PlanError, PlanErrorCode, PlanRepair, PlanValidationError
 from videopython.base.video import ALLOWED_VIDEO_FORMATS, ALLOWED_VIDEO_PRESETS, Video, VideoMetadata
+from videopython.editing.audio_ops import MusicBed, build_music_bed_filter_complex
 from videopython.editing.effects import Effect
 from videopython.editing.operation import FilterCtx, Operation, _to_strict_schema
 from videopython.editing.streaming import (
@@ -45,9 +49,10 @@ from videopython.editing.streaming import (
     stream_transition_frames,
     stream_transition_pair,
 )
-from videopython.editing.transforms import DURATION_EPS, CutSeconds, Resize
+from videopython.editing.transforms import DURATION_EPS, CutSeconds, Resize, speech_windows
 
 __all__ = [
+    "MusicBed",
     "SegmentConfig",
     "TransitionSpec",
     "VideoEdit",
@@ -817,6 +822,14 @@ class VideoEdit(BaseModel):
             "mismatched dimensions raise during validation."
         ),
     )
+    music_bed: MusicBed | None = Field(
+        default=None,
+        description=(
+            "Optional music bed mixed under the whole assembled program in a final pass "
+            "(after segment concat / transitions). Set `duck` on it to lower the bed under "
+            "transcription-derived speech (single-segment plans only)."
+        ),
+    )
 
     # ------------------------------------------------------------------ I/O
 
@@ -898,6 +911,18 @@ class VideoEdit(BaseModel):
             prop["anyOf"] = [ts, {"type": "null"}]
             return prop
 
+        def _music_bed_field() -> dict[str, Any]:
+            # `music_bed` is `MusicBed | None`; like `transition_in`, inline a
+            # self-contained closed object so the field needs no external `$defs`.
+            mb = MusicBed.model_json_schema()
+            mb.pop("title", None)
+            mb.pop("$defs", None)
+            for sub in mb.get("properties", {}).values():
+                sub.pop("title", None)
+            prop = _field(cls, "music_bed")
+            prop["anyOf"] = [mb, {"type": "null"}]
+            return prop
+
         segment_schema: dict[str, Any] = {
             "type": "object",
             "description": SegmentConfig.__doc__,
@@ -922,6 +947,7 @@ class VideoEdit(BaseModel):
                 "post_operations": _array(cls, "post_operations", op_schema),
                 "match_to_lowest_fps": _field(cls, "match_to_lowest_fps"),
                 "match_to_lowest_resolution": _field(cls, "match_to_lowest_resolution"),
+                "music_bed": _music_bed_field(),
             },
             "required": ["segments"],
             "additionalProperties": False,
@@ -1302,6 +1328,77 @@ class VideoEdit(BaseModel):
             message, err = errs[0]
             raise PlanValidationError(message, [err])
 
+    def _music_bed_errors(self) -> list[_LocatedError]:
+        """Validate :attr:`music_bed`: readable source, and duck on a single segment.
+
+        Two checks, both fail-fast (before any decode): the bed ``source`` must
+        be a readable audio file (``SOURCE_UNREADABLE``, a cheap ffprobe header
+        probe like :class:`ImageOverlay`'s); and transcription-derived ducking is
+        only well-defined when the assembled timeline is a single segment's
+        timeline -- a multi-segment plan with ``duck`` set is rejected
+        (``MUSIC_BED_DUCK_MULTISEGMENT``), since the assembled-timeline
+        transcription mapping across cuts is out of scope. A non-ducked bed on a
+        multi-segment plan is fine.
+        """
+        bed = self.music_bed
+        if bed is None:
+            return []
+        out: list[_LocatedError] = []
+        if bed.duck is not None and len(self.segments) > 1:
+            message = (
+                f"music_bed.duck is set, but the plan has {len(self.segments)} segments. "
+                "Transcription-derived ducking is only supported on a single-segment plan "
+                "(the assembled-timeline transcription mapping across cuts is out of scope); "
+                "drop the duck or use a single-segment plan."
+            )
+            out.append(
+                (
+                    message,
+                    PlanError(PlanErrorCode.MUSIC_BED_DUCK_MULTISEGMENT, location="music_bed", field="duck"),
+                )
+            )
+        try:
+            bed.validate_source()
+        except PlanValidationError as e:
+            for err in e.errors:
+                err.location = "music_bed"
+            out.append((str(e), e.errors[0]))
+        return out
+
+    def _assert_music_bed_supported(self) -> None:
+        """Raising guard used by ``run``/``run_to_file`` (see :meth:`_music_bed_errors`)."""
+        errs = self._music_bed_errors()
+        if errs:
+            message, err = errs[0]
+            raise PlanValidationError(message, [err])
+
+    def _music_bed_speech_windows(self, context: dict[str, Any] | None) -> list[tuple[float, float]] | None:
+        """Speech windows for the music-bed duck, on the single segment's timeline.
+
+        Only reached for a single-segment plan (the duck-multisegment guard
+        rejects the rest), so the assembled timeline == the segment's timeline:
+        the rebased context transcription maps directly. Resolves the
+        segment-local transcription exactly as the per-segment ops do
+        (:func:`_segment_context`), then derives padded speech windows via the
+        shared :func:`speech_windows` helper. ``None`` when the bed is not
+        ducked or there is no transcription to derive windows from -- a non-ducked
+        (or context-less) bed mixes flat.
+        """
+        bed = self.music_bed
+        if bed is None or bed.duck is None:
+            return None
+        from videopython.base.transcription import Transcription
+
+        segment = self.segments[0]
+        seg_context = _segment_context(context, str(segment.source), segment.start, segment.end)
+        transcription = (seg_context or {}).get("transcription")
+        if not isinstance(transcription, Transcription):
+            return None
+        # The bed's padding mirrors silence_removal's default breathing room so
+        # the duck eases around speech rather than clipping each word tightly.
+        total = segment.end - segment.start
+        return speech_windows(transcription.words, 0.15, total)
+
     def _validate(
         self,
         source_metas: list[VideoMetadata],
@@ -1343,6 +1440,9 @@ class VideoEdit(BaseModel):
             errors.extend(exc.errors)
 
         for message, err in self._post_op_context_errors(context):
+            emit(message, err)
+
+        for message, err in self._music_bed_errors():
             emit(message, err)
 
         for message, err in _transition_structure_errors(list(self.segments)):
@@ -1492,6 +1592,7 @@ class VideoEdit(BaseModel):
         ``STREAMING_FALLBACK`` errors as :meth:`run_to_file`.
         """
         plans = self._compile_streaming_plans(context)
+        self._assert_music_bed_supported()
         try:
             self._assert_transitions_runnable(plans)
             videos: list[Video] = []
@@ -1517,11 +1618,77 @@ class VideoEdit(BaseModel):
                         plans[i].source_path
                     )
                     result = self._join_transition_in_memory(result, videos[i], spec, both_audible)
+            if self.music_bed is not None:
+                # Final post-assembly bed mix, the in-memory twin of
+                # run_to_file's: route the assembled program audio + the bed
+                # through the SAME build_music_bed_filter_complex builder.
+                speech = self._music_bed_speech_windows(context)
+                result.audio = self._mix_music_bed_in_memory(result, speech)
             return result
         finally:
             for plan in plans:
                 for f in plan.owned_temp_files:
                     f.unlink(missing_ok=True)
+
+    def _mix_music_bed_in_memory(self, result: Video, speech: list[tuple[float, float]] | None) -> Audio:
+        """Mix the music bed under the assembled program audio for ``run()``.
+
+        The in-memory twin of :meth:`_mix_music_bed_to_file`: the assembled
+        program's PCM audio is written to a temp WAV (input 0), the bed added as
+        a second ``-i`` input, and :func:`build_music_bed_filter_complex` (the
+        SAME builder the file path uses) compiles the ``amix`` graph, decoded
+        back to a float32 :class:`Audio`. The program duration is the assembled
+        video's exact timeline so the bed's loop/trim pin matches.
+        """
+        bed = self.music_bed
+        assert bed is not None
+        program_seconds = result.total_seconds
+        bed_inputs, graph, out_label = build_music_bed_filter_complex(
+            bed, program_seconds, speech=speech, bed_input_index=1, prog_label="0:a"
+        )
+        sample_rate = result.audio.metadata.sample_rate
+        tmpdir = Path(tempfile.mkdtemp(prefix="vp_bed_"))
+        prog_wav = tmpdir / "prog.wav"
+        try:
+            result.audio.save(prog_wav, format="wav")
+            cmd = [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                str(prog_wav),
+                *bed_inputs,
+                "-filter_complex",
+                ";".join(graph),
+                "-map",
+                out_label,
+                "-ac",
+                "2",
+                "-ar",
+                str(sample_rate),
+                "-f",
+                "f32le",
+                "pipe:1",
+            ]
+            raw = _ffmpeg.run(cmd)
+        finally:
+            prog_wav.unlink(missing_ok=True)
+            tmpdir.rmdir()
+
+        data = np.frombuffer(raw, dtype=np.float32)
+        if data.size % 2 != 0:
+            data = data[: data.size - 1]
+        data = data.reshape(-1, 2).copy()
+        np.clip(data, -1.0, 1.0, out=data)
+        metadata = AudioMetadata(
+            sample_rate=sample_rate,
+            channels=2,
+            sample_width=2,
+            duration_seconds=data.shape[0] / sample_rate,
+            frame_count=data.shape[0],
+        )
+        return Audio(data, metadata)
 
     def _join_transition_in_memory(self, left: Video, right: Video, spec: TransitionSpec, both_audible: bool) -> Video:
         """xfade ``right`` onto the running ``left`` video for ``run()``.
@@ -1576,40 +1743,119 @@ class VideoEdit(BaseModel):
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         plans = self._compile_streaming_plans(context)
+        self._assert_music_bed_supported()
+        # With a music bed, segment assembly writes to an intermediate file and
+        # the bed is mixed into `output_path` in a final post-assembly pass;
+        # without one, assembly writes straight to `output_path`.
+        bed_tmp: Path | None = None
+        if self.music_bed is not None:
+            tmp = tempfile.NamedTemporaryFile(suffix=f".{format}", delete=False)
+            tmp.close()
+            bed_tmp = Path(tmp.name)
+        assemble_target = bed_tmp if bed_tmp is not None else output_path
         try:
             self._assert_transitions_runnable(plans)
             if len(plans) == 1:
-                return stream_segment(plans[0], output_path, format=format, preset=preset, crf=crf)
+                assembled = stream_segment(plans[0], assemble_target, format=format, preset=preset, crf=crf)
+            else:
+                # Realize each segment to its own temp file (effects + audio
+                # already baked by stream_segment's filter_complex), capturing
+                # per-segment audibility for the crossfade-vs-butt-join decision
+                # at any transition seam. Audibility is the source's audio-stream
+                # presence: a source with no audio gets a native silent track
+                # (anullsrc), so it never crossfades -- the same decision the old
+                # materialized is_silent made for the no-audio case, without
+                # decoding audio.
+                temp_files: list[Path] = []
+                audible: list[bool] = []
+                try:
+                    for plan in plans:
+                        tmp = tempfile.NamedTemporaryFile(suffix=f".{format}", delete=False)
+                        tmp.close()
+                        audible.append(source_has_audio_stream(plan.source_path))
+                        stream_segment(plan, Path(tmp.name), with_audio=True, format=format, preset=preset, crf=crf)
+                        temp_files.append(Path(tmp.name))
 
-            # Realize each segment to its own temp file (effects + audio already
-            # baked by stream_segment's filter_complex), capturing per-segment
-            # audibility for the crossfade-vs-butt-join decision at any
-            # transition seam. Audibility is the source's audio-stream presence:
-            # a source with no audio gets a native silent track (anullsrc), so
-            # it never crossfades -- the same decision the old materialized
-            # is_silent made for the no-audio case, without decoding audio.
-            temp_files: list[Path] = []
-            audible: list[bool] = []
-            try:
-                for plan in plans:
-                    tmp = tempfile.NamedTemporaryFile(suffix=f".{format}", delete=False)
-                    tmp.close()
-                    audible.append(source_has_audio_stream(plan.source_path))
-                    stream_segment(plan, Path(tmp.name), with_audio=True, format=format, preset=preset, crf=crf)
-                    temp_files.append(Path(tmp.name))
+                    if all(seg.transition_in is None for seg in self.segments):
+                        assembled = concat_files(temp_files, assemble_target)
+                    else:
+                        assembled = self._assemble_with_transitions(
+                            temp_files, audible, assemble_target, format=format, preset=preset, crf=crf
+                        )
+                finally:
+                    for f in temp_files:
+                        f.unlink(missing_ok=True)
 
-                if all(seg.transition_in is None for seg in self.segments):
-                    return concat_files(temp_files, output_path)
-                return self._assemble_with_transitions(
-                    temp_files, audible, output_path, format=format, preset=preset, crf=crf
-                )
-            finally:
-                for f in temp_files:
-                    f.unlink(missing_ok=True)
+            if self.music_bed is None:
+                return assembled
+            # Final post-assembly pass: mix the bed under the assembled program.
+            speech = self._music_bed_speech_windows(context)
+            return self._mix_music_bed_to_file(assembled, output_path, speech, format=format, preset=preset, crf=crf)
         finally:
+            if bed_tmp is not None:
+                bed_tmp.unlink(missing_ok=True)
             for plan in plans:
                 for f in plan.owned_temp_files:
                     f.unlink(missing_ok=True)
+
+    def _mix_music_bed_to_file(
+        self,
+        assembled: Path,
+        output_path: Path,
+        speech: list[tuple[float, float]] | None,
+        *,
+        format: str,
+        preset: str,
+        crf: int,
+    ) -> Path:
+        """Mix the music bed under an assembled program file in one ffmpeg pass.
+
+        The file half of the bed mix: the assembled program is input 0, the bed
+        a second ``-i`` input, and :func:`build_music_bed_filter_complex` (shared
+        with ``run()``) compiles the ``amix`` graph. The program duration is the
+        assembled file's PROBED length so the bed's loop/trim pin matches the
+        realized timeline exactly. The video stream is copied (``-c:v copy`` --
+        the bed touches only audio); the mixed audio is re-encoded to AAC.
+        """
+        bed = self.music_bed
+        assert bed is not None
+        meta = VideoMetadata.from_path(str(assembled))
+        program_seconds = meta.total_seconds
+        bed_inputs, graph, out_label = build_music_bed_filter_complex(
+            bed, program_seconds, speech=speech, bed_input_index=1, prog_label="0:a"
+        )
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(assembled),
+            *bed_inputs,
+            "-filter_complex",
+            ";".join(graph),
+            "-map",
+            "0:v",
+            "-map",
+            out_label,
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-movflags",
+            "+faststart",
+            str(output_path),
+        ]
+        try:
+            _ffmpeg.run(cmd)
+        except Exception:
+            if output_path.exists():
+                output_path.unlink()
+            raise
+        return output_path
 
     def _assemble_with_transitions(
         self,

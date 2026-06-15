@@ -46,7 +46,33 @@ __all__ = [
     "SpeedChange",
     "FreezeFrame",
     "SilenceRemoval",
+    "speech_windows",
 ]
+
+
+def speech_windows(words: list[Any], padding: float, total_seconds: float) -> list[tuple[float, float]]:
+    """Merge word-level timestamps into padded, non-overlapping speech windows.
+
+    Each word contributes ``[start - padding, end + padding]``, clamped to
+    ``[0, total_seconds]``; abutting/overlapping windows are merged so the
+    result is a sorted list of disjoint ``(start, end)`` spans where speech
+    (plus its breathing room) is present. The single source of the speech-window
+    derivation, shared by :meth:`SilenceRemoval._silence_ranges` (which takes the
+    complement to find silences) and the transcription-derived music-bed duck
+    (which lowers the bed *inside* these windows). Keeping one helper means the
+    duck's idea of "where speech is" cannot drift from what silence-removal cuts.
+    """
+    speech: list[tuple[float, float]] = []
+    for word in words:
+        start = max(0.0, word.start - padding)
+        end = min(total_seconds, word.end + padding)
+        if end <= start:
+            continue
+        if speech and start <= speech[-1][1]:
+            speech[-1] = (speech[-1][0], max(speech[-1][1], end))
+        else:
+            speech.append((start, end))
+    return speech
 
 
 class CutFrames(Operation):
@@ -681,14 +707,10 @@ class SilenceRemoval(Operation):
     )
 
     def _silence_ranges(self, words: list[Any], total_seconds: float) -> list[tuple[float, float]]:
-        speech: list[tuple[float, float]] = []
-        for word in words:
-            start = max(0.0, word.start - self.padding)
-            end = min(total_seconds, word.end + self.padding)
-            if speech and start <= speech[-1][1]:
-                speech[-1] = (speech[-1][0], max(speech[-1][1], end))
-            else:
-                speech.append((start, end))
+        # Silences are the complement of the padded speech windows -- derive the
+        # windows from the shared `speech_windows` helper so the duck and the cut
+        # agree on exactly where speech is.
+        speech = speech_windows(words, self.padding, total_seconds)
         silences: list[tuple[float, float]] = []
         prev_end = 0.0
         for s_start, s_end in speech:

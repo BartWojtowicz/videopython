@@ -145,6 +145,29 @@ BREAKING: `Operation.transform_audio` → `to_ffmpeg_audio_filter`;
 ffmpeg (`afade`/`volume`-shaped), not bit-identical to the old numpy ramps (the
 libass precedent).
 
+### Music bed + transcription-derived ducking
+
+A plan can now carry a `VideoEdit.music_bed` (a frozen `MusicBed`: `source`,
+`gain`, `loop`, `fade_in`/`fade_out`, and an optional `duck`). The bed is mixed
+under the **whole assembled** program in a final `amix` pass after concat /
+transitions — `run()` and `run_to_file` share one bed-mix filter builder, so
+they cannot diverge. `amix=duration=first` clamps the output to the program
+length (a short bed loops, a long bed is trimmed) and `normalize=0` keeps the
+program dialogue at full level. An unreadable bed source fails `validate`/`check`
+with `SOURCE_UNREADABLE` before any decode.
+
+`music_bed.duck` lowers the bed under speech using deterministic,
+transcription-derived `volume` automation (no live key signal): the speech
+windows come from a shared `speech_windows()` helper that `silence_removal` also
+uses. Ducking is single-segment only (the assembled timeline maps cleanly to one
+segment's re-based transcription); a multi-segment plan with `duck` set raises a
+structured `MUSIC_BED_DUCK_MULTISEGMENT` error (a non-ducked bed on a
+multi-segment plan is fine).
+
+Per-segment / per-window **gain** already shipped with the audio-graph migration
+above (`volume_adjust` compiles to a `volume` node), so no separate op was
+needed.
+
 ## 0.42.0
 
 **Streaming-first migration complete: streaming is the only execution

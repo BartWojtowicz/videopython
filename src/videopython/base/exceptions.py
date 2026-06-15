@@ -94,6 +94,7 @@ class PlanErrorCode(str, Enum):
     POST_OP_REQUIRES_CONTEXT = "post_op_requires_context"
     CONTEXT_SOURCE_MISSING = "context_source_missing"
     TRANSITION_TOO_LONG = "transition_too_long"
+    MUSIC_BED_DUCK_MULTISEGMENT = "music_bed_duck_multisegment"
     # Streaming: unstreamable op at its plan position (always reported).
     STREAMING_FALLBACK = "streaming_fallback"
 
