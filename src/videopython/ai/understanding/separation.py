@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from videopython.ai._device import log_device_initialization, release_device_memory, select_device
+from videopython.ai._predictor import ManagedPredictor
 from videopython.ai.dubbing.models import SeparatedAudio
 from videopython.audio import Audio, AudioMetadata
 
@@ -55,7 +56,7 @@ def _merge_regions(
     return merged
 
 
-class AudioSeparator:
+class AudioSeparator(ManagedPredictor):
     """Separates audio into vocals and background components using Demucs."""
 
     SUPPORTED_MODELS: list[str] = ["htdemucs", "htdemucs_ft", "htdemucs_6s", "mdx_extra"]

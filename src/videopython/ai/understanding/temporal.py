@@ -10,13 +10,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from videopython.ai._device import log_device_initialization, release_device_memory, select_device
+from videopython.ai._predictor import ManagedPredictor
 from videopython.base.description import SceneBoundary
 
 if TYPE_CHECKING:
     from videopython.base.video import Video
 
 
-class SemanticSceneDetector:
+class SemanticSceneDetector(ManagedPredictor):
     """ML-based scene detection using TransNetV2.
 
     TransNetV2 is a neural network specifically designed for shot boundary

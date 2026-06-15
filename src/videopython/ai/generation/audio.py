@@ -5,13 +5,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from videopython.ai._device import log_device_initialization, release_device_memory, select_device
+from videopython.ai._predictor import ManagedPredictor
+from videopython.ai._revisions import pinned
 from videopython.audio import Audio, AudioMetadata
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 
-class TextToSpeech:
+class TextToSpeech(ManagedPredictor):
     """Generates speech audio from text using Chatterbox Multilingual.
 
     Backed by Chatterbox Multilingual (Resemble AI). When ``voice_sample`` is
@@ -42,6 +44,8 @@ class TextToSpeech:
         requested_device = self.device
         device = select_device(self.device, mps_allowed=False)
 
+        # No repo id to key a revision on: Chatterbox resolves its own repo +
+        # revision internally, so there is nothing to pass revision= to.
         self._model = ChatterboxMultilingualTTS.from_pretrained(device=device)
         self.device = device
         log_device_initialization(
@@ -146,7 +150,7 @@ class TextToSpeech:
         release_device_memory(self.device)
 
 
-class TextToMusic:
+class TextToMusic(ManagedPredictor):
     """Generates music from text descriptions using MusicGen."""
 
     def __init__(self, device: str | None = None):
@@ -170,8 +174,8 @@ class TextToMusic:
         device = select_device(self.device, mps_allowed=True)
 
         model_name = "facebook/musicgen-small"
-        self._processor = AutoProcessor.from_pretrained(model_name)
-        self._model = MusicgenForConditionalGeneration.from_pretrained(model_name)
+        self._processor = AutoProcessor.from_pretrained(model_name, revision=pinned(model_name))
+        self._model = MusicgenForConditionalGeneration.from_pretrained(model_name, revision=pinned(model_name))
         self._model.to(device)
         self.device = device
         log_device_initialization(

@@ -15,8 +15,24 @@ from tests.test_config import (
     TEST_AUDIO_PATH,
     TEST_IMAGE_PATH,
 )
+from videopython.audio.audio import Audio, AudioMetadata
 from videopython.base import video as _video_mod
 from videopython.base.video import Video, VideoMetadata
+
+
+def _tone(duration_seconds: float, sample_rate: int, freq: float = 440.0) -> Audio:
+    """Build a non-silent mono tone Audio at the given sample rate."""
+    frame_count = int(duration_seconds * sample_rate)
+    t = np.arange(frame_count, dtype=np.float32) / sample_rate
+    data = (0.5 * np.sin(2 * np.pi * freq * t)).astype(np.float32)
+    metadata = AudioMetadata(
+        sample_rate=sample_rate,
+        channels=1,
+        sample_width=2,
+        duration_seconds=frame_count / sample_rate,
+        frame_count=frame_count,
+    )
+    return Audio(data, metadata)
 
 
 @pytest.fixture(autouse=True)
@@ -235,3 +251,66 @@ def test_from_path_is_threadsafe():
 
     assert not errors
     assert all(result in (SMALL_VIDEO_METADATA, BIG_VIDEO_METADATA) for result in results)
+
+
+def test_add_audio_overlay_resamples_to_existing_rate_without_drift():
+    """Overlaying audio at a mismatched sample rate must resample to the existing
+    track's rate and produce no duration/length drift."""
+    video = Video.from_image(np.zeros((64, 64, 3), dtype=np.uint8), fps=24, length_seconds=3.0)
+    # Existing track at the canonical 44100 Hz (non-silent so it triggers overlay).
+    video.audio = _tone(video.total_seconds, sample_rate=44100)
+    assert not video.audio.is_silent
+
+    # Incoming audio at a mismatched rate; without resampling overlay() would raise.
+    incoming = _tone(video.total_seconds, sample_rate=48000)
+
+    result = video.add_audio(incoming, overlay=True)
+
+    # Canonical target is the existing track's sample rate.
+    assert result.audio.metadata.sample_rate == 44100
+    # No A/V drift: audio duration matches the video duration.
+    assert result.audio.metadata.duration_seconds == pytest.approx(video.total_seconds, abs=0.01)
+    expected_frames = round(video.total_seconds * 44100)
+    assert result.audio.metadata.frame_count == pytest.approx(expected_frames, abs=2)
+    assert len(result.audio.data) == pytest.approx(expected_frames, abs=2)
+
+
+def test_add_audio_overlay_longer_mismatched_rate_no_drift():
+    """A longer incoming clip at a mismatched rate must be resampled then trimmed
+    to the video duration without drift."""
+    video = Video.from_image(np.zeros((64, 64, 3), dtype=np.uint8), fps=24, length_seconds=2.0)
+    video.audio = _tone(video.total_seconds, sample_rate=44100)
+
+    # Incoming clip is longer than the video and at a different rate.
+    incoming = _tone(5.0, sample_rate=22050)
+
+    result = video.add_audio(incoming, overlay=True)
+
+    assert result.audio.metadata.sample_rate == 44100
+    assert result.audio.metadata.duration_seconds == pytest.approx(video.total_seconds, abs=0.01)
+    expected_frames = round(video.total_seconds * 44100)
+    assert len(result.audio.data) == pytest.approx(expected_frames, abs=2)
+
+
+def test_add_audio_replace_keeps_incoming_rate():
+    """Pure replace (overlay=False) must keep the incoming sample rate as-is."""
+    video = Video.from_image(np.zeros((64, 64, 3), dtype=np.uint8), fps=24, length_seconds=2.0)
+    video.audio = _tone(video.total_seconds, sample_rate=44100)
+
+    incoming = _tone(video.total_seconds, sample_rate=48000)
+    result = video.add_audio(incoming, overlay=False)
+
+    assert result.audio.metadata.sample_rate == 48000
+    assert result.audio.metadata.duration_seconds == pytest.approx(video.total_seconds, abs=0.01)
+
+
+def test_add_audio_attach_to_silent_keeps_incoming_rate():
+    """Attaching to a video with only the default silent track keeps the incoming rate."""
+    video = Video.from_image(np.zeros((64, 64, 3), dtype=np.uint8), fps=24, length_seconds=2.0)
+    assert video.audio.is_silent
+
+    incoming = _tone(video.total_seconds, sample_rate=48000)
+    result = video.add_audio(incoming, overlay=True)
+
+    assert result.audio.metadata.sample_rate == 48000
+    assert result.audio.metadata.duration_seconds == pytest.approx(video.total_seconds, abs=0.01)

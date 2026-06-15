@@ -569,6 +569,16 @@ class Video:
         Returns:
             New Video with the audio added
         """
+        # When the incoming audio will be mixed with an existing (non-silent)
+        # track, reconcile sample rates first. concat()/overlay() require
+        # matching sample rates, and mixing at a mismatched rate would otherwise
+        # produce silent A/V drift. The existing track's sample rate is the
+        # canonical target (it is what gets encoded into the video). For a pure
+        # attach/replace (no existing audio, or overlay=False) the incoming rate
+        # is kept as-is.
+        if overlay and not self.audio.is_silent:
+            audio = audio.resample(self.audio.metadata.sample_rate)
+
         video_duration = self.total_seconds
         audio_duration = audio.metadata.duration_seconds
 

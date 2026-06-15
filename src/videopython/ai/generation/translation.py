@@ -17,6 +17,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
 
 from videopython.ai._device import log_device_initialization, release_device_memory, select_device
+from videopython.ai._predictor import ManagedPredictor
+from videopython.ai._revisions import pinned
 from videopython.base.transcription import TranscriptionSegment
 
 # Imported under TYPE_CHECKING to avoid a circular dep through
@@ -123,7 +125,7 @@ LANGUAGE_NAMES = {
 }
 
 
-class MarianTranslator:
+class MarianTranslator(ManagedPredictor):
     """Translates text between languages using local Helsinki-NLP MarianMT models."""
 
     # Languages without a direct opus-mt-{src}-{tgt} model. Maps (source, target)
@@ -181,8 +183,10 @@ class MarianTranslator:
         requested_device = self.device
         device = select_device(self.device, mps_allowed=True)
 
-        self._tokenizer = MarianTokenizer.from_pretrained(model_name)
-        self._model = MarianMTModel.from_pretrained(model_name).to(device)
+        # Marian model names are dynamic per language pair, so pinned() returns
+        # None for them by design (revision=None tracks main, the safe default).
+        self._tokenizer = MarianTokenizer.from_pretrained(model_name, revision=pinned(model_name))
+        self._model = MarianMTModel.from_pretrained(model_name, revision=pinned(model_name)).to(device)
         self.device = device
         log_device_initialization(
             "MarianTranslator",

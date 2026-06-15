@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from videopython.ai._device import log_device_initialization, release_device_memory, select_device
+from videopython.ai._predictor import ManagedPredictor
+from videopython.ai._revisions import pinned
 from videopython.base.video import Video
 
 if TYPE_CHECKING:
@@ -23,7 +25,7 @@ def _get_torch_device_and_dtype(device: str | None) -> tuple[str, Any]:
     return selected_device, torch.float32
 
 
-class TextToVideo:
+class TextToVideo(ManagedPredictor):
     """Generates videos from text descriptions using local diffusion models."""
 
     def __init__(self, device: str | None = None):
@@ -39,7 +41,7 @@ class TextToVideo:
         device, dtype = _get_torch_device_and_dtype(self.device)
 
         model_name = "THUDM/CogVideoX1.5-5B"
-        self._pipeline = CogVideoXPipeline.from_pretrained(model_name, torch_dtype=dtype)
+        self._pipeline = CogVideoXPipeline.from_pretrained(model_name, revision=pinned(model_name), torch_dtype=dtype)
         self._pipeline.to(device)
         self.device = device
         log_device_initialization(
@@ -77,7 +79,7 @@ class TextToVideo:
         release_device_memory(self.device)
 
 
-class ImageToVideo:
+class ImageToVideo(ManagedPredictor):
     """Generates videos from static images using local video diffusion."""
 
     def __init__(self, device: str | None = None):
@@ -95,7 +97,9 @@ class ImageToVideo:
         device, dtype = _get_torch_device_and_dtype(self.device)
 
         model_name = "THUDM/CogVideoX1.5-5B-I2V"
-        self._pipeline = CogVideoXImageToVideoPipeline.from_pretrained(model_name, torch_dtype=dtype)
+        self._pipeline = CogVideoXImageToVideoPipeline.from_pretrained(
+            model_name, revision=pinned(model_name), torch_dtype=dtype
+        )
         self._pipeline.to(device)
         self.device = device
         log_device_initialization(
