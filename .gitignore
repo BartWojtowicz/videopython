@@ -148,3 +148,10 @@ data/exported/*.mp4
 # Model weights
 *.pt
 
+# Sample / working videos (keep them out of the repo root)
+*.mp4
+!data/exported/example.mp4
+
+# Local scratch / sign-off artifacts
+libass_signoff/
+
