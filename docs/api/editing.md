@@ -87,18 +87,28 @@ Rules:
 `VideoEdit` runs each segment's `operations` in order, concatenates the
 results, then applies `post_operations` to the assembled output.
 
-## Streaming Mode (`run_to_file`)
+## The Streaming Engine
 
-`run_to_file()` pipes ffmpeg decode → per-frame effect chain → ffmpeg
-encode, keeping memory constant (~250 MB) regardless of video length.
+Streaming is the **only** execution engine. `run_to_file()` pipes ffmpeg
+decode → per-frame effect chain → ffmpeg encode, keeping memory constant
+(~250 MB) regardless of video length; `run()` is a view over the same
+engine that streams into memory (lossless rawvideo) instead of encoding.
 
-Each operation contributes either a ffmpeg `-vf` filter
-(`op.to_ffmpeg_filter(ctx)`) or a streaming `Effect`
-(`op.streamable == True` plus `process_frame`). If any operation is not
-streamable, `run_to_file` falls back to eager (`run()` + `save()`).
+Each operation compiles to one of: an ffmpeg filter
+(`op.to_ffmpeg_filter(ctx)`) -- the decode chain, or the encode chain when
+ordered after frame effects -- or a per-frame streaming `Effect`
+(`op.streamable == True` plus `process_frame`). Plans whose shape has no
+streaming strategy (the remaining cases: a frame effect ordered after
+encode-stage filters, time-based context after a duration-changing
+transform, a few post-op shapes) are rejected with structured
+`STREAMING_FALLBACK` errors before any decode.
 
-**Streamable transforms**: `resize`, `crop`, `resample_fps`.
-**Streamable effects**: every `Effect`, including the context-requiring
+**Filter transforms**: `resize`, `crop`, `resample_fps`, the
+duration-changing `speed_change` and `freeze_frame` (predicted metadata is
+folded through the chain so effect windows and audio follow the new
+timeline), the transcription-consuming `silence_removal`, and `face_crop`
+(ai extra; compile-time detection pass driving a per-frame crop track).
+**Streaming effects**: every `Effect`, including the context-requiring
 `add_subtitles` (pass `context=` to `run_to_file`).
 
 `add_subtitles` renders via libass: the transcription is compiled to an
@@ -107,34 +117,29 @@ filter — native speed, zero per-frame Python, classified as a `filter` in
 the streamability report. It joins the filter chain at its plan position:
 the decode chain normally (so transforms may follow it in plan order), or
 the encode chain when frame effects precede it (so `[fade, add_subtitles]`
-streams too). The eager `run()` path pipes the in-memory frames through the
-same filter — one pixel path everywhere. Requires an ffmpeg built with
+streams too). In memory, `run()` pipes the streamed-in frames through the same filter
+via a lossless rawvideo roundtrip — one pixel path everywhere. Requires an ffmpeg built with
 libass.
 
-### Streamability report and strict mode
+### Streamability report
 
 `edit.streamability()` classifies every op by streaming class without
-touching the disk — `filter` (ffmpeg `-vf`), `frame_effect`
-(`process_frame`), or `eager` (forces the whole-plan fallback, with the
-reason on the entry):
+touching the disk — `filter` (ffmpeg filter chain), `frame_effect`
+(`process_frame`), or `unstreamable` (the plan is rejected, with the
+reason and a reorder hint on the entry):
 
 ```python
 report = edit.streamability()
-report.streamable        # will run_to_file stream in O(1) memory?
+report.streamable        # will the plan run?
 report.fallbacks         # the offending ops, with reasons
 report.errors()          # the same as structured STREAMING_FALLBACK PlanErrors
 ```
 
-To make the fallback an error instead of a silent behavior change:
-
-- `edit.check(meta, strict_streaming=True)` appends one
-  `STREAMING_FALLBACK` error per offending op (location, op, and the
-  reason in `detail`) after the regular validity errors.
-- `edit.run_to_file(path, strict_streaming=True)` raises
-  `PlanValidationError` with those errors before any decode.
-
-Streamability is purely structural (op classes, order, plan shape), so a
-consumer can gate job admission on the report before downloading sources.
+`edit.check(meta)` reports the same `STREAMING_FALLBACK` errors after the
+regular validity errors, and `run()`/`run_to_file()` raise them before any
+decode. Streamability is purely structural (op classes, order, plan
+shape), so a consumer can gate job admission on the report before
+downloading sources.
 
 ## Context Data
 

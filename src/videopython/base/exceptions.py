@@ -92,7 +92,7 @@ class PlanErrorCode(str, Enum):
     UNKNOWN_OP = "unknown_op"
     CONCAT_MISMATCH = "concat_mismatch"
     POST_OP_REQUIRES_CONTEXT = "post_op_requires_context"
-    # Streaming strictness (opt-in via strict_streaming).
+    # Streaming: unstreamable op at its plan position (always reported).
     STREAMING_FALLBACK = "streaming_fallback"
 
 
@@ -103,7 +103,7 @@ class PlanError:
     ``location`` is a path into the plan (e.g. ``'segments[1].operations[0]'``);
     the remaining fields are populated when meaningful for the ``code``.
     ``detail`` carries a short human-readable cause when the code alone is not
-    actionable (e.g. *why* an op forces the eager fallback) -- prose meant for
+    actionable (e.g. *why* an op cannot stream at its plan position) -- prose meant for
     LLM refine-loop feedback, not for branching.
     """
 

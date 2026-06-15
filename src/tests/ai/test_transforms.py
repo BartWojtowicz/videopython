@@ -240,42 +240,25 @@ class TestFaceTrackingCrop:
         assert crop.max_speed == 0.1
         assert crop.fallback == "center"
 
-    def test_calculate_crop_region_basic(self):
-        """Test crop region calculation."""
-        crop = FaceTrackingCrop(target_aspect=(9, 16), padding=0.3, vertical_offset=0.0)
+    def test_track_positions_fixed_crop_size_and_centering(self):
+        """The crop window is the fixed aspect-fit box, centered on the face."""
+        crop = FaceTrackingCrop(target_aspect=(9, 16), framing_rule="center", smoothing=0.0)
+        frames = [np.zeros((1080, 1920, 3), dtype=np.uint8)] * 3
+        with patch("videopython.ai.transforms.FaceTracker") as tracker_cls:
+            tracker_cls.return_value.detect_and_track.return_value = (0.5, 0.5, 0.1, 0.15)
+            positions = crop._track_crop_positions(frames, 1920, 1080)
 
-        # Face at center of 1920x1080 frame
-        x, y, w, h = crop._calculate_crop_region(
-            face_cx=0.5,
-            face_cy=0.5,
-            face_w=0.1,
-            face_h=0.15,
-            frame_w=1920,
-            frame_h=1080,
-        )
+        # For 9:16 from 1920x1080: crop = 606x1080 (even-floored), centered.
+        assert positions == [(657, 0)] * 3  # int(0.5*1920 - 606/2) = 657
 
-        # For 9:16 from 1920x1080: crop_h = 1080, crop_w = 1080 * 9/16 = 607.5
-        # Rounded down to even for H.264 compatibility
-        assert w == 606
-        assert h == 1080
+    def test_track_positions_clamped_to_bounds(self):
+        crop = FaceTrackingCrop(target_aspect=(9, 16), framing_rule="center", smoothing=0.0)
+        frames = [np.zeros((1080, 1920, 3), dtype=np.uint8)]
+        with patch("videopython.ai.transforms.FaceTracker") as tracker_cls:
+            tracker_cls.return_value.detect_and_track.return_value = (0.05, 0.5, 0.1, 0.15)
+            positions = crop._track_crop_positions(frames, 1920, 1080)
 
-    def test_calculate_crop_region_clamped_to_bounds(self):
-        """Test crop region is clamped to frame bounds."""
-        crop = FaceTrackingCrop(target_aspect=(9, 16), padding=0.3, vertical_offset=0.0)
-
-        # Face at edge of frame
-        x, y, w, h = crop._calculate_crop_region(
-            face_cx=0.05,  # Near left edge
-            face_cy=0.5,
-            face_w=0.1,
-            face_h=0.15,
-            frame_w=1920,
-            frame_h=1080,
-        )
-
-        # x should be clamped to 0
-        assert x >= 0
-        assert x + w <= 1920
+        assert positions == [(0, 0)]  # clamped at the left edge
 
     @patch("videopython.ai.transforms.FaceTracker")
     def test_apply_creates_correct_output_shape(self, mock_tracker_class):
@@ -600,3 +583,103 @@ class TestFaceCropSubtitleValidateGap:
         source = VideoMetadata(height=1080, width=1920, fps=30, frame_count=60, total_seconds=2.0)
         out = VideoEdit.from_dict(plan).validate_with_metadata(source, context={"transcription": self._transcription()})
         assert (out.width, out.height) == (606, 1080)
+
+
+class TestFaceCropStreaming:
+    """face_crop compiles to a sendcmd-driven crop track at plan build."""
+
+    @staticmethod
+    def _plan():
+        from videopython.editing import VideoEdit
+
+        return VideoEdit.model_validate(
+            {
+                "segments": [
+                    {
+                        "source": "src/tests/test_data/small_video.mp4",
+                        "start": 2.0,
+                        "end": 6.0,
+                        "operations": [
+                            {
+                                "op": "face_crop",
+                                "target_aspect": [9, 16],
+                                "framing_rule": "center",
+                                "smoothing": 0.0,
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
+
+    def test_classifies_as_filter(self):
+        from videopython.editing import StreamingClass
+
+        report = self._plan().streamability()
+        assert report.entries[0].streaming_class is StreamingClass.FILTER
+        assert report.streamable
+
+    def test_streams_and_tracks_the_face(self, tmp_path):
+        import glob
+        import tempfile as _tempfile
+        from unittest.mock import patch as _patch
+
+        from videopython.base.video import Video
+
+        before = set(glob.glob(_tempfile.gettempdir() + "/*.cmd"))
+        plan = self._plan()
+        with _patch("videopython.ai.transforms.FaceTracker") as tracker_cls:
+            # Face drifts left -> right across the clip.
+            tracker_cls.return_value.detect_and_track.side_effect = lambda frame, i: (
+                0.3 + 0.4 * (i / 96),
+                0.5,
+                0.1,
+                0.15,
+            )
+            out = plan.run_to_file(tmp_path / "out.mp4")
+        assert set(glob.glob(_tempfile.gettempdir() + "/*.cmd")) == before, "sendcmd file leaked"
+
+        video = Video.from_path(str(out))
+        assert video.frames.shape == (96, 500, 280, 3)  # 9:16 of 800x500
+
+        source = Video.from_path("src/tests/test_data/small_video.mp4", start_second=2.0, end_second=6.0)
+
+        def best_x(out_frame: np.ndarray, src_frame: np.ndarray, width: int = 280) -> int:
+            errors = [
+                np.abs(out_frame.astype(np.float32) - src_frame[:, x : x + width].astype(np.float32)).mean()
+                for x in range(0, 800 - width, 20)
+            ]
+            return int(np.argmin(errors)) * 20
+
+        x_early = best_x(video.frames[5], source.frames[5])
+        x_late = best_x(video.frames[90], source.frames[90])
+        assert x_late > x_early + 100, f"crop did not follow the face: {x_early} -> {x_late}"
+
+    def test_behind_frame_effects_is_rejected(self, tmp_path):
+        """face_crop cannot reproduce post-effect frames at compile time."""
+        from unittest.mock import patch as _patch
+
+        import pytest as _pytest
+
+        from videopython.base.exceptions import PlanValidationError
+        from videopython.editing import VideoEdit
+
+        plan = VideoEdit.model_validate(
+            {
+                "segments": [
+                    {
+                        "source": "src/tests/test_data/small_video.mp4",
+                        "start": 2.0,
+                        "end": 4.0,
+                        "operations": [
+                            {"op": "fade", "mode": "in", "duration": 0.5},
+                            {"op": "face_crop", "target_aspect": [9, 16]},
+                        ],
+                    }
+                ]
+            }
+        )
+        with _patch("videopython.ai.transforms.FaceTracker") as tracker_cls:
+            tracker_cls.return_value.detect_and_track.return_value = (0.5, 0.5, 0.1, 0.15)
+            with _pytest.raises(PlanValidationError, match="cannot stream"):
+                plan.run_to_file(tmp_path / "out.mp4")

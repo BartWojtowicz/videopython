@@ -429,6 +429,7 @@ class Fade(Effect):
 
     op: Literal["fade"] = "fade"
     streamable: ClassVar[bool] = True
+    audio_coupled: ClassVar[bool] = True
 
     mode: Literal["in", "out", "in_out"] = Field(
         description=('"in" fades from black at the start, "out" fades to black at the end, "in_out" does both.'),
@@ -513,6 +514,7 @@ class VolumeAdjust(Effect):
 
     op: Literal["volume_adjust"] = "volume_adjust"
     streamable: ClassVar[bool] = True
+    audio_coupled: ClassVar[bool] = True
 
     volume: float = Field(
         1.0,

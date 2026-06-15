@@ -45,12 +45,13 @@ edit.run_to_file("output.mp4", crf=20, preset="medium")
 # Peak memory: ~250 MB regardless of video length
 ```
 
-When all operations are streamable, frames are never loaded into memory. If any operation
-is not streamable (e.g. `reverse`, `speed_change`), the pipeline falls back to eager
-mode automatically. To find out ahead of time, `edit.streamability()` returns a per-op
-report without touching the disk; to forbid the fallback outright, pass
-`strict_streaming=True` to `run_to_file` (raises `PlanValidationError` before any
-decode) or to `check` (reports structured `STREAMING_FALLBACK` errors).
+Streaming is the only execution engine: every op compiles to an ffmpeg
+filter or a per-frame effect, and frames are never accumulated in memory.
+A plan shape with no streaming strategy (e.g. a frame effect ordered after
+burned-in subtitles) is rejected with structured `STREAMING_FALLBACK`
+errors before any decode. `edit.streamability()` returns the per-op
+classification without touching the disk; `edit.check(meta)` reports the
+same errors alongside the validity checks.
 
 Context-requiring effects stream too: pass `context=` to `run_to_file` and
 e.g. `add_subtitles` burns word-level subtitles on the streaming path, with

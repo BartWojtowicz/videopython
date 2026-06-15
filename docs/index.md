@@ -42,7 +42,7 @@ final.save("output.mp4")
 
 ### Core Editing
 
-Cut, resize, crop, change speed, reverse, freeze frames, silence removal. Multi-segment editing plans with automatic fps/resolution matching for concatenation.
+Cut, resize, crop, change speed, freeze frames, silence removal. Multi-segment editing plans with automatic fps/resolution matching for concatenation.
 
 </div>
 

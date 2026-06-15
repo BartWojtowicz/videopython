@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import patch
 
 import pytest
 
@@ -18,7 +17,7 @@ from videopython.editing.video_edit import VideoEdit
 FADE = {"op": "fade", "mode": "in", "duration": 0.5}
 RESIZE = {"op": "resize", "width": 640, "height": 480}
 SUBTITLES = {"op": "add_subtitles", "font_scale": 0.1}
-FREEZE = {"op": "freeze_frame", "timestamp": 0.5, "duration": 0.2}
+CUT = {"op": "cut", "start": 0.0, "end": 1.0}
 SILENCE = {"op": "silence_removal"}
 
 
@@ -62,35 +61,52 @@ class TestStreamabilityReport:
         assert report.errors() == []
         assert all(e.reason is None for e in report.entries)
 
-    def test_transform_after_effect_is_eager(self):
+    def test_transform_after_effect_streams_via_encode_stage(self):
+        # 0.42.0: transforms following frame effects join the encode-stage
+        # filter chain instead of forcing the whole-plan eager fallback.
         report = _plan([FADE, RESIZE]).streamability()
 
         fade, resize = report.entries
-        assert fade.streams
-        assert resize.streaming_class is StreamingClass.EAGER
-        assert resize.reason is not None and "follows an effect" in resize.reason
+        assert fade.streaming_class is StreamingClass.FRAME_EFFECT
+        assert resize.streaming_class is StreamingClass.FILTER
+        assert report.streamable
+
+    def test_effect_after_encode_stage_is_unstreamable(self):
+        report = _plan([FADE, RESIZE, {"op": "color_adjust", "brightness": 0.2}]).streamability()
+
+        trailing = report.entries[2]
+        assert trailing.streaming_class is StreamingClass.UNSTREAMABLE
+        assert trailing.reason is not None and "encode-stage" in trailing.reason
         assert not report.streamable
 
-    def test_context_requiring_transform_is_eager(self):
+    def test_context_requiring_transform_streams_as_filter(self):
+        # silence_removal consumes its transcription at plan compile (0.42.0).
         report = _plan([SILENCE]).streamability()
 
         (entry,) = report.entries
-        assert entry.streaming_class is StreamingClass.EAGER
-        assert entry.reason is not None and "transcription" in entry.reason
+        assert entry.streaming_class is StreamingClass.FILTER
 
-    def test_unfilterable_transform_is_eager(self):
-        report = _plan([FREEZE]).streamability()
+    def test_context_transform_after_duration_change_is_unstreamable(self):
+        report = _plan([{"op": "speed_change", "speed": 2.0}, SILENCE]).streamability()
+
+        speed, silence = report.entries
+        assert speed.streaming_class is StreamingClass.FILTER
+        assert silence.streaming_class is StreamingClass.UNSTREAMABLE
+        assert silence.reason is not None and "duration-changing" in silence.reason
+
+    def test_unfilterable_transform_is_unstreamable(self):
+        report = _plan([CUT]).streamability()
 
         (entry,) = report.entries
-        assert entry.streaming_class is StreamingClass.EAGER
+        assert entry.streaming_class is StreamingClass.UNSTREAMABLE
         assert entry.reason is not None and "no ffmpeg filter" in entry.reason
 
-    def test_non_streamable_effect_is_eager(self, monkeypatch: pytest.MonkeyPatch):
+    def test_non_streamable_effect_is_unstreamable(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(Fade, "streamable", False)
         report = _plan([FADE]).streamability()
 
         (entry,) = report.entries
-        assert entry.streaming_class is StreamingClass.EAGER
+        assert entry.streaming_class is StreamingClass.UNSTREAMABLE
         assert entry.reason is not None and "streamable=False" in entry.reason
 
     def test_post_op_effect_on_single_segment_streams(self):
@@ -101,35 +117,35 @@ class TestStreamabilityReport:
         assert entry.streaming_class is StreamingClass.FRAME_EFFECT
         assert report.streamable
 
-    def test_post_op_on_multi_segment_plan_is_eager(self):
+    def test_audio_coupled_post_op_on_multi_segment_plan_is_unstreamable(self):
         report = _plan([], post_operations=[FADE], n_segments=2).streamability()
 
         (entry,) = report.entries
-        assert entry.streaming_class is StreamingClass.EAGER
+        assert entry.streaming_class is StreamingClass.UNSTREAMABLE
         assert entry.reason is not None and "multi-segment" in entry.reason
 
-    def test_context_requiring_post_op_is_eager(self):
+    def test_context_requiring_post_op_is_unstreamable(self):
         report = _plan([], post_operations=[SUBTITLES]).streamability()
 
         (entry,) = report.entries
-        assert entry.streaming_class is StreamingClass.EAGER
+        assert entry.streaming_class is StreamingClass.UNSTREAMABLE
         assert entry.reason is not None and "transcription" in entry.reason
 
-    def test_transform_post_op_is_eager(self):
+    def test_transform_post_op_is_unstreamable(self):
         report = _plan([], post_operations=[RESIZE]).streamability()
 
         (entry,) = report.entries
-        assert entry.streaming_class is StreamingClass.EAGER
+        assert entry.streaming_class is StreamingClass.UNSTREAMABLE
         assert entry.reason is not None and "post-operations" in entry.reason
 
     def test_errors_carry_location_op_and_detail(self):
-        errors = _plan([FADE, RESIZE]).streamability().errors()
+        errors = _plan([FADE, RESIZE, {"op": "color_adjust", "brightness": 0.2}]).streamability().errors()
 
         (err,) = errors
         assert err.code is PlanErrorCode.STREAMING_FALLBACK
-        assert err.location == "segments[0].operations[1]"
-        assert err.op == "resize"
-        assert err.detail is not None and "follows an effect" in err.detail
+        assert err.location == "segments[0].operations[2]"
+        assert err.op == "color_adjust"
+        assert err.detail is not None and "encode-stage" in err.detail
 
 
 class TestRegistryAlignment:
@@ -155,41 +171,37 @@ class TestRegistryAlignment:
 
 
 class TestCheckStrictStreaming:
-    def test_default_check_ignores_streamability(self):
-        plan = _plan([FADE, RESIZE])
-        assert plan.check(SMALL_VIDEO_METADATA) == []
-
-    def test_strict_check_reports_fallbacks(self):
-        plan = _plan([FADE, RESIZE])
-        errors = plan.check(SMALL_VIDEO_METADATA, strict_streaming=True)
+    def test_check_reports_unstreamable_ops(self):
+        # Streaming is the only engine: unstreamable shapes are plan errors.
+        plan = _plan([FADE, RESIZE, {"op": "color_adjust", "brightness": 0.2}])
+        errors = plan.check(SMALL_VIDEO_METADATA)
 
         (err,) = errors
         assert err.code is PlanErrorCode.STREAMING_FALLBACK
-        assert err.location == "segments[0].operations[1]"
-        assert err.op == "resize"
+        assert err.location == "segments[0].operations[2]"
+        assert err.op == "color_adjust"
 
-    def test_strict_check_on_streamable_plan_is_clean(self):
+    def test_check_on_streamable_plan_is_clean(self):
         plan = _plan([RESIZE, FADE])
-        assert plan.check(SMALL_VIDEO_METADATA, strict_streaming=True) == []
+        assert plan.check(SMALL_VIDEO_METADATA) == []
 
     def test_fallback_errors_append_after_validity_errors(self):
         bad_window = {"op": "fade", "mode": "in", "duration": 0.5, "window": {"start": 50.0, "stop": 60.0}}
-        plan = _plan([bad_window, RESIZE])
-        errors = plan.check(SMALL_VIDEO_METADATA, strict_streaming=True)
+        plan = _plan([bad_window, RESIZE, {"op": "color_adjust", "brightness": 0.2}])
+        errors = plan.check(SMALL_VIDEO_METADATA)
 
         assert len(errors) >= 2
         assert errors[0].code is not PlanErrorCode.STREAMING_FALLBACK
         assert errors[-1].code is PlanErrorCode.STREAMING_FALLBACK
 
 
-class TestRunToFileStrict:
-    def test_streamable_plan_streams_under_strict(self, tmp_path):
+class TestRunToFileRejection:
+    def test_streamable_plan_streams(self, tmp_path):
         plan = _plan([RESIZE, FADE])
-        with patch.object(VideoEdit, "_run_to_file_eager", side_effect=AssertionError("eager fallback used")):
-            out = plan.run_to_file(tmp_path / "out.mp4", strict_streaming=True)
+        out = plan.run_to_file(tmp_path / "out.mp4")
         assert out.exists()
 
-    def test_multi_segment_streamable_plan_streams_under_strict(self, tmp_path):
+    def test_multi_segment_streamable_plan_streams(self, tmp_path):
         plan = VideoEdit.model_validate(
             {
                 "segments": [
@@ -198,54 +210,42 @@ class TestRunToFileStrict:
                 ],
             }
         )
-        with patch.object(VideoEdit, "_run_to_file_eager", side_effect=AssertionError("eager fallback used")):
-            out = plan.run_to_file(tmp_path / "out.mp4", strict_streaming=True)
+        out = plan.run_to_file(tmp_path / "out.mp4")
         assert out.exists()
 
-    def test_fallback_plan_raises_under_strict(self, tmp_path):
-        plan = _plan([FADE, RESIZE])
+    def test_unstreamable_plan_raises(self, tmp_path):
+        plan = _plan([FADE, RESIZE, {"op": "color_adjust", "brightness": 0.2}])
         out_path = tmp_path / "out.mp4"
 
-        with pytest.raises(PlanValidationError, match="strict_streaming=True rejects this plan") as exc_info:
-            plan.run_to_file(out_path, strict_streaming=True)
+        with pytest.raises(PlanValidationError, match="cannot stream") as exc_info:
+            plan.run_to_file(out_path)
 
         assert not out_path.exists()
         (err,) = exc_info.value.errors
         assert err.code is PlanErrorCode.STREAMING_FALLBACK
-        assert err.op == "resize"
+        assert err.op == "color_adjust"
 
-    def test_fallback_plan_still_falls_back_without_strict(self, tmp_path):
-        plan = _plan([FADE, RESIZE])
-        with patch.object(
-            VideoEdit, "_run_to_file_eager", autospec=True, side_effect=VideoEdit._run_to_file_eager
-        ) as eager_spy:
-            out = plan.run_to_file(tmp_path / "out.mp4")
-        assert eager_spy.call_count == 1
-        assert out.exists()
+    def test_run_raises_the_same_errors(self, tmp_path):
+        plan = _plan([FADE, RESIZE, {"op": "color_adjust", "brightness": 0.2}])
+        with pytest.raises(PlanValidationError, match="cannot stream"):
+            plan.run()
 
     def test_builder_drift_raises_instead_of_silent_eager(self, tmp_path, monkeypatch: pytest.MonkeyPatch):
-        """A streamable-flagged transform that fails to compile must not eager-load."""
+        """A streamable-flagged transform that fails to compile must not slip through."""
         monkeypatch.setattr(Resize, "to_ffmpeg_filter", lambda self, ctx: None)
         plan = _plan([RESIZE])
 
         with pytest.raises(PlanValidationError, match="despite a clean streamability report"):
-            plan.run_to_file(tmp_path / "out.mp4", strict_streaming=True)
+            plan.run_to_file(tmp_path / "out.mp4")
 
-    def test_flag_false_transform_goes_eager_even_with_working_filter(self, tmp_path, monkeypatch: pytest.MonkeyPatch):
-        """The ``streamable`` flag is authoritative in both directions.
-
-        A transform declaring ``streamable=False`` must take the eager path
-        even if its ``to_ffmpeg_filter`` compiles -- otherwise the runtime
-        would stream while the report (which classifies by the flag) says
-        eager, and strict mode would reject a plan that actually streams.
-        """
+    def test_flag_false_transform_is_rejected_even_with_working_filter(self, tmp_path, monkeypatch: pytest.MonkeyPatch):
+        """The ``streamable`` flag is authoritative in both directions: a
+        transform declaring ``streamable=False`` is rejected even if its
+        ``to_ffmpeg_filter`` compiles, so the report and the runtime can
+        never disagree."""
         monkeypatch.setattr(Resize, "streamable", False)
         plan = _plan([RESIZE])
 
         assert not plan.streamability().streamable
-        with patch.object(
-            VideoEdit, "_run_to_file_eager", autospec=True, side_effect=VideoEdit._run_to_file_eager
-        ) as eager_spy:
-            out = plan.run_to_file(tmp_path / "out.mp4")
-        assert eager_spy.call_count == 1
-        assert out.exists()
+        with pytest.raises(PlanValidationError, match="cannot stream"):
+            plan.run_to_file(tmp_path / "out.mp4")

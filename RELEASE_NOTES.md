@@ -1,5 +1,68 @@
 # Release Notes
 
+## 0.42.0
+
+**Streaming-first migration complete: streaming is the only execution
+engine.** Every operation compiles to an ffmpeg filter chain or streams as a
+per-frame effect; the silent whole-plan eager fallback is gone, and `run()`
+is a view over the same engine that streams into memory (lossless rawvideo)
+instead of encoding. Plan shapes with no streaming strategy are rejected
+before any decode with structured `STREAMING_FALLBACK` errors carrying
+reorder hints.
+
+**Every remaining op streams natively:**
+
+- `speed_change`: `setpts` retime (bias-corrected nearest-frame for
+  speedups; closed-form log-curve ramps, exact to half a timebase tick) +
+  `fps`/`framerate` (blending) resample.
+- `freeze_frame`: linear `loop`/`select` chains for all three modes.
+- `silence_removal`: the transcription is consumed at plan compile and the
+  silent gaps drop via a `select` keep-window cut; gains a real
+  `predict_metadata` so validation folds the cut duration.
+- `face_crop` (ai extra): the detection pass runs at plan-compile time over
+  a bounded decode of exactly the frames the filter sees, compiling the
+  smoothed track to a per-frame `sendcmd` crop -- zero per-frame Python at
+  render time.
+
+**The engine folds duration and audio.** The plan builder threads real
+metadata through the chain (pipe stage vs final stage), the plan carries
+authoritative frame counts, effect envelopes size to the post-transform
+timeline, and segment audio follows through per-op audio twins
+(`Operation.transform_audio`: time-stretch, silence insertion, gap cuts)
+replayed in chain order around the effect envelopes.
+
+**Plan-order scheduling across two filter stages.** Transforms ordered
+after frame effects join the encoder's filter chain (`FrameEncoder -vf`),
+so `[fade, crop]` and `[fade, speed_change]` stream in plan order. Post-op
+effects fold across multi-segment plans with globally-rebased frame
+offsets -- envelopes continue across concat boundaries -- closing the last
+whole-plan fallback trigger (the brand-logo overlay on multi-segment
+plans).
+
+**The unstreamable shapes that remain** (all rejected with explicit
+errors): a frame effect ordered after encode-stage filters; time-based
+context after a duration-changing transform; transform post-ops;
+audio-coupled post-ops (`fade`/`volume_adjust`) on multi-segment plans;
+`face_crop` behind frame effects; in-plan `cut` ops.
+
+**BREAKING (no deprecation):**
+
+- The `reverse` op is removed (whole-video buffering has no place in a
+  streaming-first engine).
+- `silence_removal` loses `mode="speed_up"` and `speed_factor`.
+- `face_crop`: fixed crop-window size (the size-expansion clause is gone,
+  crops are pure slices); `fallback="full_frame"` behaves as `"center"`.
+- `strict_streaming` kwargs removed from `run_to_file()` and `check()` --
+  strictness is the only behavior; `check()` always reports unstreamable
+  ops as plan errors.
+- `StreamingClass.EAGER` renamed to `UNSTREAMABLE` (value
+  `"unstreamable"`).
+- `VideoEdit.run()` executes via the streaming engine: per-op in-memory
+  execution inside `VideoEdit` (`SegmentConfig.process`) is deleted, and
+  `run()` output pixels come from the decode chain. Per-op `apply()`
+  remains as the direct single-op API.
+- Plans that previously relied on the silent eager fallback now raise.
+
 ## 0.41.0
 
 **The subtitle renderer is now libass.** `add_subtitles` consumes its
@@ -94,7 +157,7 @@ streaming-first migration.
 Context-requiring effects now stream. `add_subtitles` — previously the most
 common reason a whole plan silently fell back to eager, in-memory execution —
 runs on the O(1)-memory streaming path. First step of the streaming-first
-migration (TODO.md P0.1).
+migration.
 
 - **Context threading.** `run_to_file` resolves each segment's `requires`
   context at plan-build time, re-based onto the segment-local timeline by the

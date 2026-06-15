@@ -175,10 +175,9 @@ llm_schema = cls.llm_json_schema()       # LLM-facing (llm_hidden dropped)
 | `resize` | `Resize` | transform | yes |
 | `resample_fps` | `ResampleFPS` | transform | yes |
 | `crop` | `Crop` | transform | yes |
-| `speed_change` | `SpeedChange` | transform | no |
-| `reverse` | `Reverse` | transform | no |
-| `freeze_frame` | `FreezeFrame` | transform | no |
-| `silence_removal` | `SilenceRemoval` | transform | no (requires `transcription`) |
+| `speed_change` | `SpeedChange` | transform | yes — compiles to `setpts` + CFR resample; audio time-stretched in sync |
+| `freeze_frame` | `FreezeFrame` | transform | yes — compiles to a `loop`-based chain; silence inserted in the audio |
+| `silence_removal` | `SilenceRemoval` | transform | yes — `select` keep-window cut (requires `transcription` context) |
 | `blur_effect` | `Blur` | effect | yes |
 | `zoom_effect` | `Zoom` | effect | yes |
 | `color_adjust` | `ColorGrading` | effect | yes |
@@ -209,7 +208,8 @@ and the default LLM-facing schema because they need a server-resolved
 
 | ID | Class | Category | Streamable |
 |---|---|---|---|
-| `face_crop` | `FaceTrackingCrop` | transform | no |
+| `face_crop` | `FaceTrackingCrop` | transform | yes — compile-time detection pass drives a per-frame crop track |
+| `object_detection_overlay` | `ObjectDetectionOverlay` | effect | yes — per-frame box overlay; YOLOv8 detection on a `detection_interval` cadence; bounded memory, not bounded compute |
 
 ## API Reference
 

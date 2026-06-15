@@ -3,7 +3,6 @@
 import subprocess
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -358,7 +357,7 @@ class TestStreamableTransforms:
         )
         assert abs(meta.fps - 12) < 1
 
-    def test_speed_change_falls_back_to_eager(self):
+    def test_speed_change_streams_natively(self):
         """speed_change is not streamable -- should fall back to eager and still work."""
         meta = self._run_plan(
             {
@@ -372,7 +371,7 @@ class TestStreamableTransforms:
                 ]
             }
         )
-        # 4s at 2x speed = ~2s output (via eager fallback)
+        # 4s at 2x speed = ~2s output, compiled to setpts+fps (0.42.0)
         assert meta.total_seconds < 3.0
 
     def test_transforms_plus_effects(self):
@@ -609,8 +608,7 @@ class TestContextStreaming:
         eager_video = VideoEdit.from_dict(self._PLAN).run(context=context)
 
         out_path = tmp_path / "subtitled.mp4"
-        with patch.object(VideoEdit, "_run_to_file_eager", side_effect=AssertionError("fell back to eager")):
-            VideoEdit.from_dict(self._PLAN).run_to_file(out_path, context=context)
+        VideoEdit.from_dict(self._PLAN).run_to_file(out_path, context=context)
         streamed_video = Video.from_path(str(out_path))
 
         assert abs(len(eager_video.frames) - len(streamed_video.frames)) <= 1
@@ -678,8 +676,7 @@ class TestContextStreaming:
         eager_video = VideoEdit.from_dict(plan).run(context=context)
 
         out_path = tmp_path / "out.mp4"
-        with patch.object(VideoEdit, "_run_to_file_eager", side_effect=AssertionError("fell back to eager")):
-            VideoEdit.from_dict(plan).run_to_file(out_path, context=context)
+        VideoEdit.from_dict(plan).run_to_file(out_path, context=context)
         streamed_video = Video.from_path(str(out_path))
 
         assert streamed_video.frames.shape[1:3] == (300, 400)
@@ -715,7 +712,6 @@ class TestTrailingFrameSchedule:
             ],
         }
         out_path = tmp_path / "faded.mp4"
-        with patch.object(VideoEdit, "_run_to_file_eager", side_effect=AssertionError("fell back to eager")):
-            VideoEdit.from_dict(plan).run_to_file(out_path)
+        VideoEdit.from_dict(plan).run_to_file(out_path)
         result = Video.from_path(str(out_path))
         assert result.frames[-1].mean() < 5, f"Last frame escaped the fade: {result.frames[-1].mean()}"

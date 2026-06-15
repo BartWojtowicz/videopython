@@ -188,13 +188,13 @@ for err in errors:
 # Re-prompt once with the full structured list instead of one-at-a-time
 ```
 
-With `check(source_metadata, strict_streaming=True)`, ops that would force
-`run_to_file`'s silent eager fallback are reported too — one
-`STREAMING_FALLBACK` error per op, with the actionable cause in
-`err.detail` (e.g. "transform follows an effect in plan order ... move the
-transform before the effect to stream"), so the refine loop can treat
-"won't stream" like any other violation. The full per-op classification
-(including the ops that do stream) is `edit.streamability()`.
+Streaming is the only execution engine, so ops that cannot stream at
+their plan position are real plan errors: `check()` reports one
+`STREAMING_FALLBACK` error per offending op, with the actionable cause in
+`err.detail` (e.g. "move the op before the duration-changing transform to
+stream"), and the refine loop treats "won't stream" like any other
+violation. The full per-op classification (including the ops that do
+stream) is `edit.streamability()`.
 
 ### Auto-repair the mechanical violations: `repair()`
 
@@ -278,7 +278,8 @@ edit.run_to_file("out.mp4", context={"transcription": transcription})
 
 Time-based context values (e.g. a `Transcription` with source-absolute
 timestamps) are re-based onto each cut segment's local timeline
-automatically, on both the eager and streaming paths.
+automatically, on the streaming engine that backs both `run()` and
+`run_to_file()`.
 
 Discover requires-aware ops via the registry:
 
