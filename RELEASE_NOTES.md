@@ -61,6 +61,33 @@ different files never serialize. New `VideoMetadata.clear_cache()` forces a
 re-probe for the rare in-place overwrite that preserves both mtime_ns and size.
 No API or behavior change otherwise.
 
+### Per-source runtime context for multi-clip plans
+
+A runtime context value may now be a per-source map keyed by
+`str(segment.source)`, so a plan that cuts from several sources can feed each
+segment its OWN transcription:
+
+```python
+edit.run_to_file(out, context={"transcription": {"a.mp4": tx_a, "b.mp4": tx_b}})
+```
+
+A bare value still broadcasts to every segment (unchanged), mirroring the
+existing `VideoMetadata | dict[str, VideoMetadata]` precedent in
+`_resolve_source_metas` — runtime metadata and runtime context now share one
+mental model. Resolution happens at the single `_segment_context` chokepoint
+(per-source select, then the existing per-segment re-basing), so nothing
+downstream changed. This lifts the block on subtitles in multi-clip project
+edits, where a single global transcription was wrong for every segment past
+the first.
+
+`check()` now reports a structured `CONTEXT_SOURCE_MISSING` error when an op
+requires a per-source key whose map omits that segment's source — otherwise an
+`add_subtitles` plan would pass validation (subtitles do not change predicted
+metadata) and only fail at decode.
+
+BREAKING: the private `_segment_context(context, start, end)` helper gains a
+`source` argument (`_segment_context(context, source, start, end)`).
+
 ## 0.42.0
 
 **Streaming-first migration complete: streaming is the only execution

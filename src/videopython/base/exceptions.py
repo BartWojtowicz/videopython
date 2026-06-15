@@ -92,6 +92,7 @@ class PlanErrorCode(str, Enum):
     UNKNOWN_OP = "unknown_op"
     CONCAT_MISMATCH = "concat_mismatch"
     POST_OP_REQUIRES_CONTEXT = "post_op_requires_context"
+    CONTEXT_SOURCE_MISSING = "context_source_missing"
     # Streaming: unstreamable op at its plan position (always reported).
     STREAMING_FALLBACK = "streaming_fallback"
 

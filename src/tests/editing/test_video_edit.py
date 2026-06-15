@@ -787,7 +787,7 @@ class TestSegmentContextHelper:
             words=[TranscriptionWord(12.0, 13.0, "a"), TranscriptionWord(14.5, 15.5, "b")],
             language="en",
         )
-        out = _segment_context({"transcription": tx}, 12.0, 16.0)
+        out = _segment_context({"transcription": tx}, "a.mp4", 12.0, 16.0)
         assert out is not None
         result = out["transcription"]
         assert _word_spans(result) == [(0.0, 1.0, "a"), (2.5, 3.5, "b")]
@@ -795,20 +795,20 @@ class TestSegmentContextHelper:
 
     def test_slices_out_of_range_words_then_offsets(self):
         tx = _make_transcription([(1.0, 2.0, "x"), (5.0, 6.0, "keep"), (20.0, 21.0, "y")])
-        out = _segment_context({"transcription": tx}, 4.0, 10.0)
+        out = _segment_context({"transcription": tx}, "a.mp4", 4.0, 10.0)
         assert out is not None
         assert _word_spans(out["transcription"]) == [(1.0, 2.0, "keep")]
 
     def test_start_zero_still_clips_trailing_words(self):
         tx = _make_transcription([(1.0, 2.0, "in"), (8.0, 9.0, "out")])
-        out = _segment_context({"transcription": tx}, 0.0, 5.0)
+        out = _segment_context({"transcription": tx}, "a.mp4", 0.0, 5.0)
         assert out is not None
         assert _word_spans(out["transcription"]) == [(1.0, 2.0, "in")]
 
     def test_no_overlap_drops_transcription_key_keeps_others(self):
         tx = _make_transcription([(1.0, 2.0, "hello")])
         ctx = {"transcription": tx, "other": 42}
-        out = _segment_context(ctx, 50.0, 60.0)
+        out = _segment_context(ctx, "a.mp4", 50.0, 60.0)
         assert out is not None
         assert "transcription" not in out
         assert out["other"] == 42
@@ -816,20 +816,54 @@ class TestSegmentContextHelper:
     def test_does_not_mutate_original_context(self):
         tx = _make_transcription([(12.0, 13.0, "a")])
         ctx = {"transcription": tx, "k": 1}
-        out = _segment_context(ctx, 12.0, 14.0)
+        out = _segment_context(ctx, "a.mp4", 12.0, 14.0)
         assert ctx["transcription"] is tx
         assert _word_spans(ctx["transcription"]) == [(12.0, 13.0, "a")]
         assert out is not ctx
 
     def test_none_and_empty_context_pass_through(self):
-        assert _segment_context(None, 0.0, 5.0) is None
+        assert _segment_context(None, "a.mp4", 0.0, 5.0) is None
         empty: dict[str, Any] = {}
-        assert _segment_context(empty, 0.0, 5.0) is empty
+        assert _segment_context(empty, "a.mp4", 0.0, 5.0) is empty
 
     def test_non_transcription_value_passes_through_unchanged(self):
         ctx = {"transcription": "not-a-transcription", "other": 1}
-        assert _segment_context(ctx, 10.0, 20.0) is ctx
-        assert _segment_context({"other": 1}, 10.0, 20.0) == {"other": 1}
+        assert _segment_context(ctx, "a.mp4", 10.0, 20.0) is ctx
+        assert _segment_context({"other": 1}, "a.mp4", 10.0, 20.0) == {"other": 1}
+
+    def test_per_source_map_selects_and_rebases_this_segments_source(self):
+        tx_a = _make_transcription([(4.5, 5.5, "hello")])
+        tx_b = _make_transcription([(6.0, 6.5, "world")])
+        ctx = {"transcription": {"a.mp4": tx_a, "b.mp4": tx_b}}
+
+        out_a = _segment_context(ctx, "a.mp4", 4.0, 8.0)
+        assert out_a is not None
+        assert _word_spans(out_a["transcription"]) == [(0.5, 1.5, "hello")]
+
+        out_b = _segment_context(ctx, "b.mp4", 4.0, 8.0)
+        assert out_b is not None
+        assert _word_spans(out_b["transcription"]) == [(2.0, 2.5, "world")]
+
+    def test_per_source_map_drops_key_for_absent_source(self):
+        tx_a = _make_transcription([(4.5, 5.5, "hello")])
+        ctx = {"transcription": {"a.mp4": tx_a}, "other": 1}
+        out = _segment_context(ctx, "missing.mp4", 4.0, 8.0)
+        assert out == {"other": 1}
+
+    def test_broadcast_value_applies_regardless_of_source(self):
+        tx = _make_transcription([(4.5, 5.5, "hello")])
+        for source in ("a.mp4", "b.mp4"):
+            out = _segment_context({"transcription": tx}, source, 4.0, 8.0)
+            assert out is not None
+            assert _word_spans(out["transcription"]) == [(0.5, 1.5, "hello")]
+
+    def test_mixed_per_source_and_broadcast_resolve_together(self):
+        tx_a = _make_transcription([(4.5, 5.5, "hello")])
+        ctx = {"transcription": {"a.mp4": tx_a}, "broadcast": 7}
+        out = _segment_context(ctx, "a.mp4", 4.0, 8.0)
+        assert out is not None
+        assert _word_spans(out["transcription"]) == [(0.5, 1.5, "hello")]
+        assert out["broadcast"] == 7
 
 
 class TestSegmentContextWiring:
@@ -896,7 +930,7 @@ class TestGenericContextRebasing:
     """_segment_context re-bases anything with slice+offset, not just Transcription."""
 
     def test_duck_typed_value_is_rebased(self):
-        out = _segment_context({"clip": _FakeTimeline(12.0, 18.0), "k": 1}, 12.0, 16.0)
+        out = _segment_context({"clip": _FakeTimeline(12.0, 18.0), "k": 1}, "a.mp4", 12.0, 16.0)
         assert out is not None
         clip = out["clip"]
         assert isinstance(clip, _FakeTimeline)
@@ -904,8 +938,44 @@ class TestGenericContextRebasing:
         assert out["k"] == 1
 
     def test_duck_typed_value_dropped_when_no_overlap(self):
-        out = _segment_context({"clip": _FakeTimeline(50.0, 60.0)}, 0.0, 5.0)
+        out = _segment_context({"clip": _FakeTimeline(50.0, 60.0)}, "a.mp4", 0.0, 5.0)
         assert out == {}
+
+
+class TestPerSourceContextCheck:
+    """``check`` surfaces a per-source map that omits a segment's source."""
+
+    _PLAN = {
+        "segments": [
+            {
+                "source": SMALL_VIDEO_PATH,
+                "start": 0.0,
+                "end": 5.0,
+                "operations": [{"op": "add_subtitles", "font_scale": 0.1}],
+            }
+        ],
+    }
+
+    def test_check_reports_missing_source(self):
+        tx = _make_transcription([(1.0, 2.0, "hi")])
+        context = {"transcription": {"other.mp4": tx}}
+        errors = VideoEdit.from_dict(self._PLAN).check(SMALL_VIDEO_METADATA, context=context)
+        missing = [e for e in errors if e.code is PlanErrorCode.CONTEXT_SOURCE_MISSING]
+        assert len(missing) == 1
+        assert missing[0].location == "segments[0].operations[0]"
+        assert missing[0].op == "add_subtitles"
+
+    def test_check_passes_when_source_present(self):
+        tx = _make_transcription([(1.0, 2.0, "hi")])
+        context = {"transcription": {SMALL_VIDEO_PATH: tx}}
+        errors = VideoEdit.from_dict(self._PLAN).check(SMALL_VIDEO_METADATA, context=context)
+        assert all(e.code is not PlanErrorCode.CONTEXT_SOURCE_MISSING for e in errors)
+
+    def test_check_ignores_broadcast_value(self):
+        tx = _make_transcription([(1.0, 2.0, "hi")])
+        context = {"transcription": tx}
+        errors = VideoEdit.from_dict(self._PLAN).check(SMALL_VIDEO_METADATA, context=context)
+        assert all(e.code is not PlanErrorCode.CONTEXT_SOURCE_MISSING for e in errors)
 
 
 class TestStreamingRequiresGuard:

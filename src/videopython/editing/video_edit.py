@@ -103,26 +103,74 @@ class SegmentRebaseable(Protocol):
 
 
 def _rebaseable_keys(context: dict[str, Any] | None) -> set[str]:
-    """Context keys whose value carries a re-baseable source-absolute timeline."""
+    """Context keys whose value carries a re-baseable source-absolute timeline.
+
+    Recognizes both a bare rebaseable value and a per-source ``dict`` map (see
+    :func:`_resolve_source_context`) whose values are all rebaseable.
+    """
     if not context:
         return set()
-    return {k for k, v in context.items() if isinstance(v, SegmentRebaseable)}
+    keys: set[str] = set()
+    for k, v in context.items():
+        if isinstance(v, SegmentRebaseable):
+            keys.add(k)
+        elif isinstance(v, dict) and v and all(isinstance(sv, SegmentRebaseable) for sv in v.values()):
+            keys.add(k)
+    return keys
+
+
+def _resolve_source_context(context: dict[str, Any] | None, source: str) -> dict[str, Any] | None:
+    """Collapse per-source context maps to a single segment source's values.
+
+    A context value that is a plain ``dict`` is treated as a per-source map
+    keyed by ``str(segment.source)`` -- mirroring
+    :meth:`VideoEdit._resolve_source_metas`, so runtime metadata and runtime
+    context share one mental model. Its entry for ``source`` is selected; when
+    ``source`` is absent the key is dropped so the consuming op raises its own
+    clear "requires ..." error (or surfaces as ``CONTEXT_SOURCE_MISSING`` in
+    :meth:`VideoEdit.check`). Any non-dict value is a broadcast value shared by
+    every segment and passes through unchanged (the pre-0.43 behavior).
+    """
+    if not context:
+        return context
+    if not any(isinstance(v, dict) for v in context.values()):
+        return context  # no per-source maps -> nothing to resolve, keep identity
+    resolved: dict[str, Any] = {}
+    for key, value in context.items():
+        if isinstance(value, dict):
+            if source in value:
+                resolved[key] = value[source]
+            # else: drop -- this segment's source is not in the per-source map.
+        else:
+            resolved[key] = value
+    return resolved
 
 
 def _segment_context(
     context: dict[str, Any] | None,
+    source: str,
     start: float,
     end: float,
 ) -> dict[str, Any] | None:
-    """Re-base time-based context entries onto a cut segment's local timeline.
+    """Resolve per-source context, then re-base it onto a cut segment's local timeline.
 
-    A cut segment is decoded 0-based -- its first frame is ``t=0`` -- but
-    context values may carry source-absolute timestamps. Every value
-    implementing :class:`SegmentRebaseable` (e.g. a ``Transcription``) is
-    sliced to ``[start, end)`` and shifted by ``-start`` so segment operations
-    (``add_subtitles``, ``silence_removal``) see segment-local time. Without
-    this, subtitles on a segment cut from the middle of a video render blank.
-    Values that don't implement the protocol pass through untouched.
+    Two stages, run at the single chokepoint every per-segment site funnels
+    through:
+
+    1. **Per-source resolution** (:func:`_resolve_source_context`): a context
+       value may be a per-source ``dict`` keyed by ``str(segment.source)``;
+       it collapses to this segment's source. A bare value broadcasts to all
+       segments (the pre-0.43 behavior). This lets a multi-clip plan carry
+       ``{"transcription": {"a.mp4": tx_a, "b.mp4": tx_b}}`` and feed each
+       segment its OWN transcription.
+    2. **Re-basing**: a cut segment is decoded 0-based -- its first frame is
+       ``t=0`` -- but context values may carry source-absolute timestamps.
+       Every value implementing :class:`SegmentRebaseable` (e.g. a
+       ``Transcription``) is sliced to ``[start, end)`` and shifted by
+       ``-start`` so segment operations (``add_subtitles``,
+       ``silence_removal``) see segment-local time. Without this, subtitles on
+       a segment cut from the middle of a video render blank. Values that don't
+       implement the protocol pass through untouched.
 
     Slicing always runs (even for ``start == 0``) so out-of-range entries do
     not bleed in. When ``slice`` yields nothing the key is dropped rather than
@@ -137,10 +185,13 @@ def _segment_context(
     """
     if not context:
         return context
-    rebaseable = {k: v for k, v in context.items() if isinstance(v, SegmentRebaseable)}
+    resolved = _resolve_source_context(context, source)
+    if not resolved:
+        return resolved
+    rebaseable = {k: v for k, v in resolved.items() if isinstance(v, SegmentRebaseable)}
     if not rebaseable:
-        return context
-    rebased = dict(context)
+        return resolved
+    rebased = dict(resolved)
     for key, value in rebaseable.items():
         sliced = value.slice(start, end)
         if sliced is None:
@@ -148,6 +199,47 @@ def _segment_context(
         else:
             rebased[key] = sliced.offset(-start)
     return rebased
+
+
+def _missing_source_context_errors(
+    context: dict[str, Any] | None,
+    index: int,
+    segment: SegmentConfig,
+) -> list[_LocatedError]:
+    """``CONTEXT_SOURCE_MISSING`` errors for ops needing a per-source key that omits this source.
+
+    Fires only for the new failure mode P1.9 introduces: a per-source context
+    map (a plain ``dict``) is supplied for a key an op ``requires``, but it has
+    no entry for this segment's source. A bare broadcast value or a fully
+    absent key is left to the existing missing-context path. Surfacing it in
+    :meth:`VideoEdit.check` matters because an ``add_subtitles`` plan would
+    otherwise pass ``check`` (subtitles do not change predicted metadata) and
+    only fail at decode.
+    """
+    if not context:
+        return []
+    source = str(segment.source)
+    out: list[_LocatedError] = []
+    for op_index, op in enumerate(segment.operations):
+        for key in op.requires:
+            value = context.get(key)
+            if isinstance(value, dict) and source not in value:
+                available = sorted(str(k) for k in value)
+                message = (
+                    f"Segment {index}: operation '{op.op}' requires context '{key}' for source "
+                    f"'{source}', but the per-source map has no entry for it. Available: {available}."
+                )
+                out.append(
+                    (
+                        message,
+                        PlanError(
+                            PlanErrorCode.CONTEXT_SOURCE_MISSING,
+                            location=f"segments[{index}].operations[{op_index}]",
+                            op=op.op,
+                        ),
+                    )
+                )
+    return out
 
 
 def _predict_with_context(
@@ -837,7 +929,7 @@ class VideoEdit(BaseModel):
                 final_segments.append(seg)
                 seg_output_metas.append(None)
                 continue
-            seg_context = _segment_context(context, seg.start, seg.end)
+            seg_context = _segment_context(context, str(seg.source), seg.start, seg.end)
             new_ops, op_repairs, out_meta = _repair_op_chain(
                 list(seg.operations),
                 seg_meta,
@@ -1052,6 +1144,10 @@ class VideoEdit(BaseModel):
         for message, err in self._post_op_context_errors(context):
             emit(message, err)
 
+        for i, seg in enumerate(self.segments):
+            for message, err in _missing_source_context_errors(context, i, seg):
+                emit(message, err)
+
         # Cut each segment against its own source metadata. A bad range isolates
         # that segment (no cut meta -> its op chain is skipped below).
         cut_metas: list[VideoMetadata | None] = []
@@ -1075,7 +1171,7 @@ class VideoEdit(BaseModel):
             seg_meta = matched_by_index.get(i)
             if seg_meta is None:
                 continue
-            seg_context = _segment_context(context, seg.start, seg.end)
+            seg_context = _segment_context(context, str(seg.source), seg.start, seg.end)
             failed = False
             for op_index, op in enumerate(seg.operations):
                 location = f"segments[{i}].operations[{op_index}]"
@@ -1138,7 +1234,7 @@ class VideoEdit(BaseModel):
         dimensions). :meth:`_collect` has its own per-op loop because it must
         also accumulate, clamp windows, and isolate failures per segment.
         """
-        seg_context = _segment_context(context, segment.start, segment.end)
+        seg_context = _segment_context(context, str(segment.source), segment.start, segment.end)
         for op_index, op in enumerate(segment.operations):
             location = f"segments[{index}].operations[{op_index}]"
             for message, err in _window_errors(op, meta.total_seconds, location):
@@ -1383,7 +1479,7 @@ class VideoEdit(BaseModel):
         # _apply_with_context). Like _segment_context's eager consumers, a
         # missing/empty key is passed as absent so the effect raises its own
         # clear "requires ..." error -- before that segment's decode.
-        seg_context = _segment_context(context, segment.start, segment.end)
+        seg_context = _segment_context(context, str(segment.source), segment.start, segment.end)
 
         owned_files: list[Path] = []
 
