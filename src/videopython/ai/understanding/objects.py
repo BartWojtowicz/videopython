@@ -83,7 +83,9 @@ class ObjectDetector:
         return self._resolve_device()
 
     def _init_yolo(self) -> None:
-        from ultralytics import YOLO
+        from videopython.ai._optional import require
+
+        YOLO = require("ultralytics", "vision", feature="ObjectDetector").YOLO
 
         self._yolo_model = YOLO(self.model_name)
         self._class_names = dict(self._yolo_model.names)

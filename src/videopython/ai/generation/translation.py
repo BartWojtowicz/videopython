@@ -170,7 +170,11 @@ class MarianTranslator:
         return f"Helsinki-NLP/opus-mt-{source_lang}-{target_lang}"
 
     def _init_local(self, source_lang: str, target_lang: str) -> None:
-        from transformers import MarianMTModel, MarianTokenizer
+        from videopython.ai._optional import require
+
+        _transformers = require("transformers", "translation", feature="MarianTranslator")
+        MarianMTModel = _transformers.MarianMTModel
+        MarianTokenizer = _transformers.MarianTokenizer
 
         model_name = self._get_local_model_name(source_lang, target_lang)
 

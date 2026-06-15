@@ -31,7 +31,9 @@ class TextToVideo:
         self._pipeline: Any = None
 
     def _init_local(self) -> None:
-        from diffusers import CogVideoXPipeline
+        from videopython.ai._optional import require
+
+        CogVideoXPipeline = require("diffusers", "generation", feature="TextToVideo").CogVideoXPipeline
 
         requested_device = self.device
         device, dtype = _get_torch_device_and_dtype(self.device)
@@ -83,7 +85,11 @@ class ImageToVideo:
         self._pipeline: Any = None
 
     def _init_local(self) -> None:
-        from diffusers import CogVideoXImageToVideoPipeline
+        from videopython.ai._optional import require
+
+        CogVideoXImageToVideoPipeline = require(
+            "diffusers", "generation", feature="ImageToVideo"
+        ).CogVideoXImageToVideoPipeline
 
         requested_device = self.device
         device, dtype = _get_torch_device_and_dtype(self.device)

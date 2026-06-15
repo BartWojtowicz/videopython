@@ -64,7 +64,9 @@ class SemanticSceneDetector:
         if self._model is not None:
             return
 
-        from transnetv2_pytorch import TransNetV2
+        from videopython.ai._optional import require
+
+        TransNetV2 = require("transnetv2_pytorch", "vision", feature="SemanticSceneDetector").TransNetV2
 
         requested_device = self.device
         device = select_device(self.device, mps_allowed=True)

@@ -2,6 +2,28 @@
 
 Dub videos into different languages or replace speech with custom text using voice cloning.
 
+## Installation
+
+Dubbing needs the `[dub]` extra (transcription + source separation + translation
++ loudness matching):
+
+```bash
+pip install "videopython[dub]"        # pipeline WITHOUT local TTS
+pip install "videopython[dub,tts]"    # + default local voice synthesis
+```
+
+`[dub]` deliberately **excludes** `chatterbox-tts` so a dubbing image
+co-resolves without chatterbox's strict torch/diffusers pins. Local speech
+synthesis runs through the pluggable
+[`SpeechBackend`](#pluggable-tts-backend) protocol:
+
+- Install `[tts]` to use the bundled local `TextToSpeech` (Chatterbox). A bare
+  `[dub]` install that reaches synthesis raises a clear `ImportError` pointing
+  at `[tts]`.
+- Or inject your own `SpeechBackend` (e.g. an out-of-process / remote
+  synthesizer) into `VideoDubber` — then `[dub]` alone is enough and chatterbox
+  never enters the process.
+
 ## Local Pipeline
 
 Video dubbing runs with a local pipeline combining Whisper for transcription, MarianMT or Qwen3 for translation, Chatterbox Multilingual TTS for speech synthesis, and Demucs for source separation. Translation backend selection is automatic by default — see [Translation Backend](#translation-backend) for details.
@@ -198,6 +220,32 @@ text. Empty list under MarianTranslator.
 
 If neither backend covers the requested pair the auto resolver raises
 `UnsupportedLanguageError` (importable from `videopython.ai.dubbing`).
+
+### Pluggable TTS Backend
+
+Speech synthesis is decoupled from the pipeline behind a `runtime_checkable`
+`SpeechBackend` protocol (`videopython.ai.generation._tts_backend`). The bundled
+local `TextToSpeech` (Chatterbox, `[tts]` extra) satisfies it structurally; when
+no backend is injected the pipeline constructs it lazily — which requires `[tts]`.
+
+To dub **without** chatterbox in the process, inject any object exposing
+`generate_audio(text, *, voice_sample_path=..., exaggeration=..., cfg_weight=...,
+temperature=...) -> Audio` (e.g. an out-of-process or remote synthesizer):
+
+```python
+from videopython.ai.dubbing import VideoDubber
+from videopython.audio import Audio
+
+class RemoteTTS:
+    def generate_audio(self, text, voice_sample=None, voice_sample_path=None,
+                       exaggeration=None, cfg_weight=None, temperature=None) -> Audio:
+        ...  # call your remote/Modal synthesizer, return an Audio
+
+dubber = VideoDubber(tts_backend=RemoteTTS())  # [dub] alone is enough; no chatterbox
+```
+
+videopython ships only the protocol plus the local backend — there is no
+reference remote/HTTP backend.
 
 ### Output Options for `dub_file`
 

@@ -94,7 +94,9 @@ def phash_dedup_frames(
     if len(frames) <= 1:
         return list(frames)
 
-    import imagehash
+    from videopython.ai._optional import require
+
+    imagehash = require("imagehash", "vision", feature="scene-frame dedup")
 
     kept: list[np.ndarray | Image.Image] = []
     kept_hashes: list[Any] = []

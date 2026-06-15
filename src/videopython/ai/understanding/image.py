@@ -151,7 +151,12 @@ class SceneVLM:
     def _init_local(self) -> None:
         """Initialize local Qwen3.5 model."""
         import torch
-        from transformers import AutoModelForImageTextToText, AutoProcessor
+
+        from videopython.ai._optional import require
+
+        _transformers = require("transformers", "vision", feature="SceneVLM")
+        AutoModelForImageTextToText = _transformers.AutoModelForImageTextToText
+        AutoProcessor = _transformers.AutoProcessor
 
         t0 = time.perf_counter()
         requested_device = self.device
@@ -275,7 +280,10 @@ class SceneVLM:
     def _generate_from_message_batch(self, messages_batch: list[list[dict[str, Any]]]) -> list[str]:
         """Run batch generation for one or more multimodal chat messages."""
         import torch
-        from qwen_vl_utils import process_vision_info
+
+        from videopython.ai._optional import require
+
+        process_vision_info = require("qwen_vl_utils", "vision", feature="SceneVLM").process_vision_info
 
         if self._model is None:
             self._init_local()

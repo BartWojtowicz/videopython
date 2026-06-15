@@ -62,7 +62,9 @@ def loudness_match(target: Audio, reference: Audio) -> Audio:
     if not target.data.size or not reference.data.size:
         return target
 
-    import pyloudnorm
+    from videopython.ai._optional import require
+
+    pyloudnorm = require("pyloudnorm", "dub", feature="loudness matching")
 
     target_lufs = pyloudnorm.Meter(target.metadata.sample_rate).integrated_loudness(target.data)
     reference_lufs = pyloudnorm.Meter(reference.metadata.sample_rate).integrated_loudness(reference.data)

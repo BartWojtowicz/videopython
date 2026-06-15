@@ -260,7 +260,10 @@ class Qwen3Translator:
     def _init_local(self) -> None:
         """Download (if needed) and load the GGUF weights."""
         from huggingface_hub import hf_hub_download
-        from llama_cpp import Llama
+
+        from videopython.ai._optional import require
+
+        Llama = require("llama_cpp", "translation", feature="Qwen3Translator").Llama
 
         # Warn about CPU latency at load time (not __init__) — the warning is
         # about runtime cost, which only applies once the model is actually

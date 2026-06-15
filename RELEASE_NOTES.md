@@ -1,5 +1,53 @@
 # Release Notes
 
+## 0.43.0
+
+The P1 roadmap items, shipped as one
+release. Highlights: dubbing dependency isolation, multi-clip per-source
+context, and an ffprobe probe cache.
+
+### Dubbing dependency isolation: granular `[ai]` extras + a pluggable TTS backend
+
+The monolithic `[ai]` extra is split into per-capability extras so a consumer
+can build a slim, conflict-free image per capability instead of pulling the
+entire ML stack (and `chatterbox-tts`'s strict pins) for one feature:
+
+| Extra | Covers |
+|---|---|
+| `asr` | transcription / diarization (`understanding/audio.py`) |
+| `vision` | detection, scene/temporal, VLM (`understanding/{faces,objects,temporal,image}.py`, `video_analysis`) |
+| `separation` | source separation (`understanding/separation.py`) |
+| `translation` | MarianMT + Qwen3 GGUF (`generation/{translation,qwen3}.py`) |
+| `tts` | Chatterbox voice cloning (`generation/audio.py`) — isolated |
+| `generation` | SDXL / CogVideoX / MusicGen (`generation/*`) |
+| `dub` | the dubbing pipeline (`asr + separation + translation + pyloudnorm`) |
+| `ai` | convenience aggregate of every extra (PEP 685 self-references) |
+
+**`[dub]` deliberately excludes `chatterbox-tts`.** The blocker that made the
+dubbing wedge undeployable was chatterbox's `torch==2.6.0` pin conflicting with
+`pyannote-audio` (`torch>=2.8`) and CogVideoX (`diffusers>=0.30`). Local
+synthesis now runs through a new `runtime_checkable` `SpeechBackend` protocol
+(`ai/generation/_tts_backend.py`): `VideoDubber` / `LocalDubbingPipeline` accept
+a `tts_backend=` injection, so a consumer can run TTS in its own image/function
+(install `[tts]` there, or inject a remote backend) while a `[dub]` image
+co-resolves cleanly **without** chatterbox. `[tts]` installs standalone on
+chatterbox's own pins. The `[tool.uv].override-dependencies` block is now
+load-bearing only for the all-in `[ai]` resolve.
+
+**Lazy `ai` imports.** `ai/__init__.py` and the `generation`/`understanding`/
+`dubbing` sub-packages are PEP 562 `__getattr__` lazy re-exports, and every
+heavy import is guarded by `ai/_optional.require(module, extra)`, which raises
+a clear `pip install 'videopython[<extra>]'` hint on a missing dependency.
+`import videopython.ai` (and importing a single leaf class) no longer drags in
+sibling heavy modules — verified in `test_packaging_extras.py`, which also
+drift-guards `union(granular) == [ai]` so the dep lists never hand-desync.
+
+BREAKING: `pip install videopython[ai]` still installs everything, but
+consumers pinning a sub-capability must migrate to the new extra names; a bare
+`[dub]` install that reaches local synthesis raises an ImportError pointing at
+`[tts]`; `numba`/`scipy`/`scikit-learn`/`ollama`/`hf-transfer` drop to
+transitive-only.
+
 ## 0.42.0
 
 **Streaming-first migration complete: streaming is the only execution
