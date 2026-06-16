@@ -16,8 +16,9 @@ runtime.
 
 from __future__ import annotations
 
-import importlib
 from typing import TYPE_CHECKING
+
+from videopython.ai._optional import lazy_exports
 
 if TYPE_CHECKING:
     # Redundant aliases mark these as intentional re-exports (mypy/IDE see the
@@ -43,7 +44,7 @@ if TYPE_CHECKING:
 # Public symbol -> submodule (relative to this package) that defines it. The
 # submodule's own (lazy) __init__ resolves the symbol; we only import the
 # submodule, never its siblings.
-_SYMBOL_MODULES: dict[str, str] = {
+_exports: dict[str, str] = {
     # Generation
     "TextToVideo": ".generation",
     "ImageToVideo": ".generation",
@@ -67,16 +68,6 @@ _SYMBOL_MODULES: dict[str, str] = {
     "VideoAnalyzer": ".video_analysis",
 }
 
-__all__ = list(_SYMBOL_MODULES)
+__all__ = list(_exports)
 
-
-def __getattr__(name: str) -> object:
-    module_name = _SYMBOL_MODULES.get(name)
-    if module_name is None:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    module = importlib.import_module(module_name, __name__)
-    return getattr(module, name)
-
-
-def __dir__() -> list[str]:
-    return sorted(__all__)
+__getattr__, __dir__ = lazy_exports(__name__, _exports)

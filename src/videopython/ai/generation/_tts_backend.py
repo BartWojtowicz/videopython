@@ -10,7 +10,7 @@ local ``TextToSpeech`` (which pulls ``chatterbox-tts`` via the ``[tts]`` extra)
 satisfies this protocol structurally — no changes needed there. A consumer that
 can't or won't install chatterbox (e.g. a service running synthesis in a
 separate process or on a remote/Modal function) supplies its own object
-implementing :meth:`SpeechBackend.synthesize` and injects it; the pipeline never
+implementing :meth:`SpeechBackend.generate_audio` and injects it; the pipeline never
 imports chatterbox in that case. videopython ships ONLY this protocol plus the
 local backend — no reference remote/HTTP backend.
 """

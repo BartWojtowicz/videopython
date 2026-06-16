@@ -11,8 +11,9 @@ symbols visible to mypy and IDEs.
 
 from __future__ import annotations
 
-import importlib
 from typing import TYPE_CHECKING
+
+from videopython.ai._optional import lazy_exports
 
 if TYPE_CHECKING:
     # Redundant aliases = intentional re-exports (visible to mypy/IDE, not
@@ -32,7 +33,7 @@ if TYPE_CHECKING:
     from videopython.ai.generation.translation import UnsupportedLanguageError as UnsupportedLanguageError
 
 # Public symbol -> fully-qualified module that defines it.
-_SYMBOL_MODULES: dict[str, str] = {
+_exports: dict[str, str] = {
     "DubbingConfig": "videopython.ai.dubbing.config",
     "VideoDubber": "videopython.ai.dubbing.dubber",
     "DubbingResult": "videopython.ai.dubbing.models",
@@ -48,16 +49,6 @@ _SYMBOL_MODULES: dict[str, str] = {
     "UnsupportedLanguageError": "videopython.ai.generation.translation",
 }
 
-__all__ = list(_SYMBOL_MODULES)
+__all__ = list(_exports)
 
-
-def __getattr__(name: str) -> object:
-    module_name = _SYMBOL_MODULES.get(name)
-    if module_name is None:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    module = importlib.import_module(module_name)
-    return getattr(module, name)
-
-
-def __dir__() -> list[str]:
-    return sorted(__all__)
+__getattr__, __dir__ = lazy_exports(__name__, _exports)

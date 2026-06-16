@@ -28,6 +28,7 @@ from videopython.base.description import BoundingBox
 from videopython.base.exceptions import PlanError, PlanErrorCode, PlanValidationError
 from videopython.base.fonts import load_font
 from videopython.editing._easing import ease, ease_out
+from videopython.editing.audio_ops import volume_envelope
 from videopython.editing.operation import Effect, FilterCtx
 
 if TYPE_CHECKING:
@@ -505,10 +506,7 @@ class Fade(Effect):
         if self.mode in ("out", "in_out"):
             out_start = stop_s - ramp
             terms.append((f"between(t,{out_start:.6f},{stop_s:.6f})", self._curve_expr(f"({stop_s:.6f}-t)/{ramp:.6f}")))
-        expr = "1"
-        for cond, gain in reversed(terms):
-            expr = f"if({cond},{gain},{expr})"
-        return f"volume=volume='{expr}':eval=frame"
+        return volume_envelope(terms)
 
 
 class VolumeAdjust(Effect):
@@ -566,12 +564,12 @@ class VolumeAdjust(Effect):
         down_start = stop_s - ramp
         up = f"(1+({v:.6f}-1)*sqrt((t-{start_s:.6f})/{ramp:.6f}))"
         down = f"(1+({v:.6f}-1)*sqrt(({stop_s:.6f}-t)/{ramp:.6f}))"
-        expr = (
-            f"if(between(t,{start_s:.6f},{up_end:.6f}),{up},"
-            f"if(between(t,{up_end:.6f},{down_start:.6f}),{v:.6f},"
-            f"if(between(t,{down_start:.6f},{stop_s:.6f}),{down},1)))"
-        )
-        return f"volume=volume='{expr}':eval=frame"
+        terms = [
+            (f"between(t,{start_s:.6f},{up_end:.6f})", up),
+            (f"between(t,{up_end:.6f},{down_start:.6f})", f"{v:.6f}"),
+            (f"between(t,{down_start:.6f},{stop_s:.6f})", down),
+        ]
+        return volume_envelope(terms)
 
 
 class _AnchoredOverlay(Effect):

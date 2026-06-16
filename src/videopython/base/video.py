@@ -177,6 +177,23 @@ class VideoMetadata:
             total_seconds=round(seconds, 4),
         )
 
+    def with_frame_count(self, frame_count: int) -> VideoMetadata:
+        """Return new metadata with updated frame count.
+
+        Args:
+            frame_count: New frame count.
+
+        Returns:
+            New VideoMetadata with updated frame count and duration.
+        """
+        return VideoMetadata(
+            height=self.height,
+            width=self.width,
+            fps=self.fps,
+            frame_count=frame_count,
+            total_seconds=round(frame_count / self.fps, 4),
+        )
+
     def with_dimensions(self, width: int, height: int) -> VideoMetadata:
         """Return new metadata with updated dimensions.
 

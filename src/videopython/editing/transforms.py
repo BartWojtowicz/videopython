@@ -128,7 +128,6 @@ class CutSeconds(Operation):
                         field="end",
                         value=self.end,
                         limit=meta.total_seconds,
-                        predicted_duration=meta.total_seconds,
                     )
                 ],
             )
@@ -369,15 +368,7 @@ class SpeedChange(Operation):
                     )
                 ],
             )
-        from videopython.base.video import VideoMetadata as _Meta
-
-        return _Meta(
-            height=meta.height,
-            width=meta.width,
-            fps=meta.fps,
-            frame_count=new_count,
-            total_seconds=round(new_count / meta.fps, 4),
-        )
+        return meta.with_frame_count(new_count)
 
 
 class FreezeFrame(Operation):
@@ -487,7 +478,6 @@ class FreezeFrame(Operation):
                         field="timestamp",
                         value=self.timestamp,
                         limit=meta.total_seconds,
-                        predicted_duration=meta.total_seconds,
                     )
                 ],
             )
@@ -498,15 +488,7 @@ class FreezeFrame(Operation):
             frame_idx = min(round(self.timestamp * meta.fps), meta.frame_count - 1)
             replace_end = min(frame_idx + freeze_count, meta.frame_count)
             new_count = meta.frame_count - (replace_end - frame_idx) + freeze_count
-        from videopython.base.video import VideoMetadata as _Meta
-
-        return _Meta(
-            height=meta.height,
-            width=meta.width,
-            fps=meta.fps,
-            frame_count=new_count,
-            total_seconds=round(new_count / meta.fps, 4),
-        )
+        return meta.with_frame_count(new_count)
 
 
 class SilenceRemoval(Operation):
@@ -636,12 +618,4 @@ class SilenceRemoval(Operation):
         if keep is None:
             return meta
         new_count = sum(e - s for s, e in keep)
-        from videopython.base.video import VideoMetadata as _Meta
-
-        return _Meta(
-            height=meta.height,
-            width=meta.width,
-            fps=meta.fps,
-            frame_count=new_count,
-            total_seconds=round(new_count / meta.fps, 4),
-        )
+        return meta.with_frame_count(new_count)

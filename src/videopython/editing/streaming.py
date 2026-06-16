@@ -115,10 +115,10 @@ def analyze_streamability(
     ``streamable`` ClassVar as the authoritative declaration (a flag-False
     transform never streams, even with a working ``to_ffmpeg_filter``); the
     one divergence the flag cannot express -- flag True but the filter
-    compiles to ``None`` -- is caught at runtime by the strict-mode drift
-    guard, and a registry test pins flag-True transforms to an actual
-    ``to_ffmpeg_filter`` override. Purely structural: no disk access and no
-    runtime context.
+    compiles to ``None`` -- is caught at runtime by the ``STREAMING_FALLBACK``
+    raise in ``_compile_streaming_plans``, and a registry test pins flag-True
+    transforms to an actual ``to_ffmpeg_filter`` override. Purely structural:
+    no disk access and no runtime context.
 
     Segment transitions (``SegmentConfig.transition_in``) do not appear here:
     a transition is a native ffmpeg ``xfade``/``acrossfade`` pass over two

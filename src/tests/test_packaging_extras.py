@@ -17,7 +17,6 @@ dep lists aligned. They enforce, mechanically:
 
 from __future__ import annotations
 
-import ast
 import importlib
 import sys
 import tomllib
@@ -25,6 +24,8 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+
+from tests.conftest import _flatten_extra, _toplevel_imports
 
 # Parsed-TOML shape is recursive; an Any-valued mapping is the honest type here.
 Pyproject = dict[str, object]
@@ -98,38 +99,6 @@ def _optional_deps(pyproject: Pyproject) -> dict[str, list[str]]:
 def _dependency_groups(pyproject: Pyproject) -> dict[str, list[str]]:
     """Typed view of ``[dependency-groups]`` (empty when absent)."""
     return cast("dict[str, list[str]]", pyproject.get("dependency-groups", {}))
-
-
-def _flatten_extra(extras: dict[str, list[str]], extra: str, _seen: set[str] | None = None) -> set[str]:
-    """Resolve an extra to its concrete dep set, following ``videopython[...]``
-    PEP 685 self-references recursively."""
-    seen = _seen if _seen is not None else set()
-    if extra in seen:
-        return set()
-    seen.add(extra)
-
-    deps: set[str] = set()
-    for req in extras[extra]:
-        if _req_name(req) == "videopython":
-            inner = req.split("[", 1)[1].split("]", 1)[0]
-            for ref in inner.split(","):
-                deps |= _flatten_extra(extras, ref.strip(), seen)
-        else:
-            deps.add(req.strip())
-    return deps
-
-
-def _toplevel_imports(file_path: Path) -> list[str]:
-    """Top-level (module-scope) import names. Lazy imports inside functions are
-    intentionally excluded — they're the allowed escape hatch."""
-    tree = ast.parse(file_path.read_text())
-    names: list[str] = []
-    for node in tree.body:
-        if isinstance(node, ast.Import):
-            names.extend(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            names.append(node.module)
-    return names
 
 
 # --------------------------------------------------------------------------- #

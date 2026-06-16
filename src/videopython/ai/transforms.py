@@ -15,8 +15,8 @@ from tqdm import tqdm
 
 from videopython.ai.understanding.faces import FaceTracker
 from videopython.base._dimensions import floor_to_even
+from videopython.base._ffmpeg import escape_filter_value
 from videopython.base.video import FrameIterator, VideoMetadata
-from videopython.editing._ass import escape_filter_value
 from videopython.editing.operation import FilterCtx, OpCategory, Operation
 
 logger = logging.getLogger(__name__)

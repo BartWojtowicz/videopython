@@ -150,3 +150,14 @@ def popen_encode(cmd: Sequence[str]) -> Iterator[subprocess.Popen[bytes]]:
     _, stderr = proc.communicate()
     if proc.returncode != 0:
         raise FFmpegRunError(f"ffmpeg failed (exit {proc.returncode}): {stderr.decode(errors='replace')}")
+
+
+def escape_filter_value(value: str) -> str:
+    """Quote a string for use as an ffmpeg filter option value.
+
+    Escapes the option-value level metacharacters (``\\``, ``'``, ``:``) and
+    wraps the result in single quotes so the filtergraph-level separators
+    (``,``, ``;``, ``[``, ``]``) pass through untouched.
+    """
+    escaped = value.replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:")
+    return f"'{escaped}'"

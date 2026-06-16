@@ -11,6 +11,7 @@ import pytest
 from PIL import ImageFont
 
 from tests.test_config import SMALL_VIDEO_PATH
+from videopython.base._ffmpeg import escape_filter_value
 from videopython.base.exceptions import PlanValidationError
 from videopython.base.fonts import BUNDLED_FONT_FAMILIES, BUNDLED_FONTS, bundled_fonts_dir
 from videopython.base.transcription import Transcription, TranscriptionSegment, TranscriptionWord
@@ -24,7 +25,6 @@ from videopython.editing._ass import (
     _ass_time,
     _word_state_intervals,
     build_ass,
-    escape_filter_value,
 )
 from videopython.editing.operation import FilterCtx
 from videopython.editing.transcription_overlay import TranscriptionOverlay

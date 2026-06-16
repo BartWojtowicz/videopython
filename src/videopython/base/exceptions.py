@@ -116,7 +116,6 @@ class PlanError:
     field: str | None = None
     value: float | None = None
     limit: float | None = None
-    predicted_duration: float | None = None
     detail: str | None = None
 
     def to_prompt_line(self) -> str:
@@ -131,8 +130,7 @@ class PlanError:
         ``None`` fields are skipped)::
 
             <CODE_NAME> [at <location>] [(op '<op>')]: [<field>=<value>]
-            [(limit <limit>)] [(predicted duration <predicted_duration>s)]
-            [-- <detail>]
+            [(limit <limit>)] [-- <detail>]
 
         Every :class:`PlanErrorCode` yields a non-empty line: the code name is
         always present, so a code carrying no other fields still renders
@@ -155,8 +153,6 @@ class PlanError:
             clauses.append(f"value={_fmt_num(self.value)}")
         if self.limit is not None:
             clauses.append(f"limit {_fmt_num(self.limit)}")
-        if self.predicted_duration is not None:
-            clauses.append(f"predicted duration {_fmt_num(self.predicted_duration)}s")
 
         if clauses:
             line += ": " + ", ".join(clauses)

@@ -32,7 +32,31 @@ __all__ = [
     "MusicBed",
     "build_music_bed_filter_complex",
     "duck_volume_expression",
+    "volume_envelope",
 ]
+
+
+def volume_envelope(terms: list[tuple[str, str]]) -> str:
+    """Build a nested-if gain envelope expression for volume automation.
+
+    Takes a list of ``(condition, gain_expr)`` tuples and folds them into a
+    nested ``if()`` expression evaluated outermost-first (the terms in
+    chronological order), with each condition mapping to its gain expression and
+    ``"1"`` as the final fallback (no change). The result is wrapped in the
+    ffmpeg ``volume`` filter format.
+
+    Args:
+        terms: List of ``(condition_str, gain_expr_str)`` tuples, where each
+            condition is an ffmpeg expression (e.g. ``"between(t,0,1)"``) and
+            ``gain_expr`` is the volume multiplier for that condition.
+
+    Returns:
+        Complete ffmpeg volume filter string: ``volume=volume='...':eval=frame``.
+    """
+    expr = "1"
+    for cond, gain in reversed(terms):
+        expr = f"if({cond},{gain},{expr})"
+    return f"volume=volume='{expr}':eval=frame"
 
 
 def duck_volume_expression(
@@ -74,10 +98,7 @@ def duck_volume_expression(
         # Release: linearly rise from floor back to 1 across [e, rel_end].
         rel = f"({floor:.6f}+{duck:.6f}*(t-{e:.6f})/{release:.6f})"
         terms.append((f"between(t,{e:.6f},{rel_end:.6f})", rel))
-    expr = "1"
-    for cond, gain in reversed(terms):
-        expr = f"if({cond},{gain},{expr})"
-    return f"volume=volume='{expr}':eval=frame"
+    return volume_envelope(terms)
 
 
 class MusicBed(BaseModel):

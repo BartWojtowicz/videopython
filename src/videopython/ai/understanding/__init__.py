@@ -8,8 +8,9 @@ does not pull in ``audio`` (whisper/pyannote — ``[asr]``). The
 
 from __future__ import annotations
 
-import importlib
 from typing import TYPE_CHECKING
+
+from videopython.ai._optional import lazy_exports
 
 if TYPE_CHECKING:
     # Redundant aliases = intentional re-exports (visible to mypy/IDE, not
@@ -21,7 +22,7 @@ if TYPE_CHECKING:
     from .objects import ObjectDetector as ObjectDetector
     from .temporal import SemanticSceneDetector as SemanticSceneDetector
 
-_SYMBOL_MODULES: dict[str, str] = {
+_exports: dict[str, str] = {
     "AudioToText": ".audio",
     "AudioClassifier": ".audio",
     "FaceTracker": ".faces",
@@ -30,16 +31,6 @@ _SYMBOL_MODULES: dict[str, str] = {
     "SemanticSceneDetector": ".temporal",
 }
 
-__all__ = list(_SYMBOL_MODULES)
+__all__ = list(_exports)
 
-
-def __getattr__(name: str) -> object:
-    module_name = _SYMBOL_MODULES.get(name)
-    if module_name is None:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    module = importlib.import_module(module_name, __name__)
-    return getattr(module, name)
-
-
-def __dir__() -> list[str]:
-    return sorted(__all__)
+__getattr__, __dir__ = lazy_exports(__name__, _exports)

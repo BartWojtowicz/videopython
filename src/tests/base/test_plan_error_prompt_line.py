@@ -23,17 +23,16 @@ def test_bare_code_is_just_the_name():
 
 
 def test_segment_end_exceeds_source_includes_numerics():
-    """A representative segment error renders field/value/limit/predicted duration."""
+    """A representative segment error renders field/value/limit."""
     err = PlanError(
         code=PlanErrorCode.SEGMENT_END_EXCEEDS_SOURCE,
         location="segments[1]",
         field="end",
         value=12.0,
         limit=10.0,
-        predicted_duration=10.0,
     )
     line = err.to_prompt_line()
-    assert line == ("SEGMENT_END_EXCEEDS_SOURCE at segments[1]: end=12, limit 10, predicted duration 10s")
+    assert line == ("SEGMENT_END_EXCEEDS_SOURCE at segments[1]: end=12, limit 10")
 
 
 def test_window_error_includes_op_and_detail():
@@ -45,13 +44,12 @@ def test_window_error_includes_op_and_detail():
         field="window.stop",
         value=8.5,
         limit=6.0,
-        predicted_duration=6.0,
         detail="window clamped past the predicted segment end",
     )
     line = err.to_prompt_line()
     assert line == (
         "EFFECT_WINDOW_EXCEEDS_DURATION at segments[0].operations[2] (op 'blur'): "
-        "window.stop=8.5, limit 6, predicted duration 6s "
+        "window.stop=8.5, limit 6 "
         "-- window clamped past the predicted segment end"
     )
 
