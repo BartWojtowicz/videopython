@@ -5,12 +5,13 @@ demucs, ...). Anything outside it must stay importable on a vanilla
 ``pip install videopython`` (no ``[ai]`` extra).
 """
 
-import ast
 import importlib
 import sys
 from pathlib import Path
 
 import pytest
+
+from tests.conftest import _toplevel_imports
 
 NON_AI_SUBPACKAGES = ["videopython.base", "videopython.audio", "videopython.editing"]
 
@@ -19,27 +20,6 @@ def _package_files(package: str) -> list[Path]:
     parts = package.split(".")
     pkg_path = Path(__file__).parent.parent / "/".join(parts)
     return list(pkg_path.rglob("*.py"))
-
-
-def _toplevel_imports(file_path: Path) -> list[str]:
-    """Return module names referenced by top-level ``import`` / ``from ... import`` statements.
-
-    Lazy imports inside functions are not returned: they don't execute at
-    import time and are an allowed escape hatch.
-    """
-    with open(file_path) as f:
-        try:
-            tree = ast.parse(f.read())
-        except SyntaxError:
-            return []
-
-    imports: list[str] = []
-    for node in tree.body:
-        if isinstance(node, ast.Import):
-            imports.extend(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            imports.append(node.module)
-    return imports
 
 
 @pytest.mark.parametrize("package", NON_AI_SUBPACKAGES)

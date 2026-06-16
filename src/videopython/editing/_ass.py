@@ -27,7 +27,7 @@ from enum import Enum
 
 from videopython.base.transcription import Transcription
 
-__all__ = ["AnchorPoint", "AssLook", "build_ass", "escape_filter_value"]
+__all__ = ["AnchorPoint", "AssLook", "build_ass"]
 
 RGBColor = tuple[int, int, int]
 RGBAColor = tuple[int, int, int, int]
@@ -115,17 +115,6 @@ def _escape_text(text: str) -> str:
     ASS has no escape sequence for them, so they are substituted.
     """
     return text.replace("\\", "/").replace("{", "(").replace("}", ")").replace("\n", " ")
-
-
-def escape_filter_value(value: str) -> str:
-    """Quote a string for use as an ffmpeg filter option value.
-
-    Escapes the option-value level metacharacters (``\\``, ``'``, ``:``) and
-    wraps the result in single quotes so the filtergraph-level separators
-    (``,``, ``;``, ``[``, ``]``) pass through untouched.
-    """
-    escaped = value.replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:")
-    return f"'{escaped}'"
 
 
 def _word_state_intervals(

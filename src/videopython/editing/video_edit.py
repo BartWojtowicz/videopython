@@ -73,6 +73,10 @@ assert set(get_args(TransitionType)) == set(TRANSITION_TYPES), "TransitionType L
 # (``validate``, byte-stable prose) or accumulate them all (``check``).
 _LocatedError = tuple[str, PlanError]
 
+# Sentinel marking "caller did not pass decode_filters" so a FilterCtx builder
+# can fall back to FilterCtx's own default instead of forcing a value.
+_DECODE_FILTERS_DEFAULT = object()
+
 
 def _resolve_operation(value: Any) -> Operation:
     """BeforeValidator: turn a dict into the right :class:`Operation` subclass.
@@ -282,7 +286,6 @@ def _segment_end_exceeds_source(index: int, seg: SegmentConfig, meta: VideoMetad
         field="end",
         value=seg.end,
         limit=meta.total_seconds,
-        predicted_duration=meta.total_seconds,
     )
 
 
@@ -391,7 +394,6 @@ def _window_errors(op: Operation, duration: float, location: str) -> list[_Locat
                     field="window.start",
                     value=start,
                     limit=duration,
-                    predicted_duration=duration,
                 ),
             )
         )
@@ -406,7 +408,6 @@ def _window_errors(op: Operation, duration: float, location: str) -> list[_Locat
                     field="window.stop",
                     value=stop,
                     limit=duration,
-                    predicted_duration=duration,
                 ),
             )
         )
@@ -470,6 +471,35 @@ def _transition_structure_errors(segments: list[SegmentConfig]) -> list[_Located
     return out
 
 
+def _transition_too_long_error(
+    index: int,
+    spec: TransitionSpec,
+    overlap: int,
+    limit_frames: int,
+    limit_seconds: float,
+    remedy: str,
+) -> _LocatedError:
+    """The located ``TRANSITION_TOO_LONG`` error for an overlap that fills a segment.
+
+    Shared by the validation pass (:func:`_transition_duration_errors`) and the
+    pre-decode guard (:meth:`VideoEdit._assert_transitions_runnable`); each call
+    site resolves its own ``overlap``/``limit_frames``/``limit_seconds`` from its
+    own fps source, then supplies the trailing ``remedy`` prose.
+    """
+    message = (
+        f"Segment {index}: transition_in overlaps {overlap} frames ({spec.duration}s) but must overlap "
+        f"fewer frames than the shorter adjacent segment ({limit_frames} frames, {limit_seconds}s); "
+        f"{remedy}"
+    )
+    return message, PlanError(
+        code=PlanErrorCode.TRANSITION_TOO_LONG,
+        location=f"segments[{index}]",
+        field="transition_in.duration",
+        value=spec.duration,
+        limit=limit_seconds,
+    )
+
+
 def _transition_duration_errors(
     segments: list[SegmentConfig],
     outputs: list[VideoMetadata],
@@ -496,18 +526,13 @@ def _transition_duration_errors(
         if overlap >= limit_frames:
             limit_seconds = round(limit_frames / fps, 4) if fps else 0.0
             out.append(
-                (
-                    f"Segment {i}: transition_in overlaps {overlap} frames ({spec.duration}s) but must overlap "
-                    f"fewer frames than the shorter adjacent segment ({limit_frames} frames, {limit_seconds}s); "
+                _transition_too_long_error(
+                    i,
+                    spec,
+                    overlap,
+                    limit_frames,
+                    limit_seconds,
                     "a transition cannot consume a whole segment.",
-                    PlanError(
-                        code=PlanErrorCode.TRANSITION_TOO_LONG,
-                        location=f"segments[{i}]",
-                        field="transition_in.duration",
-                        value=spec.duration,
-                        limit=limit_seconds,
-                        predicted_duration=limit_seconds,
-                    ),
                 )
             )
     return out
@@ -891,31 +916,21 @@ class VideoEdit(BaseModel):
             prop["default"] = []
             return prop
 
-        def _transition_field() -> dict[str, Any]:
-            # `transition_in` is `TransitionSpec | None`; Pydantic emits it as an
-            # `anyOf` with a `$ref` to a buried `$defs/TransitionSpec`. Inline a
-            # self-contained closed object (titles dropped, descriptions kept) so
-            # the field needs no external `$defs` -- the same self-containment
-            # the op union relies on.
-            ts = TransitionSpec.model_json_schema()
-            ts.pop("title", None)
-            ts.pop("$defs", None)
-            for sub in ts.get("properties", {}).values():
+        def _optional_model_field(
+            inline_model: type[BaseModel], parent: type[BaseModel], field_name: str
+        ) -> dict[str, Any]:
+            # An optional `Model | None` slot (`transition_in`, `music_bed`):
+            # Pydantic emits it as an `anyOf` with a `$ref` to a buried
+            # `$defs/Model`. Inline a self-contained closed object (titles
+            # dropped, descriptions kept) so the field needs no external `$defs`
+            # -- the same self-containment the op union relies on.
+            inline = inline_model.model_json_schema()
+            inline.pop("title", None)
+            inline.pop("$defs", None)
+            for sub in inline.get("properties", {}).values():
                 sub.pop("title", None)
-            prop = _field(SegmentConfig, "transition_in")
-            prop["anyOf"] = [ts, {"type": "null"}]
-            return prop
-
-        def _music_bed_field() -> dict[str, Any]:
-            # `music_bed` is `MusicBed | None`; like `transition_in`, inline a
-            # self-contained closed object so the field needs no external `$defs`.
-            mb = MusicBed.model_json_schema()
-            mb.pop("title", None)
-            mb.pop("$defs", None)
-            for sub in mb.get("properties", {}).values():
-                sub.pop("title", None)
-            prop = _field(cls, "music_bed")
-            prop["anyOf"] = [mb, {"type": "null"}]
+            prop = _field(parent, field_name)
+            prop["anyOf"] = [inline, {"type": "null"}]
             return prop
 
         segment_schema: dict[str, Any] = {
@@ -926,7 +941,7 @@ class VideoEdit(BaseModel):
                 "start": _field(SegmentConfig, "start"),
                 "end": _field(SegmentConfig, "end"),
                 "operations": _array(SegmentConfig, "operations", op_schema),
-                "transition_in": _transition_field(),
+                "transition_in": _optional_model_field(TransitionSpec, SegmentConfig, "transition_in"),
             },
             "required": ["source", "start", "end"],
             "additionalProperties": False,
@@ -942,7 +957,7 @@ class VideoEdit(BaseModel):
                 "post_operations": _array(cls, "post_operations", op_schema),
                 "match_to_lowest_fps": _field(cls, "match_to_lowest_fps"),
                 "match_to_lowest_resolution": _field(cls, "match_to_lowest_resolution"),
-                "music_bed": _music_bed_field(),
+                "music_bed": _optional_model_field(MusicBed, cls, "music_bed"),
             },
             "required": ["segments"],
             "additionalProperties": False,
@@ -1950,6 +1965,28 @@ class VideoEdit(BaseModel):
             for f in owned_files:
                 f.unlink(missing_ok=True)
 
+        def make_ctx(decode_filters: tuple[str, ...] | None | object = _DECODE_FILTERS_DEFAULT) -> FilterCtx:
+            """A :class:`FilterCtx` snapshot of the current ``running`` state.
+
+            Captures the per-op pipeline geometry (dims/fps/frame-count) and the
+            segment's location/context every op compiles against. ``decode_filters``
+            is the decode-stage filter prefix ahead of this op; left unset it keeps
+            :class:`FilterCtx`'s own default (the op consumes no decode pass).
+            """
+            kwargs: dict[str, Any] = {
+                "width": running.width,
+                "height": running.height,
+                "fps": running.fps,
+                "frame_count": running.frame_count,
+                "context": seg_context or {},
+                "source_path": segment.source,
+                "start_second": segment.start,
+                "end_second": segment.end,
+            }
+            if decode_filters is not _DECODE_FILTERS_DEFAULT:
+                kwargs["decode_filters"] = decode_filters
+            return FilterCtx(**kwargs)
+
         effect_schedule: list[EffectScheduleEntry] = []
         post_vf_filters: list[str] = []
         af_filters: list[str] = []
@@ -2002,17 +2039,7 @@ class VideoEdit(BaseModel):
                         # process_frame. Either way plan order is preserved. A
                         # None compile falls through to the frame-effect path.
                         encode_stage_effect = bool(effect_schedule or post_vf_filters)
-                        ctx = FilterCtx(
-                            width=running.width,
-                            height=running.height,
-                            fps=running.fps,
-                            frame_count=running.frame_count,
-                            context=seg_context or {},
-                            source_path=segment.source,
-                            start_second=segment.start,
-                            end_second=segment.end,
-                            decode_filters=None if encode_stage_effect else tuple(vf_filters),
-                        )
+                        ctx = make_ctx(decode_filters=None if encode_stage_effect else tuple(vf_filters))
                         filter_expr = op.to_ffmpeg_filter(ctx)
                         owned_files.extend(ctx.owned_files)
                         if filter_expr is not None:
@@ -2043,16 +2070,7 @@ class VideoEdit(BaseModel):
                     # at the decode stage (one after an encode-stage filter is
                     # rejected above), so its audio twin joins af_filters; its
                     # window resolves against this position's running metadata.
-                    effect_ctx = FilterCtx(
-                        width=running.width,
-                        height=running.height,
-                        fps=running.fps,
-                        frame_count=running.frame_count,
-                        context=seg_context or {},
-                        source_path=segment.source,
-                        start_second=segment.start,
-                        end_second=segment.end,
-                    )
+                    effect_ctx = make_ctx()
                     compile_audio_twin(op, effect_ctx, encode_stage=False)
                     continue
                 if op.requires and (duration_changed or not op.streamable):
@@ -2084,17 +2102,7 @@ class VideoEdit(BaseModel):
                     # compile time -- not streamable (rejected as UNSTREAMABLE).
                     abandon()
                     return None
-                ctx = FilterCtx(
-                    width=running.width,
-                    height=running.height,
-                    fps=running.fps,
-                    frame_count=running.frame_count,
-                    context=seg_context or {},
-                    source_path=segment.source,
-                    start_second=segment.start,
-                    end_second=segment.end,
-                    decode_filters=None if encode_stage else tuple(vf_filters),
-                )
+                ctx = make_ctx(decode_filters=None if encode_stage else tuple(vf_filters))
                 filter_expr = op.to_ffmpeg_filter(ctx)
                 owned_files.extend(ctx.owned_files)
                 if filter_expr is None:
@@ -2103,8 +2111,8 @@ class VideoEdit(BaseModel):
                 if encode_stage:
                     # A transform following frame effects joins the encode
                     # chain (FrameEncoder -vf), which runs after every
-                    # process_frame -- plan order is preserved without the
-                    # whole-plan fallback this shape used to force.
+                    # process_frame -- plan order is preserved because this
+                    # shape places the filter without the whole-plan fallback.
                     pipe_meta = pipe_meta or running
                     post_vf_filters.append(filter_expr)
                 else:
@@ -2174,24 +2182,15 @@ class VideoEdit(BaseModel):
             limit_frames = min(left_frames, right_frames)
             if overlap >= limit_frames:
                 limit_seconds = round(limit_frames / fps, 4) if fps else 0.0
-                message = (
-                    f"Segment {i}: transition_in overlaps {overlap} frames ({spec.duration}s) but must overlap "
-                    f"fewer frames than the shorter adjacent segment ({limit_frames} frames, {limit_seconds}s); "
-                    "repair the plan or shorten the transition."
+                message, err = _transition_too_long_error(
+                    i,
+                    spec,
+                    overlap,
+                    limit_frames,
+                    limit_seconds,
+                    "repair the plan or shorten the transition.",
                 )
-                raise PlanValidationError(
-                    message,
-                    [
-                        PlanError(
-                            code=PlanErrorCode.TRANSITION_TOO_LONG,
-                            location=f"segments[{i}]",
-                            field="transition_in.duration",
-                            value=spec.duration,
-                            limit=limit_seconds,
-                            predicted_duration=limit_seconds,
-                        )
-                    ],
-                )
+                raise PlanValidationError(message, [err])
 
 
 def _plan_output_frames(plan: StreamingSegmentPlan) -> tuple[int, float]:
@@ -2208,12 +2207,6 @@ def _plan_output_frames(plan: StreamingSegmentPlan) -> tuple[int, float]:
     if frames <= 0:
         frames = round((plan.end_second - plan.start_second) * fps)
     return frames, fps
-
-
-def _plan_output_seconds(plan: StreamingSegmentPlan) -> float:
-    """A compiled segment plan's predicted post-op duration in seconds."""
-    frames, fps = _plan_output_frames(plan)
-    return frames / fps if fps else 0.0
 
 
 def _effect_frame_range(op: Effect, fps: float, total_frames: int) -> tuple[int, int]:

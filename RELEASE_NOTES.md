@@ -1,5 +1,42 @@
 # Release Notes
 
+## 0.44.1
+
+Confirmed cleanups surfaced by the 0.44.0 streaming-only removal -- all additive
+or internal refactors, no public behavior change.
+
+### Dead code and inert state
+
+- Removed the dead `_plan_output_seconds` helper (no call sites).
+- Removed `PlanError.predicted_duration`: every construction site passed a value
+  equal to `limit`, so the field was redundant. Dropped the field, its
+  `to_prompt_line()` render clause, and all `predicted_duration=` kwargs.
+
+### Internal dedup (behavior-identical)
+
+- `VideoMetadata.with_frame_count(n)` replaces 3 inline metadata rebuilds in
+  `transforms.py` (distinct from `with_duration`, which re-rounds the frame count).
+- `volume_envelope(terms)` in `audio_ops.py` is now shared by the audio ducking
+  code and the `Fade` / `VolumeAdjust` effects -- the compiled ffmpeg `volume`
+  expression is byte-identical.
+- `_optional_model_field` collapses the twin optional-field schema closures, and a
+  local `make_ctx` builder collapses the 3 identical `FilterCtx` constructions in
+  `video_edit.py`.
+- The two `TRANSITION_TOO_LONG` guards share one error builder while each call site
+  keeps its own fps resolution.
+- The generic `escape_filter_value` ffmpeg escaper moved to `base/_ffmpeg` (its
+  natural home now that it is borrowed across modules); all importers point there.
+- `lazy_exports()` in `ai/_optional.py` collapses the 4 identical PEP-562
+  lazy-import blocks across the `ai` subpackages, preserving the exact export
+  surface.
+
+### Docs and tests
+
+- Fixed the `SpeechBackend` docstring (`synthesize` -> `generate_audio`) and trimmed
+  stale streaming-only transitional comments in `video_edit.py` / `streaming.py`.
+- Hoisted the shared `_toplevel_imports` / `_flatten_extra` test helpers into
+  `conftest.py`.
+
 ## 0.44.0
 
 Breaking: the eager/in-memory editing path is gone. Streaming-to-file

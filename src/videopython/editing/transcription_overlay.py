@@ -24,9 +24,10 @@ from typing import ClassVar, Literal
 from PIL import ImageFont
 from pydantic import Field
 
+from videopython.base._ffmpeg import escape_filter_value
 from videopython.base.fonts import BUNDLED_FONT_FAMILIES, bundled_fonts_dir, load_font
 from videopython.base.transcription import Transcription
-from videopython.editing._ass import AnchorPoint, AssLook, build_ass, escape_filter_value
+from videopython.editing._ass import AnchorPoint, AssLook, build_ass
 from videopython.editing.operation import Effect, FilterCtx
 
 __all__ = ["TranscriptionOverlay", "SubtitleStyle", "SubtitleRegion"]

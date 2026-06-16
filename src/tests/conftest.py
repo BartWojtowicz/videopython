@@ -12,6 +12,9 @@ CI runs: uv run pytest src/tests/ai -m "not requires_model_download"
 Local runs: uv run pytest src/tests/ai -v (all tests including model downloads)
 """
 
+import ast
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -20,6 +23,45 @@ from tests.test_config import (
     SMALL_VIDEO_PATH,
 )
 from videopython.base.video import Video
+
+
+def _toplevel_imports(file_path: Path) -> list[str]:
+    """Return module names referenced by top-level ``import`` / ``from ... import`` statements.
+
+    Lazy imports inside functions are not returned: they don't execute at
+    import time and are an allowed escape hatch. An unparseable source file is
+    a real defect, so ``ast.parse`` is allowed to raise rather than be skipped.
+    """
+    tree = ast.parse(file_path.read_text())
+
+    imports: list[str] = []
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            imports.extend(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imports.append(node.module)
+    return imports
+
+
+def _flatten_extra(extras: dict[str, list[str]], extra: str, _seen: set[str] | None = None) -> set[str]:
+    """Resolve an extra to its concrete dep set, following ``videopython[...]``
+    PEP 685 self-references recursively."""
+    from tests.test_packaging_extras import _req_name
+
+    seen = _seen if _seen is not None else set()
+    if extra in seen:
+        return set()
+    seen.add(extra)
+
+    deps: set[str] = set()
+    for req in extras[extra]:
+        if _req_name(req) == "videopython":
+            inner = req.split("[", 1)[1].split("]", 1)[0]
+            for ref in inner.split(","):
+                deps |= _flatten_extra(extras, ref.strip(), seen)
+        else:
+            deps.add(req.strip())
+    return deps
 
 
 def pytest_configure(config):
