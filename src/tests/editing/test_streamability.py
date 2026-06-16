@@ -271,12 +271,7 @@ class TestRunToFileRejection:
         assert err.code is PlanErrorCode.STREAMING_FALLBACK
         assert err.op == "color_adjust"
 
-    def test_run_raises_the_same_errors(self, tmp_path):
-        plan = _plan([FADE, RESIZE, {"op": "color_adjust", "brightness": 0.2}])
-        with pytest.raises(PlanValidationError, match="cannot stream"):
-            plan.run()
-
-    def test_builder_drift_raises_instead_of_silent_eager(self, tmp_path, monkeypatch: pytest.MonkeyPatch):
+    def test_builder_drift_raises_instead_of_silent_fallback(self, tmp_path, monkeypatch: pytest.MonkeyPatch):
         """A streamable-flagged transform that fails to compile must not slip through."""
         monkeypatch.setattr(Resize, "to_ffmpeg_filter", lambda self, ctx: None)
         plan = _plan([RESIZE])

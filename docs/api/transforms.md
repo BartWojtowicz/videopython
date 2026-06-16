@@ -6,19 +6,22 @@ count. See [Operations](operations.md) for the base contract.
 
 ## Usage
 
-```python
-from videopython.base import Video
-from videopython.editing import Resize, Crop, CutSeconds
+Transforms are not applied to a `Video` directly. They run only through
+the streaming engine: add the operation(s) to a `VideoEdit` and render
+with `run_to_file`.
 
-video = Video.from_path("input.mp4")
-video = CutSeconds(start=0.0, end=10.0).apply(video)
-video = Crop(width=0.5, height=0.5).apply(video)        # 50% center crop
-video = Resize(width=1280, height=720).apply(video)
-video.save("output.mp4")
+```python
+from videopython.editing import VideoEdit, SegmentConfig, Resize, Crop, CutSeconds
+
+edit = VideoEdit(segments=[SegmentConfig(source="input.mp4", start=0, end=10, operations=[
+    CutSeconds(start=0.0, end=10.0),
+    Crop(width=0.5, height=0.5),        # 50% center crop
+    Resize(width=1280, height=720),
+])])
+edit.run_to_file("output.mp4")
 ```
 
-Inside a `VideoEdit` plan, transforms go in the `operations` list with
-their fields inline:
+A `SegmentConfig`'s `operations` list also accepts the inline dict form:
 
 ```python
 plan = {
@@ -53,24 +56,27 @@ plan = {
 are treated as fractions of source dimensions; everything else is
 interpreted as a pixel count.
 
+Add any of these to a `VideoEdit` and render with `run_to_file`:
+
 ```python
 from videopython.editing import Crop, CropMode
 
-Crop(width=640, height=480).apply(video)                              # pixels
-Crop(width=0.5, height=0.5).apply(video)                              # 50% center crop
-Crop(width=0.5, height=1.0, x=0.5, y=0.0, mode=CropMode.CUSTOM).apply(video)
+video_op = Crop(width=640, height=480)                              # pixels
+video_op = Crop(width=0.5, height=0.5)                              # 50% center crop
+video_op = Crop(width=0.5, height=1.0, x=0.5, y=0.0, mode=CropMode.CUSTOM)
 ```
 
 ## Context-Dependent Transforms
 
-`SilenceRemoval` declares `requires = ("transcription",)`. Inside a
-`VideoEdit`, pass it via `context`; standalone, pass it directly to
-`apply`:
+`SilenceRemoval` declares `requires = ("transcription",)`. Add it to a
+segment's `operations` and pass the transcription to the runner via
+`context`:
 
 ```python
-edit.run(context={"transcription": my_transcription})
-# or
-SilenceRemoval().apply(video, transcription=my_transcription)
+edit = VideoEdit(segments=[SegmentConfig(source="input.mp4", start=0, end=10, operations=[
+    SilenceRemoval(),
+])])
+edit.run_to_file("out.mp4", context={"transcription": my_transcription})
 ```
 
 ## API Reference

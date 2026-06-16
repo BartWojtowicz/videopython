@@ -7,29 +7,20 @@ See ``editing/operation.py`` for the ``Operation`` base.
 
 from __future__ import annotations
 
-import dataclasses
-import logging
 import math
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-import cv2
-import numpy as np
 from pydantic import Field, model_validator
-from tqdm import tqdm
 
-from videopython.audio import Audio
 from videopython.audio.audio import atempo_chain
 from videopython.base._dimensions import floor_to_even, round_to_even
 from videopython.base.exceptions import PlanError, PlanErrorCode, PlanValidationError
-from videopython.base.video import Video
 from videopython.editing.operation import BoundedTimeField, FilterCtx, OpCategory, Operation
 
 if TYPE_CHECKING:
     from videopython.base.transcription import Transcription
     from videopython.base.video import VideoMetadata
-
-logger = logging.getLogger(__name__)
 
 # Shared tolerance (seconds) for duration bounds checks across the editing layer,
 # so the located segment guard and the cut transforms accept the same boundary.
@@ -90,9 +81,6 @@ class CutFrames(Operation):
             raise ValueError(f"end ({self.end}) must be greater than start ({self.start})")
         return self
 
-    def apply(self, video: Video) -> Video:
-        return video[self.start : self.end]
-
     def predict_metadata(self, meta: VideoMetadata) -> VideoMetadata:
         # ints; eps inert -- DURATION_EPS is seconds-scale, never flips an int compare.
         if self.end > meta.frame_count + DURATION_EPS:
@@ -128,9 +116,6 @@ class CutSeconds(Operation):
             raise ValueError(f"end ({self.end}) must be greater than start ({self.start})")
         return self
 
-    def apply(self, video: Video) -> Video:
-        return video[round(self.start * video.fps) : round(self.end * video.fps)]
-
     def predict_metadata(self, meta: VideoMetadata) -> VideoMetadata:
         if self.end > meta.total_seconds + DURATION_EPS:
             message = f"end time ({self.end}) exceeds video duration ({meta.total_seconds})"
@@ -147,7 +132,8 @@ class CutSeconds(Operation):
                     )
                 ],
             )
-        # Mirror apply(): round both endpoints to frames before computing the duration.
+        # Round both endpoints to frames before computing the duration, matching
+        # the frame-accurate cut the compiled filter performs.
         start_f = round(self.start * meta.fps)
         end_f = round(self.end * meta.fps)
         duration = round((end_f - start_f) / meta.fps, 4)
@@ -186,15 +172,6 @@ class Resize(Operation):
             new_h = round_to_even(new_h)
         return new_w, new_h
 
-    def apply(self, video: Video) -> Video:
-        new_w, new_h = self._resolve_dims(video.video_shape[2], video.video_shape[1])
-        logger.info(f"Resizing video to: {new_w}x{new_h}!")
-        video.frames = np.asarray(
-            [cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA) for frame in video.frames],
-            dtype=np.uint8,
-        )
-        return video
-
     def predict_metadata(self, meta: VideoMetadata) -> VideoMetadata:
         new_w, new_h = self._resolve_dims(meta.width, meta.height)
         return meta.with_dimensions(new_w, new_h)
@@ -212,40 +189,6 @@ class ResampleFPS(Operation):
     streamable: ClassVar[bool] = True
 
     fps: float = Field(gt=0, description="Target frames per second.")
-
-    def _downsample(self, video: Video) -> Video:
-        target = int(len(video.frames) * (self.fps / video.fps))
-        idx = np.round(np.linspace(0, len(video.frames) - 1, target)).astype(int)
-        video.frames = video.frames[idx]
-        video.fps = self.fps
-        return video
-
-    def _upsample(self, video: Video) -> Video:
-        target = int(len(video.frames) * (self.fps / video.fps))
-        positions = np.linspace(0, len(video.frames) - 1, target)
-        new_frames = []
-        for pos in tqdm(positions, desc="Interpolating frames"):
-            ratio = pos % 1
-            low = int(pos)
-            high = int(np.ceil(pos))
-            frame = (1 - ratio) * video.frames[low] + ratio * video.frames[high]
-            new_frames.append(frame.astype(np.uint8))
-        video.frames = np.array(new_frames, dtype=np.uint8)
-        video.fps = self.fps
-        return video
-
-    def apply(self, video: Video) -> Video:
-        if video.fps == self.fps:
-            return video
-        if video.fps > self.fps:
-            logger.info(f"Downsampling video from {video.fps} to {self.fps} FPS.")
-            video = self._downsample(video)
-        else:
-            logger.info(f"Upsampling video from {video.fps} to {self.fps} FPS.")
-            video = self._upsample(video)
-        if video.audio is not None:
-            video.audio = video.audio.fit_to_duration(len(video.frames) / video.fps)
-        return video
 
     def predict_metadata(self, meta: VideoMetadata) -> VideoMetadata:
         return meta.with_fps(self.fps)
@@ -296,17 +239,6 @@ class Crop(Operation):
             cy = self._to_pixels(self.y, src_h)
         return cx, cy, cw, ch
 
-    def apply(self, video: Video) -> Video:
-        src_h, src_w = video.frame_shape[:2]
-        cx, cy, cw, ch = self._resolve_box(src_w, src_h)
-        if self.mode == CropMode.CENTER:
-            mid_w, mid_h = src_w // 2, src_h // 2
-            off_w, off_h = cw // 2, ch // 2
-            video.frames = video.frames[:, mid_h - off_h : mid_h + off_h, mid_w - off_w : mid_w + off_w, :]
-        else:
-            video.frames = video.frames[:, cy : cy + ch, cx : cx + cw, :]
-        return video
-
     def predict_metadata(self, meta: VideoMetadata) -> VideoMetadata:
         _, _, cw, ch = self._resolve_box(meta.width, meta.height)
         if cw > meta.width or ch > meta.height:
@@ -324,8 +256,8 @@ class Crop(Operation):
                 ],
             )
         if self.mode == CropMode.CENTER:
-            # Mirror apply()'s `mid - cw//2 : mid + cw//2` slice, which
-            # produces 2 * (cw // 2) pixels — odd targets round down.
+            # A centered crop spans `mid - cw//2 : mid + cw//2`, i.e. 2 * (cw // 2)
+            # pixels, so odd targets round down -- match that here.
             cw = floor_to_even(cw)
             ch = floor_to_even(ch)
         return meta.with_dimensions(cw, ch)
@@ -372,16 +304,16 @@ class SpeedChange(Operation):
         forward-bias correction so the ``fps`` filter's tick rounding selects
         the same nearest source frame a per-frame sampler would.
 
-        Ramp: the eager sampler varies speed linearly across the *source*
-        timeline and renormalizes so the output spans ``frame_count / avg``
-        frames; the closed form of that curve is
+        Ramp: speed varies linearly across the *source* timeline, renormalized
+        so the output spans ``frame_count / avg`` frames; the closed form of
+        that curve is
         ``out(T) = D_out * ln(1 + (b-a)*T/(a*D_in)) / ln(b/a)``, evaluated
         per frame by ``setpts`` in double precision.
 
         With ``interpolate`` on a slowdown, the CFR resampler is the
         ``framerate`` filter (blends adjacent frames) instead of ``fps``
-        (nearest), matching the eager path's frame blending in spirit -- the
-        blend weighting is libavfilter's, not pixel-identical.
+        (nearest), for frame-blended slow motion -- the blend weighting is
+        libavfilter's.
         """
         k = self.speed
         if self.end_speed is None or self.end_speed == self.speed:
@@ -412,8 +344,8 @@ class SpeedChange(Operation):
 
         The audio twin of :meth:`to_ffmpeg_filter`: streams in the same ffmpeg
         process as the video. Ramps are approximated with a single constant
-        stretch at the average speed -- the same approximation the eager path
-        uses, so the two paths agree. ``adjust_audio=False`` leaves the audio
+        stretch at the average speed, so the audio stays aligned with the
+        retimed video. ``adjust_audio=False`` leaves the audio
         untouched (the ``atrim`` to the predicted output duration is applied by
         the encoder graph's tail). Returns ``None`` when no stretch is needed.
         """
@@ -421,60 +353,6 @@ class SpeedChange(Operation):
             return None
         filters = atempo_chain(self._eff_speed())
         return ",".join(filters) if filters else None
-
-    def _audio_apply(self, audio: Audio, output_duration: float) -> Audio:
-        """Eager (in-memory) audio time-stretch for ``Video.apply``.
-
-        The friendly ``Video`` API still mutates an in-memory ``Audio`` array;
-        the streaming engine uses :meth:`to_ffmpeg_audio_filter` instead.
-        """
-        if not audio.is_silent and self.adjust_audio:
-            audio = audio.time_stretch(self._eff_speed())
-        return audio.fit_to_duration(output_duration)
-
-    def apply(self, video: Video) -> Video:
-        n_frames = len(video.frames)
-
-        if self.end_speed is None:
-            logger.info(f"Applying {self.speed}x speed change...")
-            new_count = int(n_frames / self.speed)
-            if new_count == 0:
-                raise ValueError(f"Speed {self.speed}x would result in 0 frames!")
-            source_indices = np.linspace(0, n_frames - 1, new_count)
-        else:
-            logger.info(f"Applying speed ramp from {self.speed}x to {self.end_speed}x...")
-            num_samples = 1000
-            speeds = np.linspace(self.speed, self.end_speed, num_samples)
-            time_per_sample = 1.0 / speeds
-            cumulative_time = np.cumsum(time_per_sample)
-            cumulative_time = cumulative_time / cumulative_time[-1]
-            new_count = self._new_frame_count(n_frames)
-            if new_count == 0:
-                raise ValueError("Speed ramp would result in 0 frames!")
-            output_positions = np.linspace(0, 1, new_count)
-            source_positions = np.interp(output_positions, cumulative_time, np.linspace(0, 1, num_samples))
-            source_indices = source_positions * (n_frames - 1)
-
-        if self.interpolate and self._is_slow:
-            new_frames = []
-            for idx in tqdm(source_indices, desc="Interpolating frames"):
-                idx_low = int(idx)
-                idx_high = min(idx_low + 1, n_frames - 1)
-                ratio = idx - idx_low
-                if ratio == 0 or idx_low == idx_high:
-                    new_frames.append(video.frames[idx_low])
-                else:
-                    frame = (1 - ratio) * video.frames[idx_low] + ratio * video.frames[idx_high]
-                    new_frames.append(frame.astype(np.uint8))
-            video.frames = np.array(new_frames, dtype=np.uint8)
-        else:
-            indices = np.clip(np.round(source_indices).astype(int), 0, n_frames - 1)
-            video.frames = video.frames[indices]
-
-        target_duration = len(video.frames) / video.fps
-        if video.audio is not None:
-            video.audio = self._audio_apply(video.audio, target_duration)
-        return video
 
     def predict_metadata(self, meta: VideoMetadata) -> VideoMetadata:
         new_count = self._new_frame_count(meta.frame_count)
@@ -520,28 +398,6 @@ class FreezeFrame(Operation):
         description="'after' / 'before' inserts frames; 'replace' swaps existing frames out.",
     )
 
-    def apply(self, video: Video) -> Video:
-        if self.timestamp >= video.total_seconds:
-            raise ValueError(f"timestamp ({self.timestamp}) must be less than video duration ({video.total_seconds})")
-
-        frame_idx = min(round(self.timestamp * video.fps), len(video.frames) - 1)
-        freeze_count = round(self.duration * video.fps)
-        frozen = np.tile(video.frames[frame_idx : frame_idx + 1], (freeze_count, 1, 1, 1))
-
-        if self.position == "after":
-            insert_idx = frame_idx + 1
-            video.frames = np.concatenate([video.frames[:insert_idx], frozen, video.frames[insert_idx:]], axis=0)
-        elif self.position == "before":
-            video.frames = np.concatenate([video.frames[:frame_idx], frozen, video.frames[frame_idx:]], axis=0)
-        else:  # replace
-            replace_end = min(frame_idx + freeze_count, len(video.frames))
-            video.frames = np.concatenate([video.frames[:frame_idx], frozen, video.frames[replace_end:]], axis=0)
-
-        if video.audio is not None:
-            target_duration = len(video.frames) / video.fps
-            video.audio = self._audio_apply(video.audio, target_duration, video.fps)
-        return video
-
     def to_ffmpeg_filter(self, ctx: FilterCtx) -> str | None:
         """Compile to a linear ``loop``-based freeze chain.
 
@@ -553,8 +409,8 @@ class FreezeFrame(Operation):
         region), and ``setpts`` regenerates CFR timing. Needs the input
         frame count (``ctx.frame_count``); unknown -> not streamable.
 
-        Raises the same out-of-range error as the eager path when
-        ``timestamp`` lies past the clip end -- at compile, before decode.
+        Raises an out-of-range error when ``timestamp`` lies past the clip
+        end -- at compile, before decode.
         """
         if ctx.frame_count <= 0:
             return None
@@ -592,8 +448,8 @@ class FreezeFrame(Operation):
         ``filter_complex`` splice that needs no extra input -- the input is
         ``asplit`` into head / silence / tail streams, the silence stream is a
         ``duration``-long slice zeroed by ``volume=0``, and ``concat`` rejoins
-        them. ``after`` inserts at ``timestamp + 1/fps`` (mirroring the eager
-        sample math), ``before`` at ``timestamp``, ``replace`` drops the covered
+        them. ``after`` inserts at ``timestamp + 1/fps`` (matching the video
+        splice point), ``before`` at ``timestamp``, ``replace`` drops the covered
         original audio (tail starts at ``timestamp + duration``).
 
         Returns a ``;``-joined fragment using ``ctx.audio_label``-prefixed
@@ -618,37 +474,6 @@ class FreezeFrame(Operation):
             f"[{p}t]atrim=start={tail_start:.6f},asetpts=N/SR/TB[{p}tt];"
             f"[{p}hh][{p}ss][{p}tt]concat=n=3:v=0:a=1"
         )
-
-    def _audio_apply(self, audio: Audio, output_duration: float, fps: float) -> Audio:
-        """Eager (in-memory) silence splice for ``Video.apply``.
-
-        The friendly ``Video`` API still mutates an in-memory ``Audio`` array;
-        the streaming engine uses :meth:`to_ffmpeg_audio_filter` instead.
-        """
-        sample_rate = audio.metadata.sample_rate
-        channels = audio.metadata.channels
-        silence_samples = round(self.duration * sample_rate)
-        silence_shape = (silence_samples, channels) if channels > 1 else (silence_samples,)
-        silence = np.zeros(silence_shape, dtype=np.float32)
-        timestamp_sample = round(self.timestamp * sample_rate)
-
-        if self.position == "after":
-            insert_sample = min(timestamp_sample + round(sample_rate / fps), len(audio.data))
-            data = np.concatenate([audio.data[:insert_sample], silence, audio.data[insert_sample:]], axis=0)
-        elif self.position == "before":
-            data = np.concatenate([audio.data[:timestamp_sample], silence, audio.data[timestamp_sample:]], axis=0)
-        else:
-            replace_end_sample = min(timestamp_sample + silence_samples, len(audio.data))
-            data = np.concatenate([audio.data[:timestamp_sample], silence, audio.data[replace_end_sample:]], axis=0)
-        # Rebuild metadata from the new sample count: fit_to_duration trusts
-        # metadata.duration_seconds, so a raw .data mutation would leave it
-        # stale and make the fit pad the insertion a second time.
-        metadata = dataclasses.replace(
-            audio.metadata,
-            duration_seconds=data.shape[0] / sample_rate,
-            frame_count=data.shape[0],
-        )
-        return Audio(data, metadata).fit_to_duration(output_duration)
 
     def predict_metadata(self, meta: VideoMetadata) -> VideoMetadata:
         if self.timestamp >= meta.total_seconds:
@@ -702,8 +527,7 @@ class SilenceRemoval(Operation):
     padding: float = Field(0.15, ge=0, description="Seconds of breathing room around each speech boundary.")
 
     _MISSING_CONTEXT = (
-        "SilenceRemoval requires transcription data. "
-        "Pass it via VideoEdit.run(context={'transcription': ...}) or directly to apply()."
+        "SilenceRemoval requires transcription data. Pass it via VideoEdit.run_to_file(context={'transcription': ...})."
     )
 
     def _silence_ranges(self, words: list[Any], total_seconds: float) -> list[tuple[float, float]]:
@@ -726,9 +550,9 @@ class SilenceRemoval(Operation):
     ) -> list[tuple[int, int]] | None:
         """Frame ranges to keep, or ``None`` for "nothing to cut" (identity).
 
-        The single source of the cut math, shared by the eager apply, the
-        filter compile, the audio twin, and ``predict_metadata`` -- all four
-        must agree on the output timeline.
+        The single source of the cut math, shared by the filter compile, the
+        audio twin, and ``predict_metadata`` -- all three must agree on the
+        output timeline.
         """
         words = transcription.words
         if not words:
@@ -747,17 +571,6 @@ class SilenceRemoval(Operation):
         if prev_frame < n_frames:
             keep.append((prev_frame, n_frames))
         return keep or None
-
-    def apply(self, video: Video, transcription: Transcription | None = None) -> Video:
-        if transcription is None:
-            raise ValueError(self._MISSING_CONTEXT)
-        keep = self._keep_frame_ranges(transcription, video.total_seconds, video.fps, len(video.frames))
-        if keep is None:
-            return video
-        video.frames = np.concatenate([video.frames[s:e] for s, e in keep], axis=0)
-        if video.audio is not None:
-            video.audio = self._audio_apply(video.audio, len(video.frames) / video.fps, video.fps, transcription)
-        return video
 
     def to_ffmpeg_filter(self, ctx: FilterCtx) -> str | None:
         """Compile the cut to a ``select`` keep-window filter.
@@ -789,8 +602,8 @@ class SilenceRemoval(Operation):
         cannot reproduce the sample-accurate cut; instead the input is
         ``asplit`` into one copy per window, each ``atrim``-ed to its
         ``[start, end)`` time span (``atrim`` cuts on the sample boundary), then
-        ``concat``-ed in order -- the audio analogue of the frame-slice the
-        eager path does. No silences -> ``None`` (identity).
+        ``concat``-ed in order -- the audio analogue of the kept frame ranges.
+        No silences -> ``None`` (identity).
         """
         from videopython.base.transcription import Transcription as _Transcription
 
@@ -813,28 +626,6 @@ class SilenceRemoval(Operation):
         joined = "".join(f"[{p}k{i}]" for i in range(n))
         stmts.append(f"{joined}concat=n={n}:v=0:a=1")
         return ";".join(stmts)
-
-    def _audio_apply(self, audio: Audio, output_duration: float, fps: float, transcription: Any) -> Audio:
-        """Eager (in-memory) keep-window cut for ``Video.apply``.
-
-        The friendly ``Video`` API still mutates an in-memory ``Audio`` array;
-        the streaming engine uses :meth:`to_ffmpeg_audio_filter` instead.
-        """
-        if transcription is None:
-            raise ValueError(self._MISSING_CONTEXT)
-        total_seconds = audio.metadata.duration_seconds
-        keep = self._keep_frame_ranges(transcription, total_seconds, fps, round(total_seconds * fps))
-        if keep is None:
-            return audio
-        sample_rate = audio.metadata.sample_rate
-        chunks = [audio.data[round(s / fps * sample_rate) : round(e / fps * sample_rate)] for s, e in keep]
-        data = np.concatenate(chunks, axis=0)
-        metadata = dataclasses.replace(
-            audio.metadata,
-            duration_seconds=data.shape[0] / sample_rate,
-            frame_count=data.shape[0],
-        )
-        return Audio(data, metadata).fit_to_duration(output_duration)
 
     def predict_metadata(self, meta: VideoMetadata, transcription: Transcription | None = None) -> VideoMetadata:
         """Predict the cut duration; identity when no transcription is in the

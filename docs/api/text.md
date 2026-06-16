@@ -20,24 +20,38 @@ Classes for handling transcriptions and burning subtitles onto video.
 
 ### TranscriptionOverlay
 
-Render transcriptions as subtitles with word-level highlighting:
+Render transcriptions as subtitles with word-level highlighting. The
+`add_subtitles` op (class `TranscriptionOverlay`) runs through the
+streaming engine, so it executes inside a `VideoEdit` rather than against
+a `Video` directly. It declares `requires=("transcription",)`; pass the
+transcription via the `context` argument to `run_to_file`:
 
 ```python
-from videopython.base import Video
-from videopython.editing import TranscriptionOverlay
+from videopython.editing import VideoEdit
 
-video = Video.from_path("input.mp4")
 # transcription = ... (from AudioToText or manually created)
 
-overlay = TranscriptionOverlay(
-    style="boxed",       # boxed | outline | clean | karaoke
-    region="bottom",     # top | center | bottom
-    font_scale=0.055,    # font height as a fraction of frame height
-    # font_filename is optional; omit it (or pass None) to use the
-    # bundled default font. Pass a path to use your own .ttf/.otf.
-    font_filename=None,
+edit = VideoEdit.from_dict(
+    {
+        "segments": [
+            {
+                "source": "input.mp4",
+                "start": 0.0,
+                "end": 5.0,
+                "operations": [
+                    {
+                        "op": "add_subtitles",
+                        "style": "boxed",   # boxed | outline | clean | karaoke
+                        "region": "bottom", # top | center | bottom
+                        "font_scale": 0.055,  # font height as a fraction of frame height
+                        # "font": "poppins-bold",  # optional bundled font; omit for default
+                    }
+                ],
+            }
+        ]
+    }
 )
-video = overlay.apply(video, transcription)
+edit.run_to_file("output.mp4", context={"transcription": transcription})
 ```
 
 Geometry is **resolution-independent** by default: `font_scale`/`region` are

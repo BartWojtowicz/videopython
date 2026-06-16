@@ -1,12 +1,29 @@
-import cv2
-import numpy as np
+"""Tests for the editing transforms (streaming-only, post eager-removal).
+
+Since 0.44.0 there is no eager/in-memory ``apply`` path: a transform exists
+only as a streaming compilation. So these tests assert the two decode-free
+surfaces a transform exposes:
+
+* ``predict_metadata(meta)`` -- exact output shape / fps / frame count, the
+  fail-fast gate run during plan validation.
+* ``to_ffmpeg_filter(FilterCtx(...))`` / ``to_ffmpeg_audio_filter(...)`` -- the
+  exact ffmpeg filter expression the streaming engine appends to the graph.
+
+End-to-end frame *content* (the time-warp curve, frozen-frame holds, the
+silence cut, audio sync) is covered against real decoded output in
+``test_native_transform_streaming.py``; it is not duplicated here. Anything
+that used to assert cv2-exact pixels or cut-frame identity cannot survive the
+move to ffmpeg (libswscale != cv2; a cut is a decode boundary), so those
+asserts are replaced by filter-string + ``predict_metadata`` checks.
+"""
+
 import pytest
 from pydantic import ValidationError
 
-from videopython.audio import Audio, AudioMetadata
 from videopython.base.exceptions import PlanErrorCode, PlanValidationError
 from videopython.base.transcription import Transcription, TranscriptionSegment, TranscriptionWord
-from videopython.base.video import Video, VideoMetadata
+from videopython.base.video import VideoMetadata
+from videopython.editing.operation import FilterCtx
 from videopython.editing.transforms import (
     Crop,
     CropMode,
@@ -19,325 +36,223 @@ from videopython.editing.transforms import (
     SpeedChange,
 )
 
+# A reusable source-metadata stand-in: 800x500 @ 24fps, 12 s (== the small test
+# video). predict_metadata is decode-free, so a metadata object is all it needs.
+SMALL_META = VideoMetadata(height=500, width=800, fps=24, frame_count=288, total_seconds=12.0)
+
+
+def _ctx(meta: VideoMetadata, **kwargs) -> FilterCtx:
+    """A FilterCtx mirroring a VideoMetadata, with the folded frame_count set."""
+    return FilterCtx(
+        width=meta.width,
+        height=meta.height,
+        fps=meta.fps,
+        frame_count=meta.frame_count,
+        **kwargs,
+    )
+
 
 @pytest.mark.parametrize("start, end", [(0, 100), (100, 101), (100, 120)])
-def test_cut_frames(start, end, small_video):
-    cut_frames = CutFrames(start=start, end=end)
-    start_frame = small_video.frames[start].copy()
-    transformed = cut_frames.apply(small_video)
-    assert len(transformed.frames) == (end - start)
-    assert np.all(transformed.frames[0] == start_frame)
+def test_cut_frames_predicts_frame_count(start, end):
+    """CutFrames(predict) yields exactly ``end - start`` frames."""
+    result = CutFrames(start=start, end=end).predict_metadata(SMALL_META)
+    assert result.frame_count == end - start
+    assert result.total_seconds == round((end - start) / SMALL_META.fps, 4)
 
 
 @pytest.mark.parametrize("start, end", [(0, 0.5), (0, 1), (0.5, 1.5)])
-def test_cut_seconds(start, end, small_video):
-    cut_seconds = CutSeconds(start=start, end=end)
-    start_frame = small_video.frames[round(start * small_video.fps)].copy()
-    transformed = cut_seconds.apply(small_video)
-    assert len(transformed.frames) == round((end - start) * small_video.fps)
-    assert np.all(transformed.frames[0] == start_frame)
+def test_cut_seconds_predicts_duration(start, end):
+    """CutSeconds(predict) yields the frame-rounded duration of the window."""
+    result = CutSeconds(start=start, end=end).predict_metadata(SMALL_META)
+    start_f = round(start * SMALL_META.fps)
+    end_f = round(end * SMALL_META.fps)
+    assert result.total_seconds == round((end_f - start_f) / SMALL_META.fps, 4)
 
 
 @pytest.mark.parametrize(
     "height,width",
     [
-        (
-            40,
-            60,
-        ),
-        (
-            500,
-            700,
-        ),
+        (40, 60),
+        (500, 700),
     ],
 )
-def test_video_resize(height, width, small_video):
-    """Tests Video.resize."""
-
-    source = small_video.copy()
-    original_first_frame = source.frames[0].copy()
-    resample = Resize(height=height, width=width)
-    video = resample.apply(source)
-
-    assert video.frames.shape[1:3] == (height, width)
-    assert np.all(
-        video.frames[0]
-        == cv2.resize(
-            original_first_frame,
-            (width, height),
-            interpolation=cv2.INTER_AREA,
-        )
-    )
+def test_resize_predicts_dims_and_compiles_scale(height, width):
+    """Resize predicts the exact target dims and compiles to ``scale=W:H``."""
+    resize = Resize(height=height, width=width)
+    predicted = resize.predict_metadata(SMALL_META)
+    assert (predicted.height, predicted.width) == (height, width)
+    assert resize.to_ffmpeg_filter(_ctx(SMALL_META)) == f"scale={width}:{height}"
 
 
-def test_video_resize_round_to_even_preserves_aspect_approximately():
-    video = Video.from_image(np.zeros((540, 302, 3), dtype=np.uint8), fps=30, length_seconds=1.0)
-    resized = Resize(width=1080).apply(video)
-    assert resized.frame_shape[:2] == (1932, 1080)
+def test_resize_round_to_even_preserves_aspect_approximately():
+    """Single-dimension resize keeps aspect, snapping the other to even."""
+    meta = VideoMetadata(height=540, width=302, fps=30, frame_count=30, total_seconds=1.0)
+    resize = Resize(width=1080)
+    predicted = resize.predict_metadata(meta)
+    assert (predicted.height, predicted.width) == (1932, 1080)
+    assert resize.to_ffmpeg_filter(_ctx(meta)) == "scale=1080:1932"
 
 
 def test_resample_fps_upsample_frame_count():
-    video = Video.from_image(np.zeros((64, 64, 3), dtype=np.uint8), fps=10, length_seconds=1.0)
+    meta = VideoMetadata(height=64, width=64, fps=10, frame_count=10, total_seconds=1.0)
     resample = ResampleFPS(fps=20)
-    result = resample.apply(video)
-    assert len(result.frames) == 20
-    assert abs(result.audio.metadata.duration_seconds - result.total_seconds) < 1e-3
+    predicted = resample.predict_metadata(meta)
+    assert predicted.fps == 20
+    assert predicted.frame_count == 20
+    assert resample.to_ffmpeg_filter(_ctx(meta)) == "fps=20.0"
 
 
 def test_resample_fps_downsample_frame_count():
-    video = Video.from_image(np.zeros((64, 64, 3), dtype=np.uint8), fps=20, length_seconds=1.0)
+    meta = VideoMetadata(height=64, width=64, fps=20, frame_count=20, total_seconds=1.0)
     resample = ResampleFPS(fps=10)
-    result = resample.apply(video)
-    assert len(result.frames) == 10
-    assert abs(result.audio.metadata.duration_seconds - result.total_seconds) < 1e-3
+    predicted = resample.predict_metadata(meta)
+    assert predicted.fps == 10
+    assert predicted.frame_count == 10
+    assert resample.to_ffmpeg_filter(_ctx(meta)) == "fps=10.0"
 
 
 class TestCrop:
-    """Tests for Crop transformation."""
+    """Crop predicts the cropped dims and compiles to ``crop=W:H:X:Y``."""
 
     @pytest.fixture
-    def video(self):
-        """Create a fresh test video for each test."""
-        return Video.from_image(np.zeros((500, 800, 3), dtype=np.uint8), fps=30, length_seconds=1.0)
+    def meta(self):
+        return VideoMetadata(height=500, width=800, fps=30, frame_count=30, total_seconds=1.0)
 
-    def test_crop_center_pixels(self, video):
-        """Test center crop with pixel values."""
-        crop_width, crop_height = 100, 80
+    def test_crop_center_pixels(self, meta):
+        transform = Crop(width=100, height=80, mode=CropMode.CENTER)
+        predicted = transform.predict_metadata(meta)
+        assert (predicted.height, predicted.width) == (80, 100)
+        # Center box: (800-100)//2 = 350, (500-80)//2 = 210.
+        assert transform.to_ffmpeg_filter(_ctx(meta)) == "crop=100:80:350:210"
 
-        transform = Crop(width=crop_width, height=crop_height, mode=CropMode.CENTER)
-        result = transform.apply(video)
-
-        assert result.frame_shape[0] == crop_height
-        assert result.frame_shape[1] == crop_width
-
-    def test_crop_center_normalized(self, video):
-        """Test center crop with normalized (0-1) values."""
-        original_height, original_width = video.frame_shape[:2]
-
-        # Crop to 50% of original size
+    def test_crop_center_normalized(self, meta):
         transform = Crop(width=0.5, height=0.5, mode=CropMode.CENTER)
-        result = transform.apply(video)
+        predicted = transform.predict_metadata(meta)
+        assert (predicted.height, predicted.width) == (250, 400)
+        assert transform.to_ffmpeg_filter(_ctx(meta)) == "crop=400:250:200:125"
 
-        expected_width = int(original_width * 0.5)
-        expected_height = int(original_height * 0.5)
-        assert result.frame_shape[0] == expected_height
-        assert result.frame_shape[1] == expected_width
+    def test_crop_custom_position_pixels(self, meta):
+        transform = Crop(width=50, height=40, x=10, y=20, mode=CropMode.CUSTOM)
+        predicted = transform.predict_metadata(meta)
+        assert (predicted.height, predicted.width) == (40, 50)
+        assert transform.to_ffmpeg_filter(_ctx(meta)) == "crop=50:40:10:20"
 
-    def test_crop_custom_position_pixels(self, video):
-        """Test custom position crop with pixel values."""
-        crop_width, crop_height = 50, 40
-        crop_x, crop_y = 10, 20
-
-        transform = Crop(width=crop_width, height=crop_height, x=crop_x, y=crop_y, mode=CropMode.CUSTOM)
-        result = transform.apply(video)
-
-        assert result.frame_shape[0] == crop_height
-        assert result.frame_shape[1] == crop_width
-
-    def test_crop_custom_position_normalized(self, video):
-        """Test custom position crop with normalized values."""
-        original_height, original_width = video.frame_shape[:2]
-
-        # Crop right half of video (x=0.5, width=0.5)
+    def test_crop_custom_position_normalized(self, meta):
+        # Right half: x=0.5, width=0.5, full height.
         transform = Crop(width=0.5, height=1.0, x=0.5, y=0.0, mode=CropMode.CUSTOM)
-        result = transform.apply(video)
+        predicted = transform.predict_metadata(meta)
+        assert (predicted.height, predicted.width) == (500, 400)
+        assert transform.to_ffmpeg_filter(_ctx(meta)) == "crop=400:500:400:0"
 
-        expected_width = int(original_width * 0.5)
-        expected_height = int(original_height * 1.0)
-        assert result.frame_shape[0] == expected_height
-        assert result.frame_shape[1] == expected_width
-
-    def test_crop_mixed_values(self, video):
-        """Test crop with mixed pixel and normalized values."""
-        original_height, original_width = video.frame_shape[:2]
-
-        # Width in pixels, height normalized
+    def test_crop_mixed_values(self, meta):
+        # Width in pixels, height normalized.
         transform = Crop(width=100, height=0.5, mode=CropMode.CENTER)
-        result = transform.apply(video)
+        predicted = transform.predict_metadata(meta)
+        assert predicted.width == 100
+        assert predicted.height == 250
 
-        assert result.frame_shape[1] == 100
-        assert result.frame_shape[0] == int(original_height * 0.5)
-
-    def test_crop_preserves_frame_count(self, video):
-        """Test that crop preserves the number of frames."""
-        original_frames = len(video.frames)
+    def test_crop_preserves_frame_count(self, meta):
         transform = Crop(width=0.5, height=0.5, mode=CropMode.CENTER)
-        result = transform.apply(video)
+        predicted = transform.predict_metadata(meta)
+        assert predicted.frame_count == meta.frame_count
 
-        assert len(result.frames) == original_frames
+    def test_crop_exceeds_source_raises(self, meta):
+        with pytest.raises(PlanValidationError) as exc:
+            Crop(width=2000, height=80, mode=CropMode.CENTER).predict_metadata(meta)
+        assert exc.value.errors[0].code is PlanErrorCode.CROP_EXCEEDS_SOURCE
 
 
 class TestSpeedChange:
-    """Tests for SpeedChange transformation."""
+    """SpeedChange predicts the new frame count and compiles setpts/atempo."""
 
-    def test_speed_up_2x(self, small_video):
-        """Test 2x speed results in half the frames."""
-        original_frames = len(small_video.frames)
-        transform = SpeedChange(speed=2.0)
-        result = transform.apply(small_video)
+    def test_speed_up_2x_halves_frame_count(self):
+        predicted = SpeedChange(speed=2.0).predict_metadata(SMALL_META)
+        assert predicted.frame_count == SMALL_META.frame_count // 2
 
-        # 2x speed should give approximately half the frames
-        assert len(result.frames) == original_frames // 2
+    def test_slow_down_half_doubles_frame_count(self):
+        predicted = SpeedChange(speed=0.5).predict_metadata(SMALL_META)
+        assert predicted.frame_count == SMALL_META.frame_count * 2
 
-    def test_slow_down_half(self, small_video):
-        """Test 0.5x speed results in double the frames."""
-        original_frames = len(small_video.frames)
-        transform = SpeedChange(speed=0.5)
-        result = transform.apply(small_video)
+    def test_speed_1x_no_change(self):
+        predicted = SpeedChange(speed=1.0).predict_metadata(SMALL_META)
+        assert predicted.frame_count == SMALL_META.frame_count
 
-        # 0.5x speed should give approximately double the frames
-        assert len(result.frames) == original_frames * 2
-
-    def test_speed_1x_no_change(self, small_video):
-        """Test 1x speed keeps same frame count."""
-        original_frames = len(small_video.frames)
-        transform = SpeedChange(speed=1.0)
-        result = transform.apply(small_video)
-
-        assert len(result.frames) == original_frames
-
-    def test_speed_ramp(self, small_video):
-        """Test speed ramping from 1x to 2x."""
-        original_frames = len(small_video.frames)
-        transform = SpeedChange(speed=1.0, end_speed=2.0)
-        result = transform.apply(small_video)
-
-        # Average speed is 1.5x, so should have ~2/3 the frames
-        expected_frames = int(original_frames / 1.5)
-        assert abs(len(result.frames) - expected_frames) <= 1
+    def test_speed_ramp_uses_average(self):
+        # Ramp 1x -> 2x averages 1.5x.
+        predicted = SpeedChange(speed=1.0, end_speed=2.0).predict_metadata(SMALL_META)
+        expected = int(SMALL_META.frame_count / 1.5)
+        assert predicted.frame_count == expected
 
     def test_invalid_speed_raises(self):
-        """Test that invalid speed values raise errors."""
         with pytest.raises(ValueError):
             SpeedChange(speed=0)
-
         with pytest.raises(ValueError):
             SpeedChange(speed=-1.0)
-
         with pytest.raises(ValueError):
             SpeedChange(speed=1.0, end_speed=0)
 
-    def test_preserves_frame_shape(self, small_video):
-        """Test that speed change preserves frame dimensions."""
-        original_shape = small_video.frame_shape
-        transform = SpeedChange(speed=2.0)
-        result = transform.apply(small_video)
+    def test_preserves_frame_shape(self):
+        predicted = SpeedChange(speed=2.0).predict_metadata(SMALL_META)
+        assert (predicted.height, predicted.width) == (SMALL_META.height, SMALL_META.width)
 
-        assert result.frame_shape == original_shape
+    def test_zero_frame_speed_raises(self):
+        with pytest.raises(PlanValidationError) as exc:
+            SpeedChange(speed=1000.0).predict_metadata(SMALL_META)
+        assert exc.value.errors[0].code is PlanErrorCode.DEGENERATE_DURATION
+
+    def test_constant_speedup_compiles_setpts_and_fps(self):
+        chain = SpeedChange(speed=2.0).to_ffmpeg_filter(_ctx(SMALL_META))
+        assert chain is not None
+        retime, resample = chain.split(",")
+        assert retime.startswith("setpts=(PTS-STARTPTS)/2")
+        assert resample == "fps=24"
+
+    def test_slowdown_with_interpolation_uses_framerate(self):
+        # interpolate=True (default) on a slowdown blends via the framerate filter.
+        chain = SpeedChange(speed=0.5).to_ffmpeg_filter(_ctx(SMALL_META))
+        assert chain is not None
+        assert chain.endswith("framerate=fps=24")
+
+    def test_slowdown_no_interpolation_uses_fps(self):
+        chain = SpeedChange(speed=0.5, interpolate=False).to_ffmpeg_filter(_ctx(SMALL_META))
+        assert chain is not None
+        assert chain.endswith("fps=24")
+        assert "framerate" not in chain
+
+    def test_ramp_needs_frame_count(self):
+        # Unknown frame count -> ramp cannot compile -> not streamable here.
+        ctx = FilterCtx(width=800, height=500, fps=24, frame_count=0)
+        assert SpeedChange(speed=1.0, end_speed=2.0).to_ffmpeg_filter(ctx) is None
 
 
 class TestSpeedChangeAudio:
-    """Tests for SpeedChange audio adjustment."""
+    """SpeedChange's audio twin time-stretches via an atempo chain."""
 
-    @pytest.fixture
-    def video_with_audio(self):
-        """Create a video with non-silent audio for testing."""
-        from videopython.audio import Audio, AudioMetadata
+    def test_speed_up_2x_audio_atempo(self):
+        chain = SpeedChange(speed=2.0).to_ffmpeg_audio_filter(_ctx(SMALL_META))
+        assert chain == "atempo=2.0"
 
-        # Create video frames (1 second at 30fps)
-        frames = np.full((30, 100, 150, 3), 128, dtype=np.uint8)
-        video = Video.from_frames(frames, fps=30)
+    def test_slow_down_half_audio_atempo(self):
+        chain = SpeedChange(speed=0.5).to_ffmpeg_audio_filter(_ctx(SMALL_META))
+        assert chain == "atempo=0.5"
 
-        # Create non-silent audio (sine wave)
-        sample_rate = 44100
-        duration = 1.0
-        t = np.linspace(0, duration, int(sample_rate * duration), dtype=np.float32)
-        audio_data = (np.sin(2 * np.pi * 440 * t) * 0.5).astype(np.float32)
+    def test_audio_adjust_false_is_noop(self):
+        assert SpeedChange(speed=2.0, adjust_audio=False).to_ffmpeg_audio_filter(_ctx(SMALL_META)) is None
 
-        video.audio = Audio(
-            data=audio_data,
-            metadata=AudioMetadata(
-                sample_rate=sample_rate,
-                channels=1,
-                sample_width=2,
-                duration_seconds=duration,
-                frame_count=len(audio_data),
-            ),
-        )
-        return video
+    def test_speed_1x_audio_is_noop(self):
+        # An identity stretch yields an empty atempo chain -> None.
+        assert SpeedChange(speed=1.0).to_ffmpeg_audio_filter(_ctx(SMALL_META)) is None
 
-    def test_speed_up_2x_audio_duration(self, video_with_audio):
-        """Test 2x speed results in adjusted audio duration."""
-        original_video_duration = len(video_with_audio.frames) / video_with_audio.fps
-
-        transform = SpeedChange(speed=2.0, adjust_audio=True)
-        result = transform.apply(video_with_audio)
-
-        # Video duration should be halved
-        new_video_duration = len(result.frames) / result.fps
-        assert abs(new_video_duration - original_video_duration / 2) < 0.1
-
-        # Audio duration should match video duration
-        assert abs(result.audio.metadata.duration_seconds - new_video_duration) < 0.2
-
-    def test_slow_down_half_audio_duration(self, video_with_audio):
-        """Test 0.5x speed results in adjusted audio duration."""
-        original_video_duration = len(video_with_audio.frames) / video_with_audio.fps
-
-        transform = SpeedChange(speed=0.5, adjust_audio=True)
-        result = transform.apply(video_with_audio)
-
-        # Video duration should be doubled
-        new_video_duration = len(result.frames) / result.fps
-        assert abs(new_video_duration - original_video_duration * 2) < 0.1
-
-        # Audio duration should match video duration
-        assert abs(result.audio.metadata.duration_seconds - new_video_duration) < 0.5
-
-    def test_speed_change_adjust_audio_false(self, video_with_audio):
-        """Test adjust_audio=False slices without time-stretching."""
-        transform = SpeedChange(speed=2.0, adjust_audio=False)
-        result = transform.apply(video_with_audio)
-
-        # Audio should still match video duration (sliced, not time-stretched)
-        new_video_duration = len(result.frames) / result.fps
-        assert abs(result.audio.metadata.duration_seconds - new_video_duration) < 0.2
-
-    def test_speed_change_silent_audio(self, small_video):
-        """Test speed change with silent audio."""
-        # small_video fixture has silent audio by default
-        transform = SpeedChange(speed=2.0, adjust_audio=True)
-        result = transform.apply(small_video)
-
-        # Should complete without error
-        assert result.audio is not None
-
-    def test_speed_ramp_audio(self, video_with_audio):
-        """Test audio adjustment with speed ramp."""
-        transform = SpeedChange(speed=1.0, end_speed=2.0, adjust_audio=True)
-        result = transform.apply(video_with_audio)
-
-        # Audio duration should match video duration
-        new_video_duration = len(result.frames) / result.fps
-        assert abs(result.audio.metadata.duration_seconds - new_video_duration) < 0.3
+    def test_ramp_audio_uses_average_speed(self):
+        # Ramp 1x -> 3x averages 2x, compiled as a single constant stretch.
+        chain = SpeedChange(speed=1.0, end_speed=3.0).to_ffmpeg_audio_filter(_ctx(SMALL_META))
+        assert chain == "atempo=2.0"
 
 
 @pytest.fixture
-def video_1s():
-    """1-second video at 30fps with non-black frames."""
-    frames = np.full((30, 64, 64, 3), 200, dtype=np.uint8)
-    return Video.from_frames(frames, fps=30)
-
-
-@pytest.fixture
-def video_with_audio_1s():
-    """1-second video at 30fps with a sine wave audio track."""
-    frames = np.full((30, 64, 64, 3), 200, dtype=np.uint8)
-    video = Video.from_frames(frames, fps=30)
-    sample_rate = 44100
-    t = np.linspace(0, 1.0, sample_rate, dtype=np.float32)
-    audio_data = (np.sin(2 * np.pi * 440 * t) * 0.5).astype(np.float32)
-    video.audio = Audio(
-        data=audio_data,
-        metadata=AudioMetadata(
-            sample_rate=sample_rate,
-            channels=1,
-            sample_width=2,
-            duration_seconds=1.0,
-            frame_count=sample_rate,
-        ),
-    )
-    return video
+def video_meta_1s():
+    """1-second @ 30fps source metadata (30 frames)."""
+    return VideoMetadata(height=64, width=64, fps=30, frame_count=30, total_seconds=1.0)
 
 
 def _make_transcription(words_data: list[tuple[float, float, str]]) -> Transcription:
@@ -350,38 +265,48 @@ def _make_transcription(words_data: list[tuple[float, float, str]]) -> Transcrip
 
 
 class TestFreezeFrame:
-    def test_freeze_after_increases_duration(self, video_1s):
-        original_frames = len(video_1s.frames)
-        result = FreezeFrame(timestamp=0.5, duration=1.0, position="after").apply(video_1s)
-        expected = original_frames + round(1.0 * video_1s.fps)
-        assert len(result.frames) == expected
+    """FreezeFrame predicts the extended/replaced frame count.
 
-    def test_freeze_before_increases_duration(self, video_1s):
-        original_frames = len(video_1s.frames)
-        result = FreezeFrame(timestamp=0.5, duration=1.0, position="before").apply(video_1s)
-        expected = original_frames + round(1.0 * video_1s.fps)
-        assert len(result.frames) == expected
+    Frozen-frame *content* is asserted end-to-end in
+    ``test_native_transform_streaming.py::TestFreezeFrameStreaming``.
+    """
 
-    def test_freeze_replace_maintains_approx_duration(self, video_1s):
-        original_frames = len(video_1s.frames)
-        result = FreezeFrame(timestamp=0.0, duration=0.5, position="replace").apply(video_1s)
-        assert abs(len(result.frames) - original_frames) <= 1
+    def test_freeze_after_increases_duration(self, video_meta_1s):
+        predicted = FreezeFrame(timestamp=0.5, duration=1.0, position="after").predict_metadata(video_meta_1s)
+        assert predicted.frame_count == video_meta_1s.frame_count + round(1.0 * video_meta_1s.fps)
 
-    def test_frozen_frame_content(self, video_1s):
-        video_1s.frames[15] = 42
-        result = FreezeFrame(timestamp=0.5, duration=0.5, position="after").apply(video_1s)
-        freeze_start = 16
-        freeze_count = round(0.5 * video_1s.fps)
-        for i in range(freeze_start, freeze_start + freeze_count):
-            assert (result.frames[i] == 42).all()
+    def test_freeze_before_increases_duration(self, video_meta_1s):
+        predicted = FreezeFrame(timestamp=0.5, duration=1.0, position="before").predict_metadata(video_meta_1s)
+        assert predicted.frame_count == video_meta_1s.frame_count + round(1.0 * video_meta_1s.fps)
 
-    def test_replace_clamps_to_end(self, video_1s):
-        result = FreezeFrame(timestamp=0.9, duration=5.0, position="replace").apply(video_1s)
-        assert len(result.frames) > 0
+    def test_freeze_replace_maintains_approx_duration(self, video_meta_1s):
+        predicted = FreezeFrame(timestamp=0.0, duration=0.5, position="replace").predict_metadata(video_meta_1s)
+        assert abs(predicted.frame_count - video_meta_1s.frame_count) <= 1
 
-    def test_timestamp_out_of_range_raises(self, video_1s):
+    def test_replace_clamps_to_end(self, video_meta_1s):
+        # A replace window running past the clip end stays valid (clamped).
+        predicted = FreezeFrame(timestamp=0.9, duration=5.0, position="replace").predict_metadata(video_meta_1s)
+        assert predicted.frame_count > 0
+
+    def test_freeze_after_compiles_loop_chain(self, video_meta_1s):
+        chain = FreezeFrame(timestamp=0.5, duration=0.5, position="after").to_ffmpeg_filter(_ctx(video_meta_1s))
+        assert chain is not None
+        # Held frame is index round(0.5*30)=15, held for round(0.5*30)=15 frames.
+        assert chain.startswith("loop=loop=15:size=1:start=15")
+        assert chain.endswith("fps=30")
+
+    def test_freeze_needs_frame_count(self):
+        ctx = FilterCtx(width=64, height=64, fps=30, frame_count=0)
+        assert FreezeFrame(timestamp=0.5, duration=0.5).to_ffmpeg_filter(ctx) is None
+
+    def test_timestamp_out_of_range_raises_predict(self, video_meta_1s):
+        with pytest.raises(PlanValidationError) as exc:
+            FreezeFrame(timestamp=5.0).predict_metadata(video_meta_1s)
+        assert exc.value.errors[0].code is PlanErrorCode.OP_TIMESTAMP_OUT_OF_RANGE
+
+    def test_timestamp_out_of_range_raises_compile(self, video_meta_1s):
         with pytest.raises(ValueError, match="must be less than"):
-            FreezeFrame(timestamp=5.0).apply(video_1s)
+            FreezeFrame(timestamp=5.0, duration=0.5).to_ffmpeg_filter(_ctx(video_meta_1s))
 
     def test_negative_timestamp_raises(self):
         with pytest.raises(ValidationError):
@@ -393,15 +318,20 @@ class TestFreezeFrame:
 
 
 class TestSilenceRemoval:
+    """SilenceRemoval predicts the cut frame count and compiles select windows.
+
+    The end-to-end cut behavior (which frames survive, audio sync) is covered
+    in ``test_native_transform_streaming.py::TestSilenceRemovalStreaming``.
+    """
+
     @pytest.fixture
-    def video_5s(self):
-        """5-second video at 10fps (50 frames) for silence removal tests."""
-        frames = np.full((50, 32, 32, 3), 128, dtype=np.uint8)
-        return Video.from_frames(frames, fps=10)
+    def meta_5s(self):
+        """5-second @ 10fps source metadata (50 frames)."""
+        return VideoMetadata(height=32, width=32, fps=10, frame_count=50, total_seconds=5.0)
 
     @pytest.fixture
     def transcription_with_gap(self):
-        """Transcription with speech at 0-1s and 3-4s (silence gap 1-3s)."""
+        """Speech at 0-1s and 3-4s (silence gap 1-3s)."""
         return _make_transcription(
             [
                 (0.0, 0.5, "hello"),
@@ -411,39 +341,50 @@ class TestSilenceRemoval:
             ]
         )
 
-    def test_cut_removes_silence(self, video_5s, transcription_with_gap):
-        original_frames = len(video_5s.frames)
-        result = SilenceRemoval(min_silence_duration=1.0, padding=0.0).apply(
-            video_5s, transcription=transcription_with_gap
+    def test_predict_cuts_silence(self, meta_5s, transcription_with_gap):
+        predicted = SilenceRemoval(min_silence_duration=1.0, padding=0.0).predict_metadata(
+            meta_5s, transcription=transcription_with_gap
         )
-        assert len(result.frames) < original_frames
+        assert predicted.frame_count < meta_5s.frame_count
 
-    def test_no_silence_returns_unchanged(self, video_5s):
-        transcription = _make_transcription(
-            [
-                (0.0, 1.0, "word1"),
-                (1.0, 2.0, "word2"),
-                (2.0, 3.0, "word3"),
-                (3.0, 4.0, "word4"),
-                (4.0, 5.0, "word5"),
-            ]
+    def test_predict_no_silence_unchanged(self, meta_5s):
+        transcription = _make_transcription([(float(i), float(i + 1), f"word{i}") for i in range(5)])
+        predicted = SilenceRemoval(min_silence_duration=1.0, padding=0.0).predict_metadata(
+            meta_5s, transcription=transcription
         )
-        result = SilenceRemoval(min_silence_duration=1.0, padding=0.0).apply(video_5s, transcription=transcription)
-        assert len(result.frames) == len(video_5s.frames)
+        assert predicted.frame_count == meta_5s.frame_count
 
-    def test_padding_preserves_context(self, video_5s, transcription_with_gap):
-        result = SilenceRemoval(min_silence_duration=1.0, padding=0.5).apply(
-            video_5s, transcription=transcription_with_gap
-        )
-        result_no_pad = SilenceRemoval(min_silence_duration=1.0, padding=0.0).apply(
-            Video.from_frames(np.full((50, 32, 32, 3), 128, dtype=np.uint8), fps=10),
-            transcription=transcription_with_gap,
-        )
-        assert len(result.frames) >= len(result_no_pad.frames)
+    def test_predict_without_transcription_is_identity(self, meta_5s):
+        # No transcription in the validate context -> predict_metadata is identity
+        # (the raise lives on the compile path, asserted below).
+        predicted = SilenceRemoval().predict_metadata(meta_5s)
+        assert predicted.frame_count == meta_5s.frame_count
 
-    def test_no_transcription_raises(self, video_5s):
+    def test_padding_keeps_at_least_as_many_frames(self, meta_5s, transcription_with_gap):
+        padded = SilenceRemoval(min_silence_duration=1.0, padding=0.5).predict_metadata(
+            meta_5s, transcription=transcription_with_gap
+        )
+        unpadded = SilenceRemoval(min_silence_duration=1.0, padding=0.0).predict_metadata(
+            meta_5s, transcription=transcription_with_gap
+        )
+        assert padded.frame_count >= unpadded.frame_count
+
+    def test_compile_keep_windows(self, meta_5s, transcription_with_gap):
+        ctx = _ctx(meta_5s, context={"transcription": transcription_with_gap})
+        chain = SilenceRemoval(min_silence_duration=1.0, padding=0.0).to_ffmpeg_filter(ctx)
+        assert chain is not None
+        assert chain.startswith("select='")
+        assert "between(n," in chain
+
+    def test_compile_missing_context_raises(self, meta_5s):
+        ctx = _ctx(meta_5s)  # no transcription in context
         with pytest.raises(ValueError, match="requires transcription"):
-            SilenceRemoval().apply(video_5s)
+            SilenceRemoval().to_ffmpeg_filter(ctx)
+
+    def test_compile_audio_missing_context_raises(self, meta_5s):
+        ctx = _ctx(meta_5s)
+        with pytest.raises(ValueError, match="requires transcription"):
+            SilenceRemoval().to_ffmpeg_audio_filter(ctx)
 
     def test_invalid_params(self):
         with pytest.raises(ValueError, match="min_silence_duration"):

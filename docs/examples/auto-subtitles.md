@@ -11,27 +11,34 @@ Take a video with speech, transcribe the audio using AI, and overlay synchronize
 ```python
 from videopython import Video
 from videopython.ai import AudioToText
-from videopython.editing import TranscriptionOverlay
+from videopython.editing import VideoEdit, SegmentConfig
+from videopython.editing.transcription_overlay import TranscriptionOverlay
 
 def add_subtitles(input_path: str, output_path: str):
-    # Load video
+    # Load the video and transcribe its audio.
     video = Video.from_path(input_path)
-
-    # Transcribe audio
     transcriber = AudioToText()
     transcription = transcriber.transcribe(video)
 
-    # Apply subtitle overlay. Geometry is resolution-independent by
-    # default, so the same overlay works at any output resolution.
-    overlay = TranscriptionOverlay(
-        style="boxed",      # color/border/background/highlight preset
-        region="bottom",    # top | center | bottom
-        font_scale=0.055,   # fraction of frame height (auto-scales)
-    )
-    video = overlay.apply(video, transcription)
+    # Build a streaming plan with the add_subtitles op (TranscriptionOverlay).
+    # Geometry is resolution-independent by default, so the same overlay works
+    # at any output resolution. A single segment covers the whole source.
+    edit = VideoEdit(segments=[SegmentConfig(
+        source=input_path,
+        start=0,
+        end=video.total_seconds,
+        operations=[
+            TranscriptionOverlay(
+                style="boxed",      # color/border/background/highlight preset
+                region="bottom",    # top | center | bottom
+                font_scale=0.055,   # fraction of frame height (auto-scales)
+            ),
+        ],
+    )])
 
-    # Save with burned-in subtitles
-    video.save(output_path)
+    # The op consumes the transcription via run_to_file's context; the runner
+    # re-bases it onto the segment's local timeline.
+    edit.run_to_file(output_path, context={"transcription": transcription})
 
 add_subtitles("interview.mp4", "interview_subtitled.mp4")
 ```
@@ -91,10 +98,21 @@ Key parameters (the recommended, resolution-independent surface):
     time. With the relative surface, `VideoEdit.validate()` also rejects an
     un-fittable plan up front instead of crashing mid-render.
 
-### 3. Apply Overlay
+### 3. Run the Plan
+
+The `TranscriptionOverlay` op (`add_subtitles`) declares `requires=("transcription",)`,
+so the transcription is passed through `run_to_file`'s `context` rather than to
+a constructor. The runner re-bases it onto each segment's local timeline before
+the op compiles it to a libass `subtitles=` filter:
 
 ```python
-video = overlay.apply(video, transcription)
+edit = VideoEdit(segments=[SegmentConfig(
+    source="interview.mp4",
+    start=0,
+    end=video.total_seconds,
+    operations=[overlay],
+)])
+edit.run_to_file("interview_subtitled.mp4", context={"transcription": transcription})
 ```
 
 The overlay renders each word at its exact timestamp, highlighting the current word being spoken.

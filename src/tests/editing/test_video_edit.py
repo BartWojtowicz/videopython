@@ -22,6 +22,7 @@ from videopython.editing.video_edit import (
     TransitionSpec,
     VideoEdit,
     _assemble_timeline,
+    _clamp_effect_window,
     _segment_context,
 )
 
@@ -347,12 +348,12 @@ class TestTransitionTimelineMath:
 
 
 class TestExecution:
-    def test_run_no_ops(self):
+    def test_run_no_ops(self, render):
         plan = {"segments": [_segment(start=0.0, end=2.0)]}
-        video = VideoEdit.from_dict(plan).run()
+        video = render(VideoEdit.from_dict(plan))
         assert video.total_seconds == pytest.approx(2.0, abs=0.25)
 
-    def test_run_with_transform_and_effect(self):
+    def test_run_with_transform_and_effect(self, render):
         plan = {
             "segments": [
                 _segment(
@@ -363,38 +364,38 @@ class TestExecution:
                 )
             ]
         }
-        result = VideoEdit.from_dict(plan).run()
+        result = render(VideoEdit.from_dict(plan))
         assert result.frames.shape[2] == 400
         assert result.frames.shape[1] == 250
 
-    def test_run_multi_segment_same_source(self):
+    def test_run_multi_segment_same_source(self, render):
         plan = {
             "segments": [
                 _segment(start=0.0, end=2.0),
                 _segment(start=4.0, end=6.0),
             ]
         }
-        result = VideoEdit.from_dict(plan).run()
+        result = render(VideoEdit.from_dict(plan))
         assert result.total_seconds == pytest.approx(4.0, abs=0.3)
 
-    def test_run_with_post_operations(self):
+    def test_run_with_post_operations(self, render):
         plan = {
             "segments": [_segment(start=0.0, end=2.0)],
             "post_operations": [{"op": "fade", "mode": "out", "duration": 0.5}],
         }
-        result = VideoEdit.from_dict(plan).run()
+        result = render(VideoEdit.from_dict(plan))
         assert result.frames[-1].mean() < 5
 
-    def test_transform_post_op_is_rejected(self):
+    def test_transform_post_op_is_rejected(self, render):
         # Streaming is the only engine; transforms cannot stream as post-ops.
         plan = {
             "segments": [_segment(start=0.0, end=2.0)],
             "post_operations": [{"op": "resize", "width": 200, "height": 100}],
         }
         with pytest.raises(PlanValidationError, match="move the transform into the segment"):
-            VideoEdit.from_dict(plan).run()
+            render(VideoEdit.from_dict(plan))
 
-    def test_run_with_image_overlay(self, tmp_path):
+    def test_run_with_image_overlay(self, tmp_path, render):
         logo = tmp_path / "logo.png"
         arr = np.zeros((50, 50, 4), dtype=np.uint8)
         arr[:, :, 2] = 255  # blue
@@ -411,12 +412,12 @@ class TestExecution:
         }
         edit = VideoEdit.from_dict(plan)
         meta = edit.validate()
-        result = edit.run()
+        result = render(edit)
         assert result.frame_shape[0] == meta.height
         assert result.frame_shape[1] == meta.width
         assert (result.frames[0][:, :, 2] == 255).any()
 
-    def test_run_with_svg_overlay(self, tmp_path):
+    def test_run_with_svg_overlay(self, tmp_path, render):
         svg = tmp_path / "logo.svg"
         svg.write_text(
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 40" width="100" '
@@ -433,7 +434,7 @@ class TestExecution:
         }
         edit = VideoEdit.from_dict(plan)
         meta = edit.validate()
-        result = edit.run()
+        result = render(edit)
         assert result.frame_shape[0] == meta.height
         assert result.frame_shape[1] == meta.width
         assert (result.frames[0][:, :, 1] > 150).any()  # the green logo is composited
@@ -470,11 +471,11 @@ class TestValidation:
         assert meta.width == 320
         assert meta.height == 200
 
-    def test_validate_crop_matches_runtime(self):
+    def test_validate_crop_matches_runtime(self, render):
         plan = {"segments": [_segment(operations=[{"op": "crop", "width": 5, "height": 5, "mode": "center"}])]}
         edit = VideoEdit.from_dict(plan)
         meta = edit.validate()
-        video = edit.run()
+        video = render(edit)
         assert meta.width == video.frame_shape[1]
         assert meta.height == video.frame_shape[0]
 
@@ -573,13 +574,14 @@ class TestClampWindows:
         repaired.validate_with_metadata(SMALL_VIDEO_METADATA)
 
     def test_clamp_matches_run_resolved_window(self):
-        # The clamped stop is exactly what Effect._resolved_window uses at run
-        # time: min(stop, total_seconds) against the post-op running duration.
+        # The validation clamp (repair) lands on exactly the stop the streaming
+        # engine applies at run time: min(stop, total_seconds) against the
+        # post-op running duration, mirrored by `_clamp_effect_window`.
         post_dur = SpeedChange(speed=1.5).predict_metadata(SMALL_VIDEO_METADATA).total_seconds
-        repaired, _ = VideoEdit.from_dict(self._speed_then_blur_plan()).repair(SMALL_VIDEO_METADATA)
-        blur = repaired.segments[0].operations[1]
-        _, run_stop = blur._resolved_window(post_dur)
-        assert blur.window.stop == pytest.approx(run_stop)
+        edit = VideoEdit.from_dict(self._speed_then_blur_plan())
+        repaired, _ = edit.repair(SMALL_VIDEO_METADATA)
+        run_clamped = _clamp_effect_window(edit.segments[0].operations[1], post_dur)
+        assert repaired.segments[0].operations[1].window.stop == pytest.approx(run_clamped.window.stop)
 
     def test_run_to_file_produces_clamped_output(self, tmp_path):
         edit = VideoEdit.from_dict(self._speed_then_blur_plan())
@@ -1273,12 +1275,12 @@ class TestPostOpsGuard:
         with pytest.raises(ValueError, match="not re-based across a multi-segment concat"):
             plan.validate_with_metadata(self._META, context={"transcription": tx})
 
-    def test_multi_segment_post_op_requiring_context_raises_on_run(self):
+    def test_multi_segment_post_op_requiring_context_raises_on_run(self, render):
         plan = self._plan(2, [{"op": "silence_removal"}])
         tx = _make_transcription([(1.0, 2.0, "hello")])
         # Guard fires before any disk access, so "fake.mp4" is never read.
         with pytest.raises(ValueError, match="post_operation 'silence_removal' requires"):
-            plan.run(context={"transcription": tx})
+            render(plan, context={"transcription": tx})
 
     def test_multi_segment_post_op_without_requires_is_allowed(self):
         plan = self._plan(2, [{"op": "vignette"}])

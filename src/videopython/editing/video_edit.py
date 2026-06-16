@@ -25,10 +25,8 @@ import tempfile
 from pathlib import Path
 from typing import Annotated, Any, Literal, Protocol, get_args, runtime_checkable
 
-import numpy as np
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SerializeAsAny
 
-from videopython.audio import Audio, AudioMetadata
 from videopython.base import _ffmpeg
 from videopython.base.exceptions import PlanError, PlanErrorCode, PlanRepair, PlanValidationError
 from videopython.base.video import ALLOWED_VIDEO_FORMATS, ALLOWED_VIDEO_PRESETS, Video, VideoMetadata
@@ -44,9 +42,6 @@ from videopython.editing.streaming import (
     concat_files,
     source_has_audio_stream,
     stream_segment,
-    stream_segment_audio_to_array,
-    stream_segment_to_frames,
-    stream_transition_frames,
     stream_transition_pair,
 )
 from videopython.editing.transforms import DURATION_EPS, CutSeconds, Resize, speech_windows
@@ -336,7 +331,7 @@ def _window_errors(op: Operation, duration: float, location: str) -> list[_Locat
     moved off the (now permissive) ``TimeRange`` model: negative ``start``,
     negative ``stop``, ``stop < start``, ``start`` past duration, ``stop`` past
     duration. A ``stop`` clamped to ``duration`` by ``clamp_windows`` no longer
-    overruns, so the final check stays silent for it (matching ``run()``).
+    overruns, so the final check stays silent for it (matching ``run_to_file()``).
     """
     if not isinstance(op, Effect) or op.window is None:
         return []
@@ -485,10 +480,9 @@ def _transition_duration_errors(
     the left segment's predicted post-op output and the START of the right's,
     so the overlap must be *strictly fewer frames* than either adjacent
     segment. The constraint is frame-based to match the streaming pass exactly
-    (:func:`videopython.editing.streaming.stream_transition_frames` raises on
+    (:func:`videopython.editing.streaming.stream_transition_pair` raises on
     ``overlap >= n_frames``); a seconds comparison rounds differently and
-    admits a near-full-overlap sliver that crashes ``run`` while
-    ``run_to_file`` degrades. A clean ``check`` guarantees the xfade pass will
+    admits a near-full-overlap sliver that crashes ``run_to_file``. A clean ``check`` guarantees the xfade pass will
     not fail at decode. ``repair`` clamps the same boundary mechanically.
     """
     out: list[_LocatedError] = []
@@ -523,8 +517,8 @@ def _transition_overlap_frames(spec: TransitionSpec, fps: float) -> int:
     """The number of frames a transition overlaps two segments: ``round(D*fps)``.
 
     The single source of the overlap frame count, used by the timeline math
-    (:func:`_assemble_timeline`), the per-boundary streaming pass, and the
-    in-memory twin, so they cannot disagree on how much the seam shortens.
+    (:func:`_assemble_timeline`) and the per-boundary streaming pass, so they
+    cannot disagree on how much the seam shortens.
     """
     return round(spec.duration * fps)
 
@@ -537,7 +531,7 @@ def _assemble_timeline(
 
     Segment 0 fixes height/width/fps (matching/normalization already made them
     uniform). Without transitions ``frame_count`` and ``total_seconds`` simply
-    sum -- the prediction-side model of ``run()``'s ``result + video`` concat.
+    sum -- the prediction-side model of ``run_to_file()``'s ``result + video`` concat.
     With transitions (``transitions[i]`` is segment ``i``'s ``transition_in``),
     each boundary overlaps ``round(D*fps)`` frames, so the assembled total is
     ``sum(durations) - sum(overlaps)``: every post-op window, ``predict``,
@@ -576,8 +570,9 @@ def _relocate(errors: list[PlanError], location: str) -> None:
 def _clamp_effect_window(op: Operation, duration: float) -> Operation:
     """Return ``op`` with its ``Effect.window.stop`` clamped to ``duration``.
 
-    Mirrors :meth:`Effect._resolved_window`'s run-time ``min(stop, total_seconds)``
-    so a stop overrunning a duration-shrunk chain validates instead of raising.
+    Mirrors the run-time ``min(stop, total_seconds)`` window clamp the streaming
+    engine applies, so a stop overrunning a duration-shrunk chain validates
+    instead of raising.
     This is the narrow ``clamp_windows`` repair: ``window.start`` and negative
     bounds are deliberately left untouched (still reported by ``_window_errors``).
     :meth:`VideoEdit.repair` uses the broader :func:`_repair_effect_window`.
@@ -979,9 +974,9 @@ class VideoEdit(BaseModel):
         When ``clamp_windows`` is True, an :class:`Effect`'s ``window.stop`` that
         overruns the running predicted duration (e.g. after a duration-shrinking
         op like ``speed_change``/``cut``) is clamped to that duration -- the same
-        value :meth:`Effect._resolved_window` uses at run time -- instead of
-        raising. Only ``window.stop`` is clamped: a ``window.start`` past the
-        duration still hard-raises (a residual divergence from ``run()``, which
+        ``min(stop, total_seconds)`` value the streaming engine applies at run
+        time -- instead of raising. Only ``window.stop`` is clamped: a ``window.start`` past the
+        duration still hard-raises (a residual divergence from ``run_to_file()``, which
         degrades it to a zero-width no-op).
         """
         source_metas = [VideoMetadata.from_path(str(seg.source)) for seg in self.segments]
@@ -1137,7 +1132,7 @@ class VideoEdit(BaseModel):
         # `limit_frames - 1` overlap frames so the repaired plan satisfies the
         # strict `overlap < min(frames)` streaming constraint and actually runs
         # (a seconds clamp to the segment length lands on `overlap == frames`,
-        # which passes check but crashes run). Only fires when both adjacent
+        # which passes check but crashes run_to_file). Only fires when both adjacent
         # segments predicted; a segment too short for any transition
         # (limit_frames <= 1) is left for check. A first-segment transition is a
         # structural fault, deliberately left for check.
@@ -1322,7 +1317,7 @@ class VideoEdit(BaseModel):
         return out
 
     def _assert_post_ops_supported(self, context: dict[str, Any] | None) -> None:
-        """Raising guard used by ``run``/``run_to_file`` (see :meth:`_post_op_context_errors`)."""
+        """Raising guard used by ``run_to_file`` (see :meth:`_post_op_context_errors`)."""
         errs = self._post_op_context_errors(context)
         if errs:
             message, err = errs[0]
@@ -1366,7 +1361,7 @@ class VideoEdit(BaseModel):
         return out
 
     def _assert_music_bed_supported(self) -> None:
-        """Raising guard used by ``run``/``run_to_file`` (see :meth:`_music_bed_errors`)."""
+        """Raising guard used by ``run_to_file`` (see :meth:`_music_bed_errors`)."""
         errs = self._music_bed_errors()
         if errs:
             message, err = errs[0]
@@ -1468,7 +1463,7 @@ class VideoEdit(BaseModel):
 
         # `_apply_matching` runs over the cuttable subset only; an uncuttable
         # segment isolates and is already reported, so the (now-invalid) plan's
-        # matched dims may differ from run()'s all-segments matching -- harmless,
+        # matched dims may differ from run_to_file()'s all-segments matching -- harmless,
         # since that plan can't run until the bad segment is fixed.
         seg_outputs: dict[int, VideoMetadata] = {}
         for i, seg in enumerate(self.segments):
@@ -1580,147 +1575,6 @@ class VideoEdit(BaseModel):
             result = [m.with_dimensions(min_w, min_h) if (m.width, m.height) != (min_w, min_h) else m for m in result]
         return result
 
-    # -------------------------------------------------------------------- run
-
-    def run(self, context: dict[str, Any] | None = None) -> Video:
-        """Execute the plan and return the final ``Video`` in memory.
-
-        A view over the streaming engine -- the same compiled plans
-        ``run_to_file`` streams to disk are streamed into memory (lossless
-        rawvideo, no encode round-trip), so the two entry points cannot
-        diverge. Plans with unstreamable shapes raise the same structured
-        ``STREAMING_FALLBACK`` errors as :meth:`run_to_file`.
-        """
-        plans = self._compile_streaming_plans(context)
-        self._assert_music_bed_supported()
-        try:
-            self._assert_transitions_runnable(plans)
-            videos: list[Video] = []
-            for plan in plans:
-                frames = stream_segment_to_frames(plan)
-                video = Video.from_frames(frames, fps=plan.final_fps or plan.output_fps)
-                # run() is "stream into memory": decode the SAME compiled audio
-                # graph the file path bakes into the segment to a PCM buffer
-                # (O(output-duration) memory, only for the in-memory view) so
-                # run()/run_to_file cannot diverge.
-                video.audio = stream_segment_audio_to_array(plan)
-                videos.append(video)
-            result = videos[0]
-            for i in range(1, len(videos)):
-                spec = self.segments[i].transition_in
-                if spec is None:
-                    result = result + videos[i]
-                else:
-                    # Decide crossfade-vs-butt-join by source-stream presence, the
-                    # SAME heuristic run_to_file uses (the entering segments'
-                    # sources), so the two paths cannot disagree on the seam audio.
-                    both_audible = source_has_audio_stream(plans[i - 1].source_path) and source_has_audio_stream(
-                        plans[i].source_path
-                    )
-                    result = self._join_transition_in_memory(result, videos[i], spec, both_audible)
-            if self.music_bed is not None:
-                # Final post-assembly bed mix, the in-memory twin of
-                # run_to_file's: route the assembled program audio + the bed
-                # through the SAME build_music_bed_filter_complex builder.
-                speech = self._music_bed_speech_windows(context)
-                result.audio = self._mix_music_bed_in_memory(result, speech)
-            return result
-        finally:
-            for plan in plans:
-                for f in plan.owned_temp_files:
-                    f.unlink(missing_ok=True)
-
-    def _mix_music_bed_in_memory(self, result: Video, speech: list[tuple[float, float]] | None) -> Audio:
-        """Mix the music bed under the assembled program audio for ``run()``.
-
-        The in-memory twin of :meth:`_mix_music_bed_to_file`: the assembled
-        program's PCM audio is written to a temp WAV (input 0), the bed added as
-        a second ``-i`` input, and :func:`build_music_bed_filter_complex` (the
-        SAME builder the file path uses) compiles the ``amix`` graph, decoded
-        back to a float32 :class:`Audio`. The program duration is the assembled
-        video's exact timeline so the bed's loop/trim pin matches.
-        """
-        bed = self.music_bed
-        assert bed is not None
-        program_seconds = result.total_seconds
-        bed_inputs, graph, out_label = build_music_bed_filter_complex(
-            bed, program_seconds, speech=speech, bed_input_index=1, prog_label="0:a"
-        )
-        sample_rate = result.audio.metadata.sample_rate
-        tmpdir = Path(tempfile.mkdtemp(prefix="vp_bed_"))
-        prog_wav = tmpdir / "prog.wav"
-        try:
-            result.audio.save(prog_wav, format="wav")
-            cmd = [
-                "ffmpeg",
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-i",
-                str(prog_wav),
-                *bed_inputs,
-                "-filter_complex",
-                ";".join(graph),
-                "-map",
-                out_label,
-                "-ac",
-                "2",
-                "-ar",
-                str(sample_rate),
-                "-f",
-                "f32le",
-                "pipe:1",
-            ]
-            raw = _ffmpeg.run(cmd)
-        finally:
-            prog_wav.unlink(missing_ok=True)
-            tmpdir.rmdir()
-
-        data = np.frombuffer(raw, dtype=np.float32)
-        if data.size % 2 != 0:
-            data = data[: data.size - 1]
-        data = data.reshape(-1, 2).copy()
-        np.clip(data, -1.0, 1.0, out=data)
-        metadata = AudioMetadata(
-            sample_rate=sample_rate,
-            channels=2,
-            sample_width=2,
-            duration_seconds=data.shape[0] / sample_rate,
-            frame_count=data.shape[0],
-        )
-        return Audio(data, metadata)
-
-    def _join_transition_in_memory(self, left: Video, right: Video, spec: TransitionSpec, both_audible: bool) -> Video:
-        """xfade ``right`` onto the running ``left`` video for ``run()``.
-
-        The in-memory twin of the file path's :func:`stream_transition_pair`:
-        blends the frames through the SAME shared :func:`xfade_filter` builder
-        (so the seam pixels match ``run_to_file``), then joins the audio --
-        ``acrossfade`` when ``both_audible`` and ``spec.audio`` is set, else a
-        hard butt-join over the same overlap -- and fits it to the shortened
-        video duration so the mux cannot drift. ``both_audible`` is the caller's
-        source-stream-presence decision (the same heuristic ``run_to_file``
-        uses), so the two paths agree even for a silent-but-present audio
-        stream. xfade requires matching geometry/fps; the per-segment realize
-        already normalized both to the matched targets.
-        """
-        fps = left.fps
-        blended = stream_transition_frames(left.frames, right.frames, spec.type, spec.duration, fps)
-        out = Video.from_frames(blended, fps=fps)
-
-        if spec.audio and both_audible:
-            # Crossfade over the overlap (acrossfade twin). The transition guard
-            # ensured each side is at least `duration` long, so this is safe.
-            joined_audio = left.audio.concat(right.audio, crossfade=spec.duration)
-        else:
-            # Hard butt-join over the same overlap, mirroring the file path:
-            # drop the left tail's `duration` seconds, then append the full
-            # right, so the audio tracks the shortened video timeline.
-            left_keep = max(0.0, left.audio.metadata.duration_seconds - spec.duration)
-            joined_audio = left.audio.slice(0.0, left_keep).concat(right.audio)
-        out.audio = joined_audio.fit_to_duration(out.total_seconds)
-        return out
-
     def run_to_file(
         self,
         output_path: str | Path,
@@ -1810,9 +1664,9 @@ class VideoEdit(BaseModel):
     ) -> Path:
         """Mix the music bed under an assembled program file in one ffmpeg pass.
 
-        The file half of the bed mix: the assembled program is input 0, the bed
-        a second ``-i`` input, and :func:`build_music_bed_filter_complex` (shared
-        with ``run()``) compiles the ``amix`` graph. The program duration is the
+        The bed mix: the assembled program is input 0, the bed
+        a second ``-i`` input, and :func:`build_music_bed_filter_complex`
+        compiles the ``amix`` graph. The program duration is the
         assembled file's PROBED length so the bed's loop/trim pin matches the
         realized timeline exactly. The video stream is copied (``-c:v copy`` --
         the bed touches only audio); the mixed audio is re-encoded to AAC.
@@ -1875,7 +1729,7 @@ class VideoEdit(BaseModel):
         Each transition then xfade-joins the running tail with the next group:
         ``offset`` is derived from the realized TAIL's PROBED duration (not the
         prediction) so the seam is frame-aligned, the video blend goes through
-        the shared :func:`xfade_filter` builder (matching ``run()``), and the
+        the shared :func:`xfade_filter` builder (matching ``run_to_file()``), and the
         audio is ``acrossfade``-d when ``spec.audio`` and both boundary
         segments are audible, else hard butt-joined.
 
@@ -1915,8 +1769,7 @@ class VideoEdit(BaseModel):
                 right_meta = VideoMetadata.from_path(str(right_file))
                 # Offset from the realized tail's PROBED frame count (matching
                 # the xfade input trim), not the prediction, so the seam is
-                # frame-aligned -- the file mirror of the in-memory twin's
-                # ``(n_left - overlap) / fps``.
+                # frame-aligned -- ``(n_left - overlap) / fps``.
                 overlap = _transition_overlap_frames(spec, meta.fps)
                 offset = round((meta.frame_count - overlap) / meta.fps, 6)
                 crossfade_audio = bool(spec.audio and tail_left_audible and audible[first_idx])
@@ -1962,8 +1815,7 @@ class VideoEdit(BaseModel):
     def _compile_streaming_plans(self, context: dict[str, Any] | None) -> list[StreamingSegmentPlan]:
         """Compile every segment plan and fold the post-ops, or raise.
 
-        The single admission point for both :meth:`run` and
-        :meth:`run_to_file`. Unstreamable shapes raise
+        The single admission point for :meth:`run_to_file`. Unstreamable shapes raise
         :class:`PlanValidationError` with the streamability report's
         structured errors; a builder/report drift (e.g. a third-party
         transform whose ``streamable`` flag does not match its
@@ -2086,10 +1938,9 @@ class VideoEdit(BaseModel):
 
         # Resolve requires-context onto the segment's local timeline once; each
         # context-requiring effect gets its keys on the schedule entry, which
-        # stream_segment forwards to streaming_init (the streaming twin of
-        # _apply_with_context). Like _segment_context's eager consumers, a
-        # missing/empty key is passed as absent so the effect raises its own
-        # clear "requires ..." error -- before that segment's decode.
+        # stream_segment forwards to streaming_init. A missing/empty key is
+        # passed as absent so the effect raises its own clear "requires ..."
+        # error -- before that segment's decode.
         seg_context = _segment_context(context, str(segment.source), segment.start, segment.end)
 
         owned_files: list[Path] = []
@@ -2306,8 +2157,8 @@ class VideoEdit(BaseModel):
         :func:`_transition_duration_errors` but measures each segment against
         its compiled plan's predicted post-op duration -- the exact length the
         per-segment realize pass produces -- so a plan that passes here cannot
-        fail the xfade pass at decode. Called by both ``run`` and
-        ``run_to_file`` after plan compilation (no frames decoded yet).
+        fail the xfade pass at decode. Called by ``run_to_file`` after plan
+        compilation (no frames decoded yet).
         ``repair`` clamps these mechanically; here they hard-raise.
         """
         for message, err in _transition_structure_errors(list(self.segments)):

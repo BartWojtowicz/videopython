@@ -7,9 +7,8 @@ assembled timeline, not of any one segment. It is mixed in a FINAL ffmpeg pass
 assembled program audio plus the bed input.
 
 :class:`MusicBed` is a frozen, closed pydantic model carried on
-:attr:`VideoEdit.music_bed`. Both ``run`` and ``run_to_file`` route through the
-single :func:`build_music_bed_filter_complex` builder so the in-memory and
-file paths cannot diverge on the mix.
+:attr:`VideoEdit.music_bed`. ``run_to_file`` routes through the
+single :func:`build_music_bed_filter_complex` builder for the mix.
 
 Ducking is *transcription-derived* and deterministic: when ``duck`` is set the
 bed is lowered under the speech windows derived from the context transcription
@@ -122,7 +121,7 @@ class MusicBed(BaseModel):
 
         Mirrors :meth:`ImageOverlay.predict_metadata`: a cheap ffprobe header
         probe (no decode) catches a missing / non-audio file at validate time,
-        before ``run()`` would crash mid-stream after assembling the program.
+        before ``run_to_file()`` would crash mid-stream after assembling the program.
         """
         try:
             info = _ffmpeg.probe(self.source)
@@ -147,8 +146,8 @@ class MusicBed(BaseModel):
         bed is scaled to ``gain``, faded, ducked under ``speech`` (when given and
         ``duck`` is set), then pinned to exactly ``program_seconds`` (``atrim``
         end + ``apad`` whole_dur) so a looped bed neither truncates early nor
-        extends the output past the program. Shared by the in-memory and file
-        mix paths via :func:`build_music_bed_filter_complex`.
+        extends the output past the program. Used by the file
+        mix path via :func:`build_music_bed_filter_complex`.
         """
         stages: list[str] = [f"volume={self.gain:.6f}"]
         if self.fade_in > 0:
@@ -178,8 +177,7 @@ def build_music_bed_filter_complex(
 ) -> tuple[list[str], list[str], str]:
     """Compile the music-bed input args + ``filter_complex`` mix graph.
 
-    The single source of the bed mix, shared by ``run`` (in-memory PCM pass) and
-    ``run_to_file`` (file pass) so the two cannot diverge. Returns
+    The single source of the bed mix, used by ``run_to_file`` (file pass). Returns
     ``(input_args, graph_statements, out_label)``:
 
     - ``input_args`` are the ffmpeg ``-i`` argv for the bed: ``-stream_loop -1``

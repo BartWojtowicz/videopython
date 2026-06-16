@@ -3,16 +3,13 @@
 An ``Effect`` is an ``Operation`` that preserves video shape and frame count.
 Subclasses implement the streaming contract -- :meth:`Effect.process_frame`
 (plus :meth:`Effect.streaming_init` for any precomputed state) -- which is the
-single source of truth for the effect's pixel logic. The base
-:meth:`Effect._apply` replays that contract over the in-memory frames, so
-in-memory execution comes for free and cannot drift from streaming.
-
-A few effects override the eager path deliberately: ``FullImageOverlay`` and
-``Vignette`` keep a hand-written :meth:`Effect._apply` (extra validation /
-batched vectorisation), and the audio effects (``Fade``, ``VolumeAdjust``)
-override :meth:`Effect.apply` directly so the audio splice stays coherent with
-the window. Anchored RGBA overlays (``TextOverlay``, ``ImageOverlay``) share
-their placement and blend via :class:`_AnchoredOverlay`.
+single source of truth for the effect's pixel logic and the only execution
+path. Audio effects (``Fade``, ``VolumeAdjust``) instead express their gain
+envelope via :meth:`Effect.to_ffmpeg_audio_filter`. Effects that need
+run-time validation beyond the field constraints (``FullImageOverlay``)
+override :meth:`Effect.predict_metadata`. Anchored RGBA overlays
+(``TextOverlay``, ``ImageOverlay``) share their placement and blend via
+:class:`_AnchoredOverlay`.
 """
 
 from __future__ import annotations
@@ -26,7 +23,6 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from pydantic import Field, PrivateAttr, model_validator
-from tqdm import tqdm
 
 from videopython.base.description import BoundingBox
 from videopython.base.exceptions import PlanError, PlanErrorCode, PlanValidationError
@@ -35,8 +31,7 @@ from videopython.editing._easing import ease, ease_out
 from videopython.editing.operation import Effect, FilterCtx
 
 if TYPE_CHECKING:
-    from videopython.audio import Audio
-    from videopython.base.video import Video, VideoMetadata
+    from videopython.base.video import VideoMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -121,24 +116,23 @@ class FullImageOverlay(Effect):
         fade_alpha = 1.0 if dist_from_end >= self._stream_fade_frames else dist_from_end / self._stream_fade_frames
         return self._overlay_frame(frame, fade_alpha)
 
-    def _apply(self, video: Video, **_context: Any) -> Video:
-        overlay = self._load_overlay()
-        if video.frame_shape != overlay[:, :, :3].shape:
-            raise ValueError(f"Mismatch of overlay shape `{overlay.shape}` with video shape: `{video.frame_shape}`!")
-        if not (0 <= 2 * self.fade_time <= video.total_seconds):
-            raise ValueError(f"Video is only {video.total_seconds}s long, but fade time is {self.fade_time}s!")
+    def predict_metadata(self, meta: VideoMetadata, **_context: Any) -> VideoMetadata:
+        """Reject an overlay that cannot composite onto this video at run time.
 
-        logger.info("Overlaying video...")
-        n = len(video.frames)
-        num_fade_frames = round(self.fade_time * video.fps) if self.fade_time > 0 else 0
-        for i in tqdm(range(n), desc="Overlaying frames"):
-            if num_fade_frames == 0:
-                video.frames[i] = self._overlay_frame(video.frames[i])
-            else:
-                dist_from_end = min(i, n - i)
-                fade_alpha = 1.0 if dist_from_end >= num_fade_frames else dist_from_end / num_fade_frames
-                video.frames[i] = self._overlay_frame(video.frames[i], fade_alpha)
-        return video
+        Two failures ``run_to_file()`` cannot survive are caught at ``validate()``
+        time instead of mid-stream: (a) the overlay's pixel dimensions must match
+        the video frame exactly (this op is full-frame, unlike
+        :class:`ImageOverlay`), and (b) the combined fade-in + fade-out cannot
+        exceed the clip length. Both checks come from the deleted eager path; the
+        overlay header is read once here (no per-frame work).
+        """
+        overlay = self._load_overlay()
+        frame_shape = (meta.height, meta.width, 3)
+        if frame_shape != overlay[:, :, :3].shape:
+            raise ValueError(f"Mismatch of overlay shape `{overlay.shape}` with video shape: `{frame_shape}`!")
+        if not (0 <= 2 * self.fade_time <= meta.total_seconds):
+            raise ValueError(f"Video is only {meta.total_seconds}s long, but fade time is {self.fade_time}s!")
+        return meta
 
 
 class Blur(Effect):
@@ -326,18 +320,6 @@ class Vignette(Effect):
         assert self._stream_mask_3d is not None
         return (frame.astype(np.float32) * self._stream_mask_3d).astype(np.uint8)
 
-    def _apply(self, video: Video, **_context: Any) -> Video:
-        logger.info("Applying vignette effect...")
-        height, width = video.frame_shape[:2]
-        if self._mask is None or self._mask.shape != (height, width):
-            self._mask = self._create_mask(height, width)
-        mask_3d = self._mask[:, :, np.newaxis]
-        batch_size = 64
-        for start in range(0, len(video.frames), batch_size):
-            end = min(start + batch_size, len(video.frames))
-            video.frames[start:end] = (video.frames[start:end].astype(np.float32) * mask_3d).astype(np.uint8)
-        return video
-
 
 class KenBurns(Effect):
     """Cinematic pan-and-zoom that smoothly animates between two crop regions.
@@ -473,29 +455,6 @@ class Fade(Effect):
             return frame
         return (frame.astype(np.float32) * a).astype(np.uint8)
 
-    def apply(self, video: Video, **context: Any) -> Video:
-        start_s, stop_s = self._resolved_window(video.total_seconds)
-        start_f = round(start_s * video.fps)
-        end_f = round(stop_s * video.fps)
-        n_effect = end_f - start_f
-        alpha = self._fade_envelope(n_effect, video.fps)
-
-        batch_size = 64
-        for batch_start in range(0, n_effect, batch_size):
-            batch_end = min(batch_start + batch_size, n_effect)
-            batch_alpha = alpha[batch_start:batch_end, np.newaxis, np.newaxis, np.newaxis]
-            if np.all(batch_alpha == 1.0):
-                continue
-            abs_start = start_f + batch_start
-            abs_end = start_f + batch_end
-            video.frames[abs_start:abs_end] = (video.frames[abs_start:abs_end].astype(np.float32) * batch_alpha).astype(
-                np.uint8
-            )
-
-        if video.audio is not None and not video.audio.is_silent:
-            self._audio_apply(video.audio, start_s, stop_s)
-        return video
-
     def _curve_expr(self, progress: str) -> str:
         """ffmpeg gain sub-expression for a 0->1 ramp ``progress``, per ``self.curve``.
 
@@ -513,8 +472,9 @@ class Fade(Effect):
         """Express the fade's gain envelope as a windowed ``volume`` expression.
 
         The audio twin of the video fade (which scales pixels by the same alpha
-        envelope). It must mirror :func:`_fade_envelope` / :meth:`_audio_apply`:
-        the ramp applies only WITHIN ``[start, stop]`` and the gain is 1.0
+        envelope in :meth:`process_frame`). It must mirror
+        :func:`_fade_envelope`: the ramp applies only WITHIN ``[start, stop]``
+        and the gain is 1.0
         everywhere else -- so a *windowed* fade-out returns to full volume after
         the window (matching the video, which resumes full brightness), instead
         of staying muted. Native ``afade`` cannot express this (it holds 0
@@ -531,8 +491,8 @@ class Fade(Effect):
         if stop_s <= start_s:
             return None
         window_len = stop_s - start_s
-        # Halve the ramp for in_out so the lead and trailing ramps cannot overlap
-        # (the eager path takes their min; a clamped half-window avoids it).
+        # Halve the ramp for in_out so the lead and trailing ramps cannot
+        # overlap; a clamped half-window keeps them disjoint.
         both = self.mode == "in_out"
         ramp = min(self.duration, window_len / 2 if both else window_len)
         if ramp <= 0:
@@ -549,19 +509,6 @@ class Fade(Effect):
         for cond, gain in reversed(terms):
             expr = f"if({cond},{gain},{expr})"
         return f"volume=volume='{expr}':eval=frame"
-
-    def _audio_apply(self, audio: Audio, start_s: float, stop_s: float) -> None:
-        """Eager (in-memory) fade for ``Video.apply``; streaming uses ``afade``."""
-        sample_rate = audio.metadata.sample_rate
-        audio_start = round(start_s * sample_rate)
-        audio_end = min(round(stop_s * sample_rate), len(audio.data))
-        alpha = self._fade_envelope(audio_end - audio_start, sample_rate)
-
-        if audio.data.ndim == 1:
-            audio.data[audio_start:audio_end] *= alpha
-        else:
-            audio.data[audio_start:audio_end] *= alpha[:, np.newaxis]
-        np.clip(audio.data, -1.0, 1.0, out=audio.data)
 
 
 class VolumeAdjust(Effect):
@@ -585,12 +532,6 @@ class VolumeAdjust(Effect):
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
         return frame
 
-    def apply(self, video: Video, **context: Any) -> Video:
-        start_s, stop_s = self._resolved_window(video.total_seconds)
-        if video.audio is not None and not video.audio.is_silent:
-            self._audio_apply(video.audio, start_s, stop_s)
-        return video
-
     def to_ffmpeg_audio_filter(self, ctx: FilterCtx) -> str | None:
         """Apply the volume change over the window via the ``volume`` filter.
 
@@ -598,8 +539,8 @@ class VolumeAdjust(Effect):
         multiplier compiles to ``volume=<v>:enable='between(t,start,stop)'``.
         When ``ramp_duration>0`` the gain is a time-piecewise expression
         (``volume=eval=frame``) that ramps ``1 -> volume`` over the first
-        ``ramp_duration`` of the window and back over the last, mirroring the
-        eager ``1 + (volume-1)*sqrt(t)`` edge ramps. The window resolves
+        ``ramp_duration`` of the window and back over the last, following the
+        ``1 + (volume-1)*sqrt(t)`` edge-ramp shape. The window resolves
         against the segment duration (``ctx.frame_count / ctx.fps``); ``None``
         for a degenerate window or a no-op (``volume == 1`` with no ramp).
         """
@@ -632,35 +573,13 @@ class VolumeAdjust(Effect):
         )
         return f"volume=volume='{expr}':eval=frame"
 
-    def _audio_apply(self, audio: Audio, start_s: float, stop_s: float) -> None:
-        """Eager (in-memory) volume change for ``Video.apply``; streaming uses ``volume``."""
-        sample_rate = audio.metadata.sample_rate
-        start_sample = round(start_s * sample_rate)
-        end_sample = min(round(stop_s * sample_rate), len(audio.data))
-        n_samples = end_sample - start_sample
-        envelope = np.full(n_samples, self.volume, dtype=np.float32)
-
-        if self.ramp_duration > 0:
-            ramp_samples = min(round(self.ramp_duration * sample_rate), n_samples // 2)
-            if ramp_samples > 0:
-                t = np.linspace(0, 1, ramp_samples, dtype=np.float32)
-                envelope[:ramp_samples] = 1.0 + (self.volume - 1.0) * np.sqrt(t)
-                t = np.linspace(1, 0, ramp_samples, dtype=np.float32)
-                envelope[-ramp_samples:] = 1.0 + (self.volume - 1.0) * np.sqrt(t)
-
-        if audio.data.ndim == 1:
-            audio.data[start_sample:end_sample] *= envelope
-        else:
-            audio.data[start_sample:end_sample] *= envelope[:, np.newaxis]
-        np.clip(audio.data, -1.0, 1.0, out=audio.data)
-
 
 class _AnchoredOverlay(Effect):
     """Shared base for anchored RGBA overlays (:class:`TextOverlay`, :class:`ImageOverlay`).
 
-    Owns anchored placement, off-frame clipping, and alpha blending, so the
-    eager and streaming paths share one ``_blend_params`` source of truth (the
-    parity-hole class of bug fixed in 0.34.1). Subclasses declare their own
+    Owns anchored placement, off-frame clipping, and alpha blending in one
+    ``_blend_params`` source of truth (consolidated when the eager/streaming
+    parity-hole class of bug was fixed in 0.34.1). Subclasses declare their own
     ``position``/``anchor`` field defaults and implement
     :meth:`_overlay_for_frame` to produce the RGBA bitmap; everything
     downstream is shared. It declares no ``op`` ``Literal``, so it is an
@@ -723,11 +642,11 @@ class _AnchoredOverlay(Effect):
     def _blend_params(
         self, frame_w: int, frame_h: int
     ) -> tuple[np.ndarray, np.ndarray, tuple[int, int, int, int]] | None:
-        """Placement + blend inputs shared by the eager and streaming paths.
+        """Placement + blend inputs for the streaming path.
 
-        Single source of truth so the two paths cannot drift -- the eager/stream
-        parity-hole class of bug fixed in 0.34.1. Returns ``None`` when the
-        overlay lands fully off-frame (the effect is a no-op).
+        Single source of truth for placement and blending (consolidated when the
+        eager/stream parity-hole class of bug was fixed in 0.34.1). Returns
+        ``None`` when the overlay lands fully off-frame (the effect is a no-op).
         """
         overlay = self._overlay_for_frame(frame_w, frame_h)
         oh, ow = overlay.shape[:2]
@@ -942,7 +861,7 @@ class ImageOverlay(_AnchoredOverlay):
     def predict_metadata(self, meta: VideoMetadata, **_context: Any) -> VideoMetadata:
         """Reject only a missing/unreadable ``source`` (see :meth:`Operation.predict_metadata`).
 
-        An unreadable source is the one failure ``run()`` cannot survive -- it
+        An unreadable source is the one failure ``run_to_file()`` cannot survive -- it
         would raise mid-stream after expensive frame decode -- so it is caught
         at ``validate()`` time, symmetric with ``TranscriptionOverlay``.
         Geometry (oversized / off-frame) is deliberately *not* checked here: it

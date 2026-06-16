@@ -2,8 +2,8 @@
 
 The music bed is NOT a per-segment op: it is a frozen ``MusicBed`` field on
 ``VideoEdit`` mixed under the WHOLE assembled program in a final ffmpeg ``amix``
-pass after concat / transitions. ``run`` and ``run_to_file`` share one
-``build_music_bed_filter_complex`` builder so they cannot diverge. Ducking is
+pass after concat / transitions, built by the shared
+``build_music_bed_filter_complex`` builder. Ducking is
 deterministic and transcription-derived (a ``volume=...:eval=frame`` automation
 over the shared ``speech_windows`` helper), single-segment only.
 
@@ -334,40 +334,38 @@ class TestMusicBedEndToEnd:
     def _plan(self, music_bed: dict[str, object]) -> VideoEdit:
         return VideoEdit.model_validate({"segments": [{**self.SEG}], "music_bed": music_bed})
 
-    def test_flat_bed_is_audible_under_silent_program(self, tmp_path, bed_wav):
+    def test_flat_bed_is_audible_under_silent_program(self, render, bed_wav):
         # The program is silent (no source audio), so the output RMS is the bed.
         plan = self._plan({"source": bed_wav, "gain": 0.8})
-        out = Video.from_path(str(plan.run_to_file(tmp_path / "flat.mp4")))
+        out = render(plan, name="flat.mp4")
         assert _rms(out.audio.data) > 0.05, "flat bed not audible in the mix"
         # The bed loops/trims to exactly the program timeline.
         assert abs(out.audio.metadata.duration_seconds - out.total_seconds) < 0.15
 
-    def test_bed_preserves_program_audio_level(self, tmp_path, bed_wav, voiced_source):
+    def test_bed_preserves_program_audio_level(self, render, bed_wav, voiced_source):
         # Attaching a bed must NOT attenuate the program audio. amix's default
         # normalize=1 divides every input by 2, halving the dialogue; normalize=0
         # passes the program through at full level. A silent (gain=0) bed must
         # therefore leave the program RMS unchanged (ratio ~1.0, not ~0.5).
         seg = {"source": voiced_source, "start": 0.0, "end": 4.0}
-        plain = VideoEdit.model_validate({"segments": [seg]}).run_to_file(tmp_path / "plain.mp4")
-        plain_rms = _rms(Video.from_path(str(plain)).audio.data)
-        with_bed = VideoEdit.model_validate(
-            {"segments": [seg], "music_bed": {"source": bed_wav, "gain": 0.0}}
-        ).run_to_file(tmp_path / "withbed.mp4")
-        bed_rms = _rms(Video.from_path(str(with_bed)).audio.data)
+        plain_rms = _rms(render(VideoEdit.model_validate({"segments": [seg]}), name="plain.mp4").audio.data)
+        with_bed = render(
+            VideoEdit.model_validate({"segments": [seg], "music_bed": {"source": bed_wav, "gain": 0.0}}),
+            name="withbed.mp4",
+        )
+        bed_rms = _rms(with_bed.audio.data)
         assert 0.8 < bed_rms / plain_rms < 1.25, f"bed attenuated the program: {bed_rms} vs {plain_rms}"
 
-    def test_duck_lowers_bed_under_speech_window(self, tmp_path, bed_wav):
+    def test_duck_lowers_bed_under_speech_window(self, render, bed_wav):
         # Speech at absolute [3, 4) -> segment-local [1, 2); the duck (with the
         # 0.15 padding) lowers the bed there and restores it away from speech.
         tr = Transcription(words=[TranscriptionWord(word="hello", start=3.0, end=4.0)])
-        ducked = Video.from_path(
-            str(
-                self._plan({"source": bed_wav, "gain": 0.8, "duck": 0.9}).run_to_file(
-                    tmp_path / "ducked.mp4", context={"transcription": tr}
-                )
-            )
+        ducked = render(
+            self._plan({"source": bed_wav, "gain": 0.8, "duck": 0.9}),
+            name="ducked.mp4",
+            context={"transcription": tr},
         )
-        flat = Video.from_path(str(self._plan({"source": bed_wav, "gain": 0.8}).run_to_file(tmp_path / "flat2.mp4")))
+        flat = render(self._plan({"source": bed_wav, "gain": 0.8}), name="flat2.mp4")
         sr = ducked.audio.metadata.sample_rate
 
         def region(v: Video, lo: float, hi: float) -> np.ndarray:
@@ -381,19 +379,21 @@ class TestMusicBedEndToEnd:
             f"flat bed should be louder than ducked under speech: {flat_in} vs {ducked_in}"
         )
 
-    def test_run_and_run_to_file_bed_mix_agree(self, tmp_path, bed_wav):
+    def test_run_to_file_bed_mix_agree(self, render, bed_wav):
         tr = Transcription(words=[TranscriptionWord(word="hello", start=3.0, end=4.0)])
         plan = self._plan({"source": bed_wav, "gain": 0.8, "duck": 0.9})
-        in_memory = plan.run(context={"transcription": tr})
-        on_disk = Video.from_path(str(plan.run_to_file(tmp_path / "eq.mp4", context={"transcription": tr})))
-        sr = in_memory.audio.metadata.sample_rate
+        # Streaming-to-file is the only engine now; render the same plan twice and
+        # confirm the duck is applied deterministically (shared builder).
+        first = render(plan, name="eq_a.mp4", context={"transcription": tr})
+        second = render(plan, name="eq_b.mp4", context={"transcription": tr})
+        sr = first.audio.metadata.sample_rate
 
         def region(v: Video, lo: float, hi: float) -> np.ndarray:
             return v.audio.data[round(lo * sr) : round(hi * sr)]
 
-        # Both paths duck the bed under the same window (shared builder).
-        mem_in, mem_away = _rms(region(in_memory, 1.3, 1.8)), _rms(region(in_memory, 3.0, 3.7))
-        disk_in, disk_away = _rms(region(on_disk, 1.3, 1.8)), _rms(region(on_disk, 3.0, 3.7))
-        assert mem_in < mem_away * 0.5
-        assert disk_in < disk_away * 0.5
-        assert abs(in_memory.audio.metadata.duration_seconds - on_disk.audio.metadata.duration_seconds) < 0.15
+        # Both renders duck the bed under the same window (shared builder).
+        first_in, first_away = _rms(region(first, 1.3, 1.8)), _rms(region(first, 3.0, 3.7))
+        second_in, second_away = _rms(region(second, 1.3, 1.8)), _rms(region(second, 3.0, 3.7))
+        assert first_in < first_away * 0.5
+        assert second_in < second_away * 0.5
+        assert abs(first.audio.metadata.duration_seconds - second.audio.metadata.duration_seconds) < 0.15

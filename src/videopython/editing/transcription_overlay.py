@@ -3,14 +3,10 @@
 The ``add_subtitles`` op consumes its transcription when the plan compiles:
 the cue transforms (``max_words_per_cue`` chunking, sentence capitalization)
 and the resolved look are baked into an ASS document, and ffmpeg's
-``subtitles=`` filter (libass) burns it in. One pixel path everywhere:
-
-* the streaming path emits one ``-vf`` entry -- decode-stage normally, or
-  encode-stage when the op follows frame effects in plan order, so
-  ``[fade, add_subtitles]`` keeps streaming in plan order;
-* the direct per-op path (:meth:`TranscriptionOverlay.apply`) pipes its
-  in-memory frames through the same filter (``VideoEdit.run`` streams them
-  in through the same compiled ``-vf`` entry).
+``subtitles=`` filter (libass) burns it in. The streaming path emits one
+``-vf`` entry -- decode-stage normally, or encode-stage when the op follows
+frame effects in plan order, so ``[fade, add_subtitles]`` keeps streaming in
+plan order.
 
 Geometry is resolution-relative (``font_scale``/``region``) and libass wraps
 long cues within the box instead of failing, so there is no fit validation:
@@ -23,16 +19,13 @@ import tempfile
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, ClassVar, Literal
+from typing import ClassVar, Literal
 
-import numpy as np
 from PIL import ImageFont
 from pydantic import Field
 
-from videopython.base import _ffmpeg
 from videopython.base.fonts import BUNDLED_FONT_FAMILIES, bundled_fonts_dir, load_font
 from videopython.base.transcription import Transcription
-from videopython.base.video import Video
 from videopython.editing._ass import AnchorPoint, AssLook, build_ass, escape_filter_value
 from videopython.editing.operation import Effect, FilterCtx
 
@@ -47,7 +40,7 @@ RGBAColor = tuple[int, int, int, int]
 
 _MISSING_CONTEXT_ERROR = (
     "TranscriptionOverlay requires transcription data. "
-    "Pass it via VideoEdit.run(context={'transcription': ...}) or directly to apply()."
+    "Pass it via VideoEdit.run_to_file(context={'transcription': ...})."
 )
 
 
@@ -109,8 +102,7 @@ class TranscriptionOverlay(Effect):
     local timeline and delivered at plan-compile time through
     :class:`FilterCtx`; the op compiles to a libass ``subtitles=`` filter
     (:attr:`compiles_to_filter`), so subtitled edits run on the O(1)-memory
-    streaming path at native speed. The direct per-op ``apply`` pipes frames
-    through the same filter, so both paths share one pixel implementation.
+    streaming path at native speed.
     """
 
     op: Literal["add_subtitles"] = "add_subtitles"
@@ -299,8 +291,7 @@ class TranscriptionOverlay(Effect):
         """The full ASS document for ``transcription`` at the given frame size.
 
         ``transcription`` timestamps must be local to the timeline the frames
-        come from (the plan builder re-bases context onto the cut segment; the
-        eager path receives the video-local transcription directly). The
+        come from (the plan builder re-bases context onto the cut segment). The
         ``window`` is applied by clipping event times -- the ``subtitles``
         filter has no timeline support.
         """
@@ -334,7 +325,7 @@ class TranscriptionOverlay(Effect):
         compile time: writes a temp ``.ass`` (registered on ``ctx.owned_files``
         for the runner to delete after streaming) and emits one ``-vf`` entry.
         A missing transcription raises the op's clear context error here --
-        before any decode -- mirroring the eager path.
+        before any decode.
         """
         transcription = ctx.context.get("transcription")
         if not isinstance(transcription, Transcription):
@@ -342,57 +333,3 @@ class TranscriptionOverlay(Effect):
         ass_path = self._write_ass(self._compile_ass(transcription, ctx.width, ctx.height))
         ctx.owned_files.append(ass_path)
         return self._filter_expr(ass_path)
-
-    def apply(
-        self,
-        video: Video,
-        transcription: Transcription | None = None,
-        **_context: Any,
-    ) -> Video:
-        """Eager render: pipe the in-memory frames through the same filter.
-
-        One ffmpeg rawvideo->``subtitles=``->rawvideo roundtrip, so eager and
-        streaming output come from the same renderer. The rawvideo pipe's
-        timestamps start at zero, matching the video-local transcription the
-        caller passes (``VideoEdit.run`` re-bases per segment). Frames are
-        replaced in place, like every effect; audio is untouched.
-        """
-        if transcription is None:
-            raise ValueError(_MISSING_CONTEXT_ERROR)
-        n_frames, height, width = video.frames.shape[:3]
-        ass_path = self._write_ass(self._compile_ass(transcription, width, height))
-        try:
-            cmd = [
-                "ffmpeg",
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-f",
-                "rawvideo",
-                "-pixel_format",
-                "rgb24",
-                "-video_size",
-                f"{width}x{height}",
-                "-framerate",
-                str(video.fps),
-                "-i",
-                "pipe:0",
-                "-vf",
-                self._filter_expr(ass_path),
-                "-f",
-                "rawvideo",
-                "-pix_fmt",
-                "rgb24",
-                "pipe:1",
-            ]
-            out = _ffmpeg.run(cmd, stdin=video.frames.tobytes())
-        finally:
-            ass_path.unlink(missing_ok=True)
-        frames = np.frombuffer(out, dtype=np.uint8).reshape(-1, height, width, 3)
-        if frames.shape[0] != n_frames:
-            raise RuntimeError(
-                f"subtitles filter changed the frame count from {n_frames} to {frames.shape[0]}; "
-                "effects must preserve shape and frame count."
-            )
-        video.frames = frames.copy()  # frombuffer is read-only; effects own writable frames
-        return video

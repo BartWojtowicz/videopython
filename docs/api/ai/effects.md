@@ -14,21 +14,23 @@ internally; the box/label drawing is done by the AI-free renderer
 
 ```python
 from videopython.ai import ObjectDetectionOverlay
-from videopython.base import Video
-
-video = Video.from_path("street.mp4")
+from videopython.editing import VideoEdit, SegmentConfig
 
 # Default: per-class colours, confidence shown, detect every 2nd frame.
-annotated = ObjectDetectionOverlay().apply(video)
+edit = VideoEdit(segments=[SegmentConfig(source="street.mp4", start=0, end=5, operations=[
+    ObjectDetectionOverlay(),
+])])
+edit.run_to_file("annotated.mp4")
 
 # Only people and cars, detect every frame, larger model for accuracy.
-annotated = ObjectDetectionOverlay(
-    class_filter=["person", "car"],
-    detection_interval=1,
-    model_size="s",
-).apply(video)
-
-annotated.save("annotated.mp4")
+edit = VideoEdit(segments=[SegmentConfig(source="street.mp4", start=0, end=5, operations=[
+    ObjectDetectionOverlay(
+        class_filter=["person", "car"],
+        detection_interval=1,
+        model_size="s",
+    ),
+])])
+edit.run_to_file("annotated.mp4")
 ```
 
 In a JSON editing plan (it is exposed in the LLM-facing schema):

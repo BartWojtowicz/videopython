@@ -11,10 +11,12 @@ discriminated-union schema for LLM-driven plan generation.
 
 ```python
 from typing import ClassVar, Literal
+
+import numpy as np
 from pydantic import Field
 
-from videopython.editing import Operation, OpCategory
-from videopython.base.video import Video, VideoMetadata
+from videopython.editing import Operation, OpCategory, FilterCtx
+from videopython.base.video import VideoMetadata
 
 
 class Resize(Operation):
@@ -32,10 +34,23 @@ class Resize(Operation):
     width: int | None = Field(None, gt=0)
     height: int | None = Field(None, gt=0)
 
-    def apply(self, video: Video) -> Video: ...
     def predict_metadata(self, meta: VideoMetadata) -> VideoMetadata: ...
-    def to_ffmpeg_filter(self, ctx) -> str | None: ...   # streamable transforms only
+    def to_ffmpeg_filter(self, ctx: FilterCtx) -> str | None: ...   # filter-compiled transforms
 ```
+
+There is **no** `apply()`. Operations execute only through `VideoEdit`'s
+streaming engine (`run_to_file`); they never run against a
+`Video` directly. A subclass implements:
+
+- `predict_metadata(self, meta) -> VideoMetadata` — predict the output
+  `VideoMetadata` and fail fast on plans that would crash at run time.
+  Defaults to identity (override on the base `Operation`; on `Effect` it
+  is identity, since effects preserve shape and frame count).
+- **either** `to_ffmpeg_filter(self, ctx)` (and `to_ffmpeg_audio_filter`
+  for a duration-changing transform's audio twin) — for ops compiled into
+  the ffmpeg filter chain — **or** `streaming_init(self, total_frames,
+  fps, width, height, **context)` + `process_frame(self, frame,
+  frame_index)` — for per-frame Python effects.
 
 Notes:
 
@@ -48,17 +63,20 @@ Notes:
   implementing `to_ffmpeg_filter`; for effects that means implementing
   `process_frame` and `streaming_init`.
 - Context-dependent ops declare
-  `requires: ClassVar[tuple[str, ...]] = ("transcription",)` and use a
-  wider `apply` signature (`def apply(self, video, transcription=None)`)
-  with `# type: ignore[override]`.
+  `requires: ClassVar[tuple[str, ...]] = ("transcription",)`. The runner
+  picks the matching keys out of the `context` dict passed to
+  `run_to_file(..., context=...)`, re-bases any time-based values onto the
+  segment's local timeline, and threads them into the effect's
+  `streaming_init` (and `predict_metadata`) as keyword arguments — or onto
+  the `FilterCtx.context` for a filter-compiled op.
 
 ## Effects
 
-`Effect(Operation)` adds a `window: TimeRange | None` field and a
-shape-and-frame-count-preserving invariant. Subclasses override
-`_apply(self, video)`; the base `Effect.apply` resolves the window,
-slices the video, runs `_apply`, splices the result back, and asserts
-the invariant.
+`Effect(Operation)` adds a `window: TimeRange | None` field and preserves
+shape and frame count (so its `predict_metadata` is identity). The
+streaming engine resolves `window` against the segment timeline, leaving
+frames outside the window untouched. A frame effect implements the
+`streaming_init` / `process_frame` pair:
 
 ```python
 class ColorGrading(Effect):
@@ -68,7 +86,7 @@ class ColorGrading(Effect):
     brightness: float = Field(0.0, ge=-1, le=1)
     # ... more fields ...
 
-    def _apply(self, video: Video) -> Video: ...
+    def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray: ...
 ```
 
 The `window` field on the wire:
@@ -77,9 +95,12 @@ The `window` field on the wire:
 {"op": "color_adjust", "brightness": 0.1, "window": {"start": 1.0, "stop": 3.0}}
 ```
 
-Audio-mutating effects (`Fade`, `VolumeAdjust`) override `apply` directly;
-`TranscriptionOverlay` overrides it to pipe frames through its libass
-filter.
+An effect can instead compile to a native ffmpeg filter by setting the
+`compiles_to_filter` property and implementing `to_ffmpeg_filter` (and,
+for audio-coupled effects like `Fade`/`VolumeAdjust`,
+`to_ffmpeg_audio_filter`). `TranscriptionOverlay` (`add_subtitles`) takes
+this path: it compiles its transcription to an ASS document and emits one
+libass `subtitles=` filter entry.
 
 ## Registry API
 

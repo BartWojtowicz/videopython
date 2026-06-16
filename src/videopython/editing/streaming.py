@@ -21,7 +21,6 @@ from typing import Any, get_args
 import numpy as np
 from tqdm import tqdm
 
-from videopython.audio import Audio, AudioMetadata
 from videopython.base import _ffmpeg
 from videopython.base._dimensions import require_even
 from videopython.base.exceptions import PlanError, PlanErrorCode
@@ -125,11 +124,11 @@ def analyze_streamability(
     a transition is a native ffmpeg ``xfade``/``acrossfade`` pass over two
     realized per-segment files (each segment streams to a temp file exactly as
     it would without a transition), so it is FILTER-class by construction and
-    never forces an eager render or changes any op's class. The one transition
+    never makes a plan unstreamable or changes any op's class. The one transition
     fault that can reject a plan -- an overlap longer than an adjacent
     segment's predicted post-op duration -- is duration-dependent, so it is
     reported as ``TRANSITION_TOO_LONG`` by :meth:`VideoEdit.check` (which has
-    the predicted durations) and raised by ``run``/``run_to_file`` before
+    the predicted durations) and raised by ``run_to_file`` before
     decode, not classified structurally here.
     """
     entries: list[OpStreamability] = []
@@ -484,7 +483,7 @@ def build_audio_filter_complex(
       ``-ss start -t dur -i source`` (real audio) or ``-f lavfi -i anullsrc``
       (synthesised silence). ``input_index`` is the ffmpeg input index this
       stream lands at: ``1`` for :class:`FrameEncoder` (after the ``pipe:0``
-      video), ``0`` for the audio-only ``run()`` materialiser.
+      video), ``0`` when the audio stream is the sole input.
     - ``graph_statements`` are the ``;``-joined ``filter_complex`` statements
       wiring input ``[<i>:a]`` through ``af_filters`` then ``post_af_filters``,
       a length pin, and an ``aresample`` to a final ``[aout]``.
@@ -679,41 +678,6 @@ def segment_audio_from_plan(plan: StreamingSegmentPlan) -> SegmentAudio:
     )
 
 
-def stream_segment_audio_to_array(plan: StreamingSegmentPlan, *, sample_rate: int = 44100) -> Audio:
-    """Decode the segment's compiled audio graph into an in-memory :class:`Audio`.
-
-    The audio counterpart of :func:`stream_segment_to_frames`: ``run()`` is
-    "stream into memory", so it still produces an ``Audio`` for ``video.audio``.
-    Runs the SAME ``af_filters`` / ``post_af_filters`` graph the file path bakes
-    into the segment (so ``run()`` and ``run_to_file`` cannot diverge) and reads
-    the result back as float32 PCM -- O(output-duration) memory, materialised
-    only for the in-memory view, never for ``run_to_file``. A source with no
-    audio stream yields a native ``anullsrc`` silent track.
-    """
-    audio = segment_audio_from_plan(plan)
-    # The audio source is the ONLY input here (no video pipe), so it sits at
-    # input index 0 -- the graph builder labels [0:a] accordingly.
-    input_args, graph, out_label = build_audio_filter_complex(audio, input_index=0, sample_rate=sample_rate)
-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", *input_args]
-    cmd.extend(["-filter_complex", ";".join(graph), "-map", out_label])
-    cmd.extend(["-ac", "2", "-ar", str(sample_rate), "-f", "f32le", "pipe:1"])
-    raw = _ffmpeg.run(cmd)
-
-    data = np.frombuffer(raw, dtype=np.float32)
-    if data.size % 2 != 0:
-        data = data[: data.size - 1]
-    data = data.reshape(-1, 2).copy()
-    np.clip(data, -1.0, 1.0, out=data)
-    metadata = AudioMetadata(
-        sample_rate=sample_rate,
-        channels=2,
-        sample_width=2,
-        duration_seconds=data.shape[0] / sample_rate,
-        frame_count=data.shape[0],
-    )
-    return Audio(data, metadata)
-
-
 def stream_segment(
     plan: StreamingSegmentPlan,
     output_path: Path,
@@ -818,94 +782,6 @@ def stream_segment(
         raise
 
 
-def stream_segment_to_frames(plan: StreamingSegmentPlan) -> np.ndarray:
-    """Run a segment's streaming pipeline into memory instead of a file.
-
-    The same scheduler ``stream_segment`` uses -- decode through the plan's
-    vf chain, per-frame effects in plan order, encode-stage filters via a
-    lossless rawvideo pass -- collecting RGB frames instead of encoding.
-    This is what makes ``VideoEdit.run`` a view over the streaming engine
-    rather than a second execution path.
-    """
-    total_frames = plan.output_total_frames
-    if total_frames <= 0:
-        total_frames = round((plan.end_second - plan.start_second) * plan.output_fps)
-
-    for entry in plan.effect_schedule:
-        n_effect_frames = (
-            entry.total_effect_frames if entry.total_effect_frames is not None else entry.end_frame - entry.start_frame
-        )
-        entry.effect.streaming_init(
-            n_effect_frames, plan.output_fps, plan.output_width, plan.output_height, **entry.context
-        )
-
-    frames: list[np.ndarray] = []
-    with FrameIterator(
-        plan.source_path,
-        start_second=plan.start_second,
-        end_second=plan.end_second,
-        vf_filters=plan.vf_filters,
-        output_fps=plan.output_fps,
-        output_width=plan.output_width,
-        output_height=plan.output_height,
-    ) as decoder:
-        frame_count = 0
-        for _, frame in tqdm(decoder, desc="Streaming (in-memory)", total=total_frames):
-            for entry in plan.effect_schedule:
-                open_ended = entry.end_frame >= total_frames
-                if entry.start_frame <= frame_count and (frame_count < entry.end_frame or open_ended):
-                    local_index = entry.index_offset + min(frame_count, entry.end_frame - 1) - entry.start_frame
-                    frame = entry.effect.process_frame(frame, local_index)
-            frames.append(frame)
-            frame_count += 1
-
-    stacked = np.stack(frames) if frames else np.empty((0, plan.output_height, plan.output_width, 3), dtype=np.uint8)
-    if not plan.post_vf_filters:
-        return stacked
-
-    # Encode-stage filters: a lossless rawvideo->rawvideo pass, the in-memory
-    # twin of FrameEncoder's -vf.
-    n, height, width = stacked.shape[:3]
-    cmd = [
-        "ffmpeg",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-f",
-        "rawvideo",
-        "-pixel_format",
-        "rgb24",
-        "-video_size",
-        f"{width}x{height}",
-        "-framerate",
-        str(plan.output_fps),
-        "-i",
-        "pipe:0",
-        "-vf",
-        ",".join(plan.post_vf_filters),
-        "-f",
-        "rawvideo",
-        "-pix_fmt",
-        "rgb24",
-        "pipe:1",
-    ]
-    out = _ffmpeg.run(cmd, stdin=stacked.tobytes())
-    return out_frames_reshape(out, plan, n)
-
-
-def out_frames_reshape(raw: bytes, plan: StreamingSegmentPlan, n_in: int) -> np.ndarray:
-    """Reshape a rawvideo byte stream using the plan's final geometry.
-
-    Encode-stage transforms may change dims/fps; the builder records the
-    folded final geometry on the plan (``final_width``/``final_height``).
-    """
-    final_w = plan.final_width or plan.output_width
-    final_h = plan.final_height or plan.output_height
-    frame_size = final_w * final_h * 3
-    n_frames = len(raw) // frame_size
-    return np.frombuffer(raw, dtype=np.uint8)[: n_frames * frame_size].reshape(n_frames, final_h, final_w, 3).copy()
-
-
 def concat_files(segment_files: list[Path], output_path: Path) -> Path:
     """Concatenate encoded video files using ffmpeg concat demuxer (no re-encode).
 
@@ -960,12 +836,11 @@ TRANSITION_TYPES: tuple[str, ...] = (
 
 
 def xfade_filter(transition_type: str, duration: float, offset: float, *, in_a: str = "0:v", in_b: str = "1:v") -> str:
-    """Build the one ``xfade`` filter expression shared by both transition paths.
+    """Build the one ``xfade`` filter expression for the transition path.
 
-    The single source of the seam pixels: ``run()``'s in-memory twin
-    (:func:`stream_transition_frames`) and ``run_to_file``'s file pass
-    (:func:`stream_transition_pair`) both route through this so they cannot
-    diverge. ``offset`` is in seconds against the LEFT input's exact (probed)
+    The single source of the seam pixels: ``run_to_file``'s file pass
+    (:func:`stream_transition_pair`) routes through this.
+    ``offset`` is in seconds against the LEFT input's exact (probed)
     duration -- the caller derives it from the realized file, never the
     prediction, to avoid a one-frame seam.
     """
@@ -1083,89 +958,3 @@ def stream_transition_pair(
             output_path.unlink()
         raise
     return output_path
-
-
-def stream_transition_frames(
-    left_frames: np.ndarray,
-    right_frames: np.ndarray,
-    transition_type: str,
-    duration: float,
-    fps: float,
-) -> np.ndarray:
-    """In-memory xfade twin: blend two RGB frame stacks over a ``duration`` overlap.
-
-    The view-over-streaming counterpart to :func:`stream_transition_pair`: a
-    lossless rawvideo->rawvideo ``filter_complex`` pass through the SAME
-    :func:`xfade_filter` builder, so ``run()`` and ``run_to_file`` produce
-    identical seam pixels. The overlap is ``round(duration * fps)`` frames; the
-    result has ``len(left) + len(right) - overlap`` frames. ``offset`` is
-    derived from the left stack's exact frame count (``(n_left - overlap) /
-    fps``), the in-memory analogue of probing the realized left file.
-    """
-    if left_frames.shape[1:] != right_frames.shape[1:]:
-        raise ValueError(
-            f"Transition inputs must share frame shape: {left_frames.shape[1:]} vs {right_frames.shape[1:]}"
-        )
-    n_left, height, width = left_frames.shape[:3]
-    n_right = right_frames.shape[0]
-    overlap = round(duration * fps)
-    if overlap >= n_left or overlap >= n_right:
-        raise ValueError(
-            f"Transition overlap ({overlap} frames) must be shorter than both segments (left={n_left}, right={n_right})"
-        )
-    # Offset from the LEFT stack's exact length, the in-memory mirror of
-    # probing the realized left file -- keeps the seam frame-aligned.
-    offset = (n_left - overlap) / fps
-    filter_expr = f"{xfade_filter(transition_type, duration, offset)}[vout]"
-
-    # ffmpeg has a single stdin, so the two raw inputs go through small temp
-    # files and the blended result comes back on stdout. run() already holds
-    # whole frame stacks in memory, so the temp files add no asymptotic cost
-    # and avoid the FIFO ordering deadlock two named pipes invite.
-    tmpdir = Path(tempfile.mkdtemp(prefix="vp_xfade_"))
-    left_path = tmpdir / "a.raw"
-    right_path = tmpdir / "b.raw"
-    try:
-        left_path.write_bytes(left_frames.tobytes())
-        right_path.write_bytes(right_frames.tobytes())
-
-        def _raw_input(path: Path) -> list[str]:
-            return [
-                "-f",
-                "rawvideo",
-                "-pixel_format",
-                "rgb24",
-                "-video_size",
-                f"{width}x{height}",
-                "-framerate",
-                str(fps),
-                "-i",
-                str(path),
-            ]
-
-        cmd = [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            *_raw_input(left_path),
-            *_raw_input(right_path),
-            "-filter_complex",
-            filter_expr,
-            "-map",
-            "[vout]",
-            "-f",
-            "rawvideo",
-            "-pix_fmt",
-            "rgb24",
-            "pipe:1",
-        ]
-        out = _ffmpeg.run(cmd)
-    finally:
-        left_path.unlink(missing_ok=True)
-        right_path.unlink(missing_ok=True)
-        tmpdir.rmdir()
-
-    frame_size = width * height * 3
-    n_frames = len(out) // frame_size
-    return np.frombuffer(out, dtype=np.uint8)[: n_frames * frame_size].reshape(n_frames, height, width, 3).copy()

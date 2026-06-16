@@ -10,7 +10,7 @@ from videopython.ai.transforms import (
     FaceTracker,
     FaceTrackingCrop,
 )
-from videopython.base.video import Video, VideoMetadata
+from videopython.base.video import VideoMetadata
 
 
 class MockBoundingBox:
@@ -260,24 +260,6 @@ class TestFaceTrackingCrop:
 
         assert positions == [(0, 0)]  # clamped at the left edge
 
-    @patch("videopython.ai.transforms.FaceTracker")
-    def test_apply_creates_correct_output_shape(self, mock_tracker_class):
-        """Test apply produces correct output dimensions."""
-        mock_tracker = MagicMock()
-        mock_tracker.detect_and_track.return_value = (0.5, 0.5, 0.1, 0.15)
-        mock_tracker_class.return_value = mock_tracker
-
-        # Create test video 1920x1080, 10 frames
-        frames = np.zeros((10, 1080, 1920, 3), dtype=np.uint8)
-        video = Video.from_frames(frames, fps=30)
-
-        crop = FaceTrackingCrop(target_aspect=(9, 16))
-        result = crop.apply(video)
-
-        # Output should be 9:16 aspect ratio
-        out_h, out_w = result.frame_shape[:2]
-        assert abs(out_w / out_h - 9 / 16) < 0.01
-
     @pytest.mark.parametrize(
         "src_w, src_h, aspect",
         [
@@ -287,42 +269,41 @@ class TestFaceTrackingCrop:
             (1080, 1920, (16, 9)),
         ],
     )
-    @patch("videopython.ai.transforms.FaceTracker")
-    def test_predict_metadata_matches_apply(self, mock_tracker_class, src_w, src_h, aspect):
-        """Closes the validate/run gap precondition: the dry-run dimensions
-        must equal what apply() actually produces (was identity = a lie)."""
-        mock_tracker = MagicMock()
-        mock_tracker.detect_and_track.return_value = (0.5, 0.5, 0.1, 0.15)
-        mock_tracker_class.return_value = mock_tracker
+    def test_predict_metadata_output_dims(self, src_w, src_h, aspect):
+        """The dry-run output dims are the fixed crop window the streaming filter
+        emits: the requested aspect ratio, even (ffmpeg requires it), and fitting
+        within the source. Everything but the dimensions is identity.
 
+        Asserts these invariants directly rather than re-deriving them via
+        ``_resolved_output_dims`` (which ``predict_metadata`` calls), so a bug in
+        that shared helper can actually surface here."""
         crop = FaceTrackingCrop(target_aspect=aspect)
-        video = Video.from_frames(np.zeros((4, src_h, src_w, 3), dtype=np.uint8), fps=30)
-        applied = crop.apply(video)
-
         meta = VideoMetadata(height=src_h, width=src_w, fps=30, frame_count=4, total_seconds=4 / 30)
         predicted = crop.predict_metadata(meta)
 
-        assert (predicted.width, predicted.height) == (applied.frame_shape[1], applied.frame_shape[0])
+        out_w, out_h = predicted.width, predicted.height
+        assert abs(out_w / out_h - aspect[0] / aspect[1]) < 0.02
+        assert out_w % 2 == 0 and out_h % 2 == 0
+        assert out_w <= src_w and out_h <= src_h
         # Identity for everything except dimensions.
         assert predicted.fps == meta.fps
         assert predicted.frame_count == meta.frame_count
         assert predicted.total_seconds == meta.total_seconds
 
     @patch("videopython.ai.transforms.FaceTracker")
-    def test_apply_with_fallback_center(self, mock_tracker_class):
-        """Test fallback to center when no face detected."""
+    def test_track_positions_fallback_center(self, mock_tracker_class):
+        """With no face detected, ``center`` fallback centers the crop window."""
         mock_tracker = MagicMock()
         mock_tracker.detect_and_track.return_value = None  # No face
         mock_tracker_class.return_value = mock_tracker
 
-        frames = np.zeros((10, 1080, 1920, 3), dtype=np.uint8)
-        video = Video.from_frames(frames, fps=30)
+        frames = [np.zeros((1080, 1920, 3), dtype=np.uint8)] * 10
 
         crop = FaceTrackingCrop(target_aspect=(9, 16), fallback="center")
-        result = crop.apply(video)
+        positions = crop._track_crop_positions(frames, 1920, 1080)
 
-        # Should still produce valid output
-        assert len(result.frames) == 10
+        # 9:16 of 1920x1080 -> 606x1080, centered: ((1920-606)//2, 0) = (657, 0).
+        assert positions == [(657, 0)] * 10
 
 
 class TestFaceTrackingCropFraming:
@@ -363,33 +344,18 @@ class TestFaceTrackingCropFraming:
         assert distance == pytest.approx(0.1, abs=0.01)
 
     @patch("videopython.ai.transforms.FaceTracker")
-    def test_apply_headroom_framing_creates_correct_output_shape(self, mock_tracker_class):
-        mock_tracker = MagicMock()
-        mock_tracker.detect_and_track.return_value = (0.5, 0.5, 0.1, 0.15)
-        mock_tracker_class.return_value = mock_tracker
-
-        frames = np.zeros((10, 1080, 1920, 3), dtype=np.uint8)
-        video = Video.from_frames(frames, fps=30)
-
-        crop = FaceTrackingCrop(target_aspect=(9, 16), framing_rule="headroom", max_speed=0.1)
-        result = crop.apply(video)
-
-        out_h, out_w = result.frame_shape[:2]
-        assert abs(out_w / out_h - 9 / 16) < 0.01
-
-    @patch("videopython.ai.transforms.FaceTracker")
-    def test_apply_headroom_without_face_uses_fallback(self, mock_tracker_class):
+    def test_track_positions_headroom_without_face_uses_fallback(self, mock_tracker_class):
         mock_tracker = MagicMock()
         mock_tracker.detect_and_track.return_value = None
         mock_tracker_class.return_value = mock_tracker
 
-        frames = np.zeros((10, 1080, 1920, 3), dtype=np.uint8)
-        video = Video.from_frames(frames, fps=30)
+        frames = [np.zeros((1080, 1920, 3), dtype=np.uint8)] * 10
 
         crop = FaceTrackingCrop(target_aspect=(9, 16), framing_rule="headroom", fallback="center")
-        result = crop.apply(video)
+        positions = crop._track_crop_positions(frames, 1920, 1080)
 
-        assert len(result.frames) == 10
+        # No face -> centered crop regardless of framing rule: ((1920-606)//2, 0).
+        assert positions == [(657, 0)] * 10
 
 
 class TestGPUFaceTracking:
@@ -538,14 +504,13 @@ class TestGPUFaceTracking:
         mock_tracker.detect_and_track.return_value = (0.5, 0.5, 0.1, 0.1)
         mock_tracker_class.return_value = mock_tracker
 
-        frames = np.zeros((5, 480, 640, 3), dtype=np.uint8)
-        video = Video.from_frames(frames, fps=30)
+        frames = [np.zeros((480, 640, 3), dtype=np.uint8)] * 5
 
         crop = FaceTrackingCrop(
             backend="gpu",
             sample_rate=5,
         )
-        crop.apply(video)
+        crop._track_crop_positions(frames, 640, 480)
 
         # Verify FaceTracker was created with GPU params
         call_kwargs = mock_tracker_class.call_args[1]

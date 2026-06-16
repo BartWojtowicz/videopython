@@ -169,14 +169,12 @@ class TestFreezeFrameStreaming:
         video = _stream(plan, tmp_path)
         assert abs(len(video.frames) - 72) <= 1  # 6s at 12fps, duration unchanged
 
-    def test_boundary_freeze_agrees_across_paths(self, tmp_path):
-        """Regression: a timestamp in the last half-frame window rounded to
-        frame_count, where eager silently dropped the freeze while streaming
-        held the last frame -- all paths now clamp to the last frame."""
+    def test_boundary_freeze_clamps_to_last_frame(self, tmp_path):
+        """Regression: a timestamp in the last half-frame window rounds to
+        frame_count; the freeze must hold the last frame rather than be
+        silently dropped."""
         ops = [{"op": "freeze_frame", "timestamp": 5.99, "duration": 0.5}]
-        eager = _plan(ops).run()
         video = _stream(_plan(ops), tmp_path)
-        assert len(eager.frames) == 156
         assert abs(len(video.frames) - 156) <= 1
 
     def test_sub_frame_segment_raises_structured_error(self, tmp_path):
@@ -280,13 +278,11 @@ class TestSilenceRemovalStreaming:
         assert plan.streamability().entries[0].streaming_class is StreamingClass.FILTER
 
         context = {"transcription": self._gapped_transcription()}
-        eager = _plan([{"op": "silence_removal", "min_silence_duration": 1.0, "padding": 0.0}]).run(context=context)
         out = plan.run_to_file(tmp_path / "out.mp4", context=context)
         video = Video.from_path(str(out))
 
         # Keep [0, 2.5) + [5.0, 6.0) of the 6s cut = 3.5s = 84 frames.
         assert len(video.frames) == 84
-        assert len(eager.frames) == 84
 
     def test_audio_is_cut_in_sync(self, tmp_path, audio_source):
         plan = _plan(
@@ -319,17 +315,13 @@ class TestSilenceRemovalStreaming:
 class TestEncodeStageTransforms:
     """Transforms ordered after frame effects stream via the encoder's -vf."""
 
-    def test_fade_then_crop_streams_and_matches_eager(self, tmp_path):
+    def test_fade_then_crop_streams_in_encode_stage(self, tmp_path):
         ops = [{"op": "fade", "mode": "out", "duration": 1.0}, {"op": "crop", "width": 400, "height": 300}]
-        eager = _plan(ops).run()
         video = _stream(_plan(ops), tmp_path)
 
         assert video.frames.shape[1:3] == (300, 400)
-        assert abs(len(video.frames) - len(eager.frames)) <= 1
+        assert abs(len(video.frames) - 144) <= 1  # 6s at 24fps, no duration change
         assert video.frames[-1].mean() < 5, "fade-out lost in the encode-stage crop"
-        active = 60
-        mae = np.abs(video.frames[active].astype(np.float32) - eager.frames[active].astype(np.float32)).mean()
-        assert mae < 15, f"encode-stage crop diverged from eager: {mae}"
 
     def test_fade_then_speed_streams_with_audio_sync(self, tmp_path, audio_source):
         ops = [{"op": "fade", "mode": "out", "duration": 1.0}, {"op": "speed_change", "speed": 2.0}]

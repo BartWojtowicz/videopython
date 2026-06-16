@@ -1,20 +1,22 @@
 """Tests for the Operation/Effect base machinery in editing/operation.py.
 
 Covers auto-registration, the discriminated-union JSON schema, ``TimeRange``
-validation, and the ``Effect.apply`` window/invariant logic. Per-op
-behavioural tests live in ``test_transforms.py`` / ``test_effects.py``.
+validation, and the ``Operation``/``Effect`` default-contract hooks
+(``predict_metadata``, ``to_ffmpeg_filter``, ``process_frame``) that the
+streaming engine drives. Per-op behavioural tests live in
+``test_transforms.py`` / ``test_effects.py``; the windowed-effect splice is
+covered there as a render-based test (streaming-to-file is the only engine).
 """
 
 from __future__ import annotations
 
 import json
-from typing import Any, ClassVar, Literal
+from typing import ClassVar, Literal
 
 import numpy as np
 import pytest
 from pydantic import Field, ValidationError
 
-from videopython.base.video import Video
 from videopython.editing.operation import (
     Effect,
     FilterCtx,
@@ -144,17 +146,16 @@ class TestJsonSchema:
         assert op.font_filename == "/tmp/x.ttf"
 
 
-# --- Operation.apply default ------------------------------------------------
+# --- Operation / Effect default contract hooks ------------------------------
+#
+# The eager ``Operation.apply`` / ``Effect.apply`` engine was removed (0.44.0):
+# streaming-to-file is the only execution path. What remains here are the
+# pure default-contract hooks the streaming engine relies on. The windowed
+# brighten splice these tests used to exercise via ``apply`` is re-homed as a
+# render-based test in ``test_effects.py``.
 
 
-class TestOperationApplyDefault:
-    def test_default_apply_raises(self, black_frames_test_video: Video):
-        class _UnimplOp(Operation):
-            op: Literal["_unimpl"] = "_unimpl"
-
-        with pytest.raises(NotImplementedError):
-            _UnimplOp().apply(black_frames_test_video)
-
+class TestOperationDefaults:
     def test_default_predict_metadata_is_identity(self):
         class _NoOp(Operation):
             op: Literal["_no_op"] = "_no_op"
@@ -165,72 +166,26 @@ class TestOperationApplyDefault:
         assert _NoOp().predict_metadata(meta) is meta
 
     def test_default_to_ffmpeg_filter_returns_none(self):
-        class _Eager(Operation):
-            op: Literal["_eager"] = "_eager"
+        class _Plain(Operation):
+            op: Literal["_plain"] = "_plain"
 
-        assert _Eager().to_ffmpeg_filter(FilterCtx(width=100, height=100, fps=30.0)) is None
-
-
-# --- Effect window / invariant ----------------------------------------------
+        assert _Plain().to_ffmpeg_filter(FilterCtx(width=100, height=100, fps=30.0)) is None
 
 
 class _Brighten(Effect):
-    """Add a constant brightness offset to every frame."""
+    """A toy effect that declares no streaming behaviour of its own.
+
+    Used to probe the ``Effect`` *default* contract hooks: it deliberately does
+    NOT override ``process_frame`` (so the default raise is observable) and
+    keeps ``predict_metadata`` at the identity default.
+    """
 
     op: Literal["_brighten"] = "_brighten"
 
     delta: int = Field(10, ge=-255, le=255, description="Amount added to every pixel (clipped to uint8).")
 
-    def _apply(self, video: Video, **_context: Any) -> Video:
-        from videopython.base.video import Video as _V
 
-        out = np.clip(video.frames.astype(np.int16) + self.delta, 0, 255).astype(np.uint8)
-        result = _V.from_frames(out, fps=video.fps)
-        result.audio = video.audio
-        return result
-
-
-class _ShapeBreaker(Effect):
-    op: Literal["_shape_breaker"] = "_shape_breaker"
-
-    def _apply(self, video: Video, **_context: Any) -> Video:
-        from videopython.base.video import Video as _V
-
-        return _V.from_frames(video.frames[:-1], fps=video.fps)
-
-
-class TestEffectApply:
-    def test_no_window_applies_to_whole_video(self, black_frames_test_video: Video):
-        original_mean = black_frames_test_video.frames.mean()
-        out = _Brighten(delta=20).apply(black_frames_test_video)
-        assert out.video_shape == black_frames_test_video.video_shape
-        assert out.frames.mean() > original_mean
-
-    def test_window_applies_only_inside_range(self, black_frames_test_video: Video):
-        fps = black_frames_test_video.fps
-        win_start_f = round(1.0 * fps)
-        win_end_f = round(2.0 * fps)
-
-        out = _Brighten(delta=20, window=TimeRange(start=1.0, stop=2.0)).apply(black_frames_test_video)
-
-        assert out.video_shape == black_frames_test_video.video_shape
-        # Outside the window: untouched.
-        np.testing.assert_array_equal(out.frames[:win_start_f], black_frames_test_video.frames[:win_start_f])
-        np.testing.assert_array_equal(out.frames[win_end_f:], black_frames_test_video.frames[win_end_f:])
-        # Inside the window: brightened.
-        assert out.frames[win_start_f:win_end_f].mean() > black_frames_test_video.frames[win_start_f:win_end_f].mean()
-
-    def test_window_clamps_to_video_duration(self, black_frames_test_video: Video):
-        # stop past end -> clamped, still works.
-        out = _Brighten(delta=5, window=TimeRange(start=0.0, stop=black_frames_test_video.total_seconds + 100)).apply(
-            black_frames_test_video
-        )
-        assert out.video_shape == black_frames_test_video.video_shape
-
-    def test_shape_breaking_apply_raises(self, black_frames_test_video: Video):
-        with pytest.raises(RuntimeError, match="changed video shape"):
-            _ShapeBreaker().apply(black_frames_test_video)
-
+class TestEffectDefaults:
     def test_default_process_frame_raises(self):
         with pytest.raises(NotImplementedError, match="does not support streaming"):
             _Brighten(delta=1).process_frame(np.zeros((10, 10, 3), dtype=np.uint8), 0)
@@ -239,7 +194,7 @@ class TestEffectApply:
         """Effects preserve shape/frame_count, so predict_metadata is identity —
         but it must accept arbitrary ``**context`` so requires-aware effects
         (e.g. ``TranscriptionOverlay``) don't blow up when the runner threads
-        kwargs in. Symmetric with ``Effect.apply``'s ``**context``.
+        kwargs in. Symmetric with ``Effect.streaming_init``'s ``**context``.
         """
         from videopython.base.video import VideoMetadata as _Meta
 

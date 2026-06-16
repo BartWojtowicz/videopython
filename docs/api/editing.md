@@ -9,7 +9,7 @@ carries an ordered list of `Operation` instances to run against it.
 - One `operations` list per segment — transforms and effects are sequenced together.
 - `post_operations` runs against the concatenated result.
 - `validate()` is a dry-run via metadata; no frames are loaded.
-- `run()` returns a `Video` in memory; `run_to_file()` streams directly to disk.
+- `run_to_file()` streams directly to disk — the only execution engine.
 
 ## Quick Start
 
@@ -42,11 +42,7 @@ plan = {
 
 edit = VideoEdit.from_dict(plan)
 predicted = edit.validate()        # dry-run via VideoMetadata
-video = edit.run()                  # in-memory
-video.save("output.mp4")
-
-# Or stream directly to file (constant memory, any video length):
-edit.run_to_file("output.mp4", crf=20, preset="medium")
+edit.run_to_file("output.mp4", crf=20, preset="medium")  # streams to disk (constant memory, any video length)
 ```
 
 ## JSON Plan Format
@@ -146,17 +142,18 @@ downloading sources.
 Operations that need side-channel data (e.g. `silence_removal` and
 `add_subtitles` need a transcription) declare it via
 `requires: ClassVar[tuple[str, ...]]`. The runner picks matching keys out
-of the `context` dict and threads them into `apply` / `predict_metadata`:
+of the `context` dict and threads them into the streaming compile —
+`predict_metadata` and either the effect's `streaming_init` or the
+filter-compiled op's `FilterCtx.context`:
 
 ```python
 edit = VideoEdit.from_dict(plan)
-video = edit.run(context={"transcription": my_transcription})
 edit.run_to_file("out.mp4", context={"transcription": my_transcription})
 ```
 
-On both paths, time-based context values are re-based onto each cut
-segment's local timeline; on the streaming path the resolved values are
-delivered to the effect's `streaming_init`.
+Time-based context values are re-based onto each cut segment's local
+timeline, and the resolved values are delivered to the effect's
+`streaming_init`.
 
 ## Validation
 

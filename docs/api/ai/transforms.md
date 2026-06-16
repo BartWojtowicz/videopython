@@ -11,15 +11,19 @@ The underlying `FaceTracker` lives in
 
 ```python
 from videopython.ai import FaceTrackingCrop
-from videopython.base import Video
-
-video = Video.from_path("input.mp4")
+from videopython.editing import VideoEdit, SegmentConfig
 
 # Create vertical content from horizontal by tracking faces
-vertical = FaceTrackingCrop(target_aspect=(9, 16)).apply(video)
+edit = VideoEdit(segments=[SegmentConfig(source="input.mp4", start=0, end=5, operations=[
+    FaceTrackingCrop(target_aspect=(9, 16)),
+])])
+edit.run_to_file("vertical.mp4")
 
 # Headroom framing + bounded camera speed
-framed = FaceTrackingCrop(framing_rule="headroom", max_speed=0.1).apply(video)
+edit = VideoEdit(segments=[SegmentConfig(source="input.mp4", start=0, end=5, operations=[
+    FaceTrackingCrop(framing_rule="headroom", max_speed=0.1),
+])])
+edit.run_to_file("framed.mp4")
 ```
 
 ## FaceTrackingCrop
