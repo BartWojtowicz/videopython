@@ -57,7 +57,7 @@ class TestStreamabilityReport:
             "segments[0].operations[2]",
         ]
         assert report.streamable
-        assert report.fallbacks == ()
+        assert report.unstreamable == ()
         assert report.errors() == []
         assert all(e.reason is None for e in report.entries)
 
@@ -142,7 +142,7 @@ class TestStreamabilityReport:
         errors = _plan([FADE, RESIZE, {"op": "color_adjust", "brightness": 0.2}]).streamability().errors()
 
         (err,) = errors
-        assert err.code is PlanErrorCode.STREAMING_FALLBACK
+        assert err.code is PlanErrorCode.STREAMING_UNSUPPORTED
         assert err.location == "segments[0].operations[2]"
         assert err.op == "color_adjust"
         assert err.detail is not None and "encode-stage" in err.detail
@@ -223,7 +223,7 @@ class TestCheckStrictStreaming:
         errors = plan.check(SMALL_VIDEO_METADATA)
 
         (err,) = errors
-        assert err.code is PlanErrorCode.STREAMING_FALLBACK
+        assert err.code is PlanErrorCode.STREAMING_UNSUPPORTED
         assert err.location == "segments[0].operations[2]"
         assert err.op == "color_adjust"
 
@@ -231,14 +231,14 @@ class TestCheckStrictStreaming:
         plan = _plan([RESIZE, FADE])
         assert plan.check(SMALL_VIDEO_METADATA) == []
 
-    def test_fallback_errors_append_after_validity_errors(self):
+    def test_unstreamable_errors_append_after_validity_errors(self):
         bad_window = {"op": "fade", "mode": "in", "duration": 0.5, "window": {"start": 50.0, "stop": 60.0}}
         plan = _plan([bad_window, RESIZE, {"op": "color_adjust", "brightness": 0.2}])
         errors = plan.check(SMALL_VIDEO_METADATA)
 
         assert len(errors) >= 2
-        assert errors[0].code is not PlanErrorCode.STREAMING_FALLBACK
-        assert errors[-1].code is PlanErrorCode.STREAMING_FALLBACK
+        assert errors[0].code is not PlanErrorCode.STREAMING_UNSUPPORTED
+        assert errors[-1].code is PlanErrorCode.STREAMING_UNSUPPORTED
 
 
 class TestRunToFileRejection:
@@ -268,7 +268,7 @@ class TestRunToFileRejection:
 
         assert not out_path.exists()
         (err,) = exc_info.value.errors
-        assert err.code is PlanErrorCode.STREAMING_FALLBACK
+        assert err.code is PlanErrorCode.STREAMING_UNSUPPORTED
         assert err.op == "color_adjust"
 
     def test_builder_drift_raises_instead_of_silent_fallback(self, tmp_path, monkeypatch: pytest.MonkeyPatch):

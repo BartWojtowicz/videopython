@@ -1036,7 +1036,7 @@ class VideoEdit(BaseModel):
         :meth:`validate`: a clampable ``window.stop`` overrun is not reported.
 
         Streaming is the only engine, so ops that cannot stream at their
-        plan position are real plan errors: one ``STREAMING_FALLBACK`` per
+        plan position are real plan errors: one ``STREAMING_UNSUPPORTED`` per
         offending op is appended after the validity errors, in plan order,
         with the actionable cause in :attr:`PlanError.detail`. See
         :meth:`streamability` for the full per-op report including the ops
@@ -1056,7 +1056,7 @@ class VideoEdit(BaseModel):
         admitted. ``report.streamable`` answers "will :meth:`run_to_file`
         stream this plan in O(1) memory, or is an op unstreamable at its
         plan position?"; each entry carries the op's memory class and, for
-        fallbacks, the reason.
+        unstreamable ops, the reason.
         """
         return analyze_streamability(
             [list(seg.operations) for seg in self.segments],
@@ -1603,7 +1603,7 @@ class VideoEdit(BaseModel):
         Memory usage is O(1) w.r.t. video length (video; segment audio is
         in-memory). Streaming is the only engine: a plan with an unstreamable
         shape raises :class:`PlanValidationError` carrying one
-        ``STREAMING_FALLBACK`` :class:`PlanError` per offending op -- before
+        ``STREAMING_UNSUPPORTED`` :class:`PlanError` per offending op -- before
         any decode. Gate plans early with :meth:`check` or
         :meth:`streamability`, which report the same errors without running
         anything.
@@ -1834,16 +1834,16 @@ class VideoEdit(BaseModel):
         :class:`PlanValidationError` with the streamability report's
         structured errors; a builder/report drift (e.g. a third-party
         transform whose ``streamable`` flag does not match its
-        ``to_ffmpeg_filter``) raises with a generic ``STREAMING_FALLBACK``.
+        ``to_ffmpeg_filter``) raises with a generic ``STREAMING_UNSUPPORTED``.
         On raise, any compile-time temp files already created are deleted;
         on success the caller owns ``plan.owned_temp_files``.
         """
         self._assert_post_ops_supported(context)
         report = self.streamability()
         if not report.streamable:
-            causes = "; ".join(f"{e.location} '{e.op}': {e.reason}" for e in report.fallbacks)
+            causes = "; ".join(f"{e.location} '{e.op}': {e.reason}" for e in report.unstreamable)
             message = (
-                f"Plan cannot stream: {len(report.fallbacks)} op(s) have no streaming "
+                f"Plan cannot stream: {len(report.unstreamable)} op(s) have no streaming "
                 f"strategy at their plan position -- {causes}"
             )
             raise PlanValidationError(message, report.errors())
@@ -1851,7 +1851,7 @@ class VideoEdit(BaseModel):
         def drift(detail: str) -> PlanValidationError:
             return PlanValidationError(
                 f"plan stopped streaming despite a clean streamability report ({detail})",
-                [PlanError(code=PlanErrorCode.STREAMING_FALLBACK, detail=detail)],
+                [PlanError(code=PlanErrorCode.STREAMING_UNSUPPORTED, detail=detail)],
             )
 
         target_fps, target_w, target_h = self._matching_targets_from_disk()
@@ -2090,7 +2090,7 @@ class VideoEdit(BaseModel):
                 # flag-False transform is classified UNSTREAMABLE even if it has
                 # a working to_ffmpeg_filter. The remaining drift class (flag
                 # True, filter compiles to None) is caught by the
-                # STREAMING_FALLBACK raise in _compile_streaming_plans.
+                # STREAMING_UNSUPPORTED raise in _compile_streaming_plans.
                 if not op.streamable:
                     abandon()
                     return None

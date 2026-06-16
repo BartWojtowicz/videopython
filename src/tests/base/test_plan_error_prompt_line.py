@@ -54,13 +54,13 @@ def test_window_error_includes_op_and_detail():
     )
 
 
-def test_streaming_fallback_detail_only():
-    """STREAMING_FALLBACK carries only ``detail``; it appends after the code name."""
+def test_streaming_unsupported_detail_only():
+    """STREAMING_UNSUPPORTED carries only ``detail``; it appends after the code name."""
     err = PlanError(
-        code=PlanErrorCode.STREAMING_FALLBACK,
+        code=PlanErrorCode.STREAMING_UNSUPPORTED,
         detail="text overlay cannot stream at this plan position",
     )
-    assert err.to_prompt_line() == ("STREAMING_FALLBACK -- text overlay cannot stream at this plan position")
+    assert err.to_prompt_line() == ("STREAMING_UNSUPPORTED -- text overlay cannot stream at this plan position")
 
 
 def test_field_without_value_renders_bare_field():

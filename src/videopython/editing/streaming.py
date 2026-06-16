@@ -36,8 +36,8 @@ class StreamingClass(str, Enum):
 
     ``FILTER`` and ``FRAME_EFFECT`` stream in O(1) memory w.r.t. video
     length. ``UNSTREAMABLE`` means the op (or its plan position) has no
-    streaming strategy; since streaming is the only engine, such plans are
-    rejected with structured ``STREAMING_FALLBACK`` errors instead of run.
+    streaming strategy; such plans are rejected with structured
+    ``STREAMING_UNSUPPORTED`` errors.
     """
 
     FILTER = "filter"
@@ -85,19 +85,19 @@ class StreamabilityReport:
         return all(e.streams for e in self.entries)
 
     @property
-    def fallbacks(self) -> tuple[OpStreamability, ...]:
+    def unstreamable(self) -> tuple[OpStreamability, ...]:
         """The unstreamable ops, in plan order."""
         return tuple(e for e in self.entries if not e.streams)
 
     def errors(self) -> list[PlanError]:
-        """The fallbacks as structured ``STREAMING_FALLBACK`` plan errors.
+        """The unstreamable ops as structured ``STREAMING_UNSUPPORTED`` plan errors.
 
         The same shape :meth:`VideoEdit.check` returns, so an LLM refine loop
         can treat "would not stream" exactly like any other plan violation.
         """
         return [
-            PlanError(code=PlanErrorCode.STREAMING_FALLBACK, location=e.location, op=e.op, detail=e.reason)
-            for e in self.fallbacks
+            PlanError(code=PlanErrorCode.STREAMING_UNSUPPORTED, location=e.location, op=e.op, detail=e.reason)
+            for e in self.unstreamable
         ]
 
 
@@ -115,7 +115,7 @@ def analyze_streamability(
     ``streamable`` ClassVar as the authoritative declaration (a flag-False
     transform never streams, even with a working ``to_ffmpeg_filter``); the
     one divergence the flag cannot express -- flag True but the filter
-    compiles to ``None`` -- is caught at runtime by the ``STREAMING_FALLBACK``
+    compiles to ``None`` -- is caught at runtime by the ``STREAMING_UNSUPPORTED``
     raise in ``_compile_streaming_plans``, and a registry test pins flag-True
     transforms to an actual ``to_ffmpeg_filter`` override. Purely structural:
     no disk access and no runtime context.

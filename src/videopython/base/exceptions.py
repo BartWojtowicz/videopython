@@ -96,7 +96,7 @@ class PlanErrorCode(str, Enum):
     TRANSITION_TOO_LONG = "transition_too_long"
     MUSIC_BED_DUCK_MULTISEGMENT = "music_bed_duck_multisegment"
     # Streaming: unstreamable op at its plan position (always reported).
-    STREAMING_FALLBACK = "streaming_fallback"
+    STREAMING_UNSUPPORTED = "streaming_unsupported"
 
 
 @dataclass

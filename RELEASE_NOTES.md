@@ -1,6 +1,25 @@
 # Release Notes
 
-## 0.44.1
+## 0.45.0
+
+Breaking: the "fallback" vocabulary is retired. Since the in-memory path was
+removed in 0.44.0 there is nothing to fall back *to* -- an op that cannot stream
+is a hard rejection, not a fallback -- so the names now say so.
+
+### Renamed `STREAMING_FALLBACK` -> `STREAMING_UNSUPPORTED`
+
+`PlanErrorCode.STREAMING_FALLBACK` (value `"streaming_fallback"`) is now
+`PlanErrorCode.STREAMING_UNSUPPORTED` (value `"streaming_unsupported"`). This is
+the only breaking change: consumers matching on the error code -- e.g. LLM refine
+loops reading `StreamabilityReport.errors()` or `VideoEdit.check()` output -- must
+update to the new name/value.
+
+### Renamed `StreamabilityReport.fallbacks` -> `.unstreamable`
+
+The property listing the ops that cannot stream is now `.unstreamable`, aligned
+with the existing `StreamingClass.UNSTREAMABLE`. `.errors()`, `.streamable`, and
+the rest of the report are unchanged. Docstrings and docs no longer explain why a
+"fallback" doesn't fall back -- the surface is self-describing.
 
 Confirmed cleanups surfaced by the 0.44.0 streaming-only removal -- all additive
 or internal refactors, no public behavior change.

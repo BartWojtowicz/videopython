@@ -186,9 +186,9 @@ for err in errors:
 # Re-prompt once with the full structured list instead of one-at-a-time
 ```
 
-Streaming is the only execution engine, so ops that cannot stream at
-their plan position are real plan errors: `check()` reports one
-`STREAMING_FALLBACK` error per offending op, with the actionable cause in
+Ops that cannot stream at their plan position are real plan errors:
+`check()` reports one `STREAMING_UNSUPPORTED` error per offending op, with
+the actionable cause in
 `err.detail` (e.g. "move the op before the duration-changing transform to
 stream"), and the refine loop treats "won't stream" like any other
 violation. The full per-op classification (including the ops that do
