@@ -97,7 +97,7 @@ ordered after frame effects -- or a per-frame streaming `Effect`
 streaming strategy (the remaining cases: a frame effect ordered after
 encode-stage filters, time-based context after a duration-changing
 transform, a few post-op shapes) are rejected with structured
-`STREAMING_FALLBACK` errors before any decode.
+`STREAMING_UNSUPPORTED` errors before any decode.
 
 **Filter transforms**: `resize`, `crop`, `resample_fps`, the
 duration-changing `speed_change` and `freeze_frame` (predicted metadata is
@@ -127,11 +127,11 @@ reason and a reorder hint on the entry):
 ```python
 report = edit.streamability()
 report.streamable        # will the plan run?
-report.fallbacks         # the offending ops, with reasons
-report.errors()          # the same as structured STREAMING_FALLBACK PlanErrors
+report.unstreamable      # the offending ops, with reasons
+report.errors()          # the same as structured STREAMING_UNSUPPORTED PlanErrors
 ```
 
-`edit.check(meta)` reports the same `STREAMING_FALLBACK` errors after the
+`edit.check(meta)` reports the same `STREAMING_UNSUPPORTED` errors after the
 regular validity errors, and `run()`/`run_to_file()` raise them before any
 decode. Streamability is purely structural (op classes, order, plan
 shape), so a consumer can gate job admission on the report before

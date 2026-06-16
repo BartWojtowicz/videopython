@@ -48,7 +48,7 @@ edit.run_to_file("output.mp4", crf=20, preset="medium")
 Streaming is the only execution engine: every op compiles to an ffmpeg
 filter or a per-frame effect, and frames are never accumulated in memory.
 A plan shape with no streaming strategy (e.g. a frame effect ordered after
-burned-in subtitles) is rejected with structured `STREAMING_FALLBACK`
+burned-in subtitles) is rejected with structured `STREAMING_UNSUPPORTED`
 errors before any decode. `edit.streamability()` returns the per-op
 classification without touching the disk; `edit.check(meta)` reports the
 same errors alongside the validity checks.

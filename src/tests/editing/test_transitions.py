@@ -554,5 +554,5 @@ class TestStreamability:
         )
         report = plan.streamability()
         assert report.streamable is False
-        assert report.fallbacks[0].streaming_class is StreamingClass.UNSTREAMABLE
-        assert "transition" in report.fallbacks[0].reason
+        assert report.unstreamable[0].streaming_class is StreamingClass.UNSTREAMABLE
+        assert "transition" in report.unstreamable[0].reason
