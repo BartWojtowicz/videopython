@@ -29,23 +29,33 @@ print(video.frame_shape)  # (height, width, channels)
 
 ## Basic Transformations
 
-Every editing primitive is an `Operation`. Apply one to a `Video`:
+Every editing primitive is an `Operation`. Operations run only through the
+streaming engine, so you assemble them into a `VideoEdit` plan and execute it
+with `run_to_file`. A time cut is expressed as the segment's `start`/`end`,
+while resizing, fps resampling, and effects go in the segment's `operations`
+list:
 
 ```python
-from videopython.base import Video
-from videopython.editing import CutSeconds, Resize, ResampleFPS
+from videopython.editing import VideoEdit, SegmentConfig
+from videopython.editing.transforms import Resize, ResampleFPS
 
-video = Video.from_path("input.mp4")
-video = CutSeconds(start=0, end=10).apply(video)
-video = Resize(width=1280, height=720).apply(video)
-video = ResampleFPS(fps=30).apply(video)
-
-# Resize preserves aspect ratio when only one dimension is set:
-video = Resize(width=1280).apply(video)
+edit = VideoEdit(segments=[SegmentConfig(
+    source="input.mp4",
+    start=0,    # cut the first 10 seconds...
+    end=10,     # ...via the segment range, not a cut operation
+    operations=[
+        Resize(width=1280, height=720),
+        ResampleFPS(fps=30),
+    ],
+)])
+edit.run_to_file("output.mp4")
 ```
 
-For multi-step plans use `VideoEdit`, which also gives you a dry-run
-via `.validate()`:
+`Resize` preserves aspect ratio when only one dimension is set
+(e.g. `Resize(width=1280)`).
+
+`VideoEdit` also gives you a dry-run via `.validate()`, and accepts a plain
+dict (the JSON wire format) instead of operation objects:
 
 ```python
 from videopython.editing import VideoEdit
@@ -62,7 +72,7 @@ edit = VideoEdit.from_dict({
     }]
 })
 print(edit.validate())   # predicted VideoMetadata, no frames loaded
-video = edit.run()
+edit.run_to_file("output.mp4")
 ```
 
 ## Combining Videos

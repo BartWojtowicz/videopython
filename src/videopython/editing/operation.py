@@ -2,9 +2,9 @@
 
 Every editing primitive is an ``Operation`` subclass -- a Pydantic model whose
 fields ARE the JSON wire format. Validation, schema, and serialisation come for
-free; subclasses just declare fields and implement ``apply``. Auto-registration
-via ``__pydantic_init_subclass__`` builds the ``op_id -> class`` registry as
-modules are imported.
+free; subclasses just declare fields and implement the streaming contract.
+Auto-registration via ``__pydantic_init_subclass__`` builds the
+``op_id -> class`` registry as modules are imported.
 
 Subclass contract::
 
@@ -23,7 +23,6 @@ Subclass contract::
         width: int | None = Field(None, gt=0)
         height: int | None = Field(None, gt=0)
 
-        def apply(self, video: Video) -> Video: ...
         def predict_metadata(self, meta: VideoMetadata) -> VideoMetadata: ...
         def to_ffmpeg_filter(self, ctx: FilterCtx) -> str | None: ...
 """
@@ -38,10 +37,9 @@ from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, NamedTuple,
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Discriminator, Field, TypeAdapter
-from tqdm import tqdm
 
 if TYPE_CHECKING:
-    from videopython.base.video import Video, VideoMetadata
+    from videopython.base.video import VideoMetadata
 
 __all__ = [
     "OpCategory",
@@ -72,8 +70,9 @@ class TimeRange(BaseModel):
     *shape*; the numeric bounds (``>= 0``, ``stop >= start``, in-duration) are
     owned by :meth:`VideoEdit.validate` / :meth:`VideoEdit.check`, which report
     them as structured, collectable, repairable :class:`PlanError`s instead of
-    aborting at ``from_dict``. :meth:`Effect._resolved_window` still clamps at
-    run time, so a plan run without validation degrades rather than crashes.
+    aborting at ``from_dict``. The window is still clamped to
+    ``min(stop, total_seconds)`` at run time, so a plan run without validation
+    degrades rather than crashes.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -238,8 +237,8 @@ class Operation(BaseModel):
     wire and the registry key. Subclasses may override the ``category``,
     ``streamable``, and ``requires`` ClassVars.
 
-    The default ``apply`` raises ``NotImplementedError``; ``predict_metadata``
-    defaults to identity; ``to_ffmpeg_filter`` defaults to ``None`` (no filter compilation).
+    ``predict_metadata`` defaults to identity; ``to_ffmpeg_filter`` defaults to
+    ``None`` (no filter compilation).
     """
 
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
@@ -380,24 +379,14 @@ class Operation(BaseModel):
         """
         return _strip_llm_hidden(cls.model_json_schema())
 
-    def apply(self, video: Video) -> Video:
-        """Run this operation on ``video``.
-
-        The runner passes pipeline-context values listed in ``cls.requires``
-        as keyword arguments (e.g. ``transcription=...``). Subclasses that
-        declare ``requires`` widen the signature accordingly -- e.g.
-        ``def apply(self, video, transcription=None) -> Video``.
-        """
-        raise NotImplementedError(f"{type(self).__name__}.apply not implemented")
-
     def predict_metadata(self, meta: VideoMetadata) -> VideoMetadata:
         """Predict output metadata from input metadata. Default: identity.
 
         Run during ``VideoEdit.validate()``'s dry-run, before any frames are
         decoded. Beyond predicting shape, this is the fail-fast gate, and it
         has one contract: **reject exactly the plans that would otherwise crash
-        or do unrecoverable / expensive work in** :meth:`apply` **/** ``run()``;
-        anything ``run()`` can absorb by graceful degradation is NOT rejected.
+        or do unrecoverable / expensive work in** ``run_to_file()``;
+        anything ``run_to_file()`` can absorb by graceful degradation is NOT rejected.
         ``TranscriptionOverlay`` rejects un-fittable subtitles (they used to
         crash mid-render); ``TextOverlay``/``ImageOverlay`` do not reject
         off-frame geometry (it clips to a valid no-op). Keep the check
@@ -450,18 +439,16 @@ class Effect(Operation):
 
     Subclasses implement the streaming contract -- :meth:`process_frame` (and
     :meth:`streaming_init` for any precomputed per-stream state) -- which is the
-    single source of truth for the effect's pixel logic. The base
-    :meth:`_apply` runs that same contract over the in-memory frames, so
-    in-memory execution comes for free; the same code path feeds
-    ``editing/streaming.py`` for bounded-memory streaming. The base
-    :meth:`apply` resolves :attr:`window`, slices the video, runs ``_apply`` on
-    the slice, splices the result back, and asserts the shape-preserving
-    invariant.
+    single source of truth for the effect's pixel logic. The streaming engine
+    in ``editing/streaming.py`` drives that contract for bounded-memory
+    execution, resolving :attr:`window` against the segment timeline so frames
+    outside the window pass through untouched.
 
-    Override :meth:`_apply` only when eager execution must genuinely differ from
-    a frame-by-frame replay -- e.g. extra validation, a batched vectorisation,
-    or audio handling (``Fade``/``VolumeAdjust`` override :meth:`apply` outright
-    so the audio splice stays coherent with the window).
+    Effects that compile to a native ffmpeg filter instead set
+    :attr:`compiles_to_filter` and implement :meth:`to_ffmpeg_filter` (and, for
+    audio-coupled effects like ``Fade``/``VolumeAdjust``,
+    :meth:`to_ffmpeg_audio_filter`) so the window stays coherent across the
+    decode/encode graph.
     """
 
     category: ClassVar[OpCategory] = OpCategory.EFFECT
@@ -493,66 +480,14 @@ class Effect(Operation):
         """
         return False
 
-    def apply(self, video: Video, **context: Any) -> Video:
-        from videopython.base.video import Video as _Video
-
-        original_shape = video.video_shape
-
-        if self.window is None or (self.window.start is None and self.window.stop is None):
-            result = self._apply(video, **context)
-        else:
-            start_s, stop_s = self._resolved_window(video.total_seconds)
-            start_f = round(start_s * video.fps)
-            end_f = round(stop_s * video.fps)
-            inner = self._apply(video[start_f:end_f], **context)
-            old_audio = video.audio
-            result = _Video.from_frames(
-                np.r_["0,2", video.frames[:start_f], inner.frames, video.frames[end_f:]],
-                fps=video.fps,
-            )
-            result.audio = old_audio
-
-        if result.video_shape != original_shape:
-            raise RuntimeError(
-                f"{type(self).__name__} changed video shape from {original_shape} "
-                f"to {result.video_shape}; effects must preserve shape and frame count."
-            )
-        return result
-
     def predict_metadata(self, meta: VideoMetadata, **_context: Any) -> VideoMetadata:
         """Effects preserve shape and frame count, so the prediction is identity.
 
         Accepts ``**_context`` so requires-aware effects (``TranscriptionOverlay``)
         validate without subclasses needing to override just to widen the
-        signature. Mirrors :meth:`Effect.apply`'s ``**context`` accept-all.
+        signature. Mirrors :meth:`Effect.streaming_init`'s ``**_context`` accept-all.
         """
         return meta
-
-    def _resolved_window(self, total_seconds: float) -> tuple[float, float]:
-        win = self.window or TimeRange()
-        start_s = 0.0 if win.start is None else float(win.start)
-        stop_s = total_seconds if win.stop is None else float(win.stop)
-        start_s = min(start_s, total_seconds)
-        stop_s = min(stop_s, total_seconds)
-        if stop_s < start_s:
-            raise ValueError(f"Effect stop ({stop_s}) must be >= start ({start_s})")
-        return start_s, stop_s
-
-    def _apply(self, video: Video, **context: Any) -> Video:
-        """Apply the effect to ``video`` in memory by replaying the streaming path.
-
-        Runs :meth:`streaming_init` once, then :meth:`process_frame` over every
-        frame in order -- the same logic streaming uses, so eager and streaming
-        cannot drift. ``context`` carries resolved ``requires`` values through
-        to :meth:`streaming_init`, mirroring the streaming scheduler.
-        Subclasses that need a genuinely different eager path (extra
-        validation, batched vectorisation) override this.
-        """
-        height, width = video.frame_shape[:2]
-        self.streaming_init(len(video.frames), video.fps, width, height, **context)
-        for i in tqdm(range(len(video.frames)), desc=type(self).__name__):
-            video.frames[i] = self.process_frame(video.frames[i], i)
-        return video
 
     def streaming_init(self, total_frames: int, fps: float, width: int, height: int, **_context: Any) -> None:
         """Hook for per-stream precomputation (per-frame alphas, sigma curves...).

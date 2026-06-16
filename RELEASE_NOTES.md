@@ -1,5 +1,56 @@
 # Release Notes
 
+## 0.44.0
+
+Breaking: the eager/in-memory editing path is gone. Streaming-to-file
+(`run_to_file`) is now the only execution engine -- nothing runs in memory.
+
+### Removed `VideoEdit.run()`
+
+`VideoEdit.run()` (execute the plan into an in-memory `Video`) is gone, along with
+its in-memory machinery (`stream_segment_to_frames`, `stream_segment_audio_to_array`,
+`stream_transition_frames`, `out_frames_reshape`). It was a hand-synced twin of
+`run_to_file` that defeated the engine's O(1)-memory guarantee for the sake of a
+convenience return value.
+
+Use `run_to_file` and read the result back when you need a `Video`:
+
+```python
+from videopython.base.video import Video
+
+out = edit.run_to_file("output.mp4")
+video = Video.from_path(str(out))   # only when you actually need frames in memory
+```
+
+`run_to_file` is unchanged: same signature, same structured `STREAMING_FALLBACK`
+errors raised before any decode.
+
+### Removed `Operation.apply()` and the eager twins
+
+`Operation.apply(video) -> Video` and its machinery are removed: `Effect.apply`,
+`Effect._apply`, `Effect._resolved_window`, every `Transform.apply` /
+`_audio_apply` numpy implementation, the effect `apply` / `_audio_apply` overrides
+(`Fade`, `VolumeAdjust`, `FullImageOverlay`, `Vignette`), and
+`TranscriptionOverlay.apply`. An Operation is now defined purely by its streaming
+contract: `to_ffmpeg_filter` / `to_ffmpeg_audio_filter`, `streaming_init` +
+`process_frame`, and `predict_metadata`.
+
+To apply an operation, build a `VideoEdit` and stream it:
+
+```python
+edit = VideoEdit.from_dict(
+    {"segments": [{"source": "in.mp4", "start": 0, "end": 5,
+                   "operations": [{"op": "resize", "width": 1280, "height": 720}]}]}
+)
+edit.run_to_file("out.mp4")
+```
+
+`FullImageOverlay`'s shape / fade-time validation moved to `predict_metadata`, so
+it still fails fast at `validate()`. The AI pipeline no longer loads video into
+memory to edit it: `ai/dubbing` and `ai/video_analysis` slice `Video` directly
+(frames + audio) instead of `CutSeconds(...).apply(video)`. `Video.from_frames`,
+`Video` slicing, and the per-frame `process_frame` streaming hook are unchanged.
+
 ## 0.43.1
 
 Four low-risk consumer wins (P2.14 + P3), all additive or bugfix -- no breaking

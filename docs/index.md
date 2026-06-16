@@ -32,8 +32,7 @@ edit = VideoEdit.from_dict({
          ]},
     ],
 })
-final = edit.run().add_audio_from_file("music.mp3")
-final.save("output.mp4")
+edit.run_to_file("output.mp4")
 ```
 
 <div class="feature-grid" markdown>

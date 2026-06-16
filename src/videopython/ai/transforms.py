@@ -15,7 +15,7 @@ from tqdm import tqdm
 
 from videopython.ai.understanding.faces import FaceTracker
 from videopython.base._dimensions import floor_to_even
-from videopython.base.video import FrameIterator, Video, VideoMetadata
+from videopython.base.video import FrameIterator, VideoMetadata
 from videopython.editing._ass import escape_filter_value
 from videopython.editing.operation import FilterCtx, OpCategory, Operation
 
@@ -94,8 +94,8 @@ class FaceTrackingCrop(Operation):
         """Output ``(width, height)`` -- the fixed crop-window size.
 
         The largest ``target_aspect`` box that fits the frame, even-floored.
-        A pure function of the input dimensions, shared by :meth:`apply`,
-        :meth:`predict_metadata`, and :meth:`to_ffmpeg_filter`, so the
+        A pure function of the input dimensions, shared by
+        :meth:`predict_metadata` and :meth:`to_ffmpeg_filter`, so the
         dry-run cannot disagree with the render.
         """
         target_ratio = self.target_aspect[0] / self.target_aspect[1]
@@ -131,9 +131,8 @@ class FaceTrackingCrop(Operation):
         """Per-frame crop top-left positions for a fixed-size crop window.
 
         The single source of the tracking math (detection cadence, EMA
-        smoothing, framing offset, speed clamp, frame clamping), shared by
-        the eager :meth:`apply` and the compile-time detection pass so the
-        two paths cannot drift.
+        smoothing, framing offset, speed clamp, frame clamping), run by the
+        compile-time detection pass to build the per-frame crop command file.
         """
         out_w, out_h = self._resolved_output_dims(frame_w, frame_h)
         tracker = FaceTracker(
@@ -165,23 +164,6 @@ class FaceTrackingCrop(Operation):
             else:  # "center" / "full_frame" (the latter kept for plan compat)
                 positions.append(default)
         return positions
-
-    def apply(self, video: Video) -> Video:
-        h, w = video.frame_shape[:2]
-        out_w, out_h = self._resolved_output_dims(w, h)
-        logger.info(
-            "Face tracking crop: %dx%d -> %dx%d (%d:%d, framing=%s)",
-            w,
-            h,
-            out_w,
-            out_h,
-            self.target_aspect[0],
-            self.target_aspect[1],
-            self.framing_rule,
-        )
-        positions = self._track_crop_positions(tqdm(video.frames, desc="Face tracking crop"), w, h)
-        video.frames = np.stack([video.frames[i][y : y + out_h, x : x + out_w] for i, (x, y) in enumerate(positions)])
-        return video
 
     def to_ffmpeg_filter(self, ctx: FilterCtx) -> str | None:
         """Compile the face track to a per-frame ``crop`` position command file.

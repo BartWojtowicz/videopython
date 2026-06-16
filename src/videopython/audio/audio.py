@@ -23,8 +23,8 @@ def atempo_chain(speed: float) -> list[str]:
     factor outside that range is decomposed into a chain of capped stages
     (``atempo=2.0`` repeated for speedups, ``atempo=0.5`` for slowdowns) times
     a final remainder stage. The single source of truth shared by
-    :meth:`Audio.time_stretch` (the in-memory WAV round-trip used by the eager
-    ``apply`` path) and ``SpeedChange.to_ffmpeg_audio_filter`` (the streaming
+    :meth:`Audio.time_stretch` (the in-memory WAV round-trip used by dubbing's
+    timing alignment) and ``SpeedChange.to_ffmpeg_audio_filter`` (the streaming
     filter graph), so both stretch by exactly the same chain. Returns an empty
     list for ``speed == 1`` (a no-op the caller maps to ``anull``).
     """

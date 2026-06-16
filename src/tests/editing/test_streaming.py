@@ -21,6 +21,21 @@ def small_meta():
     return VideoMetadata.from_path(SMALL_VIDEO_PATH)
 
 
+def _assert_op_changes_frame(render, operations, *, name):
+    """Render ``operations`` over a SMALL_VIDEO cut and a no-op cut of the same
+    source, then assert the op actually altered the middle frame end-to-end
+    (guarding the silent-drop failure mode) without changing the frame count.
+    Returns the edited :class:`Video` for any op-specific follow-up checks."""
+    seg = {"source": SMALL_VIDEO_PATH, "start": 0, "end": 2.0}
+    edited = render(VideoEdit.from_dict({"segments": [{**seg, "operations": operations}]}), name=name)
+    plain = render(VideoEdit.from_dict({"segments": [seg]}), name="plain_" + name)
+    assert abs(len(edited.frames) - len(plain.frames)) <= 1
+    mid = min(len(edited.frames), len(plain.frames)) // 2
+    mae = np.abs(edited.frames[mid].astype(np.float32) - plain.frames[mid].astype(np.float32)).mean()
+    assert mae > 2.0, f"op did not change the rendered frame (mae={mae})"
+    return edited
+
+
 class TestStreamSegment:
     """Test the low-level stream_segment function."""
 
@@ -126,121 +141,44 @@ class TestVideoEditRunToFile:
         finally:
             out_path.unlink(missing_ok=True)
 
-    def test_streaming_matches_eager(self):
-        """Streaming and eager paths should produce similar output."""
-        plan_dict = {
-            "segments": [
-                {
-                    "source": SMALL_VIDEO_PATH,
-                    "start": 0,
-                    "end": 2.0,
-                    "operations": [
-                        {"op": "color_adjust", "saturation": 0, "contrast": 1.15},
-                    ],
-                }
-            ],
-        }
-        # Eager path
-        edit_eager = VideoEdit.from_dict(plan_dict)
-        eager_video = edit_eager.run()
+    def test_color_adjust_changes_pixels(self, render):
+        """color_adjust streams through run_to_file and actually alters the frame."""
+        _assert_op_changes_frame(
+            render, [{"op": "color_adjust", "saturation": 0, "contrast": 1.15}], name="coloradj.mp4"
+        )
 
-        # Streaming path
-        edit_stream = VideoEdit.from_dict(plan_dict)
-        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
-            out_path = Path(f.name)
-        try:
-            edit_stream.run_to_file(out_path)
-            streamed_video = Video.from_path(str(out_path))
-
-            # Frame counts should match (within 1 due to codec rounding)
-            assert abs(len(eager_video.frames) - len(streamed_video.frames)) <= 1
-
-            # Compare pixel values -- lossy encode means not exact, but should be close
-            min_frames = min(len(eager_video.frames), len(streamed_video.frames))
-            # Sample middle frame
-            mid = min_frames // 2
-            eager_frame = eager_video.frames[mid].astype(np.float32)
-            stream_frame = streamed_video.frames[mid].astype(np.float32)
-            # Mean absolute error should be small (re-encoding introduces some loss)
-            mae = np.abs(eager_frame - stream_frame).mean()
-            assert mae < 15, f"Mean absolute error too high: {mae}"
-        finally:
-            out_path.unlink(missing_ok=True)
-
-    def test_image_overlay_streaming_matches_eager(self):
-        """ImageOverlay must produce the same pixels eager and streamed (parity)."""
+    def test_image_overlay_renders(self, render):
+        """A PNG image_overlay streams and composites onto the frame."""
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
             logo_path = Path(f.name)
         arr = np.zeros((80, 120, 4), dtype=np.uint8)
         arr[:, :, 1] = 255  # green
         arr[:, :, 3] = 180
         Image.fromarray(arr, "RGBA").save(logo_path)
-        plan_dict = {
-            "segments": [
-                {
-                    "source": SMALL_VIDEO_PATH,
-                    "start": 0,
-                    "end": 2.0,
-                    "operations": [
-                        {"op": "image_overlay", "source": str(logo_path), "scale": 0.25, "anchor": "bottom_right"},
-                    ],
-                }
-            ],
-        }
-        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
-            out_path = Path(f.name)
         try:
-            eager_video = VideoEdit.from_dict(plan_dict).run()
-            VideoEdit.from_dict(plan_dict).run_to_file(out_path)
-            streamed_video = Video.from_path(str(out_path))
-
-            assert abs(len(eager_video.frames) - len(streamed_video.frames)) <= 1
-            min_frames = min(len(eager_video.frames), len(streamed_video.frames))
-            mid = min_frames // 2
-            eager_frame = eager_video.frames[mid].astype(np.float32)
-            stream_frame = streamed_video.frames[mid].astype(np.float32)
-            mae = np.abs(eager_frame - stream_frame).mean()
-            assert mae < 15, f"Mean absolute error too high: {mae}"
+            _assert_op_changes_frame(
+                render,
+                [{"op": "image_overlay", "source": str(logo_path), "scale": 0.25, "anchor": "bottom_right"}],
+                name="overlay.mp4",
+            )
         finally:
-            out_path.unlink(missing_ok=True)
             logo_path.unlink(missing_ok=True)
 
-    def test_svg_overlay_streaming_matches_eager(self):
-        """SVG ImageOverlay must produce the same pixels eager and streamed."""
+    def test_svg_overlay_renders(self, render):
+        """An SVG image_overlay rasterises and composites onto the frame."""
         with tempfile.NamedTemporaryFile(suffix=".svg", delete=False, mode="w") as f:
             f.write(
                 '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 60" width="120" '
                 'height="60"><rect width="120" height="60" fill="rgb(0,200,120)"/></svg>'
             )
             svg_path = Path(f.name)
-        plan_dict = {
-            "segments": [
-                {
-                    "source": SMALL_VIDEO_PATH,
-                    "start": 0,
-                    "end": 2.0,
-                    "operations": [
-                        {"op": "image_overlay", "source": str(svg_path), "scale": 0.25, "anchor": "bottom_right"},
-                    ],
-                }
-            ],
-        }
-        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
-            out_path = Path(f.name)
         try:
-            eager_video = VideoEdit.from_dict(plan_dict).run()
-            VideoEdit.from_dict(plan_dict).run_to_file(out_path)
-            streamed_video = Video.from_path(str(out_path))
-
-            assert abs(len(eager_video.frames) - len(streamed_video.frames)) <= 1
-            min_frames = min(len(eager_video.frames), len(streamed_video.frames))
-            mid = min_frames // 2
-            eager_frame = eager_video.frames[mid].astype(np.float32)
-            stream_frame = streamed_video.frames[mid].astype(np.float32)
-            mae = np.abs(eager_frame - stream_frame).mean()
-            assert mae < 15, f"Mean absolute error too high: {mae}"
+            _assert_op_changes_frame(
+                render,
+                [{"op": "image_overlay", "source": str(svg_path), "scale": 0.25, "anchor": "bottom_right"}],
+                name="svg_overlay.mp4",
+            )
         finally:
-            out_path.unlink(missing_ok=True)
             svg_path.unlink(missing_ok=True)
 
     def test_volume_adjust_streaming(self):
@@ -358,7 +296,7 @@ class TestStreamableTransforms:
         assert abs(meta.fps - 12) < 1
 
     def test_speed_change_streams_natively(self):
-        """speed_change is not streamable -- should fall back to eager and still work."""
+        """speed_change compiles to setpts+fps (0.42.0) and streams natively."""
         meta = self._run_plan(
             {
                 "segments": [
@@ -602,28 +540,19 @@ class TestContextStreaming:
             ]
         )
 
-    def test_add_subtitles_streams_and_matches_eager(self, tmp_path):
-        """run_to_file must not fall back to eager, and must match run()."""
+    def test_add_subtitles_burns_in_and_rebases(self, render):
+        """run_to_file burns subtitles in (not a silent context drop) and re-bases
+        the transcription onto the cut segment's local timeline."""
         context = {"transcription": self._absolute_transcription()}
-        eager_video = VideoEdit.from_dict(self._PLAN).run(context=context)
-
-        out_path = tmp_path / "subtitled.mp4"
-        VideoEdit.from_dict(self._PLAN).run_to_file(out_path, context=context)
-        streamed_video = Video.from_path(str(out_path))
-
-        assert abs(len(eager_video.frames) - len(streamed_video.frames)) <= 1
+        subtitled = render(VideoEdit.from_dict(self._PLAN), name="subtitled.mp4", context=context)
 
         # Frame inside the first cue (segment-local t=1.0s == source t=5.0s).
         active = round(1.0 * 24)
-        eager_frame = eager_video.frames[active].astype(np.float32)
-        stream_frame = streamed_video.frames[active].astype(np.float32)
-        mae = np.abs(eager_frame - stream_frame).mean()
-        assert mae < 15, f"Mean absolute error too high: {mae}"
+        stream_frame = subtitled.frames[active].astype(np.float32)
 
         # The subtitle was actually drawn: against the raw (no-subtitle) cut,
         # a meaningful share of pixels changed by far more than codec noise.
-        # Guards the failure mode where both paths silently drop the context
-        # and the parity assertion above passes vacuously.
+        # Guards the failure mode where the context is silently dropped.
         baseline = Video.from_path(SMALL_VIDEO_PATH, start_second=4.0, end_second=8.0)
         drawn_diff = np.abs(baseline.frames[active].astype(np.float32) - stream_frame)
         drawn_fraction = (drawn_diff > 50).mean()
@@ -635,7 +564,7 @@ class TestContextStreaming:
         # only if timestamps were kept source-absolute -- they must not be).
         quiet = round(0.1 * 24)
         quiet_diff = np.abs(
-            baseline.frames[quiet].astype(np.float32) - streamed_video.frames[quiet].astype(np.float32)
+            baseline.frames[quiet].astype(np.float32) - subtitled.frames[quiet].astype(np.float32)
         ).mean()
         assert quiet_diff < 15, f"Frame before first cue was modified: {quiet_diff}"
 
@@ -645,7 +574,7 @@ class TestContextStreaming:
         with pytest.raises(ValueError, match="requires transcription data"):
             edit.run_to_file(tmp_path / "out.mp4")
 
-    def test_no_overlap_context_raises_like_eager(self, tmp_path):
+    def test_no_overlap_context_raises(self, tmp_path):
         """Words entirely outside the cut are dropped by re-basing -> same error."""
         context = {
             "transcription": Transcription(words=[TranscriptionWord(start=50.0, end=51.0, word="late")]),
@@ -654,10 +583,10 @@ class TestContextStreaming:
         with pytest.raises(ValueError, match="requires transcription data"):
             edit.run_to_file(tmp_path / "out.mp4", context=context)
 
-    def test_subtitles_then_transform_streams_in_plan_order(self, tmp_path):
-        """A transform after add_subtitles streams: both join the decode
-        filter chain in plan order (subtitles burn at pre-crop dims, then the
-        crop applies), so the output matches the eager run().
+    def test_subtitles_then_transform_streams_in_plan_order(self, render):
+        """A transform after add_subtitles streams: both join the decode filter
+        chain in plan order (subtitles burn at pre-crop dims, then the crop
+        applies), so the rendered output is the cropped size.
         """
         plan = {
             "segments": [
@@ -673,19 +602,8 @@ class TestContextStreaming:
             ],
         }
         context = {"transcription": self._absolute_transcription()}
-        eager_video = VideoEdit.from_dict(plan).run(context=context)
-
-        out_path = tmp_path / "out.mp4"
-        VideoEdit.from_dict(plan).run_to_file(out_path, context=context)
-        streamed_video = Video.from_path(str(out_path))
-
-        assert streamed_video.frames.shape[1:3] == (300, 400)
-        assert abs(len(eager_video.frames) - len(streamed_video.frames)) <= 1
-        active = round(1.0 * 24)
-        mae = np.abs(
-            eager_video.frames[active].astype(np.float32) - streamed_video.frames[active].astype(np.float32)
-        ).mean()
-        assert mae < 15, f"Mean absolute error too high: {mae}"
+        rendered = render(VideoEdit.from_dict(plan), name="subs_then_crop.mp4", context=context)
+        assert rendered.frames.shape[1:3] == (300, 400)
 
 
 class TestPerSourceContextStreaming:

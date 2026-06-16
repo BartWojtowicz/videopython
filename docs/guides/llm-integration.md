@@ -12,8 +12,7 @@ needing to learn the surface from examples.
    structured-output schema.
 2. **Validate** — call `edit.validate()` for a dry-run via metadata. No
    frames load.
-3. **Execute** — `edit.run()` returns a `Video`; `edit.run_to_file()`
-   streams directly to disk.
+3. **Execute** — `edit.run_to_file()` streams directly to disk.
 
 ```python
 from videopython.editing import VideoEdit
@@ -25,8 +24,7 @@ plan = call_your_llm(schema=schema,
 edit = VideoEdit.from_dict(plan)
 predicted = edit.validate()           # catches bad plans before any I/O
 print(predicted)
-video = edit.run()
-video.save("output.mp4")
+edit.run_to_file("output.mp4")
 ```
 
 ## Passing the Schema
@@ -79,7 +77,7 @@ response = client.messages.create(
 tool_block = next(b for b in response.content if b.type == "tool_use")
 edit = VideoEdit.from_dict(tool_block.input)
 edit.validate()
-edit.run().save("output.mp4")
+edit.run_to_file("output.mp4")
 ```
 
 ### OpenAI function calling
@@ -112,7 +110,7 @@ response = client.chat.completions.create(
 plan = json.loads(response.choices[0].message.tool_calls[0].function.arguments)
 edit = VideoEdit.from_dict(plan)
 edit.validate()
-edit.run().save("output.mp4")
+edit.run_to_file("output.mp4")
 ```
 
 ## Discovering Operations
@@ -271,15 +269,13 @@ out of the `context` dict and threads them into the op:
 ```python
 # silence_removal and add_subtitles both need a transcription
 edit = VideoEdit.from_dict(plan)
-video = edit.run(context={"transcription": transcription})
-# ... or stream to disk; context-requiring effects stream too
+# context-requiring effects stream too
 edit.run_to_file("out.mp4", context={"transcription": transcription})
 ```
 
 Time-based context values (e.g. a `Transcription` with source-absolute
 timestamps) are re-based onto each cut segment's local timeline
-automatically, on the streaming engine that backs both `run()` and
-`run_to_file()`.
+automatically, on the streaming engine that backs `run_to_file()`.
 
 Discover requires-aware ops via the registry:
 
@@ -306,7 +302,7 @@ schema = VideoEdit.json_schema()    # now includes face_crop
 - **Start with the schema.** Pass `VideoEdit.json_schema()` as the tool
   schema — it encodes all structural rules so the LLM doesn't need
   examples.
-- **Always validate.** Call `edit.validate()` before `edit.run()`.
+- **Always validate.** Call `edit.validate()` before `edit.run_to_file()`.
   Validation is fast and catches most errors.
 - **Use the error loop.** If validation fails, feed the error back to
   the LLM and ask it to fix the plan. Most issues correct in one retry.

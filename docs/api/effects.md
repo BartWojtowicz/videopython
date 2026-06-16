@@ -7,39 +7,47 @@ limits the effect to a sub-range of the video. See
 
 ## Usage
 
+Effects are not applied to a `Video` directly. They run only through the
+streaming engine: add the operation(s) to a `VideoEdit` and render with
+`run_to_file`. Each effect carries an optional `window` that limits it to
+a sub-range of the segment.
+
 ```python
-from videopython.base import Video, BoundingBox
+from videopython.base import BoundingBox
 from videopython.editing import (
+    VideoEdit, SegmentConfig,
     Blur, Zoom, ColorGrading, Vignette, KenBurns,
     Fade, VolumeAdjust, TextOverlay, TimeRange,
 )
 
-video = Video.from_path("input.mp4")
+edit = VideoEdit(segments=[SegmentConfig(source="input.mp4", start=0, end=5, operations=[
+    # Effect across the full segment:
+    Blur(mode="constant", iterations=50),
+    # Effect on a sub-range via the `window` field:
+    Blur(mode="constant", iterations=50, window=TimeRange(start=0.0, stop=2.0)),
+])])
+edit.run_to_file("output.mp4")
+```
 
-# Effect across the full duration:
-video = Blur(mode="constant", iterations=50).apply(video)
+The constructors below produce the operation objects to drop into a
+segment's `operations` list (as above) and render with `run_to_file`:
 
-# Effect on a sub-range via the `window` field:
-video = Blur(
-    mode="constant",
-    iterations=50,
-    window=TimeRange(start=0.0, stop=2.0),
-).apply(video)
-
-video = Zoom(zoom_factor=1.5, mode="in").apply(video)
-video = ColorGrading(brightness=0.1, contrast=1.2, saturation=1.1).apply(video)
-video = Vignette(strength=0.5, radius=0.8).apply(video)
+```python
+video_op = Blur(mode="constant", iterations=50)
+video_op = Blur(mode="constant", iterations=50, window=TimeRange(start=0.0, stop=2.0))
+video_op = Zoom(zoom_factor=1.5, mode="in")
+video_op = ColorGrading(brightness=0.1, contrast=1.2, saturation=1.1)
+video_op = Vignette(strength=0.5, radius=0.8)
 
 start_region = BoundingBox(x=0.0, y=0.0, width=0.5, height=0.5)
 end_region = BoundingBox(x=0.5, y=0.5, width=0.5, height=0.5)
-video = KenBurns(start_region=start_region, end_region=end_region,
-                 easing="ease_in_out").apply(video)
+video_op = KenBurns(start_region=start_region, end_region=end_region,
+                    easing="ease_in_out")
 
-video = Fade(mode="in", duration=1.0).apply(video)
-video = Fade(mode="out", duration=0.5).apply(video)
-video = VolumeAdjust(volume=0.0, window=TimeRange(stop=2.0)).apply(video)  # mute first 2s
-video = TextOverlay(text="Hello World", position=(0.5, 0.9),
-                    font_size=48).apply(video)
+video_op = Fade(mode="in", duration=1.0)
+video_op = Fade(mode="out", duration=0.5)
+video_op = VolumeAdjust(volume=0.0, window=TimeRange(stop=2.0))  # mute first 2s
+video_op = TextOverlay(text="Hello World", position=(0.5, 0.9), font_size=48)
 
 # YouTube / experimental effects:
 from videopython.editing import (
@@ -47,28 +55,31 @@ from videopython.editing import (
     FilmGrain, Sharpen, Pixelate, MirrorFlip, Kaleidoscope,
 )
 
-video = Shake(intensity_px=6, mode="rhythmic", frequency_hz=4).apply(video)
-video = PunchIn(zoom_factor=1.5, attack_frames=3, release_frames=0).apply(video)
-video = Flash(color=(255, 255, 255), peak_alpha=1.0,
-              attack_frames=2, decay_frames=4,
-              window=TimeRange(start=1.0, stop=1.3)).apply(video)
-video = ChromaticAberration(shift_px=4, mode="radial").apply(video)
-video = Glitch(intensity=0.4, slice_count=12, seed=42).apply(video)
-video = FilmGrain(intensity=0.08, monochrome=True).apply(video)
-video = Sharpen(amount=1.0, kernel_size=5).apply(video)
-video = Pixelate(block_size=24,
-                 region=BoundingBox(x=0.4, y=0.2, width=0.2, height=0.2)).apply(video)
-video = MirrorFlip(mode="mirror_left").apply(video)
-video = Kaleidoscope(segments=6).apply(video)
+video_op = Shake(intensity_px=6, mode="rhythmic", frequency_hz=4)
+video_op = PunchIn(zoom_factor=1.5, attack_frames=3, release_frames=0)
+video_op = Flash(color=(255, 255, 255), peak_alpha=1.0,
+                 attack_frames=2, decay_frames=4,
+                 window=TimeRange(start=1.0, stop=1.3))
+video_op = ChromaticAberration(shift_px=4, mode="radial")
+video_op = Glitch(intensity=0.4, slice_count=12, seed=42)
+video_op = FilmGrain(intensity=0.08, monochrome=True)
+video_op = Sharpen(amount=1.0, kernel_size=5)
+video_op = Pixelate(block_size=24,
+                    region=BoundingBox(x=0.4, y=0.2, width=0.2, height=0.2))
+video_op = MirrorFlip(mode="mirror_left")
+video_op = Kaleidoscope(segments=6)
 ```
 
-Inside a `VideoEdit` plan, effects go in the segment's `operations`
-list. The `window` field travels inline as a nested object:
+A `SegmentConfig`'s `operations` list also accepts the inline dict form;
+the `window` field travels as a nested object:
 
 ```python
 {"op": "blur_effect", "mode": "constant", "iterations": 50,
  "window": {"start": 0.0, "stop": 2.0}}
 ```
+
+The subtitles effect (`add_subtitles`) requires a `transcription`
+context, passed to the runner: `run_to_file(..., context={"transcription": ...})`.
 
 ## Available Effects
 

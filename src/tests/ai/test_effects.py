@@ -11,7 +11,7 @@ import numpy as np
 
 from videopython.ai.effects import ObjectDetectionOverlay
 from videopython.base.description import BoundingBox, DetectedObject
-from videopython.base.video import Video, VideoMetadata
+from videopython.base.video import VideoMetadata
 from videopython.editing.operation import Operation
 
 
@@ -50,33 +50,40 @@ class TestRegistrationAndSchema:
         assert (out.width, out.height, out.frame_count) == (640, 480, 60)
 
 
-class TestApply:
+def _stream(eff: ObjectDetectionOverlay, frames: np.ndarray, fps: float = 30.0) -> np.ndarray:
+    """Run an overlay over ``frames`` (T, H, W, 3) via the streaming contract."""
+    n, h, w = frames.shape[0], frames.shape[1], frames.shape[2]
+    eff.streaming_init(n, fps, w, h)
+    return np.stack([eff.process_frame(frames[i].copy(), i) for i in range(n)])
+
+
+class TestStreamingDraw:
     @patch("videopython.ai.effects.ObjectDetector")
     def test_apply_preserves_shape_and_draws(self, mock_cls):
         mock_cls.return_value = _mock_detector([_detection()])
-        video = Video.from_frames(np.zeros((5, 200, 200, 3), dtype=np.uint8), fps=30)
+        frames = np.zeros((5, 200, 200, 3), dtype=np.uint8)
 
-        out = ObjectDetectionOverlay().apply(video)
+        out = _stream(ObjectDetectionOverlay(), frames)
 
-        assert out.frame_shape == (200, 200, 3)
-        assert len(out.frames) == 5
-        assert out.frames.sum() > 0  # boxes were drawn
+        assert out.shape == (5, 200, 200, 3)
+        assert out.dtype == np.uint8
+        assert out.sum() > 0  # boxes were drawn
 
     @patch("videopython.ai.effects.ObjectDetector")
     def test_no_detections_is_noop(self, mock_cls):
         mock_cls.return_value = _mock_detector([])
-        video = Video.from_frames(np.zeros((4, 64, 64, 3), dtype=np.uint8), fps=30)
+        frames = np.zeros((4, 64, 64, 3), dtype=np.uint8)
 
-        out = ObjectDetectionOverlay().apply(video)
-        assert out.frames.sum() == 0
+        out = _stream(ObjectDetectionOverlay(), frames)
+        assert out.sum() == 0
 
     @patch("videopython.ai.effects.ObjectDetector")
     def test_detection_interval_controls_cadence(self, mock_cls):
         inst = _mock_detector([])
         mock_cls.return_value = inst
-        video = Video.from_frames(np.zeros((7, 64, 64, 3), dtype=np.uint8), fps=30)
+        frames = np.zeros((7, 64, 64, 3), dtype=np.uint8)
 
-        ObjectDetectionOverlay(detection_interval=3).apply(video)
+        _stream(ObjectDetectionOverlay(detection_interval=3), frames)
 
         # Frames 0, 3, 6 trigger detection; the rest reuse the cache.
         assert inst.detect.call_count == 3
@@ -84,9 +91,9 @@ class TestApply:
     @patch("videopython.ai.effects.ObjectDetector")
     def test_class_filter_passed_to_detector(self, mock_cls):
         mock_cls.return_value = _mock_detector([])
-        video = Video.from_frames(np.zeros((2, 64, 64, 3), dtype=np.uint8), fps=30)
+        frames = np.zeros((2, 64, 64, 3), dtype=np.uint8)
 
-        ObjectDetectionOverlay(class_filter=["person", "car"]).apply(video)
+        _stream(ObjectDetectionOverlay(class_filter=["person", "car"]), frames)
 
         _, kwargs = mock_cls.call_args
         assert kwargs["class_filter"] == ("person", "car")
@@ -95,9 +102,9 @@ class TestApply:
     @patch("videopython.ai.effects.ObjectDetector")
     def test_model_size_maps_to_weights(self, mock_cls):
         mock_cls.return_value = _mock_detector([])
-        video = Video.from_frames(np.zeros((1, 64, 64, 3), dtype=np.uint8), fps=30)
+        frames = np.zeros((1, 64, 64, 3), dtype=np.uint8)
 
-        ObjectDetectionOverlay(model_size="m").apply(video)
+        _stream(ObjectDetectionOverlay(model_size="m"), frames)
         _, kwargs = mock_cls.call_args
         assert kwargs["model_name"] == "yolov8m.pt"
 
@@ -116,20 +123,6 @@ class TestStreamingContract:
 
         assert eff.streamable is True
         assert eff.requires == ()  # stays in the streaming plan path
-
-    @patch("videopython.ai.effects.ObjectDetector")
-    def test_eager_matches_streaming(self, mock_cls):
-        # Shared mock instance -> deterministic detections on both paths.
-        mock_cls.return_value = _mock_detector([_detection()])
-        frames = np.zeros((6, 96, 96, 3), dtype=np.uint8)
-
-        eager = ObjectDetectionOverlay(detection_interval=2).apply(Video.from_frames(frames.copy(), fps=30))
-
-        eff = ObjectDetectionOverlay(detection_interval=2)
-        eff.streaming_init(6, 30.0, 96, 96)
-        streamed = np.stack([eff.process_frame(frames[i].copy(), i) for i in range(6)])
-
-        np.testing.assert_array_equal(eager.frames, streamed)
 
 
 class TestPlanValidation:

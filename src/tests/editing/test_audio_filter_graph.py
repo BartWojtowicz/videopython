@@ -6,8 +6,8 @@ ffmpeg filter graph: the original source is a second ``-i`` input routed through
 ``to_ffmpeg_audio_filter`` twin (``atempo``/silence-splice/``atrim``+``concat``
 keep-windows/``volume`` envelope). These tests pin: per-op duration parity vs the old numpy
 twins, the native ``anullsrc`` silent-track contract, the single-invocation
-shape, ``run()`` vs ``run_to_file`` audio equivalence, and that ``run_to_file``
-never materialises a full-length source ``Audio`` array.
+shape, and that ``run_to_file`` never materialises a full-length source
+``Audio`` array.
 """
 
 from __future__ import annotations
@@ -57,27 +57,27 @@ class TestPerOpDurationParity:
     """The native af graph must produce the same output audio duration the old
     numpy twin did (which == the video duration), within the A/V tolerance."""
 
-    def test_speedup_atempo_matches_video(self, tmp_path, audio_source):
+    def test_speedup_atempo_matches_video(self, render, audio_source):
         plan = _plan([{"op": "speed_change", "speed": 2.0}], audio_source)
-        video = Video.from_path(str(plan.run_to_file(tmp_path / "speed.mp4")))
+        video = render(plan, name="speed.mp4")
         assert abs(video.audio.metadata.duration_seconds - len(video.frames) / video.fps) < TOL
 
-    def test_slowdown_atempo_chain_matches_video(self, tmp_path, audio_source):
+    def test_slowdown_atempo_chain_matches_video(self, render, audio_source):
         # 0.5x exercises the atempo chaining boundary shared with time_stretch.
         plan = _plan([{"op": "speed_change", "speed": 0.5}], audio_source)
-        video = Video.from_path(str(plan.run_to_file(tmp_path / "slow.mp4")))
+        video = render(plan, name="slow.mp4")
         assert abs(video.audio.metadata.duration_seconds - len(video.frames) / video.fps) < TOL
 
-    def test_adjust_audio_false_leaves_audio_unstretched(self, tmp_path, audio_source):
+    def test_adjust_audio_false_leaves_audio_unstretched(self, render, audio_source):
         # adjust_audio=False compiles to no atempo; the length pin still trims
         # the (untouched) audio to the predicted output duration.
         plan = _plan([{"op": "speed_change", "speed": 2.0, "adjust_audio": False}], audio_source)
-        video = Video.from_path(str(plan.run_to_file(tmp_path / "noadj.mp4")))
+        video = render(plan, name="noadj.mp4")
         assert abs(video.audio.metadata.duration_seconds - len(video.frames) / video.fps) < TOL
 
-    def test_freeze_silence_position_matches_eager_window(self, tmp_path, audio_source):
+    def test_freeze_silence_position_window(self, render, audio_source):
         plan = _plan([{"op": "freeze_frame", "timestamp": 1.0, "duration": 1.0}], audio_source)
-        video = Video.from_path(str(plan.run_to_file(tmp_path / "freeze.mp4")))
+        video = render(plan, name="freeze.mp4")
         sr = video.audio.metadata.sample_rate
         d = np.abs(video.audio.data)
         # The held window [1.0, 2.0) is the inserted silence; just before/after audible.
@@ -86,7 +86,7 @@ class TestPerOpDurationParity:
         assert inside < before * 0.2, f"freeze window not silent: {inside} vs {before}"
         assert abs(video.audio.metadata.duration_seconds - len(video.frames) / video.fps) < TOL
 
-    def test_silence_removal_keep_windows_match_video(self, tmp_path, audio_source):
+    def test_silence_removal_keep_windows_match_video(self, render, audio_source):
         tr = Transcription(
             words=[
                 TranscriptionWord(word="a", start=2.5, end=3.5),
@@ -95,12 +95,12 @@ class TestPerOpDurationParity:
             ]
         )
         plan = _plan([{"op": "silence_removal", "min_silence_duration": 1.0, "padding": 0.0}], audio_source)
-        video = Video.from_path(str(plan.run_to_file(tmp_path / "sr.mp4", context={"transcription": tr})))
+        video = render(plan, name="sr.mp4", context={"transcription": tr})
         assert abs(video.audio.metadata.duration_seconds - len(video.frames) / video.fps) < TOL
 
-    def test_fade_out_audio_decays(self, tmp_path, audio_source):
+    def test_fade_out_audio_decays(self, render, audio_source):
         plan = _plan([{"op": "fade", "mode": "out", "duration": 1.0}], audio_source)
-        video = Video.from_path(str(plan.run_to_file(tmp_path / "fade.mp4")))
+        video = render(plan, name="fade.mp4")
         sr = video.audio.metadata.sample_rate
         d = video.audio.data
         head = _rms(d[: int(0.5 * sr)])
@@ -108,19 +108,16 @@ class TestPerOpDurationParity:
         assert tail < head * 0.5, f"fade-out did not decay: head={head}, tail={tail}"
         assert abs(video.audio.metadata.duration_seconds - len(video.frames) / video.fps) < TOL
 
-    def test_windowed_fade_out_keeps_audio_after_window(self, tmp_path, audio_source):
+    def test_windowed_fade_out_keeps_audio_after_window(self, render, audio_source):
         # 6s segment, fade-out windowed to [1.0, 3.0]. After the window the audio
         # must return to full volume -- the regression: native afade held gain 0
         # for the whole tail, silencing audio while the video kept playing.
         win = {"start": 1.0, "stop": 3.0}
-        faded = Video.from_path(
-            str(
-                _plan([{"op": "fade", "mode": "out", "duration": 0.5, "window": win}], audio_source).run_to_file(
-                    tmp_path / "wf.mp4"
-                )
-            )
+        faded = render(
+            _plan([{"op": "fade", "mode": "out", "duration": 0.5, "window": win}], audio_source),
+            name="wf.mp4",
         )
-        plain = Video.from_path(str(_plan([], audio_source).run_to_file(tmp_path / "plain.mp4")))
+        plain = render(_plan([], audio_source), name="plain.mp4")
         sr = faded.audio.metadata.sample_rate
 
         def _region(v: Video, lo: float, hi: float) -> np.ndarray:
@@ -135,9 +132,9 @@ class TestPerOpDurationParity:
         plain_ramp = _rms(_region(plain, 2.6, 3.0))
         assert faded_ramp < 0.7 * plain_ramp, f"fade ramp did not attenuate: {faded_ramp} vs {plain_ramp}"
 
-    def test_volume_adjust_window_mutes_in_sync(self, tmp_path, audio_source):
+    def test_volume_adjust_window_mutes_in_sync(self, render, audio_source):
         plan = _plan([{"op": "volume_adjust", "volume": 0.0, "window": {"start": 2.0, "stop": 4.0}}], audio_source)
-        video = Video.from_path(str(plan.run_to_file(tmp_path / "vol.mp4")))
+        video = render(plan, name="vol.mp4")
         sr = video.audio.metadata.sample_rate
         d = np.abs(video.audio.data)
         inside = d[int(2.3 * sr) : int(3.7 * sr)].mean()
@@ -150,7 +147,7 @@ class TestPerOpDurationParity:
 
 
 class TestNoAudioSource:
-    def test_source_without_audio_gets_native_silent_track(self, tmp_path):
+    def test_source_without_audio_gets_native_silent_track(self, render):
         # SMALL_VIDEO_PATH has no audio stream -> anullsrc silence, not a Python
         # Audio.create_silent round-trip.
         assert (
@@ -160,8 +157,7 @@ class TestNoAudioSource:
             is False
         )
         plan = _plan([], SMALL_VIDEO_PATH)
-        out = plan.run_to_file(tmp_path / "silent.mp4")
-        video = Video.from_path(str(out))
+        video = render(plan, name="silent.mp4")
         # An AAC audio stream exists and is digitally silent.
         assert video.audio is not None
         assert video.audio.is_silent
@@ -217,27 +213,6 @@ class TestSingleInvocation:
         assert "-an" in cmd
         assert "-filter_complex" not in cmd
         assert cmd.count("-i") == 1
-
-
-# --------------------------------------------- run() vs run_to_file equivalence
-
-
-class TestRunPathEquivalence:
-    def test_run_and_run_to_file_audio_durations_match(self, tmp_path, audio_source):
-        ops = [{"op": "speed_change", "speed": 2.0}]
-        in_memory = _plan(ops, audio_source).run()
-        on_disk = Video.from_path(str(_plan(ops, audio_source).run_to_file(tmp_path / "eq.mp4")))
-        assert abs(in_memory.audio.metadata.duration_seconds - on_disk.audio.metadata.duration_seconds) < TOL
-        # Both track their own video duration.
-        assert abs(in_memory.audio.metadata.duration_seconds - in_memory.total_seconds) < TOL
-        assert abs(on_disk.audio.metadata.duration_seconds - len(on_disk.frames) / on_disk.fps) < TOL
-
-    def test_run_materializes_audio_for_no_audio_source(self):
-        # run() must still produce a (silent) Audio view for video.audio.
-        video = _plan([], SMALL_VIDEO_PATH).run()
-        assert video.audio is not None
-        assert video.audio.is_silent
-        assert abs(video.audio.metadata.duration_seconds - video.total_seconds) < TOL
 
 
 # ------------------------------------------------------- no eager audio decode

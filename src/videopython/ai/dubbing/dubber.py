@@ -239,9 +239,7 @@ class VideoDubber:
         video_duration = video.total_seconds
 
         if video_duration > speech_duration:
-            from videopython.editing.transforms import CutSeconds
-
-            output_video = CutSeconds(start=0, end=speech_duration).apply(video)
+            output_video = video[: round(speech_duration * video.fps)]
         else:
             output_video = video
 

@@ -33,9 +33,9 @@ class ObjectDetectionOverlay(Effect):
     *memory*-bound: ``"streamable"`` here means bounded memory, not bounded
     compute. On long clips, cap cost with ``window`` (limit the time range),
     a larger ``detection_interval``, a ``class_filter``, and/or the smaller
-    ``model_size``. Because only ``streaming_init`` and ``process_frame`` are
-    overridden, the base ``Effect._apply`` replays the identical contract for
-    in-memory execution, so eager and streaming results cannot drift.
+    ``model_size``. Only ``streaming_init`` and ``process_frame`` are
+    overridden; the streaming engine drives that contract for bounded-memory
+    execution.
     """
 
     op: Literal["object_detection_overlay"] = "object_detection_overlay"

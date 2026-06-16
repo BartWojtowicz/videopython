@@ -20,7 +20,7 @@ from videopython.audio.audio import AudioMetadata
 from videopython.base.exceptions import PlanErrorCode, PlanValidationError
 from videopython.base.video import Video, VideoMetadata
 from videopython.editing import StreamingClass
-from videopython.editing.streaming import TRANSITION_TYPES, stream_transition_frames, xfade_filter
+from videopython.editing.streaming import TRANSITION_TYPES, xfade_filter
 from videopython.editing.video_edit import TransitionSpec, VideoEdit
 
 FPS = 24.0
@@ -112,7 +112,7 @@ class TestPlanSurface:
 
 
 class TestDurationMath:
-    def test_run_frame_count_subtracts_overlap(self, clips):
+    def test_run_frame_count_subtracts_overlap(self, clips, render):
         plan = VideoEdit.from_dict(
             {
                 "segments": [
@@ -126,7 +126,7 @@ class TestDurationMath:
                 ]
             }
         )
-        result = plan.run()
+        result = render(plan)
         overlap = round(0.5 * FPS)
         assert result.frames.shape[0] == 36 + 36 - overlap
 
@@ -172,34 +172,9 @@ class TestDurationMath:
 
 
 class TestSeamPixels:
-    @pytest.mark.parametrize("ttype", list(TRANSITION_TYPES))
-    def test_endpoints_pure_overlap_mixed_in_memory(self, ttype):
-        left = _solid((255, 0, 0), 1.5)
-        right = _solid((0, 0, 255), 1.5)
-        blended = stream_transition_frames(left.frames, right.frames, ttype, 0.5, FPS)
-        assert blended.shape[0] == 36 + 36 - 12
-        # The pre- and post-overlap endpoints stay pure source.
-        assert tuple(blended[0, 0, 0]) == (255, 0, 0)
-        assert tuple(blended[-1, 0, 0]) == (0, 0, 255)
-        # A mid-overlap frame is neither uniformly the left nor the right
-        # source: a fade/dissolve alpha-blends every pixel, a wipe/slide shows
-        # part of each source. Either way the frame is a genuine mix.
-        mid_frame = blended[(36 - 12) + 6]
-        pure_red = np.all(mid_frame == np.array([255, 0, 0], dtype=np.uint8))
-        pure_blue = np.all(mid_frame == np.array([0, 0, 255], dtype=np.uint8))
-        assert not pure_red and not pure_blue
-
-    def test_fade_midpoint_is_a_blend(self):
-        left = _solid((255, 0, 0), 1.5)
-        right = _solid((0, 0, 255), 1.5)
-        blended = stream_transition_frames(left.frames, right.frames, "fade", 0.5, FPS)
-        mid = (36 - 12) + 6  # halfway through the 12-frame overlap
-        r, g, b = (int(x) for x in blended[mid, H // 2, W // 2])
-        assert 90 < r < 165 and 90 < b < 165 and g < 20
-
-    def test_run_and_run_to_file_share_builder(self, clips, tmp_path):
-        # The in-memory twin (lossless) and the file path (lossy encode) come
-        # from the same xfade filter, so the seam blend is close, not identical.
+    def test_fade_midpoint_is_a_blend(self, clips, render):
+        # The rendered seam frame is a genuine red<->blue fade blend, not a pure
+        # source frame (lossy x264, so the channels land in a wide band).
         plan = VideoEdit.from_dict(
             {
                 "segments": [
@@ -213,14 +188,37 @@ class TestSeamPixels:
                 ]
             }
         )
-        in_mem = plan.run()
-        out = plan.run_to_file(tmp_path / "out.mp4")
-        on_disk = Video.from_path(str(out))
-        assert in_mem.frames.shape == on_disk.frames.shape
-        mid = (36 - 12) + 6
-        a = in_mem.frames[mid, H // 2, W // 2].astype(int)
-        b = on_disk.frames[mid, H // 2, W // 2].astype(int)
-        assert np.max(np.abs(a - b)) <= 12  # within x264 quantization at the seam
+        blended = render(plan).frames
+        mid = (36 - 12) + 6  # halfway through the 12-frame overlap
+        r, g, b = (int(x) for x in blended[mid, H // 2, W // 2])
+        assert 90 < r < 165 and 90 < b < 165 and g < 20
+
+    def test_seam_endpoints_pure_overlap_mixed(self, clips, render):
+        # Pre- and post-overlap endpoints stay (near) pure source; a mid-overlap
+        # frame is a genuine mix of both sources, not uniformly one of them.
+        plan = VideoEdit.from_dict(
+            {
+                "segments": [
+                    {"source": clips["red"], "start": 0, "end": 1.5},
+                    {
+                        "source": clips["blue"],
+                        "start": 0,
+                        "end": 1.5,
+                        "transition_in": {"type": "fade", "duration": 0.5},
+                    },
+                ]
+            }
+        )
+        blended = render(plan).frames
+        assert blended.shape[0] == 36 + 36 - 12
+        # Endpoints are pure source (within x264 quantization).
+        assert np.allclose(blended[0, 0, 0], np.array([255, 0, 0]), atol=12)
+        assert np.allclose(blended[-1, 0, 0], np.array([0, 0, 255]), atol=12)
+        # A mid-overlap frame is neither (near) pure red nor (near) pure blue.
+        mid_frame = blended[(36 - 12) + 6]
+        near_red = np.allclose(mid_frame, np.array([255, 0, 0], dtype=np.uint8), atol=12)
+        near_blue = np.allclose(mid_frame, np.array([0, 0, 255], dtype=np.uint8), atol=12)
+        assert not near_red and not near_blue
 
     def test_builder_is_shared_string(self):
         # One builder produces the filter both paths route through.
@@ -257,7 +255,7 @@ class TestAudio:
         assert abs(audio.metadata.duration_seconds - vmeta.total_seconds) < 0.1
         assert abs(vmeta.total_seconds - 2.5) < 0.05
 
-    def test_run_audio_fits_shortened_video(self, tmp_path):
+    def test_run_audio_fits_shortened_video(self, tmp_path, render):
         red = tmp_path / "red.mp4"
         blue = tmp_path / "blue.mp4"
         _solid((255, 0, 0), 1.5, tone_hz=440).save(str(red))
@@ -275,8 +273,9 @@ class TestAudio:
                 ]
             }
         )
-        result = plan.run()
-        assert abs(result.audio.metadata.duration_seconds - result.total_seconds) < 1e-3
+        result = render(plan)
+        # Lossy AAC mux: audio fits the shortened video within ~AAC priming.
+        assert abs(result.audio.metadata.duration_seconds - result.total_seconds) < 0.1
 
     def test_audio_false_hard_butt_join_same_length(self, tmp_path):
         red = tmp_path / "red.mp4"
@@ -301,11 +300,11 @@ class TestAudio:
         audio = Audio.from_path(str(out))
         assert abs(audio.metadata.duration_seconds - vmeta.total_seconds) < 0.1
 
-    def test_silent_stream_segment_consistent_across_paths(self, tmp_path):
+    def test_silent_stream_segment_fits_shortened_timeline(self, tmp_path):
         # A muxed-but-silent audio stream counts as "has audio" under the
-        # stream-presence heuristic, so run() and run_to_file make the SAME
-        # crossfade decision (the fix for the is_silent-vs-source_has_audio_stream
-        # divergence). Both fit the seam audio to the shortened timeline.
+        # stream-presence heuristic, so the seam audio is fit to the shortened
+        # timeline (the fix for the is_silent-vs-source_has_audio_stream
+        # divergence): the muxed audio tracks the shortened video length.
         red = tmp_path / "red.mp4"
         blue = tmp_path / "blue.mp4"
         _solid((255, 0, 0), 1.5).save(str(red))  # silent stream (still present)
@@ -323,13 +322,12 @@ class TestAudio:
                 ]
             }
         )
-        result = plan.run()
-        assert abs(result.audio.metadata.duration_seconds - result.total_seconds) < 1e-3
-
         out = plan.run_to_file(tmp_path / "out.mp4")
+        vmeta = VideoMetadata.from_path(str(out))
         file_audio = Audio.from_path(str(out))
-        # The two engines agree on the seam audio length (within AAC priming).
-        assert abs(file_audio.metadata.duration_seconds - result.audio.metadata.duration_seconds) < 0.1
+        # Seam audio fits the 2.5s shortened timeline (within AAC priming).
+        assert abs(file_audio.metadata.duration_seconds - vmeta.total_seconds) < 0.1
+        assert abs(vmeta.total_seconds - 2.5) < 0.05
 
 
 # --------------------------------------------------------------------- assembly
@@ -422,25 +420,7 @@ class TestTransitionTooLong:
             plan.run_to_file(tmp_path / "out.mp4")
         assert exc.value.errors[0].code is PlanErrorCode.TRANSITION_TOO_LONG
 
-    def test_run_raises(self, clips):
-        plan = VideoEdit.from_dict(
-            {
-                "segments": [
-                    {"source": clips["red"], "start": 0, "end": 1.5},
-                    {
-                        "source": clips["blue"],
-                        "start": 0,
-                        "end": 1.5,
-                        "transition_in": {"type": "fade", "duration": 2.0},
-                    },
-                ]
-            }
-        )
-        with pytest.raises(PlanValidationError) as exc:
-            plan.run()
-        assert exc.value.errors[0].code is PlanErrorCode.TRANSITION_TOO_LONG
-
-    def test_first_segment_transition_rejected(self, clips):
+    def test_first_segment_transition_rejected(self, clips, render):
         plan = VideoEdit.from_dict(
             {
                 "segments": [
@@ -457,9 +437,9 @@ class TestTransitionTooLong:
         codes = [e.code for e in plan.check(_metas(clips))]
         assert PlanErrorCode.TRANSITION_TOO_LONG in codes
         with pytest.raises(PlanValidationError):
-            plan.run()
+            render(plan)
 
-    def test_repair_clamps_duration(self, clips):
+    def test_repair_clamps_duration(self, clips, render):
         plan = VideoEdit.from_dict(
             {
                 "segments": [
@@ -484,17 +464,17 @@ class TestTransitionTooLong:
         # The clamped plan is clean AND actually runs -- the regression: a
         # seconds clamp to the segment length passed check() but crashed run().
         assert repaired.check(metas) == []
-        result = repaired.run()
+        result = render(repaired)
         assert result.frames.shape[0] == 36 + 36 - 35
 
-    def test_near_full_overlap_band_is_rejected(self, clips, tmp_path):
+    def test_near_full_overlap_band_is_rejected(self, clips, render):
         """A duration just under the segment length but rounding to a full-frame
-        overlap (round(D*fps) == segment_frames) must be rejected by every path.
+        overlap (round(D*fps) == segment_frames) must be rejected.
 
         Regression: the guard used to compare seconds, so duration=1.49s
         (round(1.49*24)=36 == the 36-frame segment) slipped through check while
-        run() crashed with a bare ValueError and run_to_file silently produced a
-        degenerate full-overlap clip with mismatched audio/video length.
+        the run silently produced a degenerate full-overlap clip with mismatched
+        audio/video length.
         """
         assert round(1.49 * FPS) == 36  # full overlap of a 36-frame segment
         plan = VideoEdit.from_dict(
@@ -513,11 +493,8 @@ class TestTransitionTooLong:
         metas = _metas(clips)
         assert any(e.code is PlanErrorCode.TRANSITION_TOO_LONG for e in plan.check(metas))
         with pytest.raises(PlanValidationError) as run_exc:
-            plan.run()
+            render(plan)
         assert run_exc.value.errors[0].code is PlanErrorCode.TRANSITION_TOO_LONG
-        with pytest.raises(PlanValidationError) as file_exc:
-            plan.run_to_file(tmp_path / "out.mp4")
-        assert file_exc.value.errors[0].code is PlanErrorCode.TRANSITION_TOO_LONG
 
     def test_repair_leaves_first_segment_transition_for_check(self, clips):
         # A first-segment transition is structural, not a mechanical clamp.

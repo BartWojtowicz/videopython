@@ -47,7 +47,7 @@ edit.validate()                  # dry-run via metadata, no frames loaded
 edit.run_to_file("output.mp4")   # streams ffmpeg decode → effects → encode
 ```
 
-`run_to_file()` streams ffmpeg decode → per-frame effects → encode, so memory stays bounded even for hour-long sources. Use `edit.run()` to get a `Video` back in memory instead.
+`run_to_file()` streams ffmpeg decode → per-frame effects → encode, so memory stays bounded even for hour-long sources. If you need the frames back in memory, load the rendered file: `Video.from_path(str(edit.run_to_file("output.mp4")))`.
 
 ### AI generation
 

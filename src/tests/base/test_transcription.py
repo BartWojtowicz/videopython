@@ -1,22 +1,58 @@
+from typing import Any
+
 import numpy as np
 import pytest
 
 from tests.test_config import TEST_FONT_PATH
 from videopython.base.transcription import Transcription, TranscriptionSegment, TranscriptionWord
 from videopython.base.video import Video
+from videopython.editing import VideoEdit
 from videopython.editing.transcription_overlay import TranscriptionOverlay
 
+# Eager VideoEdit/TranscriptionOverlay.apply() is gone (0.44.0); subtitles only
+# exist on the streaming-to-file engine. These overlay tests therefore render a
+# real `add_subtitles` plan via `VideoEdit.run_to_file` and read the mp4 back.
+# This file lives in tests/base/, which has no editing `render` fixture, so the
+# helpers below build the run_to_file + Video.from_path round-trip inline. The
+# x264/AAC round-trip is lossy, so anything checked on decoded frames uses
+# mean-abs-diff tolerances, never exact equality.
 
-@pytest.fixture
-def dummy_video():
-    """Create a 10-second video with black frames.
+# Subtitle pixels drawn against the black source clear this fraction of pixels
+# changed by >50; codec bleed on a truly inactive frame stays well below it.
+_ACTIVE_PIXEL_FRACTION = 0.005
 
-    Function-scoped: ``TranscriptionOverlay.apply`` replays the streaming
-    contract via ``Effect._apply``, which (like every effect) mutates the
-    input frames in place, so a shared instance would leak overlays across
-    tests.
+
+@pytest.fixture(scope="session")
+def black_source(tmp_path_factory):
+    """Path to an 8s black source video on disk (read-only, shared).
+
+    `SegmentConfig.source` is a file path, so the in-memory black clip the old
+    eager tests used must be materialized once to disk for plans to cut from.
+    A pure-black source keeps subtitle pixels a clean, isolated signal against
+    near-zero re-encode noise.
     """
-    return Video.from_image(np.zeros((360, 640, 3), dtype=np.uint8), fps=30, length_seconds=10.0)
+    src = tmp_path_factory.mktemp("black_src") / "black.mp4"
+    Video.from_image(np.zeros((360, 640, 3), dtype=np.uint8), fps=30, length_seconds=8.0).save(src)
+    return str(src)
+
+
+def _subtitles_plan(source: str, operation: dict[str, Any], *, end: float = 6.0) -> VideoEdit:
+    """A single-segment plan cutting [0, end) from `source` with one add_subtitles op."""
+    return VideoEdit.model_validate(
+        {"segments": [{"source": source, "start": 0.0, "end": end, "operations": [operation]}]}
+    )
+
+
+def _plain_plan(source: str, *, end: float = 6.0) -> VideoEdit:
+    """The same cut with no operations -- the A/B reference for frame diffs."""
+    return VideoEdit.model_validate({"segments": [{"source": source, "start": 0.0, "end": end}]})
+
+
+def _render(plan: VideoEdit, tmp_path, name: str, *, transcription: Transcription | None = None) -> Video:
+    """Run a plan to file and load it back as a Video (the only execution engine)."""
+    context = {"transcription": transcription} if transcription is not None else None
+    out = plan.run_to_file(tmp_path / name, context=context)
+    return Video.from_path(str(out))
 
 
 @pytest.fixture(scope="session")
@@ -53,6 +89,27 @@ def dummy_transcription():
     return Transcription(segments=segments)
 
 
+@pytest.fixture(scope="session")
+def early_cue_transcription():
+    """One cue at 0.0-1.8s, then a long silent tail.
+
+    The frame-content tests need an inactive sampling point (~4s) that is far
+    enough from every cue that x264 inter-frame bleed from a nearby subtitle
+    does not leak into it. A single early cue gives an active frame at ~1s and a
+    provably blank frame at ~4s.
+    """
+    words = [
+        TranscriptionWord(start=0.0, end=0.5, word="Hello"),
+        TranscriptionWord(start=0.5, end=1.0, word="world"),
+        TranscriptionWord(start=1.0, end=1.2, word="this"),
+        TranscriptionWord(start=1.2, end=1.4, word="is"),
+        TranscriptionWord(start=1.4, end=1.8, word="test"),
+    ]
+    return Transcription(
+        segments=[TranscriptionSegment(start=0.0, end=1.8, text="Hello world this is test", words=words)]
+    )
+
+
 def test_transcription_overlay_initialization(dummy_transcription):
     """Test that TranscriptionOverlay can be initialized with default parameters."""
     overlay = TranscriptionOverlay(font_filename=TEST_FONT_PATH)
@@ -60,87 +117,94 @@ def test_transcription_overlay_initialization(dummy_transcription):
     assert overlay.font_filename == TEST_FONT_PATH
 
 
-def test_transcription_overlay_apply_basic(dummy_video, dummy_transcription):
-    """Test basic application of TranscriptionOverlay to a video."""
-    overlay = TranscriptionOverlay(font_filename=TEST_FONT_PATH, font_size=20)
+def test_transcription_overlay_render_preserves_shape_and_audio(black_source, dummy_transcription, tmp_path):
+    """A subtitled render keeps dimensions, fps, frame count, and the audio track.
 
-    result_video = overlay.apply(video=dummy_video, transcription=dummy_transcription)
+    add_subtitles is a video-only libass filter, so the streamed output must
+    match a plain render of the same cut everywhere except the burned pixels.
+    """
+    op = {"op": "add_subtitles", "font_scale": 0.1, "font_filename": TEST_FONT_PATH}
+    subs = _render(_subtitles_plan(black_source, op), tmp_path, "subs.mp4", transcription=dummy_transcription)
+    plain = _render(_plain_plan(black_source), tmp_path, "plain.mp4")
 
-    # Check that the result is a Video object
-    assert isinstance(result_video, Video)
+    subs_meta, plain_meta = subs.metadata, plain.metadata
+    assert (subs_meta.width, subs_meta.height) == (plain_meta.width, plain_meta.height)
+    assert subs_meta.fps == plain_meta.fps
+    assert subs_meta.frame_count == plain_meta.frame_count
 
-    # Check that the video dimensions are preserved
-    assert result_video.frame_shape == dummy_video.frame_shape
-    assert result_video.fps == dummy_video.fps
-    assert len(result_video.frames) == len(dummy_video.frames)
-
-    # Check that audio is preserved
-    assert result_video.audio == dummy_video.audio
-
-
-def test_transcription_overlay_with_custom_settings(dummy_video, dummy_transcription):
-    """Test TranscriptionOverlay with custom text styling parameters."""
-    overlay = TranscriptionOverlay(
-        font_filename=TEST_FONT_PATH,
-        font_size=30,
-        text_color=(255, 0, 0),  # Red text
-        background_color=(0, 0, 0, 200),  # Black background with transparency
-        highlight_color=(0, 255, 0),  # Green highlight
-        position=(0.5, 0.8),
-        box_width=0.6,
-    )
-
-    result_video = overlay.apply(video=dummy_video, transcription=dummy_transcription)
-
-    # Check that the overlay was applied (video should still have same basic properties)
-    assert isinstance(result_video, Video)
-    assert result_video.frame_shape == dummy_video.frame_shape
-    assert len(result_video.frames) == len(dummy_video.frames)
+    # Audio passes through untouched (video-only filter).
+    assert subs.audio.metadata.duration_seconds == plain.audio.metadata.duration_seconds
+    assert subs.audio.metadata.sample_rate == plain.audio.metadata.sample_rate
 
 
-def test_transcription_overlay_no_background(dummy_video, dummy_transcription):
-    """Test TranscriptionOverlay with no background color."""
-    overlay = TranscriptionOverlay(font_filename=TEST_FONT_PATH, background_color=None)
+def test_transcription_overlay_with_custom_settings(black_source, dummy_transcription, tmp_path):
+    """Custom styling fields still render end-to-end and preserve dimensions."""
+    op = {
+        "op": "add_subtitles",
+        "font_filename": TEST_FONT_PATH,
+        "font_size": 30,
+        "text_color": [255, 0, 0],  # Red text
+        "background_color": [0, 0, 0, 200],  # Black background with transparency
+        "highlight_color": [0, 255, 0],  # Green highlight
+        "position": [0.5, 0.8],
+        "box_width": 0.6,
+    }
+    subs = _render(_subtitles_plan(black_source, op), tmp_path, "subs.mp4", transcription=dummy_transcription)
+    plain = _render(_plain_plan(black_source), tmp_path, "plain.mp4")
 
-    result_video = overlay.apply(video=dummy_video, transcription=dummy_transcription)
-
-    assert isinstance(result_video, Video)
-    assert len(result_video.frames) == len(dummy_video.frames)
-
-
-def test_transcription_overlay_frame_content_changes(dummy_video, dummy_transcription):
-    """Test that TranscriptionOverlay actually modifies frame content during active segments."""
-    overlay = TranscriptionOverlay(font_filename=TEST_FONT_PATH)
-
-    # apply() mutates frames in place (the Effect contract), so snapshot first.
-    original_frame_at_1s = dummy_video.frames[30].copy()  # 30fps * 1s = frame 30
-    original_frame_at_4s = dummy_video.frames[120].copy()  # 30fps * 4s = frame 120
-
-    result_video = overlay.apply(video=dummy_video, transcription=dummy_transcription)
-
-    # Frame at timestamp 1.0 should have text overlay (within first segment 0.0-1.8)
-    assert not np.array_equal(result_video.frames[30], original_frame_at_1s)
-
-    # Frame at timestamp 4.0 should be unchanged (no active segment)
-    assert np.array_equal(result_video.frames[120], original_frame_at_4s)
+    assert subs.frame_shape == plain.frame_shape
+    assert len(subs.frames) == len(plain.frames)
 
 
-def test_transcription_overlay_defaults_font_when_none(dummy_video, dummy_transcription):
+def test_transcription_overlay_no_background(black_source, dummy_transcription, tmp_path):
+    """A subtitle render with the background disabled still produces a full clip."""
+    op = {"op": "add_subtitles", "font_filename": TEST_FONT_PATH, "background_color": None}
+    subs = _render(_subtitles_plan(black_source, op), tmp_path, "subs.mp4", transcription=dummy_transcription)
+    plain = _render(_plain_plan(black_source), tmp_path, "plain.mp4")
+
+    assert len(subs.frames) == len(plain.frames)
+
+
+def test_transcription_overlay_frame_content_changes(black_source, early_cue_transcription, tmp_path):
+    """Active-segment frames gain subtitle pixels; an inactive frame does not.
+
+    The eager path could assert exact equality on in-memory black frames; the
+    streaming engine round-trips through x264, so this compares the subtitled
+    render against a plain render of the same cut with mean-abs-diff tolerances.
+    """
+    op = {"op": "add_subtitles", "font_scale": 0.1, "font_filename": TEST_FONT_PATH}
+    subs = _render(_subtitles_plan(black_source, op), tmp_path, "subs.mp4", transcription=early_cue_transcription)
+    plain = _render(_plain_plan(black_source), tmp_path, "plain.mp4")
+
+    fps = subs.fps
+    active = subs.frames[round(1.0 * fps)].astype(int) - plain.frames[round(1.0 * fps)].astype(int)
+    inactive = subs.frames[round(4.0 * fps)].astype(int) - plain.frames[round(4.0 * fps)].astype(int)
+
+    # Active frame (cue 0.0-1.8s): a meaningful fraction of pixels lit up.
+    assert (np.abs(active) > 50).mean() > _ACTIVE_PIXEL_FRACTION, "no subtitle pixels drawn on the active frame"
+    # Inactive frame (~4s, far from any cue): unchanged within codec noise.
+    assert np.abs(inactive).mean() < 1.0
+
+
+def test_transcription_overlay_defaults_font_when_none(black_source, early_cue_transcription, tmp_path):
     """font_filename is optional: None renders with the bundled default font."""
     overlay = TranscriptionOverlay(font_size=20)
+    assert overlay.font_filename is None  # construction default preserved
 
-    assert overlay.font_filename is None
+    # No font_filename in the op -> the bundled default font is used. A larger
+    # font_scale keeps the rendered pixels a robust signal through x264.
+    op = {"op": "add_subtitles", "font_scale": 0.14}
+    subs = _render(_subtitles_plan(black_source, op), tmp_path, "subs.mp4", transcription=early_cue_transcription)
+    plain = _render(_plain_plan(black_source), tmp_path, "plain.mp4")
 
-    # apply() mutates frames in place (the Effect contract), so snapshot first.
-    original_at_1s = dummy_video.frames[30].copy()
-    original_at_4s = dummy_video.frames[120].copy()
-
-    result_video = overlay.apply(video=dummy_video, transcription=dummy_transcription)
+    fps = subs.fps
+    active = subs.frames[round(1.0 * fps)].astype(int) - plain.frames[round(1.0 * fps)].astype(int)
+    inactive = subs.frames[round(4.0 * fps)].astype(int) - plain.frames[round(4.0 * fps)].astype(int)
 
     # Active segment (0.0-1.8): frame at 1s must be modified despite no font path.
-    assert not np.array_equal(result_video.frames[30], original_at_1s)
-    # Inactive region (~4s): frame unchanged.
-    assert np.array_equal(result_video.frames[120], original_at_4s)
+    assert (np.abs(active) > 50).mean() > _ACTIVE_PIXEL_FRACTION, "default font drew no subtitle pixels"
+    # Inactive region (~4s): unchanged within codec noise.
+    assert np.abs(inactive).mean() < 1.0
 
 
 def test_transcription_with_offset(dummy_transcription):
@@ -725,8 +789,14 @@ def test_overlay_normalization_defaults():
     assert overlay.capitalize is True
 
 
-def test_overlay_normalizes_long_lowercase_segment(dummy_video):
-    """A long lowercase single segment still renders end-to-end with defaults on."""
+def test_overlay_normalizes_long_lowercase_segment():
+    """Defaults chunk a long lowercase segment into cues and capitalize sentence starts.
+
+    The end-to-end render is dropped: the underlying transforms
+    (``chunk_segments`` / ``capitalize_sentences``) are exercised by their own
+    unit tests above, so this asserts the overlay's shared cue transform
+    (``_transform``) directly -- the exact data the libass compile path feeds.
+    """
     words = _lc_words(
         ("the", 0.0, 0.2),
         ("quick", 0.2, 0.4),
@@ -743,28 +813,26 @@ def test_overlay_normalizes_long_lowercase_segment(dummy_video):
             TranscriptionSegment(start=0.0, end=1.8, text="the quick brown fox jumps over the lazy dog", words=words)
         ]
     )
-    overlay = TranscriptionOverlay(font_filename=TEST_FONT_PATH, font_size=20)
+    overlay = TranscriptionOverlay(font_filename=TEST_FONT_PATH, font_size=20)  # defaults: 5 words/cue, capitalize
 
-    # apply() mutates frames in place (the Effect contract), so snapshot first.
-    original_at_1s = dummy_video.frames[30].copy()
-    original_at_4s = dummy_video.frames[120].copy()
+    result = overlay._transform(transcription)
 
-    result_video = overlay.apply(video=dummy_video, transcription=transcription)
-
-    assert isinstance(result_video, Video)
-    # Active region (~1s) is modified; inactive region (~4s) is untouched.
-    assert not np.array_equal(result_video.frames[30], original_at_1s)
-    assert np.array_equal(result_video.frames[120], original_at_4s)
+    # Chunked to <= 5 words/cue and the first word capitalized.
+    assert [s.text for s in result.segments] == ["The quick brown fox jumps", "over the lazy dog"]
+    assert all(len(s.words) <= overlay.max_words_per_cue for s in result.segments)
 
 
-def test_overlay_normalization_can_be_disabled(dummy_video, dummy_transcription):
-    """Disabling both knobs preserves source segmentation and casing without error."""
+def test_overlay_normalization_can_be_disabled(dummy_transcription):
+    """Disabling both knobs makes the cue transform an identity (source segmentation/casing kept)."""
     overlay = TranscriptionOverlay(font_filename=TEST_FONT_PATH, font_size=20, max_words_per_cue=None, capitalize=False)
 
-    result_video = overlay.apply(video=dummy_video, transcription=dummy_transcription)
+    result = overlay._transform(dummy_transcription)
 
-    assert isinstance(result_video, Video)
-    assert len(result_video.frames) == len(dummy_video.frames)
+    # No re-chunking and no re-casing: segments pass through verbatim.
+    assert [s.text for s in result.segments] == [s.text for s in dummy_transcription.segments]
+    assert [[w.word for w in s.words] for s in result.segments] == [
+        [w.word for w in s.words] for s in dummy_transcription.segments
+    ]
 
 
 def test_transcription_initialization_with_words():
