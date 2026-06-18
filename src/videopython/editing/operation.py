@@ -18,7 +18,6 @@ Subclass contract::
 
         op: Literal["resize"] = "resize"
         category: ClassVar[OpCategory] = OpCategory.TRANSFORM
-        streamable: ClassVar[bool] = True
 
         width: int | None = Field(None, gt=0)
         height: int | None = Field(None, gt=0)
@@ -234,8 +233,8 @@ class Operation(BaseModel):
 
     Concrete subclasses MUST declare an ``op`` field with a single-value
     ``Literal[str]`` annotation; that value is the discriminator on the JSON
-    wire and the registry key. Subclasses may override the ``category``,
-    ``streamable``, and ``requires`` ClassVars.
+    wire and the registry key. Subclasses may override the ``category`` and
+    ``requires`` ClassVars.
 
     ``predict_metadata`` defaults to identity; ``to_ffmpeg_filter`` defaults to
     ``None`` (no filter compilation).
@@ -246,7 +245,6 @@ class Operation(BaseModel):
     op: str
 
     category: ClassVar[OpCategory] = OpCategory.SPECIAL
-    streamable: ClassVar[bool] = False
     requires: ClassVar[tuple[str, ...]] = ()
     compiles_from_source: ClassVar[bool] = False
     """Whether the op's filter compile decodes the source itself (face_crop's
@@ -269,12 +267,11 @@ class Operation(BaseModel):
     """Whether this op is engine-internal and must NOT be a chain op.
 
     ``CutSeconds``/``CutFrames`` trim a segment, but trimming is the segment's own
-    ``start``/``end`` mechanism -- the engine constructs them directly. They are
-    non-streamable (no ffmpeg filter, no ``process_frame``), so to honor
-    "every registered op is streamable" they set this flag and are kept OUT of
-    the registry: they cannot appear in a plan's ``operations`` list or the LLM
+    ``start``/``end`` mechanism -- the engine constructs them directly. They have
+    no ffmpeg filter and no ``process_frame``, so this flag keeps them OUT of the
+    registry: they cannot appear in a plan's ``operations`` list or the LLM
     schema, while direct construction (``CutSeconds(start=..., end=...)``) still
-    works. Default False (a normal, streamable chain op)."""
+    works. Default False (a normal chain op)."""
     time_fields: ClassVar[tuple[BoundedTimeField, ...]] = ()
     """Time-valued (seconds) fields :meth:`VideoEdit.repair` may clamp into range.
 
@@ -449,6 +446,19 @@ class Operation(BaseModel):
         """
         return None
 
+    def streams(self) -> bool:
+        """Whether this op streams in O(1) memory at its plan position.
+
+        Structural replacement for the former ``streamable`` ClassVar: a transform
+        streams iff it overrides :meth:`to_ffmpeg_filter`. :class:`Effect` widens
+        this (a frame effect streams via ``process_frame``; a filter effect via
+        ``compiles_to_filter``). The one case structure cannot express -- the
+        override exists but the filter compiles to ``None`` at this position -- is
+        caught at runtime by the ``STREAMING_UNSUPPORTED`` raise in
+        ``VideoEdit._compile_streaming_plans``.
+        """
+        return type(self).to_ffmpeg_filter is not Operation.to_ffmpeg_filter
+
 
 class Effect(Operation):
     """Operation that preserves shape and frame count, driven by per-frame streaming.
@@ -470,17 +480,6 @@ class Effect(Operation):
     category: ClassVar[OpCategory] = OpCategory.EFFECT
     audio_coupled: ClassVar[bool] = False
     """Whether the effect mutates audio alongside pixels (``afade``/``volume``)."""
-    filter_needs_rgb24: ClassVar[bool] = False
-    """Whether :meth:`to_ffmpeg_filter` reads RGB pixel values and so needs the
-    decode chain converted to ``rgb24`` first.
-
-    ``geq``'s ``r``/``g``/``b`` accessors and ``rgbashift`` read RGB channels;
-    on the native yuv decode stream they read garbage. When a decode-stage
-    effect sets this, the plan builder prepends ``format=rgb24`` to the segment's
-    decode filter chain (encode-stage effects already receive rgb24 from the
-    frame pipe). Default False -- geometry/overlay filters (``hflip``,
-    ``subtitles=``) work in any pixel format. Mirrors the rgb24 frames the numpy
-    ``process_frame`` twin operated on."""
 
     window: TimeRange | None = Field(
         None,
@@ -527,3 +526,14 @@ class Effect(Operation):
         ``frame_index`` is 0-based within this effect's active window.
         """
         raise NotImplementedError(f"{type(self).__name__} does not support streaming")
+
+    def streams(self) -> bool:
+        """An effect streams via per-frame Python (``process_frame``) or a filter.
+
+        Frame effects override :meth:`process_frame`; filter effects
+        (``add_subtitles``, ``vignette``, ...) instead set
+        :attr:`compiles_to_filter` and implement :meth:`to_ffmpeg_filter`.
+        ``add_subtitles`` streams *only* via the filter path (it does not override
+        ``process_frame``), so ``compiles_to_filter`` is consulted per-instance.
+        """
+        return type(self).process_frame is not Effect.process_frame or self.compiles_to_filter

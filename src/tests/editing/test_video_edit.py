@@ -1117,11 +1117,11 @@ class TestStreamingRequiresGuard:
         )
         seg = plan.segments[0]
         assert plan._build_streaming_plan(seg, None, None, None) is not None
-        # A context-requiring transform streams when its compile can consume
-        # the context (silence_removal); without a streaming strategy it
-        # still defers to eager.
+        # A context-requiring transform streams when its compile can consume the
+        # context (silence_removal); when its filter compiles to None at this
+        # position the builder returns None (the drift the runtime guard catches).
         monkeypatch.setattr(Resize, "requires", ("transcription",))
-        monkeypatch.setattr(Resize, "streamable", False)
+        monkeypatch.setattr(Resize, "to_ffmpeg_filter", lambda self, ctx: None)
         assert plan._build_streaming_plan(seg, None, None, None) is None
 
     def test_requires_effect_builds_plan_with_rebased_context(self):

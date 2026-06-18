@@ -12,22 +12,19 @@ from videopython.editing.effects import Effect
 from videopython.editing.operation import Operation
 
 
-def test_streamable_flag_matches_filter_compilation_including_ai_ops():
-    """Every registered transform must declare ``streamable`` coherently.
+def test_every_registered_op_streams_structurally_including_ai_ops():
+    """Every registered op (incl. ai) is streamable by structure.
 
-    Both ``analyze_streamability`` and ``_build_streaming_plan`` treat the
-    ``streamable`` ClassVar as authoritative, but a flag-True transform
-    without a working ``to_ffmpeg_filter`` only fails at runtime (the
-    strict-mode drift guard), and a flag-False transform with one carries
-    dead filter code.
+    The ``streamable`` ClassVar is gone; an op streams iff it overrides
+    ``to_ffmpeg_filter`` (a filter op) or ``process_frame`` (a frame effect).
+    ``face_crop`` streams via ``to_ffmpeg_filter``; ``object_detection_overlay``
+    via ``process_frame``.
     """
     assert "face_crop" in Operation._registry
     assert "object_detection_overlay" in Operation._registry
     for op_id, cls in Operation._registry.items():
-        if issubclass(cls, Effect):
-            continue
+        if not cls.__module__.startswith("videopython"):
+            continue  # skip test-defined stub ops that pollute the global registry
         overrides_filter = cls.to_ffmpeg_filter is not Operation.to_ffmpeg_filter
-        assert overrides_filter == cls.streamable, (
-            f"op '{op_id}': streamable={cls.streamable} but "
-            f"{'overrides' if overrides_filter else 'does not override'} to_ffmpeg_filter"
-        )
+        overrides_pf = issubclass(cls, Effect) and cls.process_frame is not Effect.process_frame
+        assert overrides_filter or overrides_pf, f"op '{op_id}' streams via neither path"

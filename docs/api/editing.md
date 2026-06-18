@@ -92,24 +92,27 @@ time) regardless of video length.
 Each operation is one of two kinds:
 
 - a **filter** — compiles to a native ffmpeg filter (`op.to_ffmpeg_filter(ctx)`).
-  All transforms (`resize`, `crop`, `resample_fps`, the duration-changing
+  This is reserved for ops ffmpeg does that numpy can't (or can't do as well):
+  all transforms (`resize`, `crop`, `resample_fps`, the duration-changing
   `speed_change`/`freeze_frame`, the transcription-consuming `silence_removal`,
-  and `face_crop` from the ai extra) and most effects (`add_subtitles`,
-  `vignette`, `color_adjust`, `chromatic_aberration`, `kaleidoscope`,
-  `mirror_flip`, `sharpen`, `text_overlay`, `zoom`, monochrome `film_grain`).
+  and `face_crop` from the ai extra), and the two text-rendering effects
+  `text_overlay` (drawtext) and `add_subtitles` (libass).
 - a **per-frame effect** — shape-preserving Python over each decoded frame
-  (`streaming_init` + `process_frame`). The effects with no faithful ffmpeg form
-  (`blur`, `glitch`, `pixelate`, `ken_burns`, `punch_in`, `shake`, `flash`, the
-  image overlays) stay here.
+  (`streaming_init` + `process_frame`). **Every pixel effect** lives here:
+  `blur`, `sharpen`, `zoom`, `film_grain`, `chromatic_aberration`, `mirror_flip`,
+  `vignette`, `color_adjust`, `kaleidoscope`, `shake`, `flash`, `glitch`,
+  `pixelate`, `ken_burns`, `punch_in`, and the image overlays. These run
+  vectorised numpy/cv2 — benchmarks showed the native-filter equivalents were at
+  best ~1.1–1.4x faster (the win came from skipping the rawvideo round-trip, not
+  faster math) and in some cases slower (`gblur`), so the per-frame path is kept
+  for its simplicity and exact output.
 
 A segment whose ops are all filters renders in a **single ffmpeg invocation** —
 no rawvideo round-trip, no Python loop. A per-frame effect switches that segment
 to the decode → Python → encode pipeline, where filters before the effect join
 the decode chain and filters after it the encode chain (so `[fade, add_subtitles]`
 streams). Duration-changing transforms fold their predicted metadata through the
-chain, so later effect windows and the audio follow the new timeline. An effect
-whose filter reads RGB pixels (`geq`/`rgbashift`) sets `filter_needs_rgb24` so the
-decode chain is converted to `rgb24` first.
+chain, so later effect windows and the audio follow the new timeline.
 
 `post_operations` run as a second pass over the assembled program, so any op —
 filter, effect, or transform — applies to the whole concatenated timeline.

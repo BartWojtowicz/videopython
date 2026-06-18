@@ -119,36 +119,38 @@ def test_effect_window(render):
     assert in_diff > pre_diff * 3, f"in-window frame not blurred: in={in_diff}, pre={pre_diff}"
 
 
-def test_filter_effect_matches_numpy_in_pipeline(render):
-    """A migrated filter-effect renders through ``run_to_file`` faithfully.
+def test_frame_effect_matches_numpy_in_pipeline(render):
+    """A per-frame effect renders through ``run_to_file`` faithfully.
 
-    ``vignette`` compiles to a ``geq`` whose ``r``/``g``/``b`` accessors read
-    garbage on the native yuv decode stream, so the builder must convert to
-    ``rgb24`` first (``filter_needs_rgb24``). This renders the effect end-to-end
-    and asserts it tracks its numpy ``process_frame`` twin within an x264
-    tolerance -- a guard a standalone PNG check (rgb in, rgb out) cannot give.
+    Pixel effects run as numpy ``process_frame`` over the decoded rawvideo stream
+    (the engine no longer compiles them to ffmpeg filters). This renders
+    ``chromatic_aberration`` end-to-end and asserts it tracks its standalone numpy
+    ``process_frame`` twin within an x264 tolerance -- a guard that the decode ->
+    Python -> encode pipeline feeds the effect the right frames and order.
     """
     seg = {"source": SMALL_VIDEO_PATH, "start": 0.0, "end": 2.0}
     base = render(VideoEdit.from_dict({"segments": [{**seg, "operations": []}]}), name="base.mp4")
-    vig = render(
-        VideoEdit.from_dict({"segments": [{**seg, "operations": [{"op": "vignette", "strength": 0.5}]}]}),
-        name="vig.mp4",
+    out = render(
+        VideoEdit.from_dict(
+            {"segments": [{**seg, "operations": [{"op": "chromatic_aberration", "shift_px": 4, "mode": "horizontal"}]}]}
+        ),
+        name="chromatic.mp4",
     )
-    eff = Vignette(strength=0.5)
+    eff = ChromaticAberration(shift_px=4, mode="horizontal")
     n, h, w = base.frames.shape[:3]
     eff.streaming_init(n, base.fps, w, h)
     ref = np.stack([eff.process_frame(base.frames[i].copy(), i) for i in range(n)])
-    m = min(len(ref), len(vig.frames))
-    mean_diff = np.abs(ref[:m].astype(int) - vig.frames[:m].astype(int)).mean()
-    assert mean_diff < 6, f"vignette filter diverges from its numpy twin in-pipeline: mean={mean_diff}"
+    m = min(len(ref), len(out.frames))
+    mean_diff = np.abs(ref[:m].astype(int) - out.frames[:m].astype(int)).mean()
+    assert mean_diff < 6, f"chromatic_aberration diverges from its numpy twin in-pipeline: mean={mean_diff}"
 
 
-def test_zoom_filter_preserves_frame_count(render):
-    """zoom compiles to ``zoompan``, which reinterprets PTS at its own framerate.
+def test_zoom_preserves_frame_count(render):
+    """zoom is a per-frame effect, so it must preserve the cut's frame count.
 
-    The trailing ``setpts=N/(fps*TB)`` is load-bearing: without it the
-    decode-stage ``fps=`` resampler multiplies the frame count (a 48-frame cut
-    rendered as tens of thousands of frames). Guards that exact regression.
+    A 2s cut at 24fps is 48 frames; rendering a zoom over it must return ~48
+    frames (effects are shape- and count-preserving). Guards against a regression
+    where a zoom resamples or duplicates frames through the pipeline.
     """
     out = render(
         VideoEdit.from_dict(

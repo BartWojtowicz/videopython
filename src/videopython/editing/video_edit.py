@@ -1954,9 +1954,9 @@ class VideoEdit(BaseModel):
 
         The single admission point for :meth:`run_to_file`. Unstreamable shapes raise
         :class:`PlanValidationError` with the streamability report's
-        structured errors; a builder/report drift (e.g. a third-party
-        transform whose ``streamable`` flag does not match its
-        ``to_ffmpeg_filter``) raises with a generic ``STREAMING_UNSUPPORTED``.
+        structured errors; a builder/report drift (e.g. an op whose
+        ``to_ffmpeg_filter`` returns ``None`` at its plan position despite
+        overriding it) raises with a generic ``STREAMING_UNSUPPORTED``.
         On raise, any compile-time temp files already created are deleted;
         on success the caller owns ``plan.owned_temp_files``.
         """
@@ -2073,7 +2073,6 @@ class VideoEdit(BaseModel):
         post_af_filters: list[str] = []
         audio_idx = 0
         duration_changed = False
-        decode_needs_rgb = False
 
         def compile_audio_twin(op: Operation, ctx: FilterCtx, encode_stage: bool) -> None:
             """Append the op's audio-domain filter at the same stage the video
@@ -2100,7 +2099,7 @@ class VideoEdit(BaseModel):
         try:
             for op in segment.operations:
                 if isinstance(op, Effect):
-                    if not op.streamable:
+                    if not op.streams():
                         abandon()
                         return None
                     if op.requires and duration_changed:
@@ -2129,7 +2128,6 @@ class VideoEdit(BaseModel):
                                 post_vf_filters.append(filter_expr)
                             else:
                                 vf_filters.append(filter_expr)
-                                decode_needs_rgb = decode_needs_rgb or op.filter_needs_rgb24
                             # Audio twin at the same stage (add_subtitles has
                             # none today; kept coupled for extensibility).
                             compile_audio_twin(op, ctx, encode_stage_effect)
@@ -2155,7 +2153,7 @@ class VideoEdit(BaseModel):
                     effect_ctx = make_ctx()
                     compile_audio_twin(op, effect_ctx, encode_stage=False)
                     continue
-                if op.requires and (duration_changed or not op.streamable):
+                if op.requires and (duration_changed or not op.streams()):
                     # A context-requiring transform can stream only when its
                     # filter compile can consume the context (silence_removal
                     # does, via FilterCtx.context) -- but not after a
@@ -2165,15 +2163,13 @@ class VideoEdit(BaseModel):
                     # streamability report.
                     abandon()
                     return None
-                # Non-effect transform: compile to ffmpeg filter if streamable.
-                # The `streamable` flag is the authoritative declaration -- checked
-                # first so the streamability report (which classifies by the flag)
-                # can never disagree with the builder in this direction: a
-                # flag-False transform is classified UNSTREAMABLE even if it has
-                # a working to_ffmpeg_filter. The remaining drift class (flag
-                # True, filter compiles to None) is caught by the
-                # STREAMING_UNSUPPORTED raise in _compile_streaming_plans.
-                if not op.streamable:
+                # Non-effect transform: streams iff it compiles a filter. Checked
+                # structurally (op.streams() == overrides to_ffmpeg_filter) so the
+                # streamability report and the builder cannot disagree; the
+                # remaining drift class (overrides to_ffmpeg_filter but it compiles
+                # to None here) is caught by the STREAMING_UNSUPPORTED raise in
+                # _compile_streaming_plans.
+                if not op.streams():
                     abandon()
                     return None
                 encode_stage = bool(effect_schedule or post_vf_filters)
@@ -2212,14 +2208,6 @@ class VideoEdit(BaseModel):
             # crop exceeding source) must not leak earlier ops' temp files.
             abandon()
             raise
-
-        # A decode-stage filter-effect that reads RGB (geq r/g/b, rgbashift)
-        # must see rgb24, not the native yuv decode stream; prepend one
-        # conversion ahead of the whole decode chain (encode-stage effects
-        # already receive rgb24 from the frame pipe). Idempotent: only when an
-        # rgb-reading effect landed at decode and no conversion leads already.
-        if decode_needs_rgb and not (vf_filters and vf_filters[0] == "format=rgb24"):
-            vf_filters.insert(0, "format=rgb24")
 
         pipe = pipe_meta or running
         # Final output duration after every transform (decode + encode stage),
