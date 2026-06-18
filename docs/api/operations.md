@@ -29,7 +29,6 @@ class Resize(Operation):
 
     op: Literal["resize"] = "resize"            # discriminator + registry key
     category: ClassVar[OpCategory] = OpCategory.TRANSFORM
-    streamable: ClassVar[bool] = True
 
     width: int | None = Field(None, gt=0)
     height: int | None = Field(None, gt=0)
@@ -58,11 +57,11 @@ Notes:
   into the JSON wire as the discriminator and is also the registry key.
 - `category` is `OpCategory.TRANSFORM`, `OpCategory.EFFECT`, or
   `OpCategory.SPECIAL`.
-- `streamable: ClassVar[bool] = True` lets `VideoEdit.run_to_file()`
-  treat this op as streaming-compatible. Transforms implement
-  `to_ffmpeg_filter`; effects implement either `process_frame` +
+- Every registered op is streamable, decided structurally by `op.streams()`
+  (there is no `streamable` flag): a transform streams iff it implements
+  `to_ffmpeg_filter`; an effect iff it implements `process_frame` +
   `streaming_init` (a frame effect) or `to_ffmpeg_filter` + `compiles_to_filter`
-  (a filter effect). Every registered op is streamable.
+  (a filter effect).
 - `internal_only: ClassVar[bool] = False`, when `True`, keeps an op OUT of the
   registry — constructed directly by the engine, never a chain op. `cut`/
   `cut_frames` use it, since trimming is the segment's own `start`/`end`.
@@ -85,7 +84,6 @@ frames outside the window untouched. A frame effect implements the
 ```python
 class Glitch(Effect):  # a frame effect: no faithful ffmpeg form
     op: Literal["glitch"] = "glitch"
-    streamable: ClassVar[bool] = True
     # ... fields ...
 
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray: ...
@@ -97,15 +95,15 @@ The `window` field on the wire:
 {"op": "blur_effect", "mode": "constant", "iterations": 2, "window": {"start": 1.0, "stop": 3.0}}
 ```
 
-Most effects instead compile to a native ffmpeg filter (faster, no per-frame
+The two text-rendering effects instead compile to a native filter (no per-frame
 Python) by setting the `compiles_to_filter` property and implementing
-`to_ffmpeg_filter`: `add_subtitles`, `vignette`, `color_adjust`,
-`chromatic_aberration`, `kaleidoscope`, `mirror_flip`, `sharpen`, `text_overlay`,
-`zoom`, and monochrome `film_grain`. Audio-coupled effects (`Fade`,
-`VolumeAdjust`) add `to_ffmpeg_audio_filter`; an effect whose filter reads RGB
-(`geq`/`rgbashift`) sets `filter_needs_rgb24` so the decode chain is converted to
-`rgb24` first. `compiles_to_filter` may depend on field values — a windowed
-`sharpen`/`zoom` or a per-channel `film_grain` stays a frame effect.
+`to_ffmpeg_filter`: `add_subtitles` (libass `subtitles=`) and `text_overlay`
+(drawtext). Audio-coupled effects (`Fade`, `VolumeAdjust`) add
+`to_ffmpeg_audio_filter` for their audio twin while their video runs per-frame.
+Every other (pixel) effect runs vectorised numpy/cv2 in `process_frame`:
+benchmarks showed compiling them to ffmpeg filters bought at best ~1.1–1.4x (from
+skipping the rawvideo round-trip, not faster compute) and sometimes lost, so the
+engine reserves filters for geometry/timing transforms and text rendering.
 
 ## Registry API
 

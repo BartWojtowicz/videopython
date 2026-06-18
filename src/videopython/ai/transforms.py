@@ -44,7 +44,6 @@ class FaceTrackingCrop(Operation):
 
     op: Literal["face_crop"] = "face_crop"
     category: ClassVar[OpCategory] = OpCategory.TRANSFORM
-    streamable: ClassVar[bool] = True
     compiles_from_source: ClassVar[bool] = True
 
     target_aspect: tuple[int, int] = Field((9, 16), description="Output aspect ratio as (width, height).")

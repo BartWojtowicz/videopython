@@ -146,7 +146,6 @@ class Resize(Operation):
 
     op: Literal["resize"] = "resize"
     category: ClassVar[OpCategory] = OpCategory.TRANSFORM
-    streamable: ClassVar[bool] = True
 
     width: int | None = Field(None, gt=0, description="Target width in pixels, or None to maintain aspect ratio.")
     height: int | None = Field(None, gt=0, description="Target height in pixels, or None to maintain aspect ratio.")
@@ -187,7 +186,6 @@ class ResampleFPS(Operation):
 
     op: Literal["resample_fps"] = "resample_fps"
     category: ClassVar[OpCategory] = OpCategory.TRANSFORM
-    streamable: ClassVar[bool] = True
 
     fps: float = Field(gt=0, description="Target frames per second.")
 
@@ -212,7 +210,6 @@ class Crop(Operation):
 
     op: Literal["crop"] = "crop"
     category: ClassVar[OpCategory] = OpCategory.TRANSFORM
-    streamable: ClassVar[bool] = True
 
     width: int | float = Field(description="Crop width in pixels (int) or fraction in (0, 1] of source width.")
     height: int | float = Field(description="Crop height in pixels (int) or fraction in (0, 1] of source height.")
@@ -280,7 +277,6 @@ class SpeedChange(Operation):
 
     op: Literal["speed_change"] = "speed_change"
     category: ClassVar[OpCategory] = OpCategory.TRANSFORM
-    streamable: ClassVar[bool] = True
     changes_duration: ClassVar[bool] = True
 
     speed: float = Field(gt=0, description="Playback speed multiplier. 2.0 = twice as fast, 0.5 = half speed.")
@@ -385,7 +381,6 @@ class FreezeFrame(Operation):
 
     op: Literal["freeze_frame"] = "freeze_frame"
     category: ClassVar[OpCategory] = OpCategory.TRANSFORM
-    streamable: ClassVar[bool] = True
     changes_duration: ClassVar[bool] = True
     # `timestamp` indexes a frame, so it must be strictly < the clip duration;
     # repair clamps an out-of-range value to the last frame.
@@ -510,7 +505,6 @@ class SilenceRemoval(Operation):
 
     op: Literal["silence_removal"] = "silence_removal"
     category: ClassVar[OpCategory] = OpCategory.TRANSFORM
-    streamable: ClassVar[bool] = True
     changes_duration: ClassVar[bool] = True
     requires: ClassVar[tuple[str, ...]] = ("transcription",)
 

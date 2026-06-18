@@ -1,5 +1,74 @@
 # Release Notes
 
+## 0.47.0
+
+Pixel effects go back to numpy. After 0.46.0 migrated nine effects to native
+ffmpeg filters, benchmarks showed the migrations were not worth it: ffmpeg only
+beat the vectorised numpy/cv2 `process_frame` by ~1.1–1.4x (and that gain was
+from skipping the rawvideo round-trip, not faster compute), some were *slower*
+(`gblur`), and the `geq`-based ones were catastrophic. So the engine now reserves
+ffmpeg filters for what numpy can't do well — geometry/timing transforms and text
+rendering — and runs every pixel effect per-frame. No wire-format change; every
+op remains streamable.
+
+### Every pixel effect runs per-frame numpy again
+
+The benchmark (1080×1920, ~390 frames) was decisive: decode + encode dominate
+every render (~6s, paid by both paths), pure numpy compute is tiny (<1s for most
+effects), and the rawvideo round-trip a per-frame effect adds is only ~0.8s. So
+the per-effect filter win was marginal at best:
+
+| effect | filter (ffmpeg) | frame (numpy) | filter speedup |
+|---|---|---|---|
+| `blur` (gblur) | 12–15s | 7.3s | **0.6x (slower)** |
+| `sharpen` (unsharp) | 7.6s | 8.1s | 1.07x |
+| `zoom` (zoompan) | 6.5s | 7.6s | 1.17x |
+| `film_grain` (noise) | 27.8s | 31.9s | 1.15x |
+| `chromatic` h/v (rgbashift) | 6.4s | 8.7s | 1.36x |
+| `mirror` h/v (hflip) | 6.1s | 8.0s | 1.31x |
+
+Every pixel effect is now a per-frame `process_frame` numpy/cv2 implementation:
+`blur`, `sharpen`, `zoom`, `film_grain`, `chromatic_aberration`, `mirror_flip`,
+`vignette`, `color_adjust`, `kaleidoscope`, `shake`, `flash`, `glitch`,
+`pixelate`, `ken_burns`, `punch_in`, and the image overlays. Output is bit-identical
+to the pre-0.46.0 numpy path (no re-baseline). The only effects that still compile
+to ffmpeg filters are the two with no good numpy form: `text_overlay` (drawtext)
+and `add_subtitles` (libass). Transforms (`resize`, `crop`, `resample_fps`,
+`speed_change`, `freeze_frame`, `silence_removal`, `face_crop`) are unchanged —
+they stay native filters and an all-transform segment still renders in a single
+ffmpeg invocation.
+
+Relative to 0.46.0, the streamability *class* of every migrated pixel effect moves
+from `filter` back to `frame_effect` (all remain streamable); consumers gating on
+`edit.streamability()` should expect that reclassification.
+
+### Removed the `filter_needs_rgb24` mechanism (internal)
+
+Only the `geq`/`rgbashift`/`gblur` filters read RGB and needed the decode chain
+converted to `rgb24` first; with every pixel effect back on numpy, no effect sets
+`filter_needs_rgb24`. The `Effect.filter_needs_rgb24` ClassVar and the plan
+builder's `format=rgb24` prepend are removed. (The single-invocation fast path's
+own rgb24 round-trip — which mirrors the framewise encoder for byte-parity — is
+unrelated and stays.)
+
+### Removed the `streamable` ClassVar (internal)
+
+Every registered op is streamable, so the `streamable` flag was redundant. It is
+replaced by `Operation.streams()` — a transform streams iff it overrides
+`to_ffmpeg_filter`; an effect iff it overrides `process_frame` or sets
+`compiles_to_filter`. The classifier and plan builder now decide structurally,
+so the report and the builder cannot disagree (the residual "filter compiles to
+None at this position" case is still caught by the runtime drift guard). A custom
+`Operation`/`Effect` subclass no longer declares `streamable`; it streams by
+implementing one of those methods.
+
+### Removed dead post-op-fold machinery (internal)
+
+`EffectScheduleEntry.index_offset` / `total_effect_frames` were only set by the
+per-segment post-op fold removed in 0.46.0 (post-ops now run as a pass over the
+assembled program), so they always took their defaults. Dropped, with the
+framewise loop and a stale docstring simplified accordingly.
+
 ## 0.46.0
 
 A faster, single-mechanism editing engine. Filter-only segments render in one

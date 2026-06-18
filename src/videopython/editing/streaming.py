@@ -110,11 +110,12 @@ def _classify_op_list(ops: Sequence[Operation], location_prefix: str) -> list[Op
     ``location_prefix`` is the plan path entries are stamped under
     (``segments[i].operations`` or ``post_operations``).
 
-    ``streamable`` is the authoritative declaration (a flag-False transform
-    never streams, even with a working ``to_ffmpeg_filter``); the one divergence
-    the flag cannot express -- flag True but the filter compiles to ``None`` --
-    is caught at runtime by the ``STREAMING_UNSUPPORTED`` raise in
-    ``_compile_streaming_plans``. Purely structural: no disk access, no context.
+    A transform streams iff it overrides ``to_ffmpeg_filter`` and an effect iff it
+    overrides ``process_frame`` or sets ``compiles_to_filter`` (``op.streams()``);
+    the one divergence structure cannot express -- the override exists but the
+    filter compiles to ``None`` at this position -- is caught at runtime by the
+    ``STREAMING_UNSUPPORTED`` raise in ``_compile_streaming_plans``. Purely
+    structural: no disk access, no context.
     """
     entries: list[OpStreamability] = []
     seen_effect = False
@@ -123,7 +124,7 @@ def _classify_op_list(ops: Sequence[Operation], location_prefix: str) -> list[Op
     for j, op in enumerate(ops):
         location = f"{location_prefix}[{j}]"
         if isinstance(op, Effect):
-            if op.streamable and op.requires and seen_duration_change:
+            if op.requires and seen_duration_change:
                 # The builder rejects context-consuming ops behind a
                 # duration-changing transform: segment-local context is
                 # not re-mapped through the time warp yet.
@@ -140,7 +141,7 @@ def _classify_op_list(ops: Sequence[Operation], location_prefix: str) -> list[Op
                     )
                 )
                 continue
-            if op.streamable and op.compiles_to_filter:
+            if op.compiles_to_filter:
                 # Filter-class effect (add_subtitles, vignette, ...): joins the
                 # decode filter chain at this plan position -- or the encode
                 # chain when frame effects precede it -- so it streams in plan
@@ -150,13 +151,16 @@ def _classify_op_list(ops: Sequence[Operation], location_prefix: str) -> list[Op
                 if seen_effect:
                     seen_encode_stage = True
                 continue
-            if not op.streamable:
+            if not op.streams():
+                # Defensive: a custom Effect that overrides neither process_frame
+                # nor to_ffmpeg_filter (no built-in op does). compiles_to_filter
+                # was handled above, so this is "no process_frame".
                 entries.append(
                     OpStreamability(
                         location,
                         op.op,
                         StreamingClass.UNSTREAMABLE,
-                        reason="effect has no streaming implementation (streamable=False)",
+                        reason="effect has no streaming implementation (no process_frame or to_ffmpeg_filter)",
                     )
                 )
             elif seen_encode_stage:
@@ -189,7 +193,7 @@ def _classify_op_list(ops: Sequence[Operation], location_prefix: str) -> list[Op
                     ),
                 )
             )
-        elif op.requires and not op.streamable:
+        elif op.requires and not op.streams():
             entries.append(
                 OpStreamability(
                     location,
@@ -198,7 +202,7 @@ def _classify_op_list(ops: Sequence[Operation], location_prefix: str) -> list[Op
                     reason=(f"transform requires runtime context {sorted(op.requires)} and has no streaming strategy"),
                 )
             )
-        elif op.streamable and op.compiles_from_source and (seen_effect or seen_encode_stage):
+        elif op.streams() and op.compiles_from_source and (seen_effect or seen_encode_stage):
             entries.append(
                 OpStreamability(
                     location,
@@ -210,7 +214,7 @@ def _classify_op_list(ops: Sequence[Operation], location_prefix: str) -> list[Op
                     ),
                 )
             )
-        elif op.streamable:
+        elif op.streams():
             # Transforms compile to filters at any plan position: the decode
             # chain normally, the encode chain (after every process_frame) when
             # frame effects precede them.
@@ -269,22 +273,12 @@ class EffectScheduleEntry:
     re-based onto the segment-local timeline by the plan builder), forwarded
     as keyword arguments to ``streaming_init``. Empty for context-free
     effects.
-
-    For a post-operation folded across a multi-segment plan, the effect's
-    window lives on the assembled (concatenated) timeline: ``index_offset``
-    is the number of window frames consumed by previous segments (so
-    ``process_frame`` indices continue across the concat boundary) and
-    ``total_effect_frames`` is the global window length ``streaming_init``
-    must size envelopes to. Defaults describe the ordinary segment-local
-    case.
     """
 
     effect: Effect
     start_frame: int
     end_frame: int  # exclusive
     context: dict[str, Any] = field(default_factory=dict)
-    index_offset: int = 0
-    total_effect_frames: int | None = None
 
 
 @dataclass
@@ -751,9 +745,7 @@ def _stream_segment_framewise(
     # so a context-requiring effect with missing context fails before any
     # frame work on this segment.
     for entry in plan.effect_schedule:
-        n_effect_frames = (
-            entry.total_effect_frames if entry.total_effect_frames is not None else entry.end_frame - entry.start_frame
-        )
+        n_effect_frames = entry.end_frame - entry.start_frame
         entry.effect.streaming_init(
             n_effect_frames, plan.output_fps, plan.output_width, plan.output_height, **entry.context
         )
@@ -794,7 +786,7 @@ def _stream_segment_framewise(
                         # sized to the estimate stay in bounds.
                         open_ended = entry.end_frame >= total_frames
                         if entry.start_frame <= frame_count and (frame_count < entry.end_frame or open_ended):
-                            local_index = entry.index_offset + min(frame_count, entry.end_frame - 1) - entry.start_frame
+                            local_index = min(frame_count, entry.end_frame - 1) - entry.start_frame
                             frame = entry.effect.process_frame(frame, local_index)
 
                     encoder.write_frame(frame)

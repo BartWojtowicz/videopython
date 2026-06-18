@@ -102,10 +102,12 @@ class TestStreamabilityReport:
 
         class _NoFilterTransform:
             op = "fake_transform"
-            streamable = False
             requires: tuple[str, ...] = ()
             compiles_from_source = False
             changes_duration = False
+
+            def streams(self) -> bool:
+                return False
 
         entries = _classify_op_list([_NoFilterTransform()], "segments[0].operations")
         (entry,) = entries
@@ -113,12 +115,14 @@ class TestStreamabilityReport:
         assert entry.reason is not None and "no ffmpeg filter" in entry.reason
 
     def test_non_streamable_effect_is_unstreamable(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setattr(Fade, "streamable", False)
+        # Defensive: an effect that streams via neither path is flagged. No
+        # built-in effect is like this, so simulate by forcing streams() False.
+        monkeypatch.setattr(Fade, "streams", lambda self: False)
         report = _plan([FADE]).streamability()
 
         (entry,) = report.entries
         assert entry.streaming_class is StreamingClass.UNSTREAMABLE
-        assert entry.reason is not None and "streamable=False" in entry.reason
+        assert entry.reason is not None and "no streaming implementation" in entry.reason
 
     def test_post_op_effect_on_single_segment_streams(self):
         report = _plan([], post_operations=[FADE]).streamability()
@@ -196,8 +200,8 @@ class TestTransitionStreamability:
 
     def test_post_op_with_transition_streams(self):
         # A post-op runs over the assembled program AFTER the transition is
-        # baked, so the combination streams (the blur post-op is FRAME_EFFECT).
-        plan = self._transition_plan(post_operations=[{"op": "blur_effect", "mode": "constant", "iterations": 5}])
+        # baked, so the combination streams (glitch is a frame-effect post-op).
+        plan = self._transition_plan(post_operations=[{"op": "glitch"}])
         report = plan.streamability()
         (entry,) = report.entries
         assert entry.streaming_class is StreamingClass.FRAME_EFFECT
@@ -205,25 +209,27 @@ class TestTransitionStreamability:
 
 
 class TestRegistryAlignment:
-    def test_streamable_flag_matches_filter_compilation(self):
-        """Every registered transform must declare ``streamable`` coherently.
-
-        Both the report and the plan builder treat the ``streamable`` ClassVar
-        as authoritative, but a flag-True transform without a working
-        ``to_ffmpeg_filter`` only fails at runtime (the strict-mode drift
-        guard), and a flag-False transform with one carries dead filter code.
-        This covers ops registered by the editing layer; a twin test under
-        ``src/tests/ai`` covers the ai layer, which this suite must not
+    def test_every_registered_op_streams_structurally(self):
+        """Every registered op is streamable by structure (the ``streamable``
+        ClassVar is gone): it overrides ``to_ffmpeg_filter`` (a filter op) or
+        ``process_frame`` (a frame effect). Covers the editing layer; a twin test
+        under ``src/tests/ai`` covers the ai layer, which this suite must not
         import.
         """
         for op_id, cls in Operation._registry.items():
-            if issubclass(cls, Effect):
-                continue
+            if not cls.__module__.startswith("videopython"):
+                continue  # skip test-defined stub ops that pollute the global registry
             overrides_filter = cls.to_ffmpeg_filter is not Operation.to_ffmpeg_filter
-            assert overrides_filter == cls.streamable, (
-                f"op '{op_id}': streamable={cls.streamable} but "
-                f"{'overrides' if overrides_filter else 'does not override'} to_ffmpeg_filter"
-            )
+            overrides_pf = issubclass(cls, Effect) and cls.process_frame is not Effect.process_frame
+            assert overrides_filter or overrides_pf, f"op '{op_id}' streams via neither path"
+
+    def test_add_subtitles_streams_via_filter_only(self):
+        # The one op that streams purely via compiles_to_filter (no process_frame
+        # override) -- the reason Effect.streams() must consult compiles_to_filter.
+        from videopython.editing.transcription_overlay import TranscriptionOverlay
+
+        assert TranscriptionOverlay.process_frame is Effect.process_frame
+        assert TranscriptionOverlay(font_scale=0.1).streams()
 
     def test_cut_ops_are_internal_only(self):
         """cut/cut_frames trim via the segment's own start/end, so they are kept
@@ -296,21 +302,11 @@ class TestRunToFileRejection:
         assert err.op == "glitch"
 
     def test_builder_drift_raises_instead_of_silent_fallback(self, tmp_path, monkeypatch: pytest.MonkeyPatch):
-        """A streamable-flagged transform that fails to compile must not slip through."""
+        """A transform whose ``to_ffmpeg_filter`` compiles to ``None`` at its plan
+        position must not slip through: the structural report says FILTER but the
+        build finds ``None``, and the drift raise catches it."""
         monkeypatch.setattr(Resize, "to_ffmpeg_filter", lambda self, ctx: None)
         plan = _plan([RESIZE])
 
         with pytest.raises(PlanValidationError, match="despite a clean streamability report"):
-            plan.run_to_file(tmp_path / "out.mp4")
-
-    def test_flag_false_transform_is_rejected_even_with_working_filter(self, tmp_path, monkeypatch: pytest.MonkeyPatch):
-        """The ``streamable`` flag is authoritative in both directions: a
-        transform declaring ``streamable=False`` is rejected even if its
-        ``to_ffmpeg_filter`` compiles, so the report and the runtime can
-        never disagree."""
-        monkeypatch.setattr(Resize, "streamable", False)
-        plan = _plan([RESIZE])
-
-        assert not plan.streamability().streamable
-        with pytest.raises(PlanValidationError, match="cannot stream"):
             plan.run_to_file(tmp_path / "out.mp4")

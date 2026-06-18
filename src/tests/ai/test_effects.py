@@ -121,7 +121,7 @@ class TestStreamingContract:
             assert out.shape == (64, 64, 3)
             assert out.dtype == np.uint8
 
-        assert eff.streamable is True
+        assert eff.streams() is True
         assert eff.requires == ()  # stays in the streaming plan path
 
 

@@ -9,7 +9,7 @@ AI-free renderer in :mod:`videopython.base.draw_detections`.
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Literal
+from typing import Any, Literal
 
 import numpy as np
 from pydantic import Field, PrivateAttr
@@ -39,7 +39,6 @@ class ObjectDetectionOverlay(Effect):
     """
 
     op: Literal["object_detection_overlay"] = "object_detection_overlay"
-    streamable: ClassVar[bool] = True
 
     confidence_threshold: float = Field(0.5, ge=0, le=1, description="Minimum detection confidence to draw a box, 0-1.")
     class_filter: list[str] | None = Field(

@@ -107,7 +107,6 @@ class TranscriptionOverlay(Effect):
     """
 
     op: Literal["add_subtitles"] = "add_subtitles"
-    streamable: ClassVar[bool] = True
     requires: ClassVar[tuple[str, ...]] = ("transcription",)
 
     # ---- primary, resolution-independent surface ----
