@@ -119,6 +119,55 @@ def test_effect_window(render):
     assert in_diff > pre_diff * 3, f"in-window frame not blurred: in={in_diff}, pre={pre_diff}"
 
 
+def test_filter_effect_matches_numpy_in_pipeline(render):
+    """A migrated filter-effect renders through ``run_to_file`` faithfully.
+
+    ``vignette`` compiles to a ``geq`` whose ``r``/``g``/``b`` accessors read
+    garbage on the native yuv decode stream, so the builder must convert to
+    ``rgb24`` first (``filter_needs_rgb24``). This renders the effect end-to-end
+    and asserts it tracks its numpy ``process_frame`` twin within an x264
+    tolerance -- a guard a standalone PNG check (rgb in, rgb out) cannot give.
+    """
+    seg = {"source": SMALL_VIDEO_PATH, "start": 0.0, "end": 2.0}
+    base = render(VideoEdit.from_dict({"segments": [{**seg, "operations": []}]}), name="base.mp4")
+    vig = render(
+        VideoEdit.from_dict({"segments": [{**seg, "operations": [{"op": "vignette", "strength": 0.5}]}]}),
+        name="vig.mp4",
+    )
+    eff = Vignette(strength=0.5)
+    n, h, w = base.frames.shape[:3]
+    eff.streaming_init(n, base.fps, w, h)
+    ref = np.stack([eff.process_frame(base.frames[i].copy(), i) for i in range(n)])
+    m = min(len(ref), len(vig.frames))
+    mean_diff = np.abs(ref[:m].astype(int) - vig.frames[:m].astype(int)).mean()
+    assert mean_diff < 6, f"vignette filter diverges from its numpy twin in-pipeline: mean={mean_diff}"
+
+
+def test_zoom_filter_preserves_frame_count(render):
+    """zoom compiles to ``zoompan``, which reinterprets PTS at its own framerate.
+
+    The trailing ``setpts=N/(fps*TB)`` is load-bearing: without it the
+    decode-stage ``fps=`` resampler multiplies the frame count (a 48-frame cut
+    rendered as tens of thousands of frames). Guards that exact regression.
+    """
+    out = render(
+        VideoEdit.from_dict(
+            {
+                "segments": [
+                    {
+                        "source": SMALL_VIDEO_PATH,
+                        "start": 0.0,
+                        "end": 2.0,
+                        "operations": [{"op": "zoom_effect", "mode": "in", "zoom_factor": 2}],
+                    }
+                ]
+            }
+        ),
+        name="zoom.mp4",
+    )
+    assert abs(len(out.frames) - 48) <= 2, f"zoom changed the frame count: {len(out.frames)}"
+
+
 class TestColorGrading:
     def test_default_no_change(self, small_video):
         out = _stream(ColorGrading(), small_video)

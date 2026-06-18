@@ -84,11 +84,16 @@ context, passed to the runner: `run_to_file(..., context={"transcription": ...})
 ## Available Effects
 
 Every effect is streamable (compatible with `VideoEdit.run_to_file()` for
-constant-memory processing). Context-requiring ops (`add_subtitles`) stream
-too: pass `context=` to `run_to_file` and the runner re-bases it onto each
-segment's local timeline. `add_subtitles` is special: it compiles to a
-libass `subtitles=` ffmpeg filter at plan-compile time instead of running
-per-frame Python.
+constant-memory processing). Many effects compile to a native ffmpeg filter at
+plan-compile time (faster, no per-frame Python) in their common forms:
+`add_subtitles` (libass `subtitles=`), `vignette` / `color_adjust` /
+`kaleidoscope` (geq), `chromatic_aberration` (rgbashift/geq), `mirror_flip`
+(hflip/vflip/geq), `sharpen` (unsharp), `text_overlay` (drawtext), `zoom`
+(zoompan), and monochrome `film_grain` (noise); the rest run per-frame Python via
+`process_frame`. An effect whose filter reads RGB sets `filter_needs_rgb24` so
+the builder converts the decode chain to `rgb24` first. Context-requiring ops
+(`add_subtitles`) stream too: pass `context=` to `run_to_file` and the runner
+re-bases it onto each segment's local timeline.
 
 | op | Class | Description |
 |---|---|---|

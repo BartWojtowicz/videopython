@@ -85,37 +85,45 @@ results, then applies `post_operations` to the assembled output.
 
 ## The Streaming Engine
 
-Streaming is the **only** execution engine. `run_to_file()` pipes ffmpeg
-decode → per-frame effect chain → ffmpeg encode, keeping memory constant
-(~250 MB) regardless of video length; `run()` is a view over the same
-engine that streams into memory (lossless rawvideo) instead of encoding.
+`run_to_file()` is the only execution engine. It streams ffmpeg decode →
+filter/effect chain → ffmpeg encode, so memory stays constant (~a frame at a
+time) regardless of video length.
 
-Each operation compiles to one of: an ffmpeg filter
-(`op.to_ffmpeg_filter(ctx)`) -- the decode chain, or the encode chain when
-ordered after frame effects -- or a per-frame streaming `Effect`
-(`op.streamable == True` plus `process_frame`). Plans whose shape has no
-streaming strategy (the remaining cases: a frame effect ordered after
-encode-stage filters, time-based context after a duration-changing
-transform, a few post-op shapes) are rejected with structured
-`STREAMING_UNSUPPORTED` errors before any decode.
+Each operation is one of two kinds:
 
-**Filter transforms**: `resize`, `crop`, `resample_fps`, the
-duration-changing `speed_change` and `freeze_frame` (predicted metadata is
-folded through the chain so effect windows and audio follow the new
-timeline), the transcription-consuming `silence_removal`, and `face_crop`
-(ai extra; compile-time detection pass driving a per-frame crop track).
-**Streaming effects**: every `Effect`, including the context-requiring
-`add_subtitles` (pass `context=` to `run_to_file`).
+- a **filter** — compiles to a native ffmpeg filter (`op.to_ffmpeg_filter(ctx)`).
+  All transforms (`resize`, `crop`, `resample_fps`, the duration-changing
+  `speed_change`/`freeze_frame`, the transcription-consuming `silence_removal`,
+  and `face_crop` from the ai extra) and most effects (`add_subtitles`,
+  `vignette`, `color_adjust`, `chromatic_aberration`, `kaleidoscope`,
+  `mirror_flip`, `sharpen`, `text_overlay`, `zoom`, monochrome `film_grain`).
+- a **per-frame effect** — shape-preserving Python over each decoded frame
+  (`streaming_init` + `process_frame`). The effects with no faithful ffmpeg form
+  (`blur`, `glitch`, `pixelate`, `ken_burns`, `punch_in`, `shake`, `flash`, the
+  image overlays) stay here.
 
-`add_subtitles` renders via libass: the transcription is compiled to an
-ASS document at plan-compile time and burned in by ffmpeg's `subtitles=`
-filter — native speed, zero per-frame Python, classified as a `filter` in
-the streamability report. It joins the filter chain at its plan position:
-the decode chain normally (so transforms may follow it in plan order), or
-the encode chain when frame effects precede it (so `[fade, add_subtitles]`
-streams too). In memory, `run()` pipes the streamed-in frames through the same filter
-via a lossless rawvideo roundtrip — one pixel path everywhere. Requires an ffmpeg built with
-libass.
+A segment whose ops are all filters renders in a **single ffmpeg invocation** —
+no rawvideo round-trip, no Python loop. A per-frame effect switches that segment
+to the decode → Python → encode pipeline, where filters before the effect join
+the decode chain and filters after it the encode chain (so `[fade, add_subtitles]`
+streams). Duration-changing transforms fold their predicted metadata through the
+chain, so later effect windows and the audio follow the new timeline. An effect
+whose filter reads RGB pixels (`geq`/`rgbashift`) sets `filter_needs_rgb24` so the
+decode chain is converted to `rgb24` first.
+
+`post_operations` run as a second pass over the assembled program, so any op —
+filter, effect, or transform — applies to the whole concatenated timeline.
+
+A few plan *shapes* have no streaming strategy and are rejected with structured
+`STREAMING_UNSUPPORTED` errors before any decode: a per-frame effect ordered after
+encode-stage filters, a context-requiring op after a duration-changing transform,
+`face_crop` behind per-frame effects, and a time-based-context post-op on a
+multi-segment plan (its source-absolute context can't re-base onto the concat).
+Reorder the ops, or move the op into a segment, to fix.
+
+`add_subtitles` renders via libass — the transcription is compiled to an ASS
+document at plan-compile time and burned in by ffmpeg's `subtitles=` filter
+(needs an ffmpeg built with libass). Pass `context=` to `run_to_file`.
 
 ### Streamability report
 
@@ -132,7 +140,7 @@ report.errors()          # the same as structured STREAMING_UNSUPPORTED PlanErro
 ```
 
 `edit.check(meta)` reports the same `STREAMING_UNSUPPORTED` errors after the
-regular validity errors, and `run()`/`run_to_file()` raise them before any
+regular validity errors, and `run_to_file()` raises them before any
 decode. Streamability is purely structural (op classes, order, plan
 shape), so a consumer can gate job admission on the report before
 downloading sources.
@@ -208,15 +216,16 @@ unambiguous cases:
 It never invents intent — a concat mismatch or `end <= start` is left for
 `check()` / re-prompting — and never raises on an unrepairable op. A
 clampable `window.stop` overrun (a duration-shrinking op before a windowed
-effect) is the case `run()` already tolerates; `validate(clamp_windows=True)`
+effect) is the case `run_to_file()` already tolerates; `validate(clamp_windows=True)`
 and `check(..., clamp_windows=True)` won't report it either.
 
 ### Normalizing concat geometry (`normalize_dimensions`)
 
 `normalize_dimensions(source_metadata, target, context=...)` appends a
 per-segment `resize` to a common canvas — `target` is an explicit
-`(width, height)`, `"first"`, or `"largest"` — so the "all segments share
-dimensions" concat invariant holds by construction. Best-effort and
+`(width, height)`, `"first"`, `"largest"`, or `"match"` (the lowest common
+resolution, the same policy `match_to_lowest_resolution` applies in-stream) — so
+the "all segments share dimensions" concat invariant holds by construction. Best-effort and
 non-raising like `repair()`/`check()`: a segment it can't yet predict is
 left untouched for `check()` to report. Returns `(normalized_edit, repairs)`.
 
@@ -231,7 +240,7 @@ When multiple segments draw from sources with different fps/resolution,
   the lowest source resolution.
 
 Set either flag to `false` to require sources match natively; otherwise
-`validate()` / `run()` raises.
+`validate()` / `run_to_file()` raises.
 
 ## JSON Schema (`json_schema`)
 

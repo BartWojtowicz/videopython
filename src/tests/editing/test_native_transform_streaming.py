@@ -332,7 +332,11 @@ class TestEncodeStageTransforms:
         assert video.audio is not None
         assert abs(video.audio.metadata.duration_seconds - len(video.frames) / video.fps) < 0.15
 
-    def test_post_ops_behind_encode_stage_are_rejected(self, tmp_path):
+    def test_post_op_runs_independent_of_segment_encode_stage(self):
+        # post_operations run as a SEPARATE pass over the assembled program, so a
+        # frame-effect post-op is not blocked by a segment's encode-stage filters
+        # (here the crop after the fade). The segment's own [fade, crop] is the
+        # supported decode->frame->encode sandwich; the glitch post-op streams.
         plan = VideoEdit.model_validate(
             {
                 "segments": [
@@ -346,15 +350,14 @@ class TestEncodeStageTransforms:
                         ],
                     }
                 ],
-                "post_operations": [{"op": "color_adjust", "brightness": 0.2}],
+                "post_operations": [{"op": "glitch"}],
             }
         )
         report = plan.streamability()
         post = report.entries[-1]
-        assert post.streaming_class is StreamingClass.UNSTREAMABLE
-        assert post.reason is not None and "encode-stage" in post.reason
-        with pytest.raises(PlanValidationError, match="cannot stream"):
-            plan.run_to_file(tmp_path / "out.mp4")
+        assert post.op == "glitch"
+        assert post.streaming_class is StreamingClass.FRAME_EFFECT
+        assert report.streamable
 
 
 class TestMultiSegmentPostOps:
@@ -373,15 +376,38 @@ class TestMultiSegmentPostOps:
         )
 
     def test_pixel_post_op_streams_across_segments(self, tmp_path):
-        plan = self._plan([{"op": "vignette"}])
+        # A per-frame (frame-effect) post-op folds into BOTH segments' schedules.
+        # blur stays a frame effect (it has no faithful ffmpeg filter), so it
+        # exercises the fold; a filter-class effect (e.g. vignette) is a separate
+        # assembled-timeline path (see TODO Point 3).
+        plan = self._plan([{"op": "blur_effect", "mode": "constant", "iterations": 25}])
         assert plan.streamability().streamable
 
+        blurred = _stream(plan, tmp_path, name="blurred.mp4")
+        plain = _stream(self._plan([]), tmp_path, name="plain.mp4")
+        assert abs(len(blurred.frames) - 144) <= 2
+
+        def gradient(frame: np.ndarray) -> float:
+            return float(np.abs(np.diff(frame.astype(np.float32), axis=1)).mean())
+
+        # The blur softens frames in BOTH segments (frames 36 and 108): the
+        # horizontal gradient drops vs the un-blurred render.
+        for idx in (36, 108):
+            assert gradient(blurred.frames[idx]) < gradient(plain.frames[idx])
+
+    def test_filter_class_post_op_streams_across_segments(self, tmp_path):
+        # A FILTER-class effect (vignette) as a post-op applies over the whole
+        # assembled program via the post-op pass (Point 3) -- the regression that
+        # motivated it. It darkens corners in BOTH segments (frames 36 and 108).
+        plan = self._plan([{"op": "vignette", "strength": 0.5}])
+        assert plan.streamability().streamable
         video = _stream(plan, tmp_path)
         assert abs(len(video.frames) - 144) <= 2
-        # The vignette darkens corners in BOTH segments.
+        plain = _stream(self._plan([]), tmp_path, name="plain.mp4")
         for idx in (36, 108):
-            frame = video.frames[idx].astype(np.float32)
-            assert frame[:30, :30].mean() < frame[235:265, 385:415].mean()
+            vig_corner = video.frames[idx][:30, :30].astype(float).mean()
+            plain_corner = plain.frames[idx][:30, :30].astype(float).mean()
+            assert vig_corner < plain_corner, f"frame {idx} corner not darkened: {vig_corner} vs {plain_corner}"
 
     def test_windowed_post_op_envelope_continues_across_boundary(self, tmp_path):
         """A fade-to-black VIDEO envelope spanning the concat boundary must
@@ -405,13 +431,17 @@ class TestMultiSegmentPostOps:
         unzoomed_mae = np.abs(seg2_first - source2.frames[1].astype(np.float32)).mean()
         assert unzoomed_mae > 10, "zoom envelope restarted at the concat boundary"
 
-    def test_audio_coupled_post_op_is_rejected(self, tmp_path):
+    def test_audio_coupled_post_op_streams_over_program(self, tmp_path):
+        # An audio-coupled fade post-op applies as ONE pass over the assembled
+        # multi-segment program (Point 3): it streams, renders, and fades the
+        # whole program to black at the end rather than restarting per segment.
         plan = self._plan([{"op": "fade", "mode": "out", "duration": 1.0}])
         report = plan.streamability()
-        assert report.entries[-1].streaming_class is StreamingClass.UNSTREAMABLE
-        assert "audio-coupled" in (report.entries[-1].reason or "")
-        with pytest.raises(PlanValidationError, match="cannot stream"):
-            plan.run_to_file(tmp_path / "out.mp4")
+        assert report.entries[-1].streaming_class is StreamingClass.FRAME_EFFECT
+        assert report.streamable
+        video = _stream(plan, tmp_path)
+        assert abs(len(video.frames) - 144) <= 2
+        assert video.frames[-1].mean() < 30
 
     def test_single_segment_fade_post_op_still_folds(self, tmp_path):
         plan = VideoEdit.model_validate(

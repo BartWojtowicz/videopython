@@ -265,6 +265,16 @@ class Operation(BaseModel):
     mirrors the same rule.
     """
     llm_exposed: ClassVar[bool] = True
+    internal_only: ClassVar[bool] = False
+    """Whether this op is engine-internal and must NOT be a chain op.
+
+    ``CutSeconds``/``CutFrames`` trim a segment, but trimming is the segment's own
+    ``start``/``end`` mechanism -- the engine constructs them directly. They are
+    non-streamable (no ffmpeg filter, no ``process_frame``), so to honor
+    "every registered op is streamable" they set this flag and are kept OUT of
+    the registry: they cannot appear in a plan's ``operations`` list or the LLM
+    schema, while direct construction (``CutSeconds(start=..., end=...)``) still
+    works. Default False (a normal, streamable chain op)."""
     time_fields: ClassVar[tuple[BoundedTimeField, ...]] = ()
     """Time-valued (seconds) fields :meth:`VideoEdit.repair` may clamp into range.
 
@@ -292,6 +302,12 @@ class Operation(BaseModel):
         if len(literal_values) != 1 or not isinstance(literal_values[0], str):
             raise TypeError(f"{cls.__name__}.op must be Literal of a single str, got {literal_values!r}")
         op_id = literal_values[0]
+
+        if cls.internal_only:
+            # Engine-internal op (CutSeconds/CutFrames): the op Literal is still
+            # validated above, but the op is kept out of the registry so it
+            # cannot be resolved as a chain op or exposed to the LLM.
+            return
 
         existing = Operation._registry.get(op_id)
         if existing is not None and existing is not cls:
@@ -453,13 +469,18 @@ class Effect(Operation):
 
     category: ClassVar[OpCategory] = OpCategory.EFFECT
     audio_coupled: ClassVar[bool] = False
-    """Whether the effect mutates audio alongside pixels (``afade``/``volume``).
+    """Whether the effect mutates audio alongside pixels (``afade``/``volume``)."""
+    filter_needs_rgb24: ClassVar[bool] = False
+    """Whether :meth:`to_ffmpeg_filter` reads RGB pixel values and so needs the
+    decode chain converted to ``rgb24`` first.
 
-    Audio-coupled effects cannot fold as post-operations across segment
-    boundaries: each segment's audio is processed independently, so a gain
-    envelope spanning a concat boundary would restart mid-ramp. The plan
-    builder and the streamability report both consult this.
-    """
+    ``geq``'s ``r``/``g``/``b`` accessors and ``rgbashift`` read RGB channels;
+    on the native yuv decode stream they read garbage. When a decode-stage
+    effect sets this, the plan builder prepends ``format=rgb24`` to the segment's
+    decode filter chain (encode-stage effects already receive rgb24 from the
+    frame pipe). Default False -- geometry/overlay filters (``hflip``,
+    ``subtitles=``) work in any pixel format. Mirrors the rgb24 frames the numpy
+    ``process_frame`` twin operated on."""
 
     window: TimeRange | None = Field(
         None,

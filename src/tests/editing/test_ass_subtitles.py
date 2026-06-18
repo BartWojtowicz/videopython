@@ -241,7 +241,7 @@ class TestLibassStreamability:
             [
                 {"op": "fade", "mode": "in", "duration": 0.5},
                 SUBTITLES,
-                {"op": "color_adjust", "brightness": 0.2},
+                {"op": "glitch"},
             ]
         ).streamability()
         trailing = report.entries[2]
@@ -276,7 +276,10 @@ class TestLibassExecution:
     def test_rejected_plan_leaks_no_ass_file(self, tmp_path):
         """A plan rejected for an unstreamable op must not leak temp files."""
         before = set(glob.glob(tempfile.gettempdir() + "/*.ass"))
-        plan = _plan([SUBTITLES, {"op": "cut", "start": 0.0, "end": 1.0}])
+        # Unstreamable: a frame effect (glitch) after the encode-stage subtitles
+        # filter. The plan still carries add_subtitles, so this guards that a
+        # rejected plan does not leak the .ass temp file.
+        plan = _plan([{"op": "fade", "mode": "in", "duration": 0.5}, SUBTITLES, {"op": "glitch"}])
         with pytest.raises(PlanValidationError, match="cannot stream"):
             plan.run_to_file(tmp_path / "out.mp4", context={"transcription": _transcription()})
         assert set(glob.glob(tempfile.gettempdir() + "/*.ass")) == before

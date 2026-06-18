@@ -537,7 +537,9 @@ class TestStreamability:
         report = plan.streamability()
         assert report.streamable is True
 
-    def test_post_op_with_transition_is_unstreamable(self, clips):
+    def test_post_op_with_transition_streams(self, clips):
+        # Post-ops run over the assembled program after the transition is baked,
+        # so the combination streams (Point 3).
         plan = VideoEdit.from_dict(
             {
                 "segments": [
@@ -553,6 +555,5 @@ class TestStreamability:
             }
         )
         report = plan.streamability()
-        assert report.streamable is False
-        assert report.unstreamable[0].streaming_class is StreamingClass.UNSTREAMABLE
-        assert "transition" in report.unstreamable[0].reason
+        assert report.streamable is True
+        assert report.entries[-1].streaming_class is StreamingClass.FRAME_EFFECT

@@ -376,6 +376,24 @@ class TestNormalizeDimensions:
         meta = norm.validate_with_metadata(SMALL_VIDEO_METADATA)
         assert (meta.width, meta.height) == (1280, 720)
 
+    def test_match_target_uses_lowest_resolution(self):
+        # "match" materializes the engine's match_to_lowest_resolution policy via
+        # the shared resolver: both segments land at the lowest common res.
+        edit = VideoEdit.from_dict(
+            {
+                "segments": [
+                    _segment(start=0.0, end=5.0, operations=[{"op": "resize", "width": 640, "height": 360}]),
+                    _segment(start=0.0, end=5.0, operations=[{"op": "resize", "width": 1280, "height": 720}]),
+                ],
+            }
+        )
+        norm, repairs = edit.normalize_dimensions(SMALL_VIDEO_METADATA, "match")
+        # Segment 0 is already at the min (640x360); only segment 1 is rewritten.
+        assert [r.location for r in repairs] == ["segments[1]"]
+        assert repairs[0].new == "640x360"
+        meta = norm.validate_with_metadata(SMALL_VIDEO_METADATA)
+        assert (meta.width, meta.height) == (640, 360)
+
     def test_already_uniform_plan_is_unchanged(self):
         edit = VideoEdit.from_dict({"segments": [_segment(start=0.0, end=5.0), _segment(start=5.0, end=10.0)]})
         norm, repairs = edit.normalize_dimensions(SMALL_VIDEO_METADATA, "first")

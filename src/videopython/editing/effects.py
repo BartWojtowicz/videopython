@@ -15,6 +15,8 @@ override :meth:`Effect.predict_metadata`. Anchored RGBA overlays
 from __future__ import annotations
 
 import logging
+import math
+import tempfile
 from io import BytesIO
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
@@ -24,6 +26,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from pydantic import Field, PrivateAttr, model_validator
 
+from videopython.base._ffmpeg import escape_filter_value
 from videopython.base.description import BoundingBox
 from videopython.base.exceptions import PlanError, PlanErrorCode, PlanValidationError
 from videopython.base.fonts import load_font
@@ -225,12 +228,47 @@ class Zoom(Effect):
         cropped = frame[round(y) : round(y + h), round(x) : round(x + w)]
         return cv2.resize(cropped, (width, height))
 
+    @property
+    def compiles_to_filter(self) -> bool:
+        # Only an unwindowed, whole-clip zoom is a single comma-join-safe -vf
+        # entry. A windowed zoom (frames outside the window pass through) cannot
+        # be one zoompan, so it stays frame-only.
+        return self.window is None
+
+    def to_ffmpeg_filter(self, ctx: FilterCtx) -> str | None:
+        """Whole-clip center zoom via ffmpeg ``zoompan``.
+
+        Matches the numpy twin: the crop SIZE ramps linearly between the full
+        frame and ``width // zoom_factor`` and the frame is rescaled to the
+        original size, so the per-frame zoom is ``iw/crop_w``. The trailing
+        ``setpts=N/(fps*TB)`` is LOAD-BEARING: zoompan reinterprets PTS at its
+        own framerate, and without re-deriving PTS from the output frame number
+        the decode-stage ``fps=`` resampler multiplies the frame count. yuv-safe.
+        """
+        if ctx.frame_count <= 0:
+            return None
+        n = ctx.frame_count
+        w, h = ctx.width, ctx.height
+        small_w = w // self.zoom_factor
+        if self.mode == "out":
+            cw0, cw1 = float(small_w), float(w)
+        else:  # in
+            cw0, cw1 = float(w), float(small_w)
+        denom = max(n - 1, 1)
+        z_expr = f"iw/({cw0:.6f}+({cw1 - cw0:.6f})*on/{denom})"
+        return (
+            f"zoompan=z='{z_expr}'"
+            f":x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2'"
+            f":d=1:s={w}x{h}:fps={ctx.fps},setpts=N/({ctx.fps}*TB)"
+        )
+
 
 class ColorGrading(Effect):
     """Adjusts color properties: brightness, contrast, saturation, and temperature."""
 
     op: Literal["color_adjust"] = "color_adjust"
     streamable: ClassVar[bool] = True
+    filter_needs_rgb24: ClassVar[bool] = True
 
     brightness: float = Field(
         0.0,
@@ -278,12 +316,80 @@ class ColorGrading(Effect):
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
         return self._grade_frame(frame)
 
+    @property
+    def _is_noop(self) -> bool:
+        return self.brightness == 0.0 and self.contrast == 1.0 and self.saturation == 1.0 and self.temperature == 0.0
+
+    def _channel_expr(self, src: str, temp_offset: float) -> str:
+        """Per-channel ``geq`` expression mirroring :meth:`_grade_frame`.
+
+        ``src`` is the geq accessor for the channel being computed
+        (``r(X,Y)``/``g(X,Y)``/``b(X,Y)``); ``temp_offset`` is the additive
+        temperature shift for this channel (``+t`` on red, ``0`` on green, ``-t``
+        on blue). The pipeline runs on normalised 0..1 values: brightness add,
+        contrast about 0.5 (unclipped, matching numpy), a cv2-equivalent HSV
+        "toward-max" saturation scale, the temperature shift, then a final clamp.
+        """
+        norm = {"r": "(r(X,Y)/255)", "g": "(g(X,Y)/255)", "b": "(b(X,Y)/255)"}
+
+        def bc(v: str) -> str:
+            return f"((({v}+{self.brightness:g})-0.5)*{self.contrast:g}+0.5)"
+
+        graded = bc(f"({src}/255)")
+        if self.saturation != 1.0:
+            # cv2 RGB->HSV scales saturation toward V=max(R,G,B), clipping S at 1:
+            # each channel C maps to V-(V-C)*ratio with ratio=min(sat, V/chroma).
+            # The HSV roundtrip clips inputs to 0..1 first.
+            rc = f"clip({bc(norm['r'])},0,1)"
+            gc = f"clip({bc(norm['g'])},0,1)"
+            bcl = f"clip({bc(norm['b'])},0,1)"
+            src_c = f"clip({graded},0,1)"
+            v = f"max(max({rc},{gc}),{bcl})"
+            mn = f"min(min({rc},{gc}),{bcl})"
+            chroma = f"({v}-{mn})"
+            ratio = f"if(gt({chroma},0),min({self.saturation:g},{v}/{chroma}),1)"
+            graded = f"({v}-({v}-{src_c})*({ratio}))"
+        if temp_offset != 0.0:
+            graded = f"({graded}+({temp_offset:g}))"
+        return f"clip(({graded})*255,0,255)"
+
+    def to_ffmpeg_filter(self, ctx: FilterCtx) -> str | None:
+        """Compile the colour grade to a single ``geq`` ``-vf`` entry.
+
+        Mirrors :meth:`_grade_frame` per channel (brightness, contrast,
+        cv2-equivalent HSV saturation, temperature) on normalised RGB, faithful
+        to the numpy path to within uint8 rounding (geq rounds; numpy truncates).
+        All commas live inside single-quoted per-channel expressions, so the
+        entry is comma-join safe. A no-op grade returns ``None``. ``self.window``
+        appends a timeline ``enable='between(t,start,stop)'``.
+        """
+        if self._is_noop:
+            return None
+        temp_shift = self.temperature * 0.1
+        r = self._channel_expr("r(X,Y)", temp_shift)
+        g = self._channel_expr("g(X,Y)", 0.0)
+        b = self._channel_expr("b(X,Y)", -temp_shift)
+        expr = f"geq=r='{r}':g='{g}':b='{b}'"
+        if self.window is not None:
+            stop = ctx.frame_count / ctx.fps if ctx.fps > 0 and ctx.frame_count > 0 else None
+            start_s = 0.0 if self.window.start is None else float(self.window.start)
+            stop_s = stop if self.window.stop is None else float(self.window.stop)
+            if stop_s is not None:
+                expr += f":enable='between(t,{start_s:g},{stop_s:g})'"
+        return expr
+
+    @property
+    def compiles_to_filter(self) -> bool:
+        """A no-op grade emits no filter; any active field compiles to one ``geq`` entry."""
+        return not self._is_noop
+
 
 class Vignette(Effect):
     """Darkens the edges of the frame, drawing attention to the center."""
 
     op: Literal["vignette"] = "vignette"
     streamable: ClassVar[bool] = True
+    filter_needs_rgb24: ClassVar[bool] = True
 
     strength: float = Field(
         0.5,
@@ -320,6 +426,38 @@ class Vignette(Effect):
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
         assert self._stream_mask_3d is not None
         return (frame.astype(np.float32) * self._stream_mask_3d).astype(np.uint8)
+
+    @property
+    def compiles_to_filter(self) -> bool:
+        return True
+
+    def to_ffmpeg_filter(self, ctx: FilterCtx) -> str | None:
+        """Compile the radial darkening to a per-channel ``geq`` expression.
+
+        Reproduces :meth:`_create_mask` exactly in ffmpeg's expression language:
+        ``geq`` exposes per-pixel ``X``/``Y`` and the plane size ``W``/``H``, so
+        the normalized coordinates ``Xn = 2*X/(W-1) - 1`` / ``Yn = 2*Y/(H-1) - 1``
+        mirror ``np.linspace(-1, 1, ...)``, and the mask is
+        ``1 - clip(hypot(Xn, Yn)/radius - 0.5, 0, 1) * 2*strength`` applied to every
+        channel. ``clip`` is spelled with ``min``/``max`` and explicit products so
+        the expression carries no commas of its own -- only the quoted ``r(X,Y)``
+        lookups and the ``enable`` clause do, and those quotes survive the runner's
+        comma-join of the ``-vf`` chain. ``geq`` has native timeline support, so a
+        windowed vignette gates on ``enable`` and passes other frames through.
+        """
+        xn = "((2*X/(W-1))-1)"
+        yn = "((2*Y/(H-1))-1)"
+        falloff = 2.0 * self.strength
+        mask = f"(1-min(max(sqrt({xn}*{xn}+{yn}*{yn})/{self.radius:.6f}-0.5,0),1)*{falloff:.6f})"
+        r = f"r='r(X,Y)*{mask}'"
+        g = f"g='g(X,Y)*{mask}'"
+        b = f"b='b(X,Y)*{mask}'"
+        filt = f"geq={r}:{g}:{b}"
+        if self.window is not None:
+            start_s = 0.0 if self.window.start is None else float(self.window.start)
+            stop_s = ctx.frame_count / ctx.fps if self.window.stop is None else float(self.window.stop)
+            filt += f":enable='between(t,{start_s:.6f},{stop_s:.6f})'"
+        return filt
 
 
 class KenBurns(Effect):
@@ -791,6 +929,91 @@ class TextOverlay(_AnchoredOverlay):
             self._rendered = self._render_text_image(frame_width, frame_height)
         return self._rendered
 
+    def _resolve_fontfile(self) -> Path | None:
+        """Filesystem path to the .ttf ``drawtext`` should render with, or ``None``.
+
+        Mirrors :func:`load_font`'s resolution down to a real file: a bundled
+        NAME -> its bundled .ttf; an explicit ``font_filename`` path that exists;
+        else the bundled DejaVu Sans default. ``None`` only when even DejaVu is
+        unreachable -- then ``load_font`` falls back to PIL's built-in bitmap
+        font, which ``drawtext`` cannot consume, so the op stays frame-only.
+        """
+        from videopython.base.fonts import BUNDLED_FONTS, DEFAULT_FONT_FILENAME, bundled_fonts_dir
+
+        name = self.font_filename or self.font
+        fonts_dir = bundled_fonts_dir()
+        if name:
+            bundled = BUNDLED_FONTS.get(name)
+            if bundled is not None:
+                candidate = fonts_dir / bundled
+                if candidate.is_file():
+                    return candidate
+            candidate = Path(name)
+            if candidate.is_file():
+                return candidate
+        default = fonts_dir / DEFAULT_FONT_FILENAME
+        return default if default.is_file() else None
+
+    @property
+    def compiles_to_filter(self) -> bool:
+        """Compile to ``drawtext`` when a real TrueType file resolves, else frame-only."""
+        return self._resolve_fontfile() is not None
+
+    def to_ffmpeg_filter(self, ctx: FilterCtx) -> str | None:
+        """Compile the anchored, word-wrapped text overlay to one ``drawtext`` entry.
+
+        The text is pre-wrapped with the SAME PIL metrics (:meth:`_wrap_text`)
+        the numpy twin uses and written to a ``textfile`` (registered on
+        ``ctx.owned_files`` for the runner to delete), so line breaks match
+        exactly -- drawtext has no pixel word-wrap. The box is
+        ``box=1:boxcolor=...:boxborderw=<padding>`` placed at the anchored
+        position :meth:`_compute_position` computes. Faithful *visual* twin
+        (freetype vs PIL metrics diverge a few px), re-baselined to ffmpeg.
+        Comma-join safe: every comma-bearing value is wrapped via
+        :func:`escape_filter_value`. yuv-safe (drawtext needs no rgb24).
+        """
+        fontfile = self._resolve_fontfile()
+        if fontfile is None:
+            return None
+
+        font = self._get_font()
+        max_px = int(self.max_width * ctx.width)
+        wrapped = self._wrap_text(self.text, font, max_px)
+
+        bbox = ImageDraw.Draw(Image.new("RGBA", (1, 1))).multiline_textbbox((0, 0), wrapped, font=font)
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+        pad = self.background_padding
+        box_x, box_y = self._compute_position(ctx.width, ctx.height, text_w + 2 * pad, text_h + 2 * pad)
+
+        tmp = tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8")
+        try:
+            tmp.write(wrapped)
+        finally:
+            tmp.close()
+        textfile = Path(tmp.name)
+        ctx.owned_files.append(textfile)
+
+        r, g, b = self.text_color
+        parts = [
+            f"textfile={escape_filter_value(str(textfile))}",
+            f"fontfile={escape_filter_value(str(fontfile))}",
+            f"fontsize={self.font_size}",
+            f"fontcolor={escape_filter_value(f'0x{r:02x}{g:02x}{b:02x}')}",
+            f"x={box_x + pad}",
+            f"y={box_y + pad}",
+        ]
+        if self.background_color is not None:
+            br, bg, bb, ba = self.background_color
+            parts.append("box=1")
+            parts.append(f"boxcolor={escape_filter_value(f'0x{br:02x}{bg:02x}{bb:02x}@{ba / 255:.4f}')}")
+            parts.append(f"boxborderw={pad}")
+        if self.window is not None:
+            start = 0.0 if self.window.start is None else float(self.window.start)
+            stop = ctx.frame_count / ctx.fps if self.window.stop is None else float(self.window.stop)
+            parts.append(f"enable={escape_filter_value(f'between(t,{start:g},{stop:g})')}")
+        return "drawtext=" + ":".join(parts)
+
 
 class ImageOverlay(_AnchoredOverlay):
     """Composites a scaled image at an anchored position on every frame in the window.
@@ -1129,6 +1352,7 @@ class ChromaticAberration(Effect):
 
     op: Literal["chromatic_aberration"] = "chromatic_aberration"
     streamable: ClassVar[bool] = True
+    filter_needs_rgb24: ClassVar[bool] = True
 
     shift_px: int = Field(
         gt=0,
@@ -1185,6 +1409,52 @@ class ChromaticAberration(Effect):
 
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
         return self._aberrate(frame)
+
+    def _enable_suffix(self, ctx: FilterCtx) -> str:
+        """``:enable='between(t,START,STOP)'`` for a windowed effect, else ``""``.
+
+        START defaults to 0.0 and STOP to the segment duration
+        (``ctx.frame_count / ctx.fps``); an unset window yields no suffix. The
+        clause is single-quoted, so its inner comma survives the runner's
+        ``",".join`` into the ``-vf`` chain.
+        """
+        if self.window is None:
+            return ""
+        total_seconds = ctx.frame_count / ctx.fps if ctx.fps > 0 and ctx.frame_count > 0 else 0.0
+        start_s = 0.0 if self.window.start is None else float(self.window.start)
+        stop_s = total_seconds if self.window.stop is None else float(self.window.stop)
+        return f":enable='between(t,{start_s:.6f},{stop_s:.6f})'"
+
+    def to_ffmpeg_filter(self, ctx: FilterCtx) -> str | None:
+        """Compile the channel split to a single native ``-vf`` entry.
+
+        ``horizontal``/``vertical`` become ``rgbashift`` (R by ``+shift_px``,
+        B by ``-shift_px`` along the axis, ``edge=smear`` == BORDER_REPLICATE).
+        ``radial`` becomes one ``geq`` sampling R/B from a scale about the frame
+        center (matches bilinear ``cv2.remap`` to ~4/255). Green is untouched.
+        Every inner comma sits inside single-quoted ``geq`` expressions or the
+        ``enable`` clause, so the entry is comma-join-safe.
+        """
+        enable = self._enable_suffix(ctx)
+        if self.mode == "horizontal":
+            return f"rgbashift=rh={self.shift_px}:bh={-self.shift_px}:edge=smear{enable}"
+        if self.mode == "vertical":
+            return f"rgbashift=rv={self.shift_px}:bv={-self.shift_px}:edge=smear{enable}"
+        # radial: reproduce the cv2.remap scale about the center via geq.
+        cx, cy = ctx.width / 2.0, ctx.height / 2.0
+        max_d = float(max(ctx.width, ctx.height))
+        scale_r = 1.0 - self.shift_px / max_d
+        scale_b = 1.0 + self.shift_px / max_d
+        rx = f"((X-{cx:.6f})*{scale_r:.9f}+{cx:.6f})"
+        ry = f"((Y-{cy:.6f})*{scale_r:.9f}+{cy:.6f})"
+        bx = f"((X-{cx:.6f})*{scale_b:.9f}+{cx:.6f})"
+        by = f"((Y-{cy:.6f})*{scale_b:.9f}+{cy:.6f})"
+        return f"geq=r='r({rx}\\,{ry})':b='b({bx}\\,{by})'{enable}"
+
+    @property
+    def compiles_to_filter(self) -> bool:
+        """Every mode compiles to a single, comma-join-safe ``-vf`` entry."""
+        return True
 
 
 class Glitch(Effect):
@@ -1288,6 +1558,31 @@ class FilmGrain(Effect):
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
         return self._grain_frame(frame, frame_index)
 
+    @property
+    def compiles_to_filter(self) -> bool:
+        # Only unwindowed monochrome (luma-only) grain compiles to a single
+        # comma-join-safe `noise` entry. The per-channel variant and any windowed
+        # grain stay on the numpy frame path.
+        return self.monochrome and self.window is None
+
+    def to_ffmpeg_filter(self, ctx: FilterCtx) -> str | None:
+        """Compile luma-only grain to ffmpeg's temporal ``noise`` filter.
+
+        A statistical (NOT pixel-identical) twin of :meth:`process_frame`:
+        ffmpeg's RNG differs from numpy's, so the grain is a different but
+        distributionally-matched draw -- equivalent in look for a random grain.
+        ``c0_flags=t`` adds fresh temporal noise to component 0 (Y in the
+        pipeline's yuv420p) each frame; ``c0_strength`` is ffmpeg's 0-100 scale,
+        which the numpy std (``intensity*255``) maps onto by the empirically-fit
+        ``strength = intensity * 255 / 0.57`` (clamped to [1, 100]) so the
+        injected per-pixel std matches in the real yuv pipeline. yuv-safe.
+        """
+        if not self.monochrome:
+            return None
+        strength = int(round(self.intensity * 255.0 / 0.57))
+        strength = max(1, min(100, strength))
+        return f"noise=c0_seed={self.seed}:c0_strength={strength}:c0_flags=t"
+
 
 class Sharpen(Effect):
     """Unsharp-mask sharpening: blur the frame and subtract from itself with weight.
@@ -1329,6 +1624,29 @@ class Sharpen(Effect):
 
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
         return self._sharpen_frame(frame)
+
+    @property
+    def compiles_to_filter(self) -> bool:
+        # The whole-frame, windowless case maps cleanly to a single comma-join
+        # safe `unsharp` -vf entry. A `window` would need an enable= gate that
+        # `unsharp` does not support, so windowed sharpening stays frame-only;
+        # `unsharp` also caps the combined matrix, so kernel_size > 13 stays too.
+        return self.window is None and self.kernel_size <= 13
+
+    def to_ffmpeg_filter(self, ctx: FilterCtx) -> str | None:
+        """Native unsharp-mask sharpening via ffmpeg's ``unsharp`` filter.
+
+        The numpy twin blends ``out = in + amount*(in - gaussian_blur(in))``.
+        ``unsharp=lx:ly:la`` is the same unsharp-mask form with the same
+        ``amount`` (``la``) weighting; its kernel is a box rather than a Gaussian,
+        so the result is a faithful visual twin (re-baseline-to-ffmpeg), not
+        bit-identical. ``amount == 0`` is a no-op (``None`` -> the runner keeps
+        the frame). ``unsharp`` is yuv-safe, so no ``format=rgb24`` is needed.
+        """
+        if self.amount == 0:
+            return None
+        k = self.kernel_size
+        return f"unsharp={k}:{k}:{self.amount:.6f}:{k}:{k}:{self.amount:.6f}"
 
 
 class Pixelate(Effect):
@@ -1379,6 +1697,22 @@ class Pixelate(Effect):
         return self._pixelate_frame(frame, self._stream_region_px)
 
 
+def _mirror_geq(coord: str, src_x: str, src_y: str) -> str:
+    """One comma-join-safe ``geq`` entry that reflects a half-frame.
+
+    ``coord`` is the per-pixel predicate (e.g. ``gte(X,W/2)``); where it holds
+    the pixel samples its mirror ``(src_x, src_y)``, elsewhere it keeps
+    ``(X, Y)``. Per-channel (r/g/b) so geq runs in RGB. The function-call commas
+    live inside single-quoted plane expressions, so the whole entry survives
+    ``",".join`` into the ``-vf`` chain.
+    """
+
+    def plane(channel: str) -> str:
+        return f"if({coord},{channel}({src_x},{src_y}),{channel}(X,Y))"
+
+    return f"geq=r='{plane('r')}':g='{plane('g')}':b='{plane('b')}'"
+
+
 class MirrorFlip(Effect):
     """Flip frames or reflect one half onto the other.
 
@@ -1389,6 +1723,7 @@ class MirrorFlip(Effect):
 
     op: Literal["mirror_flip"] = "mirror_flip"
     streamable: ClassVar[bool] = True
+    filter_needs_rgb24: ClassVar[bool] = True
 
     mode: Literal[
         "horizontal",
@@ -1432,6 +1767,54 @@ class MirrorFlip(Effect):
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
         return self._flip_frame(frame)
 
+    def _enable_suffix(self, ctx: FilterCtx) -> str:
+        """``enable='between(t,START,STOP)'`` for the window, or '' when full-clip.
+
+        START defaults to 0.0 and STOP to the segment duration
+        (``ctx.frame_count / ctx.fps``). Returns the bare ``key=value`` (no
+        leading separator); the caller joins it with the right separator.
+        """
+        win = self.window
+        if win is None:
+            return ""
+        stop = ctx.frame_count / ctx.fps if win.stop is None else float(win.stop)
+        start = 0.0 if win.start is None else float(win.start)
+        return f"enable='between(t,{start:.6f},{stop:.6f})'"
+
+    def to_ffmpeg_filter(self, ctx: FilterCtx) -> str | None:
+        """Compile to one comma-join-safe ``-vf`` entry mirroring :meth:`process_frame`.
+
+        ``horizontal`` / ``vertical`` map to native ``hflip`` / ``vflip``
+        (bit-exact). The ``mirror_*`` modes reflect one half onto the other via a
+        single per-channel ``geq`` expression: each output pixel samples its
+        mirror (``W-1-X`` / ``H-1-Y``) on the reflected half and itself on the
+        kept half, matching the numpy ``w//2`` / ``h//2`` split for both even and
+        odd dimensions. A window appends an ``enable=`` option (``=`` for the
+        option-less flips, ``:`` after the ``geq`` options).
+        """
+        if self.mode == "horizontal":
+            base, sep = "hflip", "="
+        elif self.mode == "vertical":
+            base, sep = "vflip", "="
+        else:
+            sep = ":"
+            if self.mode == "mirror_left":
+                coord, src_x, src_y = "gte(X,W/2)", "W-1-X", "Y"
+            elif self.mode == "mirror_right":
+                coord, src_x, src_y = "lt(X,W/2)", "W-1-X", "Y"
+            elif self.mode == "mirror_top":
+                coord, src_x, src_y = "gte(Y,H/2)", "X", "H-1-Y"
+            else:  # mirror_bottom
+                coord, src_x, src_y = "lt(Y,H/2)", "X", "H-1-Y"
+            base = _mirror_geq(coord, src_x, src_y)
+
+        enable = self._enable_suffix(ctx)
+        return f"{base}{sep}{enable}" if enable else base
+
+    @property
+    def compiles_to_filter(self) -> bool:
+        return True
+
 
 class Kaleidoscope(Effect):
     """N-way radial mirror around the frame center.
@@ -1443,6 +1826,7 @@ class Kaleidoscope(Effect):
 
     op: Literal["kaleidoscope"] = "kaleidoscope"
     streamable: ClassVar[bool] = True
+    filter_needs_rgb24: ClassVar[bool] = True
 
     segments: int = Field(
         6,
@@ -1491,3 +1875,58 @@ class Kaleidoscope(Effect):
 
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
         return self._kaleidoscope_frame(frame)
+
+    def to_ffmpeg_filter(self, ctx: FilterCtx) -> str | None:
+        """Compile the radial mirror to a single per-pixel ``geq`` remap.
+
+        Mirrors :meth:`_build_maps`/:meth:`process_frame`. For each output pixel
+        ``geq`` recovers polar coordinates about ``((W-1)/2, (H-1)/2)``, folds
+        the angle into one wedge (``2*pi/segments``) the same way the numpy path
+        does (``mod`` then reflect across the half-wedge), and samples with
+        ``interpolation=bilinear``. Out-of-frame sample coordinates are reflected
+        back in-bounds (registers 8/9) to reproduce ``cv2.BORDER_REFLECT``. One
+        ``-vf`` node, comma-join-safe.
+        """
+        if ctx.width <= 0 or ctx.height <= 0:
+            return None
+        width, height = ctx.width, ctx.height
+        cx = (width - 1) / 2.0
+        cy = (height - 1) / 2.0
+        wedge = 2.0 * math.pi / self.segments
+        half = wedge * 0.5
+        pw = 2 * width
+        ph = 2 * height
+        ao = self.angle_offset
+
+        common = (
+            f"st(1,X-{cx:.8f});"
+            f"st(2,Y-{cy:.8f});"
+            f"st(3,hypot(ld(1),ld(2)));"
+            f"st(4,atan2(ld(2),ld(1))-{ao:.8f});"
+            f"st(5,mod(ld(4),{wedge:.10f}));"
+            f"st(5,if(lt(ld(5),0),ld(5)+{wedge:.10f},ld(5)));"
+            f"st(6,if(gt(ld(5),{half:.10f}),{wedge:.10f}-ld(5),ld(5)));"
+            f"st(7,ld(6)+{ao:.8f});"
+            f"st(8,mod({cx:.8f}+ld(3)*cos(ld(7)),{pw}));"
+            f"st(8,if(lt(ld(8),0),ld(8)+{pw},ld(8)));"
+            f"st(8,if(gte(ld(8),{width}),{pw - 1}-ld(8),ld(8)));"
+            f"st(9,mod({cy:.8f}+ld(3)*sin(ld(7)),{ph}));"
+            f"st(9,if(lt(ld(9),0),ld(9)+{ph},ld(9)));"
+            f"st(9,if(gte(ld(9),{height}),{ph - 1}-ld(9),ld(9)));"
+        )
+        expr = (
+            f"geq=interpolation=bilinear:"
+            f"r='{common}r(ld(8),ld(9))':"
+            f"g='{common}g(ld(8),ld(9))':"
+            f"b='{common}b(ld(8),ld(9))'"
+        )
+        if self.window is not None:
+            stop = ctx.frame_count / ctx.fps if ctx.fps > 0 and ctx.frame_count > 0 else 0.0
+            start_s = self.window.start if self.window.start is not None else 0.0
+            stop_s = self.window.stop if self.window.stop is not None else stop
+            expr += f":enable='between(t,{start_s:.6f},{stop_s:.6f})'"
+        return expr
+
+    @property
+    def compiles_to_filter(self) -> bool:
+        return True
