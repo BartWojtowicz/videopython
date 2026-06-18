@@ -59,9 +59,13 @@ Notes:
 - `category` is `OpCategory.TRANSFORM`, `OpCategory.EFFECT`, or
   `OpCategory.SPECIAL`.
 - `streamable: ClassVar[bool] = True` lets `VideoEdit.run_to_file()`
-  treat this op as streaming-compatible. For transforms that means
-  implementing `to_ffmpeg_filter`; for effects that means implementing
-  `process_frame` and `streaming_init`.
+  treat this op as streaming-compatible. Transforms implement
+  `to_ffmpeg_filter`; effects implement either `process_frame` +
+  `streaming_init` (a frame effect) or `to_ffmpeg_filter` + `compiles_to_filter`
+  (a filter effect). Every registered op is streamable.
+- `internal_only: ClassVar[bool] = False`, when `True`, keeps an op OUT of the
+  registry — constructed directly by the engine, never a chain op. `cut`/
+  `cut_frames` use it, since trimming is the segment's own `start`/`end`.
 - Context-dependent ops declare
   `requires: ClassVar[tuple[str, ...]] = ("transcription",)`. The runner
   picks the matching keys out of the `context` dict passed to
@@ -79,12 +83,10 @@ frames outside the window untouched. A frame effect implements the
 `streaming_init` / `process_frame` pair:
 
 ```python
-class ColorGrading(Effect):
-    op: Literal["color_adjust"] = "color_adjust"
+class Glitch(Effect):  # a frame effect: no faithful ffmpeg form
+    op: Literal["glitch"] = "glitch"
     streamable: ClassVar[bool] = True
-
-    brightness: float = Field(0.0, ge=-1, le=1)
-    # ... more fields ...
+    # ... fields ...
 
     def process_frame(self, frame: np.ndarray, frame_index: int) -> np.ndarray: ...
 ```
@@ -92,15 +94,18 @@ class ColorGrading(Effect):
 The `window` field on the wire:
 
 ```json
-{"op": "color_adjust", "brightness": 0.1, "window": {"start": 1.0, "stop": 3.0}}
+{"op": "blur_effect", "mode": "constant", "iterations": 2, "window": {"start": 1.0, "stop": 3.0}}
 ```
 
-An effect can instead compile to a native ffmpeg filter by setting the
-`compiles_to_filter` property and implementing `to_ffmpeg_filter` (and,
-for audio-coupled effects like `Fade`/`VolumeAdjust`,
-`to_ffmpeg_audio_filter`). `TranscriptionOverlay` (`add_subtitles`) takes
-this path: it compiles its transcription to an ASS document and emits one
-libass `subtitles=` filter entry.
+Most effects instead compile to a native ffmpeg filter (faster, no per-frame
+Python) by setting the `compiles_to_filter` property and implementing
+`to_ffmpeg_filter`: `add_subtitles`, `vignette`, `color_adjust`,
+`chromatic_aberration`, `kaleidoscope`, `mirror_flip`, `sharpen`, `text_overlay`,
+`zoom`, and monochrome `film_grain`. Audio-coupled effects (`Fade`,
+`VolumeAdjust`) add `to_ffmpeg_audio_filter`; an effect whose filter reads RGB
+(`geq`/`rgbashift`) sets `filter_needs_rgb24` so the decode chain is converted to
+`rgb24` first. `compiles_to_filter` may depend on field values — a windowed
+`sharpen`/`zoom` or a per-channel `film_grain` stays a frame effect.
 
 ## Registry API
 
@@ -189,10 +194,12 @@ llm_schema = cls.llm_json_schema()       # LLM-facing (llm_hidden dropped)
 
 ### Base (no AI dependencies)
 
+`cut`/`cut_frames` are internal-only: the engine trims each segment via its
+`start`/`end`, so they are not chain ops and do not appear here. Every registered
+op below is streamable (it compiles to an ffmpeg filter or is a per-frame effect).
+
 | ID | Class | Category | Streamable |
 |---|---|---|---|
-| `cut_frames` | `CutFrames` | transform | no |
-| `cut` | `CutSeconds` | transform | no |
 | `resize` | `Resize` | transform | yes |
 | `resample_fps` | `ResampleFPS` | transform | yes |
 | `crop` | `Crop` | transform | yes |

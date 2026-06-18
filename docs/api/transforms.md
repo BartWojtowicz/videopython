@@ -39,10 +39,11 @@ plan = {
 
 ## Available Transforms
 
+Cutting is the segment's own `start`/`end`; `cut`/`cut_frames` are internal-only
+(constructed by the engine, not usable as chain ops), so they are omitted here.
+
 | op | Class | Streamable | Notes |
 |---|---|---|---|
-| `cut_frames` | `CutFrames` | no | Cut by frame range |
-| `cut` | `CutSeconds` | no | Cut by time range |
 | `resize` | `Resize` | yes | Resize, optional aspect-preserving |
 | `resample_fps` | `ResampleFPS` | yes | Change frame rate |
 | `crop` | `Crop` | yes | Pixel or normalized 0–1 fractions |

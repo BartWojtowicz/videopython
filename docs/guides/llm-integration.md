@@ -254,9 +254,9 @@ to re-prompt; pass `clamp_segment_end=True` if you'd rather clamp it to the sour
 end and keep the loop raise-free. `source_metadata` leads each call for a
 consistent signature across the family.
 
-A clampable `window.stop` overrun (a duration-shrinking op like `cut` /
-`speed_change` ordered before a windowed effect leaves the stop past the
-now-shorter clip) is the one case `run()` already tolerates by clamping.
+A clampable `window.stop` overrun (a duration-shrinking op like `speed_change` /
+`freeze_frame` ordered before a windowed effect leaves the stop past the
+now-shorter clip) is the one case `run_to_file()` already tolerates by clamping.
 `validate(clamp_windows=True)` / `check(..., clamp_windows=True)` won't
 report it either; `repair()` clamps it in the returned plan.
 

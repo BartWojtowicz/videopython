@@ -101,253 +101,163 @@ class StreamabilityReport:
         ]
 
 
-def analyze_streamability(
-    segment_operations: Sequence[Sequence[Operation]],
-    post_operations: Sequence[Operation],
-    *,
-    has_transitions: bool = False,
-) -> StreamabilityReport:
-    """Classify every op in a plan by streaming class, in plan order.
+def _classify_op_list(ops: Sequence[Operation], location_prefix: str) -> list[OpStreamability]:
+    """Classify one ordered op list by streaming class, in plan order.
 
-    Mirrors the decision points of ``VideoEdit._build_streaming_plan`` and the
-    post-op folding in ``VideoEdit.run_to_file`` exactly -- this function is
-    the single documented source of those rules. Both deciders treat the
-    ``streamable`` ClassVar as the authoritative declaration (a flag-False
-    transform never streams, even with a working ``to_ffmpeg_filter``); the
-    one divergence the flag cannot express -- flag True but the filter
-    compiles to ``None`` -- is caught at runtime by the ``STREAMING_UNSUPPORTED``
-    raise in ``_compile_streaming_plans``, and a registry test pins flag-True
-    transforms to an actual ``to_ffmpeg_filter`` override. Purely structural:
-    no disk access and no runtime context.
+    Shared by every segment's ``operations`` and by the plan's
+    ``post_operations``: post-ops run as a single pass over the assembled
+    program (a synthetic final segment), so the same per-op rules apply.
+    ``location_prefix`` is the plan path entries are stamped under
+    (``segments[i].operations`` or ``post_operations``).
 
-    Segment transitions (``SegmentConfig.transition_in``) do not appear here:
-    a transition is a native ffmpeg ``xfade``/``acrossfade`` pass over two
-    realized per-segment files (each segment streams to a temp file exactly as
-    it would without a transition), so it is FILTER-class by construction and
-    never makes a plan unstreamable or changes any op's class. The one transition
-    fault that can reject a plan -- an overlap longer than an adjacent
-    segment's predicted post-op duration -- is duration-dependent, so it is
-    reported as ``TRANSITION_TOO_LONG`` by :meth:`VideoEdit.check` (which has
-    the predicted durations) and raised by ``run_to_file`` before
-    decode, not classified structurally here.
+    ``streamable`` is the authoritative declaration (a flag-False transform
+    never streams, even with a working ``to_ffmpeg_filter``); the one divergence
+    the flag cannot express -- flag True but the filter compiles to ``None`` --
+    is caught at runtime by the ``STREAMING_UNSUPPORTED`` raise in
+    ``_compile_streaming_plans``. Purely structural: no disk access, no context.
     """
     entries: list[OpStreamability] = []
-    segment_has_encode_stage: list[bool] = []
-    for i, ops in enumerate(segment_operations):
-        seen_effect = False
-        seen_encode_stage = False
-        seen_duration_change = False
-        for j, op in enumerate(ops):
-            location = f"segments[{i}].operations[{j}]"
-            if isinstance(op, Effect):
-                if op.streamable and op.requires and seen_duration_change:
-                    # The builder rejects context-consuming ops behind a
-                    # duration-changing transform: segment-local context is
-                    # not re-mapped through the time warp yet.
-                    entries.append(
-                        OpStreamability(
-                            location,
-                            op.op,
-                            StreamingClass.UNSTREAMABLE,
-                            reason=(
-                                "context-requiring op follows a duration-changing transform "
-                                "(speed_change/freeze_frame); time-based context is not re-mapped "
-                                "through the warp yet -- move the op before it to stream"
-                            ),
-                        )
-                    )
-                    continue
-                if op.streamable and op.compiles_to_filter:
-                    # Filter-class effect (add_subtitles): joins the decode
-                    # filter chain at this plan position -- or the encode
-                    # chain when frame effects precede it -- so it streams in
-                    # plan order either way and does not block later
-                    # transforms the way a scheduled frame effect does. The
-                    # builder mirrors this exactly.
-                    entries.append(OpStreamability(location, op.op, StreamingClass.FILTER))
-                    if seen_effect:
-                        seen_encode_stage = True
-                    continue
-                if not op.streamable:
-                    entries.append(
-                        OpStreamability(
-                            location,
-                            op.op,
-                            StreamingClass.UNSTREAMABLE,
-                            reason="effect has no streaming implementation (streamable=False)",
-                        )
-                    )
-                elif seen_encode_stage:
-                    entries.append(
-                        OpStreamability(
-                            location,
-                            op.op,
-                            StreamingClass.UNSTREAMABLE,
-                            reason=(
-                                "frame effect follows encode-stage filters (subtitles or transforms "
-                                "ordered after effects) in plan order; those filters run after every "
-                                "frame effect, so plan order cannot be preserved -- move the effect "
-                                "earlier to stream"
-                            ),
-                        )
-                    )
-                else:
-                    entries.append(OpStreamability(location, op.op, StreamingClass.FRAME_EFFECT))
-                seen_effect = True
-            elif op.requires and seen_duration_change:
+    seen_effect = False
+    seen_encode_stage = False
+    seen_duration_change = False
+    for j, op in enumerate(ops):
+        location = f"{location_prefix}[{j}]"
+        if isinstance(op, Effect):
+            if op.streamable and op.requires and seen_duration_change:
+                # The builder rejects context-consuming ops behind a
+                # duration-changing transform: segment-local context is
+                # not re-mapped through the time warp yet.
                 entries.append(
                     OpStreamability(
                         location,
                         op.op,
                         StreamingClass.UNSTREAMABLE,
                         reason=(
-                            "context-requiring transform follows a duration-changing transform; "
-                            "time-based context is not re-mapped through the warp yet -- move it "
-                            "before the duration change to stream"
+                            "context-requiring op follows a duration-changing transform "
+                            "(speed_change/freeze_frame); time-based context is not re-mapped "
+                            "through the warp yet -- move the op before it to stream"
                         ),
                     )
                 )
-            elif op.requires and not op.streamable:
-                entries.append(
-                    OpStreamability(
-                        location,
-                        op.op,
-                        StreamingClass.UNSTREAMABLE,
-                        reason=(
-                            f"transform requires runtime context {sorted(op.requires)} and has no streaming strategy"
-                        ),
-                    )
-                )
-            elif op.streamable and op.compiles_from_source and (seen_effect or seen_encode_stage):
-                entries.append(
-                    OpStreamability(
-                        location,
-                        op.op,
-                        StreamingClass.UNSTREAMABLE,
-                        reason=(
-                            "the op's compile-time detection pass cannot reproduce frames behind "
-                            "per-frame Python effects -- move it before the effects to stream"
-                        ),
-                    )
-                )
-            elif op.streamable:
-                # Transforms compile to filters at any plan position: the
-                # decode chain normally, the encode chain (after every
-                # process_frame) when frame effects precede them.
+                continue
+            if op.streamable and op.compiles_to_filter:
+                # Filter-class effect (add_subtitles, vignette, ...): joins the
+                # decode filter chain at this plan position -- or the encode
+                # chain when frame effects precede it -- so it streams in plan
+                # order either way and does not block later transforms the way
+                # a scheduled frame effect does. The builder mirrors this.
                 entries.append(OpStreamability(location, op.op, StreamingClass.FILTER))
-                if seen_effect or seen_encode_stage:
+                if seen_effect:
                     seen_encode_stage = True
-                if op.changes_duration:
-                    seen_duration_change = True
-            else:
+                continue
+            if not op.streamable:
                 entries.append(
                     OpStreamability(
                         location,
                         op.op,
                         StreamingClass.UNSTREAMABLE,
-                        reason="transform has no ffmpeg filter compilation",
+                        reason="effect has no streaming implementation (streamable=False)",
                     )
                 )
-
-        segment_has_encode_stage.append(seen_encode_stage)
-
-    multi_segment = len(segment_operations) > 1
-    any_encode_stage = any(segment_has_encode_stage)
-    for j, op in enumerate(post_operations):
-        location = f"post_operations[{j}]"
-        if has_transitions:
-            # Post-operations fold into the per-segment frame schedules, but a
-            # transition re-encodes the overlapped seam in a SEPARATE xfade
-            # pass after those schedules run -- so a post-op envelope spanning
-            # the seam cannot be represented (it would be applied to the
-            # pre-blend frames and then doubled at the overlap). Reject the
-            # combination rather than mis-time it; move the op into a segment.
+            elif seen_encode_stage:
+                entries.append(
+                    OpStreamability(
+                        location,
+                        op.op,
+                        StreamingClass.UNSTREAMABLE,
+                        reason=(
+                            "frame effect follows encode-stage filters (subtitles or transforms "
+                            "ordered after effects) in plan order; those filters run after every "
+                            "frame effect, so plan order cannot be preserved -- move the effect "
+                            "earlier to stream"
+                        ),
+                    )
+                )
+            else:
+                entries.append(OpStreamability(location, op.op, StreamingClass.FRAME_EFFECT))
+            seen_effect = True
+        elif op.requires and seen_duration_change:
             entries.append(
                 OpStreamability(
                     location,
                     op.op,
                     StreamingClass.UNSTREAMABLE,
                     reason=(
-                        "post-operations cannot fold across a plan that has segment transitions: the "
-                        "overlapped seam is re-encoded in a separate xfade pass, so an envelope across "
-                        "it cannot be represented -- move the op into a segment or drop the transition"
+                        "context-requiring transform follows a duration-changing transform; "
+                        "time-based context is not re-mapped through the warp yet -- move it "
+                        "before the duration change to stream"
                     ),
                 )
             )
-        elif op.requires:
+        elif op.requires and not op.streamable:
+            entries.append(
+                OpStreamability(
+                    location,
+                    op.op,
+                    StreamingClass.UNSTREAMABLE,
+                    reason=(f"transform requires runtime context {sorted(op.requires)} and has no streaming strategy"),
+                )
+            )
+        elif op.streamable and op.compiles_from_source and (seen_effect or seen_encode_stage):
             entries.append(
                 OpStreamability(
                     location,
                     op.op,
                     StreamingClass.UNSTREAMABLE,
                     reason=(
-                        f"post-operation requires runtime context {sorted(op.requires)}, which is not "
-                        "re-based onto the assembled timeline -- move it into the segment to stream"
+                        "the op's compile-time detection pass cannot reproduce frames behind "
+                        "per-frame Python effects -- move it before the effects to stream"
                     ),
                 )
             )
-        elif isinstance(op, Effect) and op.streamable and op.compiles_to_filter:
-            entries.append(
-                OpStreamability(
-                    location,
-                    op.op,
-                    StreamingClass.UNSTREAMABLE,
-                    reason=(
-                        "filter-class post-operations cannot fold into the segment schedule -- "
-                        "move the op into the segment to stream"
-                    ),
-                )
-            )
-        elif isinstance(op, Effect) and op.streamable and any_encode_stage:
-            entries.append(
-                OpStreamability(
-                    location,
-                    op.op,
-                    StreamingClass.UNSTREAMABLE,
-                    reason=(
-                        "post-operations fold into the per-segment frame-effect schedules, which run "
-                        "before a segment's encode-stage filters -- move the op into the segments "
-                        "(before the encode-stage ops) to stream"
-                    ),
-                )
-            )
-        elif isinstance(op, Effect) and op.streamable and op.audio_coupled and multi_segment:
-            entries.append(
-                OpStreamability(
-                    location,
-                    op.op,
-                    StreamingClass.UNSTREAMABLE,
-                    reason=(
-                        "audio-coupled post-operations (fade/volume_adjust) cannot fold across a "
-                        "multi-segment concat: each segment's audio is processed independently, so "
-                        "the gain envelope would restart at every boundary -- apply it per segment "
-                        "or use a single-segment plan"
-                    ),
-                )
-            )
-        elif isinstance(op, Effect) and op.streamable:
-            # Folds into the per-segment schedules with globally-rebased
-            # frame offsets (multi-segment included since 0.42.0).
-            entries.append(OpStreamability(location, op.op, StreamingClass.FRAME_EFFECT))
-        elif isinstance(op, Effect):
-            entries.append(
-                OpStreamability(
-                    location,
-                    op.op,
-                    StreamingClass.UNSTREAMABLE,
-                    reason="effect has no streaming implementation (streamable=False)",
-                )
-            )
+        elif op.streamable:
+            # Transforms compile to filters at any plan position: the decode
+            # chain normally, the encode chain (after every process_frame) when
+            # frame effects precede them.
+            entries.append(OpStreamability(location, op.op, StreamingClass.FILTER))
+            if seen_effect or seen_encode_stage:
+                seen_encode_stage = True
+            if op.changes_duration:
+                seen_duration_change = True
         else:
             entries.append(
                 OpStreamability(
                     location,
                     op.op,
                     StreamingClass.UNSTREAMABLE,
-                    reason="transforms cannot stream as post-operations -- move the transform into the segment",
+                    reason="transform has no ffmpeg filter compilation",
                 )
             )
+    return entries
 
+
+def analyze_streamability(
+    segment_operations: Sequence[Sequence[Operation]],
+    post_operations: Sequence[Operation],
+) -> StreamabilityReport:
+    """Classify every op in a plan by streaming class, in plan order.
+
+    The single documented source of ``VideoEdit._build_streaming_plan``'s rules.
+    Each segment's ``operations`` are classified by :func:`_classify_op_list`;
+    ``post_operations`` are classified the same way because they run as ONE pass
+    over the assembled program (``VideoEdit._apply_post_operations`` builds a
+    synthetic single segment over the assembled file), so a filter-class effect,
+    a frame effect, or a transform all stream as a post-op exactly as they would
+    inside a segment. Purely structural: no disk access, no runtime context.
+
+    Segment transitions do not appear here: a transition is a native
+    ``xfade``/``acrossfade`` pass over two realized per-segment files, so it is
+    FILTER-class by construction. Its one duration-dependent fault is reported as
+    ``TRANSITION_TOO_LONG`` by :meth:`VideoEdit.check`. The one post-op fault
+    this structural pass cannot see -- a context-requiring post-op on a
+    multi-segment plan, whose source-absolute context cannot be re-based onto the
+    concatenated timeline -- is reported as ``POST_OP_REQUIRES_CONTEXT`` by
+    :meth:`VideoEdit.check`.
+    """
+    entries: list[OpStreamability] = []
+    for i, ops in enumerate(segment_operations):
+        entries.extend(_classify_op_list(ops, f"segments[{i}].operations"))
+    entries.extend(_classify_op_list(list(post_operations), "post_operations"))
     return StreamabilityReport(entries=tuple(entries))
 
 
@@ -679,6 +589,121 @@ def segment_audio_from_plan(plan: StreamingSegmentPlan) -> SegmentAudio:
 
 
 def stream_segment(
+    plan: StreamingSegmentPlan,
+    output_path: Path,
+    with_audio: bool = True,
+    format: str = "mp4",
+    preset: str = "medium",
+    crf: int = 23,
+) -> Path:
+    """Render one segment, dispatching on whether it needs per-frame Python.
+
+    Filter-only segments (no scheduled frame effects) render in a SINGLE ffmpeg
+    invocation via :func:`stream_segment_filtergraph` -- no rawvideo round-trip
+    and no Python frame loop. Segments carrying frame effects fall to the
+    per-frame pipeline (:func:`_stream_segment_framewise`). Both runners emit
+    identical encode params, so their outputs concat-copy together.
+    """
+    if not plan.effect_schedule:
+        return stream_segment_filtergraph(
+            plan, output_path, with_audio=with_audio, format=format, preset=preset, crf=crf
+        )
+    return _stream_segment_framewise(plan, output_path, with_audio=with_audio, format=format, preset=preset, crf=crf)
+
+
+def stream_segment_filtergraph(
+    plan: StreamingSegmentPlan,
+    output_path: Path,
+    with_audio: bool = True,
+    format: str = "mp4",
+    preset: str = "medium",
+    crf: int = 23,
+) -> Path:
+    """Render a filter-only segment in ONE ffmpeg process (no rawvideo pipe).
+
+    Requires an empty ``plan.effect_schedule``. The source is read input-side
+    trimmed (``-ss start -t dur -i source``); the segment's video filter chain
+    and the audio ``filter_complex`` (:func:`build_audio_filter_complex`) ride
+    the same invocation. Encode params match :class:`FrameEncoder` exactly, so
+    the output concat-copies with any framewise-rendered sibling segment.
+    """
+    if format not in get_args(ALLOWED_VIDEO_FORMATS):
+        raise ValueError(f"Unsupported format: {format}")
+    if preset not in get_args(ALLOWED_VIDEO_PRESETS):
+        raise ValueError(f"Unsupported preset: {preset}")
+    assert not plan.effect_schedule, "filtergraph runner requires an empty effect schedule"
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    final_width = plan.final_width or plan.output_width
+    final_height = plan.final_height or plan.output_height
+    final_fps = plan.final_fps or plan.output_fps
+    require_even(final_width, final_height)
+
+    duration = plan.end_second - plan.start_second
+
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"]
+    if plan.start_second > 0:
+        cmd += ["-ss", f"{plan.start_second:.6f}"]
+    cmd += ["-t", f"{duration:.6f}", "-i", str(plan.source_path)]  # video: input 0
+
+    audio = segment_audio_from_plan(plan) if with_audio else None
+    graph: list[str] = []
+    maps: list[str] = []
+
+    # Reproduce the framewise path's pixel pipeline exactly so a fast-path render
+    # is byte-comparable with a framewise sibling (mixed-mechanism concat, and
+    # cross-path test comparisons). The framewise decoder (FrameIterator) applies
+    # vf_filters, then conforms to CFR with `fps=output_fps` (only if no fps=
+    # filter is already present), and emits rgb24; the framewise encoder then
+    # re-encodes rgb24 -> yuv420p. We mirror all three: vf_filters (+ the empty
+    # post_vf chain), the fps conform, and the rgb24 round-trip.
+    video_chain = [*plan.vf_filters, *plan.post_vf_filters]
+    if not any(f.startswith("fps=") for f in video_chain):
+        video_chain.append(f"fps={plan.output_fps:.10g}")
+    video_chain.append("format=rgb24")
+    graph.append(f"[0:v]{','.join(video_chain)}[vout]")
+    maps += ["-map", "[vout]"]
+
+    if audio is not None:
+        audio_inputs, audio_graph, audio_map = build_audio_filter_complex(audio, input_index=1)
+        cmd += audio_inputs  # audio: input 1
+        graph += audio_graph
+        maps += ["-map", audio_map]
+
+    if graph:
+        cmd += ["-filter_complex", ";".join(graph)]
+    cmd += maps
+    cmd += [
+        "-c:v",
+        "libx264",
+        "-preset",
+        preset,
+        "-crf",
+        str(crf),
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        "-vsync",
+        "cfr",
+        "-r",
+        f"{final_fps:.10g}",
+    ]
+    cmd += ["-c:a", "aac", "-b:a", "192k"] if audio is not None else ["-an"]
+    cmd += [str(output_path)]
+
+    try:
+        _ffmpeg.run(cmd)
+    except Exception:
+        if output_path.exists():
+            output_path.unlink()
+        raise
+    return output_path
+
+
+def _stream_segment_framewise(
     plan: StreamingSegmentPlan,
     output_path: Path,
     with_audio: bool = True,

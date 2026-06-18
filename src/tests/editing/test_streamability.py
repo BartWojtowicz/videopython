@@ -17,7 +17,6 @@ from videopython.editing.video_edit import VideoEdit
 FADE = {"op": "fade", "mode": "in", "duration": 0.5}
 RESIZE = {"op": "resize", "width": 640, "height": 480}
 SUBTITLES = {"op": "add_subtitles", "font_scale": 0.1}
-CUT = {"op": "cut", "start": 0.0, "end": 1.0}
 SILENCE = {"op": "silence_removal"}
 
 
@@ -72,7 +71,7 @@ class TestStreamabilityReport:
         assert report.streamable
 
     def test_effect_after_encode_stage_is_unstreamable(self):
-        report = _plan([FADE, RESIZE, {"op": "color_adjust", "brightness": 0.2}]).streamability()
+        report = _plan([FADE, RESIZE, {"op": "glitch"}]).streamability()
 
         trailing = report.entries[2]
         assert trailing.streaming_class is StreamingClass.UNSTREAMABLE
@@ -94,10 +93,22 @@ class TestStreamabilityReport:
         assert silence.streaming_class is StreamingClass.UNSTREAMABLE
         assert silence.reason is not None and "duration-changing" in silence.reason
 
-    def test_unfilterable_transform_is_unstreamable(self):
-        report = _plan([CUT]).streamability()
+    def test_streamable_false_transform_classifies_unstreamable(self):
+        # Defensive: no built-in op is non-streamable anymore (cut/cut_frames are
+        # internal-only), but a hypothetical custom transform with no filter
+        # compilation must still be flagged unstreamable. Exercised directly on
+        # the classifier to avoid registering a junk op.
+        from videopython.editing.streaming import _classify_op_list
 
-        (entry,) = report.entries
+        class _NoFilterTransform:
+            op = "fake_transform"
+            streamable = False
+            requires: tuple[str, ...] = ()
+            compiles_from_source = False
+            changes_duration = False
+
+        entries = _classify_op_list([_NoFilterTransform()], "segments[0].operations")
+        (entry,) = entries
         assert entry.streaming_class is StreamingClass.UNSTREAMABLE
         assert entry.reason is not None and "no ffmpeg filter" in entry.reason
 
@@ -117,43 +128,48 @@ class TestStreamabilityReport:
         assert entry.streaming_class is StreamingClass.FRAME_EFFECT
         assert report.streamable
 
-    def test_audio_coupled_post_op_on_multi_segment_plan_is_unstreamable(self):
+    def test_audio_coupled_post_op_on_multi_segment_plan_streams(self):
+        # Post-ops run as ONE pass over the assembled program, so an
+        # audio-coupled fade applies over the whole concatenated audio (Point 3).
         report = _plan([], post_operations=[FADE], n_segments=2).streamability()
 
         (entry,) = report.entries
-        assert entry.streaming_class is StreamingClass.UNSTREAMABLE
-        assert entry.reason is not None and "multi-segment" in entry.reason
+        assert entry.streaming_class is StreamingClass.FRAME_EFFECT
+        assert report.streamable
 
-    def test_context_requiring_post_op_is_unstreamable(self):
+    def test_context_requiring_post_op_on_single_segment_streams(self):
+        # On a single-segment plan the assembled timeline IS that segment's, so a
+        # context-requiring post-op (add_subtitles) re-bases and streams (FILTER).
+        # The multi-segment case is rejected by check() as POST_OP_REQUIRES_CONTEXT.
         report = _plan([], post_operations=[SUBTITLES]).streamability()
 
         (entry,) = report.entries
-        assert entry.streaming_class is StreamingClass.UNSTREAMABLE
-        assert entry.reason is not None and "transcription" in entry.reason
+        assert entry.streaming_class is StreamingClass.FILTER
+        assert report.streamable
 
-    def test_transform_post_op_is_unstreamable(self):
+    def test_transform_post_op_streams(self):
+        # A transform post-op (resize) applies to the assembled program (FILTER).
         report = _plan([], post_operations=[RESIZE]).streamability()
 
         (entry,) = report.entries
-        assert entry.streaming_class is StreamingClass.UNSTREAMABLE
-        assert entry.reason is not None and "post-operations" in entry.reason
+        assert entry.streaming_class is StreamingClass.FILTER
+        assert report.streamable
 
     def test_errors_carry_location_op_and_detail(self):
-        errors = _plan([FADE, RESIZE, {"op": "color_adjust", "brightness": 0.2}]).streamability().errors()
+        errors = _plan([FADE, RESIZE, {"op": "glitch"}]).streamability().errors()
 
         (err,) = errors
         assert err.code is PlanErrorCode.STREAMING_UNSUPPORTED
         assert err.location == "segments[0].operations[2]"
-        assert err.op == "color_adjust"
+        assert err.op == "glitch"
         assert err.detail is not None and "encode-stage" in err.detail
 
 
 class TestTransitionStreamability:
     """A transition is FILTER-class by construction; it does not appear as an op.
 
-    But a post-operation cannot fold across a plan that has transitions (the
-    overlapped seam re-encodes in a separate xfade pass), so that combination
-    is rejected.
+    Post-operations run as a separate pass over the assembled program, so they
+    are unaffected by transitions (the seam is already baked before the pass).
     """
 
     def _transition_plan(self, post_operations: list[dict[str, Any]] | None = None) -> VideoEdit:
@@ -178,20 +194,14 @@ class TestTransitionStreamability:
         assert report.entries == ()
         assert report.streamable is True
 
-    def test_post_op_with_transition_is_unstreamable(self):
+    def test_post_op_with_transition_streams(self):
+        # A post-op runs over the assembled program AFTER the transition is
+        # baked, so the combination streams (the blur post-op is FRAME_EFFECT).
         plan = self._transition_plan(post_operations=[{"op": "blur_effect", "mode": "constant", "iterations": 5}])
         report = plan.streamability()
         (entry,) = report.entries
-        assert entry.streaming_class is StreamingClass.UNSTREAMABLE
-        assert entry.reason is not None and "transition" in entry.reason
-        assert report.streamable is False
-
-    def test_has_transitions_flag_rejects_post_ops_directly(self):
-        from videopython.editing.streaming import analyze_streamability
-
-        report = analyze_streamability([[], []], [Fade(mode="in", duration=0.3)], has_transitions=True)
-        (entry,) = report.entries
-        assert entry.streaming_class is StreamingClass.UNSTREAMABLE
+        assert entry.streaming_class is StreamingClass.FRAME_EFFECT
+        assert report.streamable is True
 
 
 class TestRegistryAlignment:
@@ -215,17 +225,31 @@ class TestRegistryAlignment:
                 f"{'overrides' if overrides_filter else 'does not override'} to_ffmpeg_filter"
             )
 
+    def test_cut_ops_are_internal_only(self):
+        """cut/cut_frames trim via the segment's own start/end, so they are kept
+        OUT of the registry (not chain ops, not LLM-exposed) while staying
+        directly constructible by the engine -- the only non-streamable ops, now
+        removed from the op set so every registered op is streamable."""
+        from videopython.editing.transforms import CutFrames, CutSeconds
+
+        assert "cut" not in Operation.registry()
+        assert "cut_frames" not in Operation.registry()
+        assert "cut" not in Operation.llm_registry()
+        assert CutSeconds.internal_only and CutFrames.internal_only
+        # Direct construction still works (the engine trims segments this way).
+        assert CutSeconds(start=0.0, end=2.0).end == 2.0
+
 
 class TestCheckStrictStreaming:
     def test_check_reports_unstreamable_ops(self):
         # Streaming is the only engine: unstreamable shapes are plan errors.
-        plan = _plan([FADE, RESIZE, {"op": "color_adjust", "brightness": 0.2}])
+        plan = _plan([FADE, RESIZE, {"op": "glitch"}])
         errors = plan.check(SMALL_VIDEO_METADATA)
 
         (err,) = errors
         assert err.code is PlanErrorCode.STREAMING_UNSUPPORTED
         assert err.location == "segments[0].operations[2]"
-        assert err.op == "color_adjust"
+        assert err.op == "glitch"
 
     def test_check_on_streamable_plan_is_clean(self):
         plan = _plan([RESIZE, FADE])
@@ -233,7 +257,7 @@ class TestCheckStrictStreaming:
 
     def test_unstreamable_errors_append_after_validity_errors(self):
         bad_window = {"op": "fade", "mode": "in", "duration": 0.5, "window": {"start": 50.0, "stop": 60.0}}
-        plan = _plan([bad_window, RESIZE, {"op": "color_adjust", "brightness": 0.2}])
+        plan = _plan([bad_window, RESIZE, {"op": "glitch"}])
         errors = plan.check(SMALL_VIDEO_METADATA)
 
         assert len(errors) >= 2
@@ -260,7 +284,7 @@ class TestRunToFileRejection:
         assert out.exists()
 
     def test_unstreamable_plan_raises(self, tmp_path):
-        plan = _plan([FADE, RESIZE, {"op": "color_adjust", "brightness": 0.2}])
+        plan = _plan([FADE, RESIZE, {"op": "glitch"}])
         out_path = tmp_path / "out.mp4"
 
         with pytest.raises(PlanValidationError, match="cannot stream") as exc_info:
@@ -269,7 +293,7 @@ class TestRunToFileRejection:
         assert not out_path.exists()
         (err,) = exc_info.value.errors
         assert err.code is PlanErrorCode.STREAMING_UNSUPPORTED
-        assert err.op == "color_adjust"
+        assert err.op == "glitch"
 
     def test_builder_drift_raises_instead_of_silent_fallback(self, tmp_path, monkeypatch: pytest.MonkeyPatch):
         """A streamable-flagged transform that fails to compile must not slip through."""

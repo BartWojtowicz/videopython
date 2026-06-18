@@ -1,5 +1,76 @@
 # Release Notes
 
+## 0.46.0
+
+A faster, single-mechanism editing engine. Filter-only segments render in one
+ffmpeg invocation, nine effects became native ffmpeg filters, and
+`post_operations` run as a real pass over the assembled program. The net effect
+is fewer rejected plans and less per-frame Python.
+
+Breaking: the streamability *classification* of several plan shapes changed (more
+shapes stream; nine effects move from `frame_effect` to `filter`), and
+`cut`/`cut_frames` are no longer chain ops. Consumers that gate on
+`edit.streamability()` / `edit.check()` should expect those reclassifications. No
+public method signature changed.
+
+### Single-invocation fast path for filter-only segments
+
+A segment with no scheduled per-frame effect now renders in ONE ffmpeg process
+(`stream_segment_filtergraph`) instead of decode -> rawvideo pipe -> Python loop
+-> rawvideo pipe -> encode. Segments carrying frame effects still use the
+per-frame pipeline; both emit identical encode params so their outputs
+concat-copy together. Also fixed a latent `Crop` center-mode bug: the compiled
+`crop=` filter now floors to even dimensions and re-centers, matching
+`predict_metadata` (libx264/yuv420p reject odd dimensions).
+
+### Nine effects are now native ffmpeg filters
+
+`vignette`, `mirror_flip`, `chromatic_aberration`, `kaleidoscope`, `color_adjust`
+(geq/hflip/rgbashift), `sharpen` (unsharp), `text_overlay` (drawtext), `zoom`
+(zoompan), and monochrome `film_grain` (noise) compile to native filters in their
+common forms and take the fast path. Output is a faithful visual twin
+re-baselined to ffmpeg (verified in-pipeline against the numpy `process_frame`
+twins), not pixel-identical -- `film_grain` in particular is a different but
+statistically-matched grain. Windowed/large-kernel/per-channel/no-font variants,
+and the remaining effects (blur, glitch, pixelate, ken_burns, punch_in, shake,
+flash, the overlays), stay on the per-frame path. `process_frame` is retained on
+every migrated effect.
+
+A new `Effect.filter_needs_rgb24: ClassVar[bool]` declares that a decode-stage
+`to_ffmpeg_filter` reads RGB channels (geq r/g/b, rgbashift); the builder
+prepends `format=rgb24` to the decode chain so it does not read the native yuv
+stream. Default `False` (geometry/overlay filters like `hflip`/`drawtext`/
+`subtitles=` are format-agnostic).
+
+### `post_operations` run as a pass over the assembled program
+
+`post_operations` no longer fold into per-segment frame schedules. The assembled
+program is treated as one synthetic segment and run back through the same engine,
+so previously-rejected shapes now stream: transforms as post-ops; filter-class
+effects as post-ops; `post_operations` combined with segment transitions; and
+audio-coupled post-ops (`fade`/`volume_adjust`) over a multi-segment program (the
+envelope now spans the whole timeline instead of restarting at each boundary).
+The only post-op shape still rejected is a context-requiring (time-based) post-op
+on a multi-segment plan -- `POST_OP_REQUIRES_CONTEXT` from `check()` (source-
+absolute context cannot re-base onto a concat). Single-segment context post-ops
+stream fine.
+
+### Only streamable ops in the registry
+
+`cut`/`cut_frames` were the only non-streamable ops; trimming is the segment's own
+`start`/`end` mechanism, so they are now `internal_only` -- constructed directly
+by the engine but kept OUT of the op registry and the LLM schema. They can no
+longer appear in a plan's `operations` list (rejected at parse). Every registered
+op is now streamable -- it compiles to an ffmpeg filter or is a per-frame effect.
+A new `Operation.internal_only: ClassVar[bool]` gates registration.
+
+### Unified segment compatibility
+
+The min-fps/min-resolution concat policy now lives in one resolver
+(`_resolve_matching_target`), shared by the prediction and execution passes so
+they cannot drift, and `normalize_dimensions` gained a `"match"` target that
+materializes the same policy as explicit resize ops. Additive.
+
 ## 0.45.0
 
 Breaking: the "fallback" vocabulary is retired. Since the in-memory path was

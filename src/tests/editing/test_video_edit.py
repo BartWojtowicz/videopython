@@ -386,14 +386,15 @@ class TestExecution:
         result = render(VideoEdit.from_dict(plan))
         assert result.frames[-1].mean() < 5
 
-    def test_transform_post_op_is_rejected(self, render):
-        # Streaming is the only engine; transforms cannot stream as post-ops.
+    def test_transform_post_op_resizes_program(self, render):
+        # A transform post-op applies to the whole assembled program (Point 3):
+        # it runs as a pass over the assembled file rather than being rejected.
         plan = {
             "segments": [_segment(start=0.0, end=2.0)],
             "post_operations": [{"op": "resize", "width": 200, "height": 100}],
         }
-        with pytest.raises(PlanValidationError, match="move the transform into the segment"):
-            render(VideoEdit.from_dict(plan))
+        result = render(VideoEdit.from_dict(plan))
+        assert result.frames.shape[1:3] == (100, 200)
 
     def test_run_with_image_overlay(self, tmp_path, render):
         logo = tmp_path / "logo.png"
@@ -591,15 +592,16 @@ class TestClampWindows:
         # run() silently clamps the same window, so the output is the post-speed length.
         assert result.total_seconds == pytest.approx(post_dur, abs=0.25)
 
-    def test_cut_then_window_parity(self):
-        # cut to 6s, then a blur with window.stop=9 overruns the post-cut length.
+    def test_duration_shrink_then_window_parity(self):
+        # A duration-shrinking transform (speed 2x: 12s -> 6s) makes a later blur
+        # with window.stop=9 overrun the post-op length; repair clamps it to 6s.
         plan = {
             "segments": [
                 _segment(
                     start=0.0,
                     end=12.0,
                     operations=[
-                        {"op": "cut", "start": 0.0, "end": 6.0},
+                        {"op": "speed_change", "speed": 2.0, "adjust_audio": False},
                         {
                             "op": "blur_effect",
                             "mode": "constant",
@@ -1134,7 +1136,7 @@ class TestStreamingRequiresGuard:
                         source=SMALL_VIDEO_PATH,
                         start=4.0,
                         end=8.0,
-                        operations=[{"op": "color_adjust", "brightness": 0.2}],
+                        operations=[{"op": "glitch"}],
                     )
                 ]
             }
@@ -1161,7 +1163,7 @@ class TestStreamingRequiresGuard:
                         source=SMALL_VIDEO_PATH,
                         start=0.0,
                         end=1.0,
-                        operations=[{"op": "color_adjust", "brightness": 0.2}],
+                        operations=[{"op": "glitch"}],
                     )
                 ]
             }
@@ -1197,7 +1199,7 @@ class TestStreamingRequiresGuard:
                         source=SMALL_VIDEO_PATH,
                         start=0.0,
                         end=1.0,
-                        operations=[{"op": "color_adjust", "brightness": 0.2}],
+                        operations=[{"op": "glitch"}],
                     )
                 ]
             }
@@ -1242,7 +1244,7 @@ class TestStreamingOpOrderGuard:
             [
                 {"op": "fade", "mode": "in", "duration": 0.5},
                 {"op": "resize", "width": 64, "height": 64},
-                {"op": "color_adjust", "brightness": 0.2},
+                {"op": "glitch"},
             ]
         )
         assert plan._build_streaming_plan(plan.segments[0], None, None, None) is None
@@ -1405,17 +1407,6 @@ class TestPlanValidationErrors:
         assert err.code is PlanErrorCode.EFFECT_WINDOW_EXCEEDS_DURATION
         assert err.location == "segments[0].operations[0]"
         assert err.field == "window.stop"
-
-    def test_cut_exceeds_duration_enriched_with_segment_location(self):
-        plan = {"segments": [_segment(start=0.0, end=2.0, operations=[{"op": "cut", "start": 0.0, "end": 99.0}])]}
-        with pytest.raises(PlanValidationError) as exc:
-            VideoEdit.from_dict(plan).validate_with_metadata(SMALL_VIDEO_METADATA)
-        # The cut runs against the post-cut segment metadata (2.0s).
-        assert str(exc.value) == "end time (99.0) exceeds video duration (2.0)"
-        err = exc.value.errors[0]
-        assert err.code is PlanErrorCode.CUT_EXCEEDS_DURATION
-        assert err.location == "segments[0].operations[0]"
-        assert err.op == "cut"
 
     def test_concat_mismatch_fps(self):
         meta_a = VideoMetadata(width=320, height=240, fps=30.0, frame_count=60, total_seconds=2.0)

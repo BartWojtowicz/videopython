@@ -721,6 +721,32 @@ def _repair_op_chain(
     return new_ops, repairs, running
 
 
+@dataclasses.dataclass(frozen=True)
+class _MatchTarget:
+    """The resolved concat-compatibility target for a set of segment metas.
+
+    Produced by :meth:`VideoEdit._resolve_matching_target` and consumed by BOTH
+    the prediction pass (:meth:`VideoEdit._apply_matching`) and the execution
+    pass (:meth:`VideoEdit._matching_targets_from_disk`), so the
+    min-fps/min-resolution policy lives in one place and the two cannot drift. A
+    ``None`` axis means that axis is not matched (its ``match_to_lowest_*`` flag
+    is off, or there is nothing to match): callers leave that axis untouched.
+    """
+
+    fps: float | None
+    width: int | None
+    height: int | None
+
+    def apply(self, meta: VideoMetadata) -> VideoMetadata:
+        """Return ``meta`` conformed to this target on every non-``None`` axis."""
+        out = meta
+        if self.width is not None and self.height is not None and (out.width, out.height) != (self.width, self.height):
+            out = out.with_dimensions(self.width, self.height)
+        if self.fps is not None and out.fps != self.fps:
+            out = out.with_fps(self.fps)
+        return out
+
+
 class TransitionSpec(BaseModel):
     """How one segment enters from the previous one: a native ffmpeg crossfade.
 
@@ -1061,7 +1087,6 @@ class VideoEdit(BaseModel):
         return analyze_streamability(
             [list(seg.operations) for seg in self.segments],
             list(self.post_operations),
-            has_transitions=any(seg.transition_in is not None for seg in self.segments),
         )
 
     def repair(
@@ -1202,7 +1227,7 @@ class VideoEdit(BaseModel):
     def normalize_dimensions(
         self,
         source_metadata: VideoMetadata | dict[str, VideoMetadata],
-        target: tuple[int, int] | Literal["first", "largest"],
+        target: tuple[int, int] | Literal["first", "largest", "match"],
         context: dict[str, Any] | None = None,
     ) -> tuple[VideoEdit, list[PlanRepair]]:
         """Make every segment concat-compatible by resizing to a common canvas.
@@ -1261,6 +1286,15 @@ class VideoEdit(BaseModel):
         elif target == "largest":
             biggest = max(known, key=lambda m: m.width * m.height)
             tw, th = biggest.width, biggest.height
+        elif target == "match":
+            # The same min-resolution policy the engine's
+            # match_to_lowest_resolution applies in-stream, materialized as
+            # resize ops so it survives serialization. Degrades to "first" when
+            # the flag is off (resolved.width is None), keeping the
+            # always-produce-a-compatible-plan contract.
+            resolved = self._resolve_matching_target(known)
+            tw = resolved.width if resolved.width is not None else known[0].width
+            th = resolved.height if resolved.height is not None else known[0].height
         else:
             tw, th = target
 
@@ -1577,18 +1611,30 @@ class VideoEdit(BaseModel):
         present = [(i, m) for i, m in enumerate(cut_metas) if m is not None]
         return dict(zip((i for i, _ in present), self._apply_matching([m for _, m in present])))
 
+    def _resolve_matching_target(self, metas: list[VideoMetadata]) -> _MatchTarget:
+        """The one place the min-fps/min-resolution concat policy is decided.
+
+        Reduces per-segment metas to a single :class:`_MatchTarget` honoring
+        ``match_to_lowest_fps`` / ``match_to_lowest_resolution``. An axis is
+        ``None`` (left untouched) when its flag is off or there is nothing to
+        match (``<= 1`` meta). Shared verbatim by the prediction pass
+        (:meth:`_apply_matching`) and the execution pass
+        (:meth:`_matching_targets_from_disk`), and reused by
+        :meth:`normalize_dimensions` for its ``"match"`` target, so all three
+        agree by construction. Pure: no disk, no mutation of the inputs.
+        """
+        if len(metas) <= 1:
+            return _MatchTarget(fps=None, width=None, height=None)
+        fps = min(m.fps for m in metas) if self.match_to_lowest_fps else None
+        width = min(m.width for m in metas) if self.match_to_lowest_resolution else None
+        height = min(m.height for m in metas) if self.match_to_lowest_resolution else None
+        return _MatchTarget(fps=fps, width=width, height=height)
+
     def _apply_matching(self, metas: list[VideoMetadata]) -> list[VideoMetadata]:
         if len(metas) <= 1:
             return metas
-        result = metas
-        if self.match_to_lowest_fps:
-            min_fps = min(m.fps for m in result)
-            result = [m.with_fps(min_fps) if m.fps != min_fps else m for m in result]
-        if self.match_to_lowest_resolution:
-            min_w = min(m.width for m in result)
-            min_h = min(m.height for m in result)
-            result = [m.with_dimensions(min_w, min_h) if (m.width, m.height) != (min_w, min_h) else m for m in result]
-        return result
+        target = self._resolve_matching_target(metas)
+        return [target.apply(m) for m in metas]
 
     def run_to_file(
         self,
@@ -1613,19 +1659,29 @@ class VideoEdit(BaseModel):
 
         plans = self._compile_streaming_plans(context)
         self._assert_music_bed_supported()
-        # With a music bed, segment assembly writes to an intermediate file and
-        # the bed is mixed into `output_path` in a final post-assembly pass;
-        # without one, assembly writes straight to `output_path`.
-        bed_tmp: Path | None = None
-        if self.music_bed is not None:
+
+        # The program flows through up to three stages, each writing to its own
+        # temp file: assemble segments -> apply post_operations -> mix music bed.
+        # Only the final active stage writes straight to `output_path`.
+        has_post = bool(self.post_operations)
+        has_bed = self.music_bed is not None
+        intermediates: list[Path] = []
+
+        def _stage_target(*, is_last: bool) -> Path:
+            if is_last:
+                return output_path
             tmp = tempfile.NamedTemporaryFile(suffix=f".{format}", delete=False)
             tmp.close()
-            bed_tmp = Path(tmp.name)
-        assemble_target = bed_tmp if bed_tmp is not None else output_path
+            p = Path(tmp.name)
+            intermediates.append(p)
+            return p
+
         try:
             self._assert_transitions_runnable(plans)
+            # Stage 1: assemble the segments.
+            target = _stage_target(is_last=not (has_post or has_bed))
             if len(plans) == 1:
-                assembled = stream_segment(plans[0], assemble_target, format=format, preset=preset, crf=crf)
+                assembled = stream_segment(plans[0], target, format=format, preset=preset, crf=crf)
             else:
                 # Realize each segment to its own temp file (effects + audio
                 # already baked by stream_segment's filter_complex), capturing
@@ -1646,26 +1702,89 @@ class VideoEdit(BaseModel):
                         temp_files.append(Path(tmp.name))
 
                     if all(seg.transition_in is None for seg in self.segments):
-                        assembled = concat_files(temp_files, assemble_target)
+                        assembled = concat_files(temp_files, target)
                     else:
                         assembled = self._assemble_with_transitions(
-                            temp_files, audible, assemble_target, format=format, preset=preset, crf=crf
+                            temp_files, audible, target, format=format, preset=preset, crf=crf
                         )
                 finally:
                     for f in temp_files:
                         f.unlink(missing_ok=True)
 
-            if self.music_bed is None:
-                return assembled
-            # Final post-assembly pass: mix the bed under the assembled program.
-            speech = self._music_bed_speech_windows(context)
-            return self._mix_music_bed_to_file(assembled, output_path, speech, format=format, preset=preset, crf=crf)
+            # Stage 2: apply post_operations as ONE pass over the assembled
+            # program (a synthetic single segment), so filter-class effects,
+            # frame effects, and transforms all apply on the assembled timeline.
+            if has_post:
+                target = _stage_target(is_last=not has_bed)
+                assembled = self._apply_post_operations(
+                    assembled, target, context, format=format, preset=preset, crf=crf
+                )
+
+            # Stage 3: mix the music bed under the assembled program.
+            if has_bed:
+                speech = self._music_bed_speech_windows(context)
+                assembled = self._mix_music_bed_to_file(
+                    assembled, output_path, speech, format=format, preset=preset, crf=crf
+                )
+
+            return assembled
         finally:
-            if bed_tmp is not None:
-                bed_tmp.unlink(missing_ok=True)
+            for p in intermediates:
+                p.unlink(missing_ok=True)
             for plan in plans:
                 for f in plan.owned_temp_files:
                     f.unlink(missing_ok=True)
+
+    def _apply_post_operations(
+        self,
+        assembled: Path,
+        output_path: Path,
+        context: dict[str, Any] | None,
+        *,
+        format: str,
+        preset: str,
+        crf: int,
+    ) -> Path:
+        """Apply ``post_operations`` as one pass over the assembled program.
+
+        The assembled file is treated as a single synthetic segment whose
+        ``operations`` are the ``post_operations``, then run through the same
+        streaming engine as any segment -- so filter-class effects (vignette,
+        color_adjust, ...), frame effects, and transforms all apply uniformly to
+        the whole program on the assembled timeline, with each effect ``window``
+        resolving against the assembled file's own frame count. No per-segment
+        fold and no cross-boundary re-basing.
+
+        Runtime context: a single-segment plan's assembled timeline IS that
+        segment's, so a rebaseable value (e.g. a ``Transcription``) is re-based
+        onto it exactly as a per-segment op would see it. Multi-segment context
+        post-ops are rejected up front by :meth:`_assert_post_ops_supported`
+        (source-absolute context cannot be re-based across a concat), so only
+        broadcast (non-time) context reaches a multi-segment post-op pass.
+        """
+        meta = VideoMetadata.from_path(str(assembled))
+        seg = SegmentConfig(
+            source=assembled,
+            start=0.0,
+            end=round(meta.total_seconds, 6),
+            operations=list(self.post_operations),
+        )
+        if len(self.segments) == 1:
+            src = self.segments[0]
+            post_context = _segment_context(context, str(src.source), src.start, src.end)
+        else:
+            post_context = context
+        plan = self._build_streaming_plan(seg, None, None, None, post_context)
+        if plan is None:
+            raise PlanValidationError(
+                "post_operations did not compile to a streaming plan",
+                [PlanError(code=PlanErrorCode.STREAMING_UNSUPPORTED, location="post_operations")],
+            )
+        try:
+            return stream_segment(plan, output_path, format=format, preset=preset, crf=crf)
+        finally:
+            for f in plan.owned_temp_files:
+                f.unlink(missing_ok=True)
 
     def _mix_music_bed_to_file(
         self,
@@ -1828,7 +1947,10 @@ class VideoEdit(BaseModel):
                     f.unlink(missing_ok=True)
 
     def _compile_streaming_plans(self, context: dict[str, Any] | None) -> list[StreamingSegmentPlan]:
-        """Compile every segment plan and fold the post-ops, or raise.
+        """Compile every per-segment streaming plan, or raise.
+
+        Post-operations are NOT compiled here -- they run as a separate pass over
+        the assembled program (:meth:`_apply_post_operations`).
 
         The single admission point for :meth:`run_to_file`. Unstreamable shapes raise
         :class:`PlanValidationError` with the streamability report's
@@ -1862,46 +1984,6 @@ class VideoEdit(BaseModel):
                 if plan is None:
                     raise drift(f"segments[{i}] did not compile to a streaming plan")
                 plans.append(plan)
-
-            if self.post_operations:
-                # Post-op effects fold into the per-segment schedules with
-                # globally-rebased frame offsets: each segment's entries get
-                # the window slice that falls inside it, with index_offset /
-                # total_effect_frames carrying the assembled-timeline window
-                # so envelopes continue across the concat boundary. The
-                # unsupported shapes were rejected by the report gate above;
-                # reaching one here is drift.
-                if any(p.post_vf_filters for p in plans):
-                    raise drift("post-operations behind encode-stage filters")
-                seg_counts = [p.output_total_frames for p in plans]
-                offsets = [0]
-                for count in seg_counts[:-1]:
-                    offsets.append(offsets[-1] + count)
-                total_frames = sum(seg_counts)
-                post_fps = plans[0].output_fps
-                for op in self.post_operations:
-                    if op.requires:
-                        raise drift(f"post-operation '{op.op}' requires runtime context")
-                    if not isinstance(op, Effect) or not op.streamable or op.compiles_to_filter:
-                        raise drift(f"post-operation '{op.op}' cannot fold into the segment schedule")
-                    if op.audio_coupled and len(plans) > 1:
-                        raise drift(f"audio-coupled post-operation '{op.op}' cannot fold across segments")
-                    g_start, g_end = _effect_frame_range(op, post_fps, total_frames)
-                    g_open = g_end >= total_frames
-                    for offset, count, plan in zip(offsets, seg_counts, plans):
-                        local_start = max(g_start, offset)
-                        local_end = count + offset if g_open else min(g_end, offset + count)
-                        if local_start >= local_end:
-                            continue
-                        plan.effect_schedule.append(
-                            EffectScheduleEntry(
-                                op,
-                                local_start - offset,
-                                local_end - offset,
-                                index_offset=max(0, offset - g_start),
-                                total_effect_frames=g_end - g_start,
-                            )
-                        )
         except BaseException:
             for plan in plans:
                 for f in plan.owned_temp_files:
@@ -1915,10 +1997,8 @@ class VideoEdit(BaseModel):
         if len(self.segments) <= 1 or (not self.match_to_lowest_fps and not self.match_to_lowest_resolution):
             return None, None, None
         metas = [VideoMetadata.from_path(str(seg.source)) for seg in self.segments]
-        fps = min(m.fps for m in metas) if self.match_to_lowest_fps else None
-        w = min(m.width for m in metas) if self.match_to_lowest_resolution else None
-        h = min(m.height for m in metas) if self.match_to_lowest_resolution else None
-        return fps, w, h
+        target = self._resolve_matching_target(metas)
+        return target.fps, target.width, target.height
 
     def _build_streaming_plan(
         self,
@@ -1993,6 +2073,7 @@ class VideoEdit(BaseModel):
         post_af_filters: list[str] = []
         audio_idx = 0
         duration_changed = False
+        decode_needs_rgb = False
 
         def compile_audio_twin(op: Operation, ctx: FilterCtx, encode_stage: bool) -> None:
             """Append the op's audio-domain filter at the same stage the video
@@ -2048,6 +2129,7 @@ class VideoEdit(BaseModel):
                                 post_vf_filters.append(filter_expr)
                             else:
                                 vf_filters.append(filter_expr)
+                                decode_needs_rgb = decode_needs_rgb or op.filter_needs_rgb24
                             # Audio twin at the same stage (add_subtitles has
                             # none today; kept coupled for extensibility).
                             compile_audio_twin(op, ctx, encode_stage_effect)
@@ -2130,6 +2212,14 @@ class VideoEdit(BaseModel):
             # crop exceeding source) must not leak earlier ops' temp files.
             abandon()
             raise
+
+        # A decode-stage filter-effect that reads RGB (geq r/g/b, rgbashift)
+        # must see rgb24, not the native yuv decode stream; prepend one
+        # conversion ahead of the whole decode chain (encode-stage effects
+        # already receive rgb24 from the frame pipe). Idempotent: only when an
+        # rgb-reading effect landed at decode and no conversion leads already.
+        if decode_needs_rgb and not (vf_filters and vf_filters[0] == "format=rgb24"):
+            vf_filters.insert(0, "format=rgb24")
 
         pipe = pipe_meta or running
         # Final output duration after every transform (decode + encode stage),

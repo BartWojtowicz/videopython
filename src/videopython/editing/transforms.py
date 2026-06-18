@@ -71,6 +71,7 @@ class CutFrames(Operation):
 
     op: Literal["cut_frames"] = "cut_frames"
     category: ClassVar[OpCategory] = OpCategory.TRANSFORM
+    internal_only: ClassVar[bool] = True
 
     start: int = Field(ge=0, description="Start frame index (inclusive).")
     end: int = Field(ge=0, description="End frame index (exclusive).")
@@ -106,6 +107,7 @@ class CutSeconds(Operation):
 
     op: Literal["cut"] = "cut"
     category: ClassVar[OpCategory] = OpCategory.TRANSFORM
+    internal_only: ClassVar[bool] = True
 
     start: float = Field(ge=0, description="Start time in seconds.")
     end: float = Field(ge=0, description="End time in seconds.")
@@ -263,6 +265,13 @@ class Crop(Operation):
 
     def to_ffmpeg_filter(self, ctx: FilterCtx) -> str | None:
         cx, cy, cw, ch = self._resolve_box(ctx.width, ctx.height)
+        if self.mode == CropMode.CENTER:
+            # Match predict_metadata: a centered crop floors to even dimensions
+            # (libx264/yuv420p rejects odd), re-centered on the floored box, so
+            # the compiled filter emits exactly the declared output dims.
+            cw, ch = floor_to_even(cw), floor_to_even(ch)
+            cx = (ctx.width - cw) // 2
+            cy = (ctx.height - ch) // 2
         return f"crop={cw}:{ch}:{cx}:{cy}"
 
 
