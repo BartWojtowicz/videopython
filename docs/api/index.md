@@ -24,10 +24,8 @@ Editing primitives and the plan runner:
 
 ## `videopython.ai`
 
-AI-powered generation and understanding. Install the aggregate `[ai]` extra for
-everything, or a granular extra per capability (`[asr]`, `[vision]`,
-`[separation]`, `[translation]`, `[tts]`, `[generation]`, `[dub]` — see the
-[Installation Guide](../getting-started/installation.md)):
+AI-powered generation and understanding. Install the `[ai]` extra
+([Installation Guide](../getting-started/installation.md)):
 
 - [**Generation**](ai/generation.md) - Generate videos, images, music, and speech from text
 - [**Understanding**](ai/understanding.md) - Transcribe audio, describe images, detect scenes

@@ -39,33 +39,16 @@ pip install "videopython[ai]"
 uv add videopython --extra ai
 ```
 
-`[ai]` is a convenience aggregate that installs everything. If you only need one
-capability, install the matching granular extra instead — smaller, conflict-free,
-and (except `[tts]`) free of chatterbox's strict version pins:
+`[ai]` is the single extra and installs every AI capability — transcription,
+detection/scene/VLM understanding, source separation, translation, TTS, media
+generation, dubbing, and the LLM auto-editing planner. The heavy ML dependencies
+still load lazily at first use (no top-level imports under `ai/`), so importing
+`videopython` stays light even with `[ai]` installed.
 
-| Extra | Installs | Powers |
-|-------|----------|--------|
-| `[asr]` | Whisper, pyannote, silero-vad | `AudioToText` transcription + diarization |
-| `[vision]` | YOLO, TransNetV2, transformers, qwen-vl-utils, imagehash | `ObjectDetector`, `FaceTracker`, `SceneVLM`, `SemanticSceneDetector`, `AudioClassifier`, `VideoAnalyzer` |
-| `[separation]` | Demucs | `AudioSeparator` |
-| `[translation]` | MarianMT (transformers/sentencepiece), Qwen3 (llama-cpp) | `MarianTranslator`, `Qwen3Translator` |
-| `[tts]` | Chatterbox Multilingual | `TextToSpeech` (local voice-cloning synthesis) |
-| `[generation]` | SDXL, CogVideoX (diffusers), MusicGen | `TextToImage`, `TextToVideo`, `ImageToVideo`, `TextToMusic` |
-| `[dub]` | `asr` + `separation` + `translation` + pyloudnorm | dubbing pipeline (see note below) |
-
-```bash
-pip install "videopython[asr]"          # just transcription
-pip install "videopython[dub,tts]"      # dubbing with local TTS
-```
-
-!!! note "Dubbing and TTS"
-    `[dub]` deliberately excludes `chatterbox-tts` so a dubbing image
-    co-resolves without chatterbox's strict torch/diffusers pins. To dub with
-    the default **local** voice synthesis, also install `[tts]`
-    (`pip install "videopython[dub,tts]"`). A bare `[dub]` install that reaches
-    local synthesis raises a clear `ImportError` pointing at `[tts]`.
-    Alternatively, inject your own `SpeechBackend` into `VideoDubber` to run
-    synthesis out of process — then `[dub]` alone is enough.
+!!! note "Dubbing TTS"
+    The dubbing pipeline synthesizes speech with a local Chatterbox
+    `TextToSpeech` by default. To run synthesis out of process instead, inject
+    your own `SpeechBackend` into `VideoDubber` (e.g. a remote synthesizer).
 
 !!! note "Hardware Requirements"
     Local AI models (video generation, music generation) require a GPU.

@@ -85,7 +85,7 @@ class ObjectDetector:
     def _init_yolo(self) -> None:
         from videopython.ai._optional import require
 
-        YOLO = require("ultralytics", "vision", feature="ObjectDetector").YOLO
+        YOLO = require("ultralytics", "ai", feature="ObjectDetector").YOLO
 
         # No revision pin: ultralytics resolves/downloads this asset from its own
         # GitHub release assets, not a HF repo, and YOLO() takes no revision arg

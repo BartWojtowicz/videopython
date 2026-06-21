@@ -67,7 +67,7 @@ class SemanticSceneDetector(ManagedPredictor):
 
         from videopython.ai._optional import require
 
-        TransNetV2 = require("transnetv2_pytorch", "vision", feature="SemanticSceneDetector").TransNetV2
+        TransNetV2 = require("transnetv2_pytorch", "ai", feature="SemanticSceneDetector").TransNetV2
 
         requested_device = self.device
         device = select_device(self.device, mps_allowed=True)

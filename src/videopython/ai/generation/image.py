@@ -24,7 +24,7 @@ class TextToImage(ManagedPredictor):
 
         from videopython.ai._optional import require
 
-        DiffusionPipeline = require("diffusers", "generation", feature="TextToImage").DiffusionPipeline
+        DiffusionPipeline = require("diffusers", "ai", feature="TextToImage").DiffusionPipeline
 
         requested_device = self.device
         device = select_device(self.device, mps_allowed=True)

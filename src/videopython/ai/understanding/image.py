@@ -156,7 +156,7 @@ class SceneVLM(ManagedPredictor):
 
         from videopython.ai._optional import require
 
-        _transformers = require("transformers", "vision", feature="SceneVLM")
+        _transformers = require("transformers", "ai", feature="SceneVLM")
         AutoModelForImageTextToText = _transformers.AutoModelForImageTextToText
         AutoProcessor = _transformers.AutoProcessor
 
@@ -287,7 +287,7 @@ class SceneVLM(ManagedPredictor):
 
         from videopython.ai._optional import require
 
-        process_vision_info = require("qwen_vl_utils", "vision", feature="SceneVLM").process_vision_info
+        process_vision_info = require("qwen_vl_utils", "ai", feature="SceneVLM").process_vision_info
 
         if self._model is None:
             self._init_local()

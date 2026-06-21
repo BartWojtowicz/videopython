@@ -27,10 +27,17 @@ edit = editor.edit(["a.mp4", "b.mp4"], brief="20s highlight reel, captions on sp
 edit.run_to_file("out.mp4")
 ```
 
-Install with `pip install 'videopython[director]'` (scene analysis + the Ollama
-planner). New extras: `ollama` (planner only) and `director` (full pipeline). The
-schema-building helpers behind `VideoEdit.json_schema` moved to a shared
-`editing/_schema.py`, reused by `EditPlan.json_schema` (no behavior change).
+Install with `pip install 'videopython[ai]'`. The schema-building helpers behind
+`VideoEdit.json_schema` moved to a shared `editing/_schema.py`, reused by
+`EditPlan.json_schema` (no behavior change).
+
+### Single `[ai]` extra (breaking)
+
+The per-capability extras (`[asr]`, `[vision]`, `[separation]`, `[translation]`,
+`[tts]`, `[generation]`, `[dub]`) are collapsed into one `[ai]` extra that installs
+every AI capability. Heavy ML deps still load lazily at first use, so a plain
+`import videopython` stays light. Consumers pinning a granular extra (e.g.
+`videopython[vision]`) must switch to `videopython[ai]`.
 
 ## 0.47.0
 

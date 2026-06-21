@@ -53,101 +53,46 @@ dev = [
     "mkdocstrings>=1.0.0",
     "mkdocstrings-python>=2.0.1",
 ]
-# Thin dev-workflow group so `uv sync` / uv.lock keep working. Resolves the
-# SAME set as the aggregate `[ai]` extra below via a PEP 508 self-reference, so
-# there is a single source of truth (the granular extras) and no hand-sync.
-# `test_packaging_extras.py` asserts this stays consistent with the extra.
+# Thin dev-workflow group so `uv sync` / uv.lock keep working. References the
+# `[ai]` extra so dev installs every AI capability (single source of truth).
 ai = ["videopython[ai]"]
 
-# pip install videopython[<extra>] - pip uses optional-dependencies, not dependency-groups.
+# pip install "videopython[ai]" - pip uses optional-dependencies, not dependency-groups.
 #
-# Granular extras partition the heavy ML deps by the leaf module that imports
-# them, so consumers install only what a capability needs. `ai` is a convenience
-# aggregate that installs EVERYTHING via PEP 685 self-references (no hand-sync).
-# `test_packaging_extras.py` enforces union(granular) == ai as a drift guard.
+# A single [ai] extra installs every AI capability. The heavy ML deps still load
+# lazily at first use (no top-level imports under ai/), so importing videopython
+# stays light even with [ai] installed.
 [project.optional-dependencies]
-# Speech recognition / diarization (understanding/audio.py).
-asr = [
+ai = [
+    # Speech recognition / diarization (understanding/audio.py)
     "openai-whisper>=20240930",
     "pyannote-audio>=4.0.0",
-    # Voice activity detection (used by AudioToText to gate Whisper language detection)
     "silero-vad>=5.1",
-    "torch>=2.8.0",
-    "torchaudio>=2.8.0",
-]
-# Visual understanding: detection, scene/temporal, VLM (understanding/{faces,
-# objects,temporal,image}.py + video_analysis). transformers also backs the AST
-# AudioClassifier and the SceneVLM; qwen-vl-utils is the SceneVLM preprocessor;
-# imagehash is the SceneVLM frame-dedup; transnetv2 is scene detection.
-vision = [
+    # Visual understanding: detection, scene/temporal, VLM (understanding/*, video_analysis)
     "ultralytics>=8.0.0",
     "transnetv2-pytorch>=1.0.5",
     "transformers>=5.2.0",
     "qwen-vl-utils>=0.0.10",
     "imagehash>=4.3",
-    "torch>=2.8.0",
-    "torchaudio>=2.8.0",
-]
-# Audio source separation (understanding/separation.py).
-separation = [
+    # Audio source separation (understanding/separation.py)
     "demucs>=4.0.0",
-    "torch>=2.8.0",
-    "torchaudio>=2.8.0",
-]
-# Text translation backends (generation/translation.py MarianMT +
-# generation/qwen3.py Qwen3 GGUF). MarianTokenizer requires sentencepiece.
-translation = [
-    "transformers>=5.2.0",
+    # Translation backends (generation/translation.py MarianMT, generation/qwen3.py GGUF)
     "sentencepiece>=0.1.99",
     "llama-cpp-python>=0.3.0",
-    "torch>=2.8.0",
-]
-# Voice cloning TTS (generation/audio.py — Chatterbox Multilingual by Resemble
-# AI). ISOLATED: chatterbox-tts 0.1.7 carries the strict pins that force the
-# [tool.uv].override-dependencies block. This is the ONLY extra that drags them.
-# Left to chatterbox's own torch==2.6.0 / torchaudio==2.6.0 pins (no floors
-# here) so `pip install videopython[tts]` resolves STANDALONE in its own
-# image/Modal function -- the whole point of running TTS behind SpeechBackend.
-# The all-in [ai] resolve forces torch>=2.8.0 over this via override-dependencies.
-tts = [
+    # Voice cloning TTS (generation/audio.py — Chatterbox); its strict pins drive
+    # the [tool.uv].override-dependencies block below.
     "chatterbox-tts>=0.1.7",
-]
-# Local media generation: SDXL/CogVideoX (generation/{image,video}.py) +
-# MusicGen (generation/audio.py TextToMusic, via transformers).
-generation = [
+    # Local media generation: SDXL/CogVideoX + MusicGen (generation/*)
     "diffusers>=0.30.0",
-    "transformers>=5.2.0",
     "accelerate>=0.29.2",
+    # Dubbing loudness matching (dubbing/loudness.py)
+    "pyloudnorm>=0.1.1",
+    # LLM-authored editing planner (auto_edit/local.py OllamaVisionLLM)
+    "ollama>=0.5.0",
+    # Shared torch stack
     "torch>=2.8.0",
     "torchaudio>=2.8.0",
 ]
-# Dubbing pipeline's hard top-level deps: transcription (asr) + source
-# separation (separation) + translation, plus BS.1770 loudness matching
-# (dubbing/loudness.py). Deliberately EXCLUDES tts/chatterbox: local synthesis
-# runs through the SpeechBackend protocol against a separately-installed [tts]
-# extra or an injected remote backend, so a [dub] image co-resolves WITHOUT
-# chatterbox's override-forcing pin. A bare [dub] install that hits local
-# synthesis raises a clear [tts]-pointing ImportError.
-dub = [
-    "videopython[asr,separation,translation]",
-    # Loudness measurement (BS.1770) for dub-vs-source loudness matching (M3)
-    "pyloudnorm>=0.1.1",
-]
-# LLM-authored editing planner (auto_edit/local.py OllamaVisionLLM). A light HTTP
-# client for a local Ollama server -- no torch -- so the user runs any pulled
-# vision model. Structured output uses Ollama's schema `format`.
-ollama = [
-    "ollama>=0.5.0",
-]
-# Convenience aggregate for the full auto-edit pipeline: scene analysis (vision +
-# asr) plus the Ollama planner. Mirrors how [dub] aggregates its stages.
-director = [
-    "videopython[asr,vision,ollama]",
-]
-# Convenience aggregate: installs every capability. PEP 685 self-references make
-# this the single "everything" install with no hand-duplicated dep list. This
-# combined resolve is what the [tool.uv].override-dependencies block exists for.
-ai = ["videopython[asr,vision,separation,translation,tts,generation,dub,ollama]"]
 
 [project.urls]
 Homepage = "https://videopython.com"
@@ -183,16 +128,10 @@ module = [
 ignore_missing_imports = true
 
 [tool.uv]
-# LOAD-BEARING ONLY for the all-in `[ai]` resolve (every extra installed
-# together, as in dev/CI and `uv sync`). chatterbox-tts 0.1.7 (the `[tts]`
-# extra) pins strict torch/torchaudio/numpy/diffusers that conflict with
-# pyannote-audio (torch>=2.8, `[asr]`) and CogVideoX (diffusers>=0.30,
-# `[generation]`). This override lets the combined resolver pick compatible
-# versions. A consumer installing a SUBSET that excludes chatterbox — notably
-# `[dub]` (asr+separation+translation+pyloudnorm, no tts) — co-resolves cleanly
-# WITHOUT this override; that clean `[dub]` resolve is the whole point of
-# isolating `[tts]`. The ai dependency floors are aligned with these overrides
-# to keep pip and uv resolving similar versions.
+# chatterbox-tts 0.1.7 (in [ai]) pins strict torch/torchaudio/numpy/diffusers
+# that conflict with pyannote-audio (torch>=2.8) and CogVideoX (diffusers>=0.30).
+# These overrides let the combined [ai] resolve pick compatible versions; the
+# floors in [ai] are aligned with them so pip and uv resolve similar versions.
 override-dependencies = [
     "torch>=2.8.0", "torchaudio>=2.8.0", "numpy>=2.0.0", "diffusers>=0.30.0",
     # ultralytics depends on opencv-python which conflicts with our

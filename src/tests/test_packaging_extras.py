@@ -1,13 +1,12 @@
-"""Packaging-extras drift guard + import-topology tests for ``videopython.ai``.
+"""Packaging + import-topology tests for ``videopython.ai``.
 
-These tests replace the hand-sync that previously kept the duplicated ``[ai]``
-dep lists aligned. They enforce, mechanically:
+They enforce, mechanically:
 
-* The granular extras (``asr``, ``vision``, ...) union to exactly the aggregate
-  ``[ai]`` extra, and the ``[dependency-groups].ai`` dev group stays consistent
-  with it (drift guard).
+* The ``[dependency-groups].ai`` dev group stays consistent with the ``[ai]``
+  optional-dependencies extra, and every dep declared in ``[ai]`` is imported
+  somewhere under ``ai/`` (no vestigial declarations).
 * No heavy ML dependency is imported at module top level anywhere under ``ai/``
-  (so leaf modules stay importable on a slim extra; deps load lazily).
+  (so leaf modules stay importable on a slim install; deps load lazily).
 * Importing a leaf symbol (or ``videopython.ai`` itself) does NOT eagerly import
   sibling AI leaf modules — i.e. the PEP 562 lazy ``__getattr__`` chains work.
 * ``ai._optional.require`` raises an actionable, extra-pointing ``ImportError``.
@@ -73,8 +72,6 @@ _HEAVY_IMPORT_NAMES: set[str] = {
     "huggingface_hub",
 }
 
-_GRANULAR_EXTRAS = ["asr", "vision", "separation", "translation", "tts", "generation", "dub", "ollama"]
-
 
 @pytest.fixture(scope="module")
 def pyproject() -> Pyproject:
@@ -106,30 +103,6 @@ def _dependency_groups(pyproject: Pyproject) -> dict[str, list[str]]:
 # --------------------------------------------------------------------------- #
 
 
-def test_granular_extras_union_equals_aggregate_ai(pyproject: Pyproject) -> None:
-    """union(granular extras) == aggregate [ai]. Replaces the old hand-sync.
-
-    This guards the aggregate's *reference list* (e.g. dropping ``dub`` from
-    ``ai = videopython[...]``), not the granular extras' contents: because [ai]
-    self-references the granular extras, a dep added to a granular extra flows
-    into both sides. Phantom/raw deps are caught by
-    ``test_every_declared_dep_is_imported_somewhere`` and the per-extra tests.
-    """
-    extras = _optional_deps(pyproject)
-
-    union: set[str] = set()
-    for name in _GRANULAR_EXTRAS:
-        union |= _flatten_extra(extras, name)
-
-    aggregate = _flatten_extra(extras, "ai")
-
-    assert union == aggregate, (
-        "Granular extras drifted from aggregate [ai]:\n"
-        f"  only in granular union: {sorted(union - aggregate)}\n"
-        f"  only in [ai]:           {sorted(aggregate - union)}"
-    )
-
-
 def test_dependency_group_ai_matches_optional_ai(pyproject: Pyproject) -> None:
     """[dependency-groups].ai resolves the same set as [project.optional-dependencies].ai."""
     opt = _optional_deps(pyproject)
@@ -156,19 +129,6 @@ def test_dependency_group_ai_matches_optional_ai(pyproject: Pyproject) -> None:
     )
 
 
-def test_tts_is_isolated(pyproject: Pyproject) -> None:
-    """chatterbox-tts lives ONLY in [tts] (and the aggregate), never in [dub]."""
-    extras = _optional_deps(pyproject)
-
-    tts_deps = {_req_name(r) for r in _flatten_extra(extras, "tts")}
-    assert "chatterbox-tts" in tts_deps
-
-    dub_deps = {_req_name(r) for r in _flatten_extra(extras, "dub")}
-    assert "chatterbox-tts" not in dub_deps, "[dub] must NOT include chatterbox-tts (it runs via SpeechBackend)"
-    # The dub-only loudness feature must land in [dub], not asr.
-    assert "pyloudnorm" in dub_deps
-
-
 # Deps that are declared as resolver co-pins/floors but have NO direct import
 # under ai/ — they're pulled transitively by a sibling dep that we DO import:
 #   torchaudio  -> co-pin for the torch stack (whisper/chatterbox/demucs)
@@ -178,13 +138,10 @@ _TRANSITIVE_ONLY_DEPS = {"torchaudio", "sentencepiece", "accelerate"}
 
 
 def test_every_declared_dep_is_imported_somewhere(pyproject: Pyproject) -> None:
-    """Each dep declared across the granular extras is actually imported under
-    ai/ (lazily, anywhere) — or is a known transitive-only co-pin. Guards
-    against vestigial declarations creeping back."""
+    """Each dep declared in [ai] is actually imported under ai/ (lazily, anywhere)
+    — or is a known transitive-only co-pin. Guards against vestigial declarations."""
     extras = _optional_deps(pyproject)
-    declared: set[str] = set()
-    for name in _GRANULAR_EXTRAS:
-        declared |= {_req_name(r) for r in _flatten_extra(extras, name)}
+    declared = {_req_name(r) for r in _flatten_extra(extras, "ai")}
 
     source = "\n".join(p.read_text() for p in _AI_ROOT.rglob("*.py"))
 
@@ -294,12 +251,11 @@ def test_require_raises_with_extra_and_pip_hint() -> None:
     from videopython.ai._optional import require
 
     with pytest.raises(ImportError) as exc_info:
-        require("definitely_not_a_real_module_xyz", "tts", feature="TextToSpeech")
+        require("definitely_not_a_real_module_xyz", "ai", feature="TextToSpeech")
 
     msg = str(exc_info.value)
-    assert "tts" in msg
     assert "pip install" in msg
-    assert "videopython[tts]" in msg
+    assert "videopython[ai]" in msg
 
 
 def test_require_returns_module_when_present() -> None:

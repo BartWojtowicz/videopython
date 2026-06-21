@@ -94,7 +94,7 @@ pip install videopython          # core editing
 pip install "videopython[ai]"    # + ALL local AI features (GPU recommended)
 ```
 
-`[ai]` installs everything; granular extras (`[asr]`, `[vision]`, `[separation]`, `[translation]`, `[tts]`, `[generation]`, `[dub]`) install only one capability each.
+`[ai]` is the single extra and installs every AI capability; heavy ML deps still load lazily at first use.
 
 Python `>=3.11, <3.14`. AI features run locally -- no cloud API keys required.
 

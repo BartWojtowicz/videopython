@@ -4536,71 +4536,6 @@ ai = [
     { name = "transnetv2-pytorch" },
     { name = "ultralytics" },
 ]
-asr = [
-    { name = "openai-whisper" },
-    { name = "pyannote-audio" },
-    { name = "silero-vad" },
-    { name = "torch" },
-    { name = "torchaudio" },
-]
-director = [
-    { name = "imagehash" },
-    { name = "ollama" },
-    { name = "openai-whisper" },
-    { name = "pyannote-audio" },
-    { name = "qwen-vl-utils" },
-    { name = "silero-vad" },
-    { name = "torch" },
-    { name = "torchaudio" },
-    { name = "transformers" },
-    { name = "transnetv2-pytorch" },
-    { name = "ultralytics" },
-]
-dub = [
-    { name = "demucs" },
-    { name = "llama-cpp-python" },
-    { name = "openai-whisper" },
-    { name = "pyannote-audio" },
-    { name = "pyloudnorm" },
-    { name = "sentencepiece" },
-    { name = "silero-vad" },
-    { name = "torch" },
-    { name = "torchaudio" },
-    { name = "transformers" },
-]
-generation = [
-    { name = "accelerate" },
-    { name = "diffusers" },
-    { name = "torch" },
-    { name = "torchaudio" },
-    { name = "transformers" },
-]
-ollama = [
-    { name = "ollama" },
-]
-separation = [
-    { name = "demucs" },
-    { name = "torch" },
-    { name = "torchaudio" },
-]
-translation = [
-    { name = "llama-cpp-python" },
-    { name = "sentencepiece" },
-    { name = "torch" },
-    { name = "transformers" },
-]
-tts = [
-    { name = "chatterbox-tts" },
-]
-vision = [
-    { name = "imagehash" },
-    { name = "qwen-vl-utils" },
-    { name = "torch" },
-    { name = "torchaudio" },
-    { name = "transformers" },
-    { name = "transnetv2-pytorch" },
-    { name = "ultralytics" },
-]
 
 [package.dev-dependencies]
 ai = [
@@ -4622,44 +4557,32 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "accelerate", marker = "extra == 'generation'", specifier = ">=0.29.2" },
-    { name = "chatterbox-tts", marker = "extra == 'tts'", specifier = ">=0.1.7" },
-    { name = "demucs", marker = "extra == 'separation'", specifier = ">=4.0.0" },
-    { name = "diffusers", marker = "extra == 'generation'", specifier = ">=0.30.0" },
-    { name = "imagehash", marker = "extra == 'vision'", specifier = ">=4.3" },
-    { name = "llama-cpp-python", marker = "extra == 'translation'", specifier = ">=0.3.0" },
+    { name = "accelerate", marker = "extra == 'ai'", specifier = ">=0.29.2" },
+    { name = "chatterbox-tts", marker = "extra == 'ai'", specifier = ">=0.1.7" },
+    { name = "demucs", marker = "extra == 'ai'", specifier = ">=4.0.0" },
+    { name = "diffusers", marker = "extra == 'ai'", specifier = ">=0.30.0" },
+    { name = "imagehash", marker = "extra == 'ai'", specifier = ">=4.3" },
+    { name = "llama-cpp-python", marker = "extra == 'ai'", specifier = ">=0.3.0" },
     { name = "numpy", specifier = ">=1.25.2" },
-    { name = "ollama", marker = "extra == 'ollama'", specifier = ">=0.5.0" },
-    { name = "openai-whisper", marker = "extra == 'asr'", specifier = ">=20240930" },
+    { name = "ollama", marker = "extra == 'ai'", specifier = ">=0.5.0" },
+    { name = "openai-whisper", marker = "extra == 'ai'", specifier = ">=20240930" },
     { name = "opencv-python-headless", specifier = ">=4.9.0.80" },
     { name = "pillow", specifier = ">=12.1.1" },
-    { name = "pyannote-audio", marker = "extra == 'asr'", specifier = ">=4.0.0" },
+    { name = "pyannote-audio", marker = "extra == 'ai'", specifier = ">=4.0.0" },
     { name = "pydantic", specifier = ">=2.8.0" },
-    { name = "pyloudnorm", marker = "extra == 'dub'", specifier = ">=0.1.1" },
-    { name = "qwen-vl-utils", marker = "extra == 'vision'", specifier = ">=0.0.10" },
+    { name = "pyloudnorm", marker = "extra == 'ai'", specifier = ">=0.1.1" },
+    { name = "qwen-vl-utils", marker = "extra == 'ai'", specifier = ">=0.0.10" },
     { name = "resvg-py", specifier = ">=0.3.2" },
-    { name = "sentencepiece", marker = "extra == 'translation'", specifier = ">=0.1.99" },
-    { name = "silero-vad", marker = "extra == 'asr'", specifier = ">=5.1" },
-    { name = "torch", marker = "extra == 'asr'", specifier = ">=2.8.0" },
-    { name = "torch", marker = "extra == 'generation'", specifier = ">=2.8.0" },
-    { name = "torch", marker = "extra == 'separation'", specifier = ">=2.8.0" },
-    { name = "torch", marker = "extra == 'translation'", specifier = ">=2.8.0" },
-    { name = "torch", marker = "extra == 'vision'", specifier = ">=2.8.0" },
-    { name = "torchaudio", marker = "extra == 'asr'", specifier = ">=2.8.0" },
-    { name = "torchaudio", marker = "extra == 'generation'", specifier = ">=2.8.0" },
-    { name = "torchaudio", marker = "extra == 'separation'", specifier = ">=2.8.0" },
-    { name = "torchaudio", marker = "extra == 'vision'", specifier = ">=2.8.0" },
+    { name = "sentencepiece", marker = "extra == 'ai'", specifier = ">=0.1.99" },
+    { name = "silero-vad", marker = "extra == 'ai'", specifier = ">=5.1" },
+    { name = "torch", marker = "extra == 'ai'", specifier = ">=2.8.0" },
+    { name = "torchaudio", marker = "extra == 'ai'", specifier = ">=2.8.0" },
     { name = "tqdm", specifier = ">=4.66.3" },
-    { name = "transformers", marker = "extra == 'generation'", specifier = ">=5.2.0" },
-    { name = "transformers", marker = "extra == 'translation'", specifier = ">=5.2.0" },
-    { name = "transformers", marker = "extra == 'vision'", specifier = ">=5.2.0" },
-    { name = "transnetv2-pytorch", marker = "extra == 'vision'", specifier = ">=1.0.5" },
-    { name = "ultralytics", marker = "extra == 'vision'", specifier = ">=8.0.0" },
-    { name = "videopython", extras = ["asr", "separation", "translation"], marker = "extra == 'dub'" },
-    { name = "videopython", extras = ["asr", "vision", "ollama"], marker = "extra == 'director'" },
-    { name = "videopython", extras = ["asr", "vision", "separation", "translation", "tts", "generation", "dub", "ollama"], marker = "extra == 'ai'" },
+    { name = "transformers", marker = "extra == 'ai'", specifier = ">=5.2.0" },
+    { name = "transnetv2-pytorch", marker = "extra == 'ai'", specifier = ">=1.0.5" },
+    { name = "ultralytics", marker = "extra == 'ai'", specifier = ">=8.0.0" },
 ]
-provides-extras = ["asr", "vision", "separation", "translation", "tts", "generation", "dub", "ollama", "director", "ai"]
+provides-extras = ["ai"]
 
 [package.metadata.requires-dev]
 ai = [{ name = "videopython", extras = ["ai"] }]

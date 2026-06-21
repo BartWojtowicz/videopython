@@ -38,7 +38,7 @@ class OllamaVisionLLM:
 
     def _get_client(self) -> Any:
         if self._client is None:
-            ollama = require("ollama", "ollama", feature="OllamaVisionLLM")
+            ollama = require("ollama", "ai", feature="OllamaVisionLLM")
             self._client = ollama.Client(host=self.host)
         return self._client
 

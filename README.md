@@ -18,8 +18,6 @@ pip install videopython          # core video/audio editing
 pip install "videopython[ai]"    # + ALL local AI features (GPU recommended)
 ```
 
-AI deps are also split into granular extras so you can install only what you need: `[asr]` (transcription), `[vision]` (detection/scene/VLM), `[separation]`, `[translation]`, `[tts]` (voice cloning), `[generation]` (image/video/music), and `[dub]` (the dubbing pipeline). `[dub]` excludes chatterbox — add `[tts]` for local synthesis (`pip install "videopython[dub,tts]"`) or inject a `SpeechBackend`. See the [Installation Guide](https://videopython.com/getting-started/installation/) for the full table.
-
 Python `>=3.11, <3.14`. AI features run locally — no cloud API keys required, but model weights are downloaded on first use.
 
 ## Quick Start

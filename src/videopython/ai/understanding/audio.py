@@ -59,7 +59,7 @@ def _build_initial_prompt(vocabulary: list[str]) -> str | None:
 
     from videopython.ai._optional import require
 
-    whisper_tokenizer = require("whisper.tokenizer", "asr", feature="AudioToText")
+    whisper_tokenizer = require("whisper.tokenizer", "ai", feature="AudioToText")
 
     tokenizer = whisper_tokenizer.get_tokenizer(multilingual=True, task="transcribe")
     kept = list(vocabulary)
@@ -187,7 +187,7 @@ class AudioToText(ManagedPredictor):
         """Initialize local Whisper model."""
         from videopython.ai._optional import require
 
-        whisper = require("whisper", "asr", feature="AudioToText")
+        whisper = require("whisper", "ai", feature="AudioToText")
 
         # No revision pin: openai-whisper downloads weights by name from OpenAI's
         # own CDN, not via a HF from_pretrained repo, so there is no HF commit
@@ -200,7 +200,7 @@ class AudioToText(ManagedPredictor):
 
         from videopython.ai._optional import require
 
-        Pipeline = require("pyannote.audio", "asr", feature="AudioToText diarization").Pipeline
+        Pipeline = require("pyannote.audio", "ai", feature="AudioToText diarization").Pipeline
 
         self._diarization_pipeline = Pipeline.from_pretrained(
             self.PYANNOTE_DIARIZATION_MODEL, revision=pinned(self.PYANNOTE_DIARIZATION_MODEL)
@@ -216,7 +216,7 @@ class AudioToText(ManagedPredictor):
         """
         from videopython.ai._optional import require
 
-        load_silero_vad = require("silero_vad", "asr", feature="AudioToText VAD").load_silero_vad
+        load_silero_vad = require("silero_vad", "ai", feature="AudioToText VAD").load_silero_vad
 
         self._vad_model = load_silero_vad()
 
@@ -529,7 +529,7 @@ class AudioClassifier(ManagedPredictor):
         """Initialize local AST model from HuggingFace."""
         from videopython.ai._optional import require
 
-        _transformers = require("transformers", "vision", feature="AudioClassifier")
+        _transformers = require("transformers", "ai", feature="AudioClassifier")
         ASTFeatureExtractor = _transformers.ASTFeatureExtractor
         ASTForAudioClassification = _transformers.ASTForAudioClassification
 
