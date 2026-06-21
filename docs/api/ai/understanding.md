@@ -132,7 +132,7 @@ for event in result.events:
 ## SceneVLM
 
 `SceneVLM` describes scenes with a local Ollama vision model (`model` kwarg, an
-Ollama tag you have pulled; default `llama3.2-vision`). It needs a running Ollama
+Ollama tag you have pulled; default `gemma3:27b`). It needs a running Ollama
 server and a vision-capable model that supports structured output.
 
 `analyze_scene()` and `analyze_frame()` return a structured

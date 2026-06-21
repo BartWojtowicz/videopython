@@ -194,8 +194,8 @@ context window, with one parse-retry on any segments the first pass misses.
 # Translation always uses the local Ollama model (translator "auto" / "ollama").
 dubber = VideoDubber(translator="auto")
 
-# Pick the Ollama model + server (pull it first: `ollama pull qwen3`).
-dubber = VideoDubber(translator_model="qwen3", translator_host="http://localhost:11434")
+# Pick the Ollama model + server (pull it first: `ollama pull gemma3:27b`).
+dubber = VideoDubber(translator_model="gemma3:27b", translator_host="http://localhost:11434")
 ```
 
 Segments the model never returns (after the retry) are surfaced on
@@ -404,7 +404,7 @@ config = DubbingConfig(
     device="cuda",
     low_memory=True,
     whisper_model="large",
-    translator_model="qwen3",
+    translator_model="gemma3:27b",
     vocabulary=["Klarna", "Allegro"],
 )
 dubber = VideoDubber(config=config)

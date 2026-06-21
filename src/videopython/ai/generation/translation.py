@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 # Default Ollama text model for translation; override via the `model` arg (and
 # `ollama pull` it first). Any instruct model that supports structured output works.
-DEFAULT_TRANSLATION_MODEL = "qwen3"
+DEFAULT_TRANSLATION_MODEL = "gemma3:27b"
 
 
 class UnsupportedLanguageError(ValueError):

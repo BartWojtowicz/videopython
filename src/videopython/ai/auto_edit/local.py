@@ -8,7 +8,7 @@ from videopython.ai._ollama import OllamaError, OllamaStructuredClient
 
 from .backend import ImagePart, Part, PlannerError, TextPart
 
-DEFAULT_OLLAMA_MODEL = "llama3.2-vision"
+DEFAULT_OLLAMA_MODEL = "gemma3:27b"
 
 
 class OllamaVisionLLM:
