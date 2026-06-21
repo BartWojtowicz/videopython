@@ -58,7 +58,7 @@ config = VideoAnalysisConfig(
         "face_tracker",
     },
     analyzer_params={
-        "scene_vlm": {"model_size": "9b"},   # default is "4b"
+        "scene_vlm": {"model": "gemma3:27b"},  # any vision tag you've pulled
         "audio_to_text": {
             "model_name": "large",
             "vocabulary": ["Klarna", "Allegro", "InPost"],  # brand-name biasing
@@ -83,9 +83,10 @@ adjacent short scenes get merged into a single VLM call:
 | `"medium"` (default) | 30 | 10s | balanced default |
 | `"high"` | 60 | 4s | rich analysis, talking-head depth |
 
-`model_size` and `sampling` are orthogonal kwargs.
-`model_size="4b" + sampling="high"` is the rich-analysis pairing;
-`model_size="4b" + sampling="low"` is a fast preview.
+The SceneVLM `model` (an Ollama tag) and `sampling` are orthogonal: `sampling`
+sizes the per-scene frame budget, `model` picks the captioning model. A capable
+model with `sampling="high"` is the rich pairing; `sampling="low"` is a fast
+preview.
 
 ## Rich Understanding Preset
 

@@ -55,9 +55,17 @@ Blur, zoom, color grading, vignette, Ken Burns, text and image overlay. Load, no
 
 <div class="feature-card" markdown>
 
-### LLM-Driven Editing
+### LLM Plan Schema
 
-JSON editing plans with full JSON Schema generation, dry-run validation, and an operation registry with rich constraints. [Learn more →](guides/llm-integration.md)
+Drive videopython from your own LLM: JSON Schema generation, dry-run validation, and a structured repair / normalize refine loop. [Learn more →](guides/llm-integration.md)
+
+</div>
+
+<div class="feature-card" markdown>
+
+### Automatic Editing
+
+Hand `AutoEditor` your clips and a one-line brief — a local vision LLM selects and orders the shots, then renders the cut. Or drive the same pipeline from any MCP agent. [Learn more →](guides/auto-editing.md)
 
 </div>
 
@@ -90,11 +98,12 @@ Translate speech, clone the original voice, and re-time the dub onto the source 
 ## Installation
 
 ```bash
-pip install videopython          # core editing
-pip install "videopython[ai]"    # + ALL local AI features (GPU recommended)
+pip install videopython              # core editing
+pip install "videopython[ai]"        # + ALL local AI features (GPU recommended)
+pip install "videopython[ai,mcp]"    # + MCP server (videopython-mcp)
 ```
 
-`[ai]` is the single extra and installs every AI capability; heavy ML deps still load lazily at first use.
+`[ai]` is the single AI extra and installs every AI capability; heavy ML deps still load lazily at first use. `[mcp]` adds the MCP server.
 
 Python `>=3.11, <3.14`. AI features run locally -- no cloud API keys required.
 

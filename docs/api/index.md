@@ -1,6 +1,6 @@
 # API Reference
 
-videopython is organized into four top-level subpackages. Everything outside `videopython.ai` is installable with the default `pip install videopython` — no ML dependencies required.
+videopython is organized into a few top-level subpackages. Everything outside `videopython.ai` (and the optional MCP server) is installable with the default `pip install videopython` — no ML dependencies required.
 
 ## `videopython.base`
 
@@ -30,8 +30,13 @@ AI-powered generation and understanding. Install the `[ai]` extra
 - [**Generation**](ai/generation.md) - Generate videos, images, music, and speech from text
 - [**Understanding**](ai/understanding.md) - Transcribe audio, describe images, detect scenes
 - [**Video Analysis**](ai/video_analysis.md) - Aggregate serializable scene-first analysis across audio, visual, and temporal understanding
+- [**Auto-Editing**](ai/auto_edit.md) - `AutoEditor`: plan and render an edit from sources + a one-line brief with a local LLM
 - [**Dubbing**](ai/dubbing.md) - Dub videos into different languages or revoice with custom text
 - [**AI Transforms**](ai/transforms.md) - `FaceTrackingCrop` for face-aware reframing (headroom / thirds, bounded camera speed)
+
+## `videopython.mcp`
+
+The auto-editing pipeline exposed as [Model Context Protocol](https://modelcontextprotocol.io) tools, so an MCP-capable agent drives editing with its own model as the planner. Install the `[ai,mcp]` extras and run `videopython-mcp`. See the [MCP Server guide](../guides/mcp.md).
 
 ## Import Patterns
 

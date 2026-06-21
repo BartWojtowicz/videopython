@@ -6,6 +6,18 @@ rules, parameter types, and value constraints surface as standard JSON
 Schema. An LLM can generate, validate, and execute editing plans without
 needing to learn the surface from examples.
 
+There are three ways to put an LLM in the loop:
+
+1. **Bring your own LLM** *(this guide)* — videopython hands your model the JSON
+   Schema and the validate/repair/normalize refine loop; your model authors plans.
+2. **[Automatic Editing](auto-editing.md)** — `AutoEditor` runs a *local* Ollama
+   vision model as the planner; give it sources + a brief and it returns a cut.
+3. **[MCP Server](mcp.md)** — `videopython-mcp` exposes the pipeline as Model
+   Context Protocol tools so an external agent (its own model the planner) drives it.
+
+The rest of this guide covers approach 1: the schema, the refine loop, and the
+operation registry the other two modes build on.
+
 ## Workflow
 
 1. **Generate** — pass `VideoEdit.json_schema()` to the LLM as a tool /

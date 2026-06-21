@@ -1,6 +1,6 @@
 [project]
 name = "videopython"
-version = "0.49.0"
+version = "0.50.0"
 description = "Minimal video generation and processing library."
 authors = [
     { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
@@ -89,6 +89,11 @@ ai = [
     "torch>=2.8.0",
     "torchaudio>=2.8.0",
 ]
+# MCP server (videopython/mcp/). Pin <2 — v2 is pre-release/breaking.
+mcp = ["mcp>=1.27,<2"]
+
+[project.scripts]
+videopython-mcp = "videopython.mcp.server:main"
 
 [project.urls]
 Homepage = "https://videopython.com"
@@ -118,6 +123,7 @@ module = [
     "cv2", "cv2.*",
     "pyloudnorm", "pyloudnorm.*",
     "imagehash", "imagehash.*",
+    "mcp", "mcp.*",
 ]
 ignore_missing_imports = true
 
