@@ -67,10 +67,6 @@ from __future__ import annotations
 # ``pinned(model_id)`` resolves with a plain dict lookup. SHAs captured from
 # the HuggingFace model API (see module docstring for refresh instructions).
 MODEL_REVISIONS: dict[str, str] = {
-    # SceneVLM (ai/understanding/image.py: SCENE_VLM_MODEL_IDS)
-    "Qwen/Qwen3.5-4B": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
-    "Qwen/Qwen3.5-9B": "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
-    "Qwen/Qwen3.5-27B": "fc05daec18b0a78c049392ed2e771dde82bdf654",
     # Speaker diarization (ai/understanding/audio.py: PYANNOTE_DIARIZATION_MODEL).
     # Gated repo (auto-approved); from_pretrained needs an accepted HF token.
     "pyannote/speaker-diarization-community-1": "3533c8cf8e369892e6b79ff1bf80f7b0286a54ee",
