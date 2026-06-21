@@ -14,11 +14,12 @@ Full documentation: [videopython.com](https://videopython.com)
 
 ```bash
 # Install FFmpeg first (macOS: brew install ffmpeg | Debian: apt-get install ffmpeg)
-pip install videopython          # core video/audio editing
-pip install "videopython[ai]"    # + ALL local AI features (GPU recommended)
+pip install videopython              # core video/audio editing
+pip install "videopython[ai]"        # + ALL local AI features (GPU recommended)
+pip install "videopython[ai,mcp]"    # + MCP server for agent-driven editing
 ```
 
-Python `>=3.11, <3.14`. AI features run locally — no cloud API keys required, but model weights are downloaded on first use.
+Python `>=3.11, <3.14`. AI features run locally — no cloud API keys required, but model weights are downloaded on first use. LLM-driven editing and scene captioning use a local [Ollama](https://ollama.com) server (`ollama pull gemma3:27b`).
 
 ## Quick Start
 
@@ -47,6 +48,23 @@ edit.run_to_file("output.mp4")   # streams ffmpeg decode → effects → encode
 
 `run_to_file()` streams ffmpeg decode → per-frame effects → encode, so memory stays bounded even for hour-long sources. If you need the frames back in memory, load the rendered file: `Video.from_path(str(edit.run_to_file("output.mp4")))`.
 
+### Automatic editing (local LLM)
+
+Give `AutoEditor` your clips and a brief; a local Ollama vision model selects and orders the shots, and you get back a runnable `VideoEdit`:
+
+```python
+from videopython.ai import AutoEditor, OllamaVisionLLM
+
+editor = AutoEditor(planner=OllamaVisionLLM(model="gemma3:27b"))  # ollama pull gemma3:27b
+edit = editor.edit(
+    ["clip_a.mp4", "clip_b.mp4", "clip_c.mp4"],
+    brief="A punchy 15-second teaser; lead with the most dynamic shot.",
+)
+edit.run_to_file("teaser.mp4")
+```
+
+The model picks scenes **by id** from a catalog built from scene detection + captions, so its temporal imprecision never reaches the render. See the [Automatic Editing Guide](https://videopython.com/guides/auto-editing/).
+
 ### AI generation
 
 ```python
@@ -60,7 +78,13 @@ video.add_audio(audio).save("ai_video.mp4")
 
 ## LLM & AI Agent Integration
 
-Every operation is a Pydantic model whose fields ARE the JSON wire format. `VideoEdit.json_schema()` returns a JSON Schema with a discriminated union over every LLM-exposed `Operation` (server-only ops like `image_overlay` are excluded by default) — pass it straight to Anthropic tool use, OpenAI function calling, or any structured-output API. Pass `strict=True` for a provider strict-mode grammar that prevents simple bound violations at decode time.
+Putting an LLM in the loop works three ways:
+
+1. **Bring your own LLM** — videopython gives your model the JSON Schema and a structured refine loop; your model authors the plans (details below).
+2. **`AutoEditor`** — a local Ollama vision model is the planner (see [Automatic editing](#automatic-editing-local-llm) above).
+3. **MCP server** — `videopython-mcp` exposes the pipeline as [Model Context Protocol](https://modelcontextprotocol.io) tools, so an agent like Claude drives editing with its own model. Install `[ai,mcp]`, run `videopython-mcp`, and point your MCP client at it. See the [MCP Server Guide](https://videopython.com/guides/mcp/).
+
+For mode 1: every operation is a Pydantic model whose fields ARE the JSON wire format. `VideoEdit.json_schema()` returns a JSON Schema with a discriminated union over every LLM-exposed `Operation` (server-only ops like `image_overlay` are excluded by default) — pass it straight to Anthropic tool use, OpenAI function calling, or any structured-output API. Pass `strict=True` for a provider strict-mode grammar that prevents simple bound violations at decode time.
 
 The plan parses permissively (shape only) and owns numeric bounds at validation, so a refine loop converges fast: `edit.check(meta)` collects **every** structured `PlanError` in one pass, `edit.repair(meta)` auto-clamps the mechanical violations (window/timestamp overruns, negatives) with a reported changelog, and `edit.normalize_dimensions(meta, target)` makes heterogeneous segments concat-compatible by construction. `edit.validate()` still raises a typed `PlanValidationError` (a `ValueError` with structured `.errors`) for the single-error path.
 
@@ -71,8 +95,10 @@ See the [LLM Integration Guide](https://videopython.com/guides/llm-integration/)
 - **`videopython.base`** — `Video`, `VideoMetadata`, `FrameIterator`, `Transcription`, and shared result types (`BoundingBox`, `FaceTrack`, `SceneBoundary`, ...). No AI dependencies.
 - **`videopython.audio`** — `Audio` with overlay, concat, normalize, time-stretch, silence detection, segment classification.
 - **`videopython.editing`** — `Operation`/`Effect` foundation, `VideoEdit` plan runner with JSON Schema + streaming execution. Transforms (resize, crop, fps, speed, freeze, silence removal; cutting is the segment's own start/end) and effects (blur, zoom, color grading, vignette, Ken Burns, fade, overlays, animated subtitles).
-- **`videopython.ai`** *(install with `[ai]`)* — generation (`TextToVideo`, `ImageToVideo`, `TextToImage`, `TextToSpeech`, `TextToMusic`), understanding (`AudioToText`, `AudioClassifier`, `SceneVLM`, `FaceTracker`, `ObjectDetector`, `SemanticSceneDetector`), the `FaceTrackingCrop` transform, the `ObjectDetectionOverlay` effect (per-frame bounding boxes + labels), and the full-pipeline `VideoAnalyzer`.
+- **`videopython.ai`** *(install with `[ai]`)* — generation (`TextToVideo`, `ImageToVideo`, `TextToImage`, `TextToSpeech`, `TextToMusic`), understanding (`AudioToText`, `AudioClassifier`, `SceneVLM`, `FaceTracker`, `ObjectDetector`, `SemanticSceneDetector`), the `FaceTrackingCrop` transform, the `ObjectDetectionOverlay` effect (per-frame bounding boxes + labels), and the full-pipeline `VideoAnalyzer`. Scene captioning and dub translation run on a local [Ollama](https://ollama.com) model.
+- **`videopython.ai.auto_edit`** — `AutoEditor` + `OllamaVisionLLM`: plan and render an edit from sources + a one-line brief, with a local LLM selecting scenes by id from an auto-built catalog.
 - **`videopython.ai.dubbing`** — `VideoDubber` for voice-cloned revoicing with timing sync.
+- **`videopython.mcp`** *(install with `[mcp]`)* — `videopython-mcp`, an MCP stdio server exposing the auto-edit pipeline (analyze → catalog → validate/repair/run) so an agent drives editing.
 
 ## Examples
 

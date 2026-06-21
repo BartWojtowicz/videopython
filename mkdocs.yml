@@ -74,6 +74,8 @@ nav:
       - Quick Start: getting-started/quickstart.md
   - Guides:
       - LLM & AI Agent Integration: guides/llm-integration.md
+      - Automatic Editing: guides/auto-editing.md
+      - MCP Server: guides/mcp.md
   - Examples:
       - Social Media Clip: examples/social-clip.md
       - AI-Generated Video: examples/ai-video.md
@@ -92,6 +94,7 @@ nav:
       - AI Generation: api/ai/generation.md
       - AI Understanding: api/ai/understanding.md
       - AI Video Analysis: api/ai/video_analysis.md
+      - AI Auto-Editing: api/ai/auto_edit.md
       - AI Dubbing: api/ai/dubbing.md
       - AI Transforms: api/ai/transforms.md
       - AI Effects: api/ai/effects.md
