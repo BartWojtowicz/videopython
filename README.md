@@ -84,11 +84,13 @@ Putting an LLM in the loop works three ways:
 2. **`AutoEditor`** — a local Ollama vision model is the planner (see [Automatic editing](#automatic-editing-local-llm) above).
 3. **MCP server** — `videopython-mcp` exposes the pipeline as [Model Context Protocol](https://modelcontextprotocol.io) tools, so an agent like Claude drives editing with its own model. Install `[ai,mcp]`, run `videopython-mcp`, and point your MCP client at it. See the [MCP Server Guide](https://videopython.com/guides/mcp/).
 
-For mode 1: every operation is a Pydantic model whose fields ARE the JSON wire format. `VideoEdit.json_schema()` returns a JSON Schema with a discriminated union over every LLM-exposed `Operation` (server-only ops like `image_overlay` are excluded by default) — pass it straight to Anthropic tool use, OpenAI function calling, or any structured-output API. Pass `strict=True` for a provider strict-mode grammar that prevents simple bound violations at decode time.
+**Mode 1** in brief: every operation is a Pydantic model whose fields *are* the JSON wire format, so `VideoEdit.json_schema()` hands your model a ready-made tool schema — a discriminated union over every LLM-exposed op (pass `strict=True` for provider grammar modes). Plans parse permissively and own their numeric bounds at validation, so a refine loop converges fast:
 
-The plan parses permissively (shape only) and owns numeric bounds at validation, so a refine loop converges fast: `edit.check(meta)` collects **every** structured `PlanError` in one pass, `edit.repair(meta)` auto-clamps the mechanical violations (window/timestamp overruns, negatives) with a reported changelog, and `edit.normalize_dimensions(meta, target)` makes heterogeneous segments concat-compatible by construction. `edit.validate()` still raises a typed `PlanValidationError` (a `ValueError` with structured `.errors`) for the single-error path.
+- **`edit.check(meta)`** — collect *every* structured error in one pass, not just the first
+- **`edit.repair(meta)`** — auto-clamp mechanical violations (overruns, negatives) with a changelog
+- **`edit.normalize_dimensions(meta, target)`** — make heterogeneous segments concat-compatible
 
-See the [LLM Integration Guide](https://videopython.com/guides/llm-integration/) for end-to-end examples, the collect/repair/normalize refine loop, and operation discovery patterns.
+See the [LLM Integration Guide](https://videopython.com/guides/llm-integration/) for end-to-end examples (Anthropic / OpenAI tool use), the refine loop, and operation discovery.
 
 ## Features
 
