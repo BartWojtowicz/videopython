@@ -19,7 +19,7 @@ Editing primitives and the plan runner:
 
 - [**Editing Plans (`VideoEdit`)**](editing.md) - Multi-segment editing plans with JSON parsing, validation, and schema generation
 - [**Operations**](operations.md) - The `Operation` Pydantic base, auto-registry, and discriminated-union schema
-- [**Transforms**](transforms.md) - Frame transformations (cut, resize, resample)
+- [**Transforms**](transforms.md) - Frame transformations (resize, crop, fps, speed, freeze)
 - [**Effects**](effects.md) - Visual effects (blur, zoom, overlays) — including `TranscriptionOverlay` for subtitles
 
 ## `videopython.ai`
@@ -54,8 +54,8 @@ from videopython.audio import (
     AudioMetadata,
 )
 from videopython.editing import (
-    CutSeconds,
     Resize,
+    Crop,
     Blur,
 )
 

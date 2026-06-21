@@ -35,6 +35,8 @@ edit = VideoEdit.from_dict({
 edit.run_to_file("output.mp4")
 ```
 
+`run_to_file()` streams ffmpeg decode → per-frame effects → encode, so memory stays bounded (~O(1)) even for hour-long sources — no frames are held in RAM.
+
 <div class="feature-grid" markdown>
 
 <div class="feature-card" markdown>
@@ -65,7 +67,15 @@ Drive videopython from your own LLM: JSON Schema generation, dry-run validation,
 
 ### Automatic Editing
 
-Hand `AutoEditor` your clips and a one-line brief — a local vision LLM selects and orders the shots, then renders the cut. Or drive the same pipeline from any MCP agent. [Learn more →](guides/auto-editing.md)
+Hand `AutoEditor` your clips and a one-line brief — a local vision LLM selects and orders the shots, then renders the cut. [Learn more →](guides/auto-editing.md)
+
+</div>
+
+<div class="feature-card" markdown>
+
+### MCP Server
+
+Expose the auto-edit pipeline as [Model Context Protocol](https://modelcontextprotocol.io) tools, so an agent like Claude drives editing with its own model — analyze, browse scenes by keyframe, author a plan, validate, render. [Learn more →](guides/mcp.md)
 
 </div>
 
