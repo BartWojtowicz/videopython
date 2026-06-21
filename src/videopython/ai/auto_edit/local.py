@@ -18,10 +18,13 @@ DEFAULT_OLLAMA_MODEL = "llama3.2-vision"
 
 
 class OllamaVisionLLM:
-    """A StructuredVisionLLM backed by a local Ollama server (any pulled vision model).
+    """A StructuredVisionLLM backed by a local Ollama server.
 
-    ``model`` is the Ollama tag to use (``ollama pull <model>`` first); ``options``
-    are extra Ollama generation options merged over ``temperature=0``.
+    The model must be vision-capable (it is sent keyframes) AND support Ollama's
+    structured-output ``format`` (the EditPlan schema constrains the decode). Not
+    every model supports schema conditioning -- ``gemma3:27b`` is verified working;
+    some builds (e.g. certain MLX ones) fail it. ``ollama pull <model>`` first;
+    ``options`` are extra generation options merged over ``temperature=0``.
     """
 
     def __init__(

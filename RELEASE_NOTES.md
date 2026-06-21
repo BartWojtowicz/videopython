@@ -14,10 +14,14 @@ points. Validity stays the existing `repair()` / `normalize_dimensions()` /
 ### Local-first, model-agnostic planner via Ollama
 
 The default planner, `OllamaVisionLLM`, talks to a local Ollama server, so you run
-any pulled vision model (`llama3.2-vision`, `qwen2.5vl`, ...) with no external API.
-The `EditPlan` schema is handed to Ollama's structured-output `format`, giving the
-local path grammar-constrained JSON decode. The planner is injected through the
-`StructuredVisionLLM` protocol, so swapping models or backends needs no SDK.
+a pulled vision model with no external API. The `EditPlan` schema is handed to
+Ollama's structured-output `format`, giving the local path grammar-constrained JSON
+decode. The planner is injected through the `StructuredVisionLLM` protocol, so
+swapping models or backends needs no SDK.
+
+The chosen model must support **both** vision and Ollama's structured-output
+`format` — not all do. `gemma3:27b` is verified working; some builds (e.g. certain
+MLX ones) ignore schema conditioning and fail.
 
 ```python
 from videopython.ai import AutoEditor, OllamaVisionLLM
