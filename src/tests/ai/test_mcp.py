@@ -31,11 +31,11 @@ from videopython.mcp import server  # noqa: E402
 def _reset_state() -> Any:
     server._analyses = {}
     server._bundle = None
-    server._analyzer = None
+    server._analyzers = {}
     yield
     server._analyses = {}
     server._bundle = None
-    server._analyzer = None
+    server._analyzers = {}
 
 
 def _real_analysis() -> VideoAnalysis:
@@ -67,6 +67,34 @@ def _real_analysis() -> VideoAnalysis:
         config=VideoAnalysisConfig(),
         run_info=AnalysisRunInfo(created_at="2026-01-01T00:00:00Z", mode="path"),
         scenes=SceneAnalysisSection(samples=scenes),
+    )
+
+
+def _analysis_with_scenes(n: int) -> VideoAnalysis:
+    meta = VideoMetadata.from_path(SMALL_VIDEO_PATH)
+    dur = meta.total_seconds
+    step = dur / n
+    samples = [
+        SceneAnalysisSample(
+            scene_index=i,
+            start_second=i * step,
+            end_second=(i + 1) * step,
+            scene_description=SceneDescription(caption=f"scene {i}", subjects=[], shot_type="wide"),
+        )
+        for i in range(n)
+    ]
+    return VideoAnalysis(
+        source=VideoAnalysisSource(
+            path=str(SMALL_VIDEO_PATH),
+            fps=meta.fps,
+            width=meta.width,
+            height=meta.height,
+            frame_count=meta.frame_count,
+            duration=dur,
+        ),
+        config=VideoAnalysisConfig(),
+        run_info=AnalysisRunInfo(created_at="2026-01-01T00:00:00Z", mode="path"),
+        scenes=SceneAnalysisSection(samples=samples),
     )
 
 
@@ -120,7 +148,7 @@ def test_analyze_video_caches_and_summarizes() -> None:
         def analyze_path(self, path: str) -> VideoAnalysis:
             return analysis
 
-    server._analyzer = _FakeAnalyzer()  # type: ignore[assignment]
+    server._analyzers["full"] = _FakeAnalyzer()  # type: ignore[assignment]
     out = server.analyze_video(str(SMALL_VIDEO_PATH))
     assert out["scenes"] == 2
     assert out["source"] == str(SMALL_VIDEO_PATH)
@@ -135,7 +163,7 @@ def test_analyze_video_keeps_stdout_clean(capsys: pytest.CaptureFixture[str]) ->
             print("transnetv2-style stdout noise that would corrupt JSON-RPC")
             return analysis
 
-    server._analyzer = _NoisyAnalyzer()  # type: ignore[assignment]
+    server._analyzers["full"] = _NoisyAnalyzer()  # type: ignore[assignment]
     server.analyze_video(str(SMALL_VIDEO_PATH))
     captured = capsys.readouterr()
     assert captured.out == ""  # stdout (the transport channel) stays clean
@@ -215,3 +243,45 @@ def test_repair_dict_shape() -> None:
         "new": 2.0,
         "code": "effect_window_exceeds_duration",
     }
+
+
+def test_build_catalog_caps_inlined_keyframes_and_notes_omitted() -> None:
+    n = server._MAX_INLINE_KEYFRAMES + 3
+    server._analyses = {str(SMALL_VIDEO_PATH): _analysis_with_scenes(n)}
+    blocks = server.build_catalog()
+
+    images = [b for b in blocks if isinstance(b, ImageContent)]
+    assert len(images) == server._MAX_INLINE_KEYFRAMES
+    note = blocks[-1]
+    assert isinstance(note, TextContent)
+    assert "scene_keyframes" in note.text
+    assert server._bundle is not None
+    omitted = [s.id for s in server._bundle.catalog.scenes][server._MAX_INLINE_KEYFRAMES :]
+    assert all(oid in note.text for oid in omitted)
+
+
+def test_scene_keyframes_returns_requested_images() -> None:
+    server._analyses = {str(SMALL_VIDEO_PATH): _real_analysis()}
+    server.build_catalog()
+    blocks = server.scene_keyframes([f"{_stem()}#0"])
+    assert sum(isinstance(b, ImageContent) for b in blocks) == 1
+
+
+def test_scene_keyframes_dedups_repeated_ids() -> None:
+    server._analyses = {str(SMALL_VIDEO_PATH): _real_analysis()}
+    server.build_catalog()
+    blocks = server.scene_keyframes([f"{_stem()}#0", f"{_stem()}#0"])
+    assert sum(isinstance(b, ImageContent) for b in blocks) == 1
+
+
+def test_scene_keyframes_unknown_id_structured_error() -> None:
+    server._analyses = {str(SMALL_VIDEO_PATH): _real_analysis()}
+    server.build_catalog()
+    [block] = server.scene_keyframes(["nope#0"])
+    assert isinstance(block, TextContent)
+    assert json.loads(block.text)["code"] == "unknown_scene_ids"
+
+
+def test_scene_keyframes_without_catalog_errors() -> None:
+    with pytest.raises(ValueError, match="catalog"):
+        server.scene_keyframes(["x#0"])
