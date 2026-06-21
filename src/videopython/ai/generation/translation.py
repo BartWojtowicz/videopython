@@ -1,40 +1,36 @@
-"""Text translation backends.
+"""Context-aware dub translation via a local Ollama text model.
 
-Two backends share the :class:`TranslationBackend` protocol:
-
-- :class:`MarianTranslator` (HuggingFace Helsinki-NLP MarianMT) — fast,
-  segment-isolated, available for ~30 language pairs. Default on CPU.
-- :class:`Qwen3Translator` (Qwen3-4B/8B/14B-Instruct via llama-cpp-python) —
-  slower but produces context-aware, length-budgeted translations. Default
-  on GPU.
-
-The pipeline picks via :class:`videopython.ai.dubbing.pipeline` based on a
-``translator`` kwarg (``"auto"`` resolves at runtime).
+``OllamaTranslator`` is the single translation backend: it sends the
+transcription segments to a local Ollama model under a structured-output schema
+and reads back length-budgeted, context-aware translations. The pipeline always
+uses it (the old Marian / llama-cpp backends were removed in the Ollama
+consolidation).
 """
 
 from __future__ import annotations
 
+import json
+import logging
 from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
 
-from videopython.ai._device import log_device_initialization, release_device_memory, select_device
+from videopython.ai._ollama import OllamaError, OllamaStructuredClient
 from videopython.ai._predictor import ManagedPredictor
-from videopython.ai._revisions import pinned
 from videopython.base.transcription import TranscriptionSegment
 
-# Imported under TYPE_CHECKING to avoid a circular dep through
-# videopython.ai.dubbing (the dubbing pipeline imports both
-# MarianTranslator and Qwen3Translator, which both import
-# TranslatedSegment from dubbing.models). Runtime users do a lazy
-# local import inside translate_segments.
 if TYPE_CHECKING:
     from videopython.ai.dubbing.models import TranslatedSegment
 
+logger = logging.getLogger(__name__)
+
+# Default Ollama text model for translation; override via the `model` arg (and
+# `ollama pull` it first). Any instruct model that supports structured output works.
+DEFAULT_TRANSLATION_MODEL = "qwen3"
+
 
 class UnsupportedLanguageError(ValueError):
-    """Raised when no available translation backend supports a given
-    ``(source, target)`` language pair.
+    """Raised when no translation backend supports a ``(source, target)`` pair.
 
-    Carries the requested pair so callers can introspect:
+    Carries the requested pair so callers can introspect::
 
         try:
             dubber.dub(video, target_lang="xh")
@@ -52,19 +48,14 @@ def _is_translatable_text(text: str) -> bool:
     """Return True if text has enough content to be worth translating.
 
     Whisper routinely emits punctuation-only or single-character segments
-    (" .", "...", "?", "♪") that MarianMT can hallucinate full sentences
-    from. Require at least 2 alphanumeric characters to filter these out.
+    (" .", "...", "?", "♪"). Require at least 2 alphanumeric characters.
     """
     return sum(1 for c in text if c.isalnum()) >= 2
 
 
 @runtime_checkable
 class TranslationBackend(Protocol):
-    """Pipeline-facing translation interface.
-
-    Both :class:`MarianTranslator` and :class:`Qwen3Translator` satisfy
-    this. The pipeline only depends on these methods.
-    """
+    """Pipeline-facing translation interface."""
 
     def translate_segments(
         self,
@@ -78,10 +69,7 @@ class TranslationBackend(Protocol):
 
     @property
     def translation_failures(self) -> list[int]:
-        """Indices into the most recent ``segments`` input where the backend
-        could not produce a translation. Empty for backends that never fail
-        per-segment (e.g. MarianTranslator). The dubbing pipeline copies
-        this onto :class:`DubbingResult.translation_failures`."""
+        """Indices into the most recent ``segments`` input where translation failed."""
         ...
 
     @staticmethod
@@ -125,149 +113,187 @@ LANGUAGE_NAMES = {
 }
 
 
-class MarianTranslator(ManagedPredictor):
-    """Translates text between languages using local Helsinki-NLP MarianMT models."""
+# Average characters per second of natural speech, for the per-segment
+# ``target_chars`` budget. The prompt treats it as a ±15% target, not a cap.
+_SPEECH_CHARS_PER_SEC: dict[str, float] = {
+    "en": 14.0, "es": 14.0, "pt": 13.5, "it": 13.5, "fr": 13.0, "de": 12.0,
+    "pl": 12.5, "nl": 12.5, "ru": 12.0, "uk": 12.0, "cs": 12.0, "sk": 12.0,
+    "ro": 13.0, "hu": 12.0, "fi": 11.0, "sv": 12.5, "da": 13.0, "nb": 13.0,
+    "no": 13.0, "ja": 8.0, "ko": 9.0, "zh": 7.0, "zh-CN": 7.0, "zh-TW": 7.0,
+    "th": 9.0, "vi": 11.0, "ar": 10.0, "he": 10.0, "hi": 11.0, "ta": 10.0,
+    "id": 12.0, "ms": 12.0, "tr": 12.0, "el": 12.0,
+}  # fmt: skip
+_SPEECH_CHARS_DEFAULT = 12.0
 
-    # Languages without a direct opus-mt-{src}-{tgt} model. Maps (source, target)
-    # to an alternative HuggingFace model identifier.
-    _MODEL_OVERRIDES: dict[tuple[str, str], str] = {
-        ("en", "pt"): "Helsinki-NLP/opus-mt-tc-big-en-pt",
-        ("en", "ko"): "Helsinki-NLP/opus-mt-tc-big-en-ko",
-        ("en", "ja"): "Helsinki-NLP/opus-mt-en-jap",
-        ("en", "pl"): "Helsinki-NLP/opus-mt-en-zlw",
-    }
+# avg_logprob below this marks a transcription window we don't trust.
+_LOW_LOGPROB_HINT_THRESHOLD = -1.0
 
-    @classmethod
-    def has_model_for(cls, source_lang: str, target_lang: str) -> bool:
-        """Return True if Marian has (or is likely to have) a model for ``(source, target)``.
+# Conservative chars/token for sizing chunks without a tokenizer (low end so any
+# source language stays safe), plus prompt-envelope and per-segment overheads.
+_CHARS_PER_TOKEN = 2.0
+_PROMPT_OVERHEAD_TOKENS = 300
+_SEGMENT_ENVELOPE_CHARS = 40
 
-        Same-language pairs return True (translation is the identity).
-        Otherwise: True if either an entry in ``_MODEL_OVERRIDES`` exists or
-        both languages are in :data:`LANGUAGE_NAMES`. The latter is a
-        permissive proxy — Marian publishes ``opus-mt-{src}-{tgt}`` for
-        most ISO-639-1 pairs we expose, but not all (e.g. some Asian-to-
-        Asian pairs route through English). Used by the M2.3 ``auto``
-        resolver as a *coverage hint*; the actual existence check happens
-        at first-use download time.
-        """
-        if source_lang == target_lang:
-            return True
-        if (source_lang, target_lang) in cls._MODEL_OVERRIDES:
-            return True
-        return source_lang in LANGUAGE_NAMES and target_lang in LANGUAGE_NAMES
+_TRANSLATION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "translations": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"i": {"type": "integer"}, "translated": {"type": "string"}},
+                "required": ["i", "translated"],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["translations"],
+    "additionalProperties": False,
+}
 
-    def __init__(self, model_name: str | None = None, device: str | None = None):
-        self.model_name = model_name
-        self.device = device
-        self._model: Any = None
-        self._tokenizer: Any = None
-        self._current_lang_pair: tuple[str, str] | None = None
 
-    def _get_local_model_name(self, source_lang: str, target_lang: str) -> str:
-        if self.model_name:
-            return self.model_name
-        override = self._MODEL_OVERRIDES.get((source_lang, target_lang))
-        if override:
-            return override
-        return f"Helsinki-NLP/opus-mt-{source_lang}-{target_lang}"
+def _chunk_segment_indices(segments: list[TranscriptionSegment], n_ctx: int, max_tokens: int) -> list[list[int]]:
+    """Group positions in ``segments`` into batches that fit one model call.
 
-    def _init_local(self, source_lang: str, target_lang: str) -> None:
-        from videopython.ai._optional import require
+    Each batch keeps ``prompt_tokens + max_tokens <= n_ctx``, approximated from
+    character length via ``_CHARS_PER_TOKEN``. A segment whose own serialized
+    form exceeds the budget gets its own chunk.
+    """
+    prompt_token_budget = n_ctx - max_tokens - _PROMPT_OVERHEAD_TOKENS
+    if prompt_token_budget <= 0:
+        return [[i] for i in range(len(segments))]
+    char_budget = int(prompt_token_budget * _CHARS_PER_TOKEN)
 
-        _transformers = require("transformers", "ai", feature="MarianTranslator")
-        MarianMTModel = _transformers.MarianMTModel
-        MarianTokenizer = _transformers.MarianTokenizer
+    chunks: list[list[int]] = []
+    current: list[int] = []
+    current_chars = 0
+    for i, seg in enumerate(segments):
+        seg_chars = len(seg.text) + _SEGMENT_ENVELOPE_CHARS
+        if current and current_chars + seg_chars > char_budget:
+            chunks.append(current)
+            current = []
+            current_chars = 0
+        current.append(i)
+        current_chars += seg_chars
+    if current:
+        chunks.append(current)
+    return chunks
 
-        model_name = self._get_local_model_name(source_lang, target_lang)
 
-        requested_device = self.device
-        device = select_device(self.device, mps_allowed=True)
+def _target_chars_for(duration_seconds: float, target_lang: str) -> int:
+    """Character-count budget for a segment of ``duration_seconds`` in ``target_lang``."""
+    rate = _SPEECH_CHARS_PER_SEC.get(target_lang, _SPEECH_CHARS_DEFAULT)
+    return max(1, int(duration_seconds * rate * 1.15))
 
-        # Marian model names are dynamic per language pair, so pinned() returns
-        # None for them by design (revision=None tracks main, the safe default).
-        self._tokenizer = MarianTokenizer.from_pretrained(model_name, revision=pinned(model_name))
-        self._model = MarianMTModel.from_pretrained(model_name, revision=pinned(model_name)).to(device)
-        self.device = device
-        log_device_initialization(
-            "MarianTranslator",
-            requested_device=requested_device,
-            resolved_device=device,
-        )
-        self._current_lang_pair = (source_lang, target_lang)
 
-    def _translate_local(self, text: str, target_lang: str, source_lang: str) -> str:
-        import torch
+def _build_system_prompt(source_lang: str, target_lang: str) -> str:
+    src_name = LANGUAGE_NAMES.get(source_lang, source_lang)
+    tgt_name = LANGUAGE_NAMES.get(target_lang, target_lang)
+    return (
+        f"You are a professional dub translator. Translate from {src_name} to {tgt_name}.\n"
+        "Preserve register and proper nouns. Match each segment's syllable count so the\n"
+        "dub fits the original timing -- translation is for spoken audio, not subtitles.\n"
+        "Aim for `target_chars` characters per segment (+/-15%).\n"
+        "If a segment is non-speech filler keep it as filler; do not invent content.\n"
+        "If a segment carries `low_confidence`, translate conservatively.\n"
+        "\n"
+        'Return a JSON object {"translations": [{"i": <segment_index>, "translated": "<text>"}, ...]} '
+        "with exactly one entry per input segment."
+    )
 
-        if self._model is None or self._current_lang_pair != (source_lang, target_lang):
-            self._init_local(source_lang, target_lang)
 
-        inputs = self._tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
-        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+def _build_user_prompt(segments: list[TranscriptionSegment], target_lang: str) -> str:
+    lines: list[str] = []
+    for idx, seg in enumerate(segments):
+        entry: dict[str, Any] = {
+            "i": idx,
+            "text": seg.text,
+            "target_chars": _target_chars_for(seg.end - seg.start, target_lang),
+        }
+        if seg.avg_logprob is not None and seg.avg_logprob < _LOW_LOGPROB_HINT_THRESHOLD:
+            entry["low_confidence"] = True
+        lines.append(json.dumps(entry, ensure_ascii=False))
+    return "Input segments:\n" + "\n".join(lines) + f"\n\nTranslate all {len(segments)} segments."
 
-        with torch.no_grad():
-            outputs = self._model.generate(**inputs, max_length=512)
 
-        return self._tokenizer.decode(outputs[0], skip_special_tokens=True)
+def _parse_translations(data: dict[str, Any]) -> dict[int, str]:
+    """Extract ``{i: translated_text}`` from the model's ``{"translations": [...]}``."""
+    out: dict[int, str] = {}
+    for obj in data.get("translations", []):
+        if isinstance(obj, dict) and "i" in obj and "translated" in obj:
+            try:
+                out[int(obj["i"])] = str(obj["translated"])
+            except (TypeError, ValueError):
+                continue
+    return out
 
-    def translate(
+
+class OllamaTranslator(ManagedPredictor):
+    """Dub translation via a local Ollama text model.
+
+    The model must support Ollama's structured-output ``format``; ``ollama pull
+    <model>`` first. ``n_ctx`` sizes the per-call chunking (long sources are
+    split across calls); ``options`` are extra Ollama generation options.
+    """
+
+    def __init__(
         self,
-        text: str,
-        target_lang: str,
-        source_lang: str | None = None,
-    ) -> str:
-        """Translate text to target language."""
-        if not text.strip():
-            return text
+        model: str = DEFAULT_TRANSLATION_MODEL,
+        *,
+        host: str | None = None,
+        n_ctx: int = 8192,
+        max_tokens: int = 4096,
+        temperature: float = 0.1,
+        options: dict[str, Any] | None = None,
+    ) -> None:
+        self.n_ctx = n_ctx
+        self.max_tokens = max_tokens
+        client_options = {"temperature": temperature, "num_ctx": n_ctx, "num_predict": max_tokens, **(options or {})}
+        self._client = OllamaStructuredClient(model=model, host=host, options=client_options)
+        self._failures_last_call: list[int] = []
 
-        effective_source = source_lang or "en"
-        if effective_source == target_lang:
-            return text
-        return self._translate_local(text, target_lang, effective_source)
+    def _translate_chunk(
+        self, segments: list[TranscriptionSegment], target_lang: str, source_lang: str
+    ) -> dict[int, str]:
+        """One model call. Empty dict on unusable output (caller retries / records failure)."""
+        try:
+            data = self._client.generate_json(
+                system=_build_system_prompt(source_lang, target_lang),
+                text=_build_user_prompt(segments, target_lang),
+                schema=_TRANSLATION_SCHEMA,
+            )
+        except OllamaError:
+            return {}
+        return _parse_translations(data)
 
-    def translate_batch(
+    def _translate_chunked(
         self,
-        texts: list[str],
+        segments: list[TranscriptionSegment],
         target_lang: str,
-        source_lang: str | None = None,
+        source_lang: str,
         progress_callback: Callable[[float], None] | None = None,
-    ) -> list[str]:
-        """Translate multiple texts to target language.
-
-        ``progress_callback`` is called once per batch with a fraction in
-        ``[0, 1]`` representing translation-stage progress. It does not fire
-        on the empty-input or same-language shortcuts (those are O(0) work
-        and the caller frames its own progress events around the call).
-        """
-        import torch
-
-        if not texts:
-            return []
-
-        effective_source = source_lang or "en"
-        if effective_source == target_lang:
-            return list(texts)
-        if self._model is None or self._current_lang_pair != (effective_source, target_lang):
-            self._init_local(effective_source, target_lang)
-
-        translated: list[str] = []
-        batch_size = 8
-        total = len(texts)
-
-        for i in range(0, total, batch_size):
-            batch = texts[i : i + batch_size]
-            inputs = self._tokenizer(batch, return_tensors="pt", padding=True, truncation=True, max_length=512)
-            inputs = {k: v.to(self.device) for k, v in inputs.items()}
-
-            with torch.no_grad():
-                outputs = self._model.generate(**inputs, max_length=512)
-
-            for output in outputs:
-                translated.append(self._tokenizer.decode(output, skip_special_tokens=True))
-
+        progress_start: float = 0.0,
+        progress_end: float = 1.0,
+    ) -> dict[int, str]:
+        """Translate across one or more calls, each kept under ``n_ctx``."""
+        results: dict[int, str] = {}
+        if not segments:
             if progress_callback is not None:
-                progress_callback(min(1.0, (i + len(batch)) / total))
+                progress_callback(progress_end)
+            return results
 
-        return translated
+        chunks = _chunk_segment_indices(segments, self.n_ctx, self.max_tokens)
+        if len(chunks) > 1:
+            logger.info("OllamaTranslator: splitting %d segments into %d chunks", len(segments), len(chunks))
+        for chunk_num, chunk_positions in enumerate(chunks):
+            chunk_result = self._translate_chunk([segments[p] for p in chunk_positions], target_lang, source_lang)
+            for local_idx, text in chunk_result.items():
+                if 0 <= local_idx < len(chunk_positions):
+                    results[chunk_positions[local_idx]] = text
+            if progress_callback is not None:
+                fraction = (chunk_num + 1) / len(chunks)
+                progress_callback(progress_start + (progress_end - progress_start) * fraction)
+        return results
 
     def translate_segments(
         self,
@@ -276,72 +302,68 @@ class MarianTranslator(ManagedPredictor):
         source_lang: str | None = None,
         progress_callback: Callable[[float], None] | None = None,
     ) -> list[TranslatedSegment]:
-        """Translate transcription segments while preserving timing/speaker info.
-
-        Segments whose text is empty or contains fewer than 2 alphanumeric
-        characters are not sent to the model — they receive
-        ``translated_text=""`` instead. This avoids MarianMT hallucinating
-        full sentences from " .", "...", or single-token Whisper segments,
-        which would otherwise be TTS'd into the dubbed track.
-
-        ``progress_callback`` is forwarded to :meth:`translate_batch` so
-        callers can render translation-stage progress without knowing the
-        batch size.
-        """
-        # Lazy import to avoid a circular dep through videopython.ai.dubbing
-        # (see TYPE_CHECKING import at the top of the module).
+        """Translate segments with a parse-retry pass; unrecovered ones land in
+        ``translation_failures`` with empty text. Progress ramps 0 -> 0.5 (first
+        pass), 0.9 (after retry), 1.0 (done)."""
         from videopython.ai.dubbing.models import TranslatedSegment
 
         effective_source = source_lang or "en"
+        self._failures_last_call = []
 
-        translatable_indices = [i for i, segment in enumerate(segments) if _is_translatable_text(segment.text)]
-        translatable_texts = [segments[i].text for i in translatable_indices]
-        translated_texts = self.translate_batch(
-            translatable_texts, target_lang, source_lang, progress_callback=progress_callback
+        translatable_indices = [i for i, seg in enumerate(segments) if _is_translatable_text(seg.text)]
+        translatable_segments = [segments[i] for i in translatable_indices]
+
+        results = self._translate_chunked(
+            translatable_segments, target_lang, effective_source, progress_callback, 0.0, 0.5
         )
 
-        translation_map: dict[int, str] = dict(zip(translatable_indices, translated_texts))
-
-        translated_segments = []
-        for i, segment in enumerate(segments):
-            translated_segments.append(
-                TranslatedSegment(
-                    original_segment=segment,
-                    translated_text=translation_map.get(i, ""),
-                    source_lang=effective_source,
-                    target_lang=target_lang,
-                    speaker=segment.speaker,
-                    start=segment.start,
-                    end=segment.end,
-                )
+        missing_local = [li for li in range(len(translatable_segments)) if li not in results]
+        if missing_local:
+            logger.info("OllamaTranslator: retrying %d/%d segments", len(missing_local), len(translatable_segments))
+            retry = self._translate_chunked(
+                [translatable_segments[li] for li in missing_local], target_lang, effective_source
             )
+            for retry_local, text in retry.items():
+                results[missing_local[retry_local]] = text
+        if progress_callback is not None:
+            progress_callback(0.9)
 
+        for li in range(len(translatable_segments)):
+            if li not in results:
+                self._failures_last_call.append(translatable_indices[li])
+
+        translation_for_orig = {translatable_indices[li]: text for li, text in results.items()}
+        translated_segments = [
+            TranslatedSegment(
+                original_segment=seg,
+                translated_text=translation_for_orig.get(i, ""),
+                source_lang=effective_source,
+                target_lang=target_lang,
+                speaker=seg.speaker,
+                start=seg.start,
+                end=seg.end,
+            )
+            for i, seg in enumerate(segments)
+        ]
+        if progress_callback is not None:
+            progress_callback(1.0)
         return translated_segments
-
-    def unload(self) -> None:
-        """Release the translation model so the next translate() re-initializes.
-
-        Used by low-memory dubbing to free VRAM between pipeline stages.
-        """
-        self._model = None
-        self._tokenizer = None
-        self._current_lang_pair = None
-        release_device_memory(self.device)
 
     @property
     def translation_failures(self) -> list[int]:
-        """Marian never fails per-segment (worst case it produces poor
-        output, not no output). Always empty; satisfies the
-        :class:`TranslationBackend` protocol."""
-        return []
+        """Indices (in the most recent ``segments`` input) where translation failed entirely."""
+        return list(self._failures_last_call)
+
+    def unload(self) -> None:
+        self._client.unload()
 
     @staticmethod
     def get_supported_languages() -> dict[str, str]:
         return LANGUAGE_NAMES.copy()
 
-
-# Back-compat alias. ``TextTranslator`` was the class name through 0.28.x;
-# 0.29.0 renames to ``MarianTranslator`` to make room for ``Qwen3Translator``
-# behind a shared :class:`TranslationBackend` protocol. The alias will be
-# removed in 0.30.0.
-TextTranslator = MarianTranslator
+    @classmethod
+    def supports(cls, source_lang: str, target_lang: str) -> bool:
+        """Coverage hint for the dubbing pipeline."""
+        if source_lang == target_lang:
+            return True
+        return source_lang in LANGUAGE_NAMES and target_lang in LANGUAGE_NAMES

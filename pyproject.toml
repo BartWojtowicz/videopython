@@ -1,6 +1,6 @@
 [project]
 name = "videopython"
-version = "0.48.0"
+version = "0.49.0"
 description = "Minimal video generation and processing library."
 authors = [
     { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
@@ -75,9 +75,6 @@ ai = [
     "imagehash>=4.3",
     # Audio source separation (understanding/separation.py)
     "demucs>=4.0.0",
-    # Translation backends (generation/translation.py MarianMT, generation/qwen3.py GGUF)
-    "sentencepiece>=0.1.99",
-    "llama-cpp-python>=0.3.0",
     # Voice cloning TTS (generation/audio.py — Chatterbox); its strict pins drive
     # the [tool.uv].override-dependencies block below.
     "chatterbox-tts>=0.1.7",
@@ -119,7 +116,6 @@ module = [
     "pyannote", "pyannote.*",
     "silero_vad", "silero_vad.*",
     "cv2", "cv2.*",
-    "llama_cpp", "llama_cpp.*",
     "pyloudnorm", "pyloudnorm.*",
     "imagehash", "imagehash.*",
 ]

@@ -74,8 +74,6 @@ MODEL_REVISIONS: dict[str, str] = {
     "MIT/ast-finetuned-audioset-10-10-0.4593": "f826b80d28226b62986cc218e5cec390b1096902",
     # Face detection checkpoint (ai/understanding/faces.py: hf_hub_download)
     "arnabdhar/YOLOv8-Face-Detection": "52fa54977207fa4f021de949b515fb19dcab4488",
-    # Qwen3 translation GGUF (ai/generation/qwen3.py: DEFAULT_REPO_ID)
-    "unsloth/Qwen3-4B-Instruct-2507-GGUF": "a06e946bb6b655725eafa393f4a9745d460374c9",
     # MusicGen (ai/generation/audio.py: TextToMusic)
     "facebook/musicgen-small": "4c8334b02c6ec4e8664a91979669a501ec497792",
     # SDXL (ai/generation/image.py: TextToImage)

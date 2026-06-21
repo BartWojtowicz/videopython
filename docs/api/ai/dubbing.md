@@ -18,7 +18,7 @@ chatterbox out of the process.
 
 ## Local Pipeline
 
-Video dubbing runs with a local pipeline combining Whisper for transcription, MarianMT or Qwen3 for translation, Chatterbox Multilingual TTS for speech synthesis, and Demucs for source separation. Translation backend selection is automatic by default — see [Translation Backend](#translation-backend) for details.
+Video dubbing runs with a local pipeline combining Whisper for transcription, a local Ollama model for translation, Chatterbox Multilingual TTS for speech synthesis, and Demucs for source separation. See [Translation Backend](#translation-backend) for details.
 
 ## VideoDubber
 
@@ -183,32 +183,24 @@ rules and the token-budget guard.
 
 ### Translation Backend
 
-Two translation backends ship with the dubbing pipeline:
-
-- **MarianMT** (Helsinki-NLP) — fast on CPU, segment-isolated translation. Covers
-  ~30 high-resource language pairs out of the box.
-- **Qwen3** — Qwen3-4B-Instruct via `llama-cpp-python` (Q4_K_M GGUF, ~2.4 GB,
-  downloaded on first use). Context-aware: prompts include a per-segment
-  character budget derived from source duration and a `low_confidence` hint
-  sourced from Whisper `avg_logprob`. Per-segment fallback to Marian if Qwen
-  parse-retries both fail and the language pair is supported.
+Translation runs through `OllamaTranslator` — a single local Ollama text model.
+It sends the transcription segments under a structured-output schema and reads
+back length-budgeted, context-aware translations: the prompt carries a per-segment
+character budget (from source duration) and a `low_confidence` hint sourced from
+Whisper `avg_logprob`. Long sources are split into chunks that fit the model's
+context window, with one parse-retry on any segments the first pass misses.
 
 ```python
-# Auto resolver: Qwen3 on GPU when supported, MarianMT on CPU.
+# Translation always uses the local Ollama model (translator "auto" / "ollama").
 dubber = VideoDubber(translator="auto")
 
-# Force MarianMT (e.g. CPU machines where Qwen3 wall time is impractical).
-dubber = VideoDubber(translator="marian")
-
-# Force Qwen3. Logs a WARNING on CPU because Qwen3-4B Q4_K_M runs ~10-15x
-# slower than Marian without GPU acceleration.
-dubber = VideoDubber(translator="qwen3")
+# Pick the Ollama model + server (pull it first: `ollama pull qwen3`).
+dubber = VideoDubber(translator_model="qwen3", translator_host="http://localhost:11434")
 ```
 
-Hard failures from Qwen3 (both the primary call and the per-segment Marian
-fallback fail) are surfaced on `DubbingResult.translation_failures` as a list
-of segment indices; those segments land on the result with empty translated
-text. Empty list under MarianTranslator.
+Segments the model never returns (after the retry) are surfaced on
+`DubbingResult.translation_failures` as a list of indices; those land on the
+result with empty translated text.
 
 If neither backend covers the requested pair the auto resolver raises
 `UnsupportedLanguageError` (importable from `videopython.ai.dubbing`).
@@ -412,7 +404,7 @@ config = DubbingConfig(
     device="cuda",
     low_memory=True,
     whisper_model="large",
-    translator="qwen3",
+    translator_model="qwen3",
     vocabulary=["Klarna", "Allegro"],
 )
 dubber = VideoDubber(config=config)
@@ -502,9 +494,9 @@ heuristic returns `recommendation="reject"`. Carries the triggering
 
 ## UnsupportedLanguageError
 
-Raised by the translator auto-resolver when neither MarianMT nor Qwen3 covers
-the requested `(source_lang, target_lang)` pair. Carries both fields for
-caller introspection without parsing the message.
+Available for callers to catch. The Ollama translator attempts any language
+pair, so the pipeline no longer raises this itself; it carries both language
+fields for introspection without parsing the message.
 
 ::: videopython.ai.dubbing.UnsupportedLanguageError
 

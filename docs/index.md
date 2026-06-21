@@ -81,7 +81,7 @@ Transcribe with speaker diarization, classify ambient audio, detect scene bounda
 
 ### AI Dubbing
 
-Translate speech, clone the original voice, and re-time the dub onto the source — all in one pipeline. Whisper + MarianMT/Qwen3 + Chatterbox + Demucs. Source-prosody-conditioned expressiveness and a transcript-quality gate that rejects garbage input before paying for translation and TTS. [Learn more →](api/ai/dubbing.md)
+Translate speech, clone the original voice, and re-time the dub onto the source — all in one pipeline. Whisper + a local Ollama model + Chatterbox + Demucs. Source-prosody-conditioned expressiveness and a transcript-quality gate that rejects garbage input before paying for translation and TTS. [Learn more →](api/ai/dubbing.md)
 
 </div>
 

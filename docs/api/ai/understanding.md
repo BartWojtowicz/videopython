@@ -8,7 +8,7 @@ For a single aggregate, serializable analysis object across multiple analyzers, 
 
 | Class | Local Model Family |
 |-------|--------------------|
-| SceneVLM | Qwen3.5 (4B / 9B / 27B) |
+| SceneVLM | Ollama vision model |
 | AudioToText | Whisper |
 | AudioClassifier | AST |
 | SemanticSceneDetector | TransNetV2 |
@@ -89,7 +89,7 @@ diarization-only path that builds segments from words without overlap match,
 or on transcripts loaded from formats that don't carry the metadata).
 
 These signals feed the dubbing pipeline's transcript-quality gate (median
-`avg_logprob` is one of three reject flags) and Qwen3's confidence-aware
+`avg_logprob` is one of three reject flags) and the translator's confidence-aware
 translation prompt (segments below threshold get a `low_confidence` hint). They
 are also useful for downstream callers that want to drop low-quality segments
 before further processing.
@@ -131,22 +131,19 @@ for event in result.events:
 
 ## SceneVLM
 
-`SceneVLM` supports Qwen3.5 dense vision-capable variants via the
-`model_size` kwarg: `"4b"` (default, ~8 GB FP16), `"9b"` (~18 GB FP16),
-`"27b"` (~54 GB FP16, needs ≥48 GB). Device selection is automatic by
-default (`cuda` -> `mps` -> `cpu`).
+`SceneVLM` describes scenes with a local Ollama vision model (`model` kwarg, an
+Ollama tag you have pulled; default `llama3.2-vision`). It needs a running Ollama
+server and a vision-capable model that supports structured output.
 
 `analyze_scene()` and `analyze_frame()` return a structured
 [`SceneDescription`](#scenedescription) with three fields: a one-sentence
-`caption`, an open-list `subjects`, and a closed-enum `shot_type`. The
-class uses few-shot JSON prompting with one parse-retry; on persistent
-parse failure, the raw text becomes the caption while `subjects` and
-`shot_type` are returned empty / `None`.
+`caption`, an open-list `subjects`, and a closed-enum `shot_type`. The schema is
+handed to Ollama's `format`, so the model returns valid JSON directly.
 
 ```python
 from videopython.ai import SceneVLM
 
-vlm = SceneVLM(model_size="4b")  # default
+vlm = SceneVLM(model="llava")  # any pulled vision model
 description = vlm.analyze_frame(frame_array)
 
 print(description.caption)     # "A man in a cap speaks into a microphone."
@@ -154,8 +151,7 @@ print(description.subjects)    # ["man", "microphone", "cap"]
 print(description.shot_type)   # "medium"
 ```
 
-`SceneVLM.unload()` releases the model + processor for `low_memory`
-parity with the dubbing pipeline's translator backends.
+`SceneVLM.unload()` clears the Ollama client for `low_memory` parity.
 
 ::: videopython.ai.SceneVLM
 
