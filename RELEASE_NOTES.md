@@ -1,5 +1,19 @@
 # Release Notes
 
+## 0.50.0
+
+MCP server. A new `videopython/mcp/` exposes the auto-edit pipeline as Model
+Context Protocol tools, so an MCP-capable agent (its own model is the planner)
+drives editing: `analyze_video`, `build_catalog` (returns the candidate scenes
+as JSON plus one keyframe image each, so the model sees the footage),
+`validate_edit`, `repair_edit`, `run_edit`, and the edit-plan JSON schema as a
+resource. The agent authors an `EditPlan` by scene id; the server caches analyses
++ the catalog so payloads stay small and reuses the existing
+resolve/check/repair/run machinery (no new editing logic).
+
+Install with `pip install 'videopython[ai,mcp]'` and run `videopython-mcp`
+(stdio); register it with any MCP client. New `[mcp]` extra (`mcp>=1.27,<2`).
+
 ## 0.49.0
 
 Local AI models consolidated onto Ollama. Scene captioning (`SceneVLM`) and
