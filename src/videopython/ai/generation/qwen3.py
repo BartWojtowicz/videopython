@@ -265,7 +265,7 @@ class Qwen3Translator(ManagedPredictor):
 
         from videopython.ai._optional import require
 
-        Llama = require("llama_cpp", "translation", feature="Qwen3Translator").Llama
+        Llama = require("llama_cpp", "ai", feature="Qwen3Translator").Llama
 
         # Warn about CPU latency at load time (not __init__) — the warning is
         # about runtime cost, which only applies once the model is actually

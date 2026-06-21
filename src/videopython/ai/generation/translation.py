@@ -174,7 +174,7 @@ class MarianTranslator(ManagedPredictor):
     def _init_local(self, source_lang: str, target_lang: str) -> None:
         from videopython.ai._optional import require
 
-        _transformers = require("transformers", "translation", feature="MarianTranslator")
+        _transformers = require("transformers", "ai", feature="MarianTranslator")
         MarianMTModel = _transformers.MarianMTModel
         MarianTokenizer = _transformers.MarianTokenizer
 

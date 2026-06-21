@@ -38,7 +38,7 @@ class TextToSpeech(ManagedPredictor):
         from videopython.ai._optional import require
 
         ChatterboxMultilingualTTS = require(
-            "chatterbox.mtl_tts", "tts", feature="TextToSpeech"
+            "chatterbox.mtl_tts", "ai", feature="TextToSpeech"
         ).ChatterboxMultilingualTTS
 
         requested_device = self.device
@@ -164,7 +164,7 @@ class TextToMusic(ManagedPredictor):
 
         from videopython.ai._optional import require
 
-        _transformers = require("transformers", "generation", feature="TextToMusic")
+        _transformers = require("transformers", "ai", feature="TextToMusic")
         AutoProcessor = _transformers.AutoProcessor
         MusicgenForConditionalGeneration = _transformers.MusicgenForConditionalGeneration
 

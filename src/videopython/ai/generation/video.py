@@ -35,7 +35,7 @@ class TextToVideo(ManagedPredictor):
     def _init_local(self) -> None:
         from videopython.ai._optional import require
 
-        CogVideoXPipeline = require("diffusers", "generation", feature="TextToVideo").CogVideoXPipeline
+        CogVideoXPipeline = require("diffusers", "ai", feature="TextToVideo").CogVideoXPipeline
 
         requested_device = self.device
         device, dtype = _get_torch_device_and_dtype(self.device)
@@ -89,9 +89,7 @@ class ImageToVideo(ManagedPredictor):
     def _init_local(self) -> None:
         from videopython.ai._optional import require
 
-        CogVideoXImageToVideoPipeline = require(
-            "diffusers", "generation", feature="ImageToVideo"
-        ).CogVideoXImageToVideoPipeline
+        CogVideoXImageToVideoPipeline = require("diffusers", "ai", feature="ImageToVideo").CogVideoXImageToVideoPipeline
 
         requested_device = self.device
         device, dtype = _get_torch_device_and_dtype(self.device)

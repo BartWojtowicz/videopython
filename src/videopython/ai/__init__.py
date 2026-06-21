@@ -24,6 +24,16 @@ if TYPE_CHECKING:
     # Redundant aliases mark these as intentional re-exports (mypy/IDE see the
     # symbols; ruff doesn't flag them as unused). Runtime resolution is lazy via
     # __getattr__ below.
+    from .auto_edit import AutoEditError as AutoEditError
+    from .auto_edit import AutoEditor as AutoEditor
+    from .auto_edit import EditCatalog as EditCatalog
+    from .auto_edit import EditPlan as EditPlan
+    from .auto_edit import ImagePart as ImagePart
+    from .auto_edit import OllamaVisionLLM as OllamaVisionLLM
+    from .auto_edit import PlannerError as PlannerError
+    from .auto_edit import StructuredVisionLLM as StructuredVisionLLM
+    from .auto_edit import TextPart as TextPart
+    from .auto_edit import build_catalog as build_catalog
     from .effects import ObjectDetectionOverlay as ObjectDetectionOverlay
     from .generation import ImageToVideo as ImageToVideo
     from .generation import TextToImage as TextToImage
@@ -66,6 +76,17 @@ _exports: dict[str, str] = {
     "VideoAnalysis": ".video_analysis",
     "VideoAnalysisConfig": ".video_analysis",
     "VideoAnalyzer": ".video_analysis",
+    # Auto-editing (LLM-authored edits)
+    "AutoEditor": ".auto_edit",
+    "AutoEditError": ".auto_edit",
+    "OllamaVisionLLM": ".auto_edit",
+    "StructuredVisionLLM": ".auto_edit",
+    "PlannerError": ".auto_edit",
+    "TextPart": ".auto_edit",
+    "ImagePart": ".auto_edit",
+    "EditCatalog": ".auto_edit",
+    "EditPlan": ".auto_edit",
+    "build_catalog": ".auto_edit",
 }
 
 __all__ = list(_exports)

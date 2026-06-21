@@ -78,7 +78,7 @@ class _FaceDetector:
 
         from videopython.ai._optional import require
 
-        YOLO = require("ultralytics", "vision", feature="FaceTracker").YOLO
+        YOLO = require("ultralytics", "ai", feature="FaceTracker").YOLO
 
         model_path = hf_hub_download(
             repo_id="arnabdhar/YOLOv8-Face-Detection",

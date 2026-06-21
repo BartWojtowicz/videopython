@@ -1,5 +1,48 @@
 # Release Notes
 
+## 0.48.0
+
+LLM-authored editing: a new `videopython.ai.auto_edit` layer turns one or more
+analyzed videos plus a creative brief into a runnable `VideoEdit`. It builds a
+scene **catalog** from `VideoAnalysis` (stable per-scene ids, exact CV-derived
+bounds, a keyframe, caption, transcript), asks a vision model to select and order
+scenes **by id** — never authoring timestamps — and resolves that plan back to
+exact source/start/end, so the model's temporal imprecision can't reach the cut
+points. Validity stays the existing `repair()` / `normalize_dimensions()` /
+`check()` loop; `auto_edit` adds no new validation.
+
+### Local-first, model-agnostic planner via Ollama
+
+The default planner, `OllamaVisionLLM`, talks to a local Ollama server, so you run
+a pulled vision model with no external API. The `EditPlan` schema is handed to
+Ollama's structured-output `format`, giving the local path grammar-constrained JSON
+decode. The planner is injected through the `StructuredVisionLLM` protocol, so
+swapping models or backends needs no SDK.
+
+The chosen model must support **both** vision and Ollama's structured-output
+`format` — not all do. `gemma3:27b` is verified working; some builds (e.g. certain
+MLX ones) ignore schema conditioning and fail.
+
+```python
+from videopython.ai import AutoEditor, OllamaVisionLLM
+
+editor = AutoEditor(planner=OllamaVisionLLM(model="qwen2.5vl"))
+edit = editor.edit(["a.mp4", "b.mp4"], brief="20s highlight reel, captions on speech")
+edit.run_to_file("out.mp4")
+```
+
+Install with `pip install 'videopython[ai]'`. The schema-building helpers behind
+`VideoEdit.json_schema` moved to a shared `editing/_schema.py`, reused by
+`EditPlan.json_schema` (no behavior change).
+
+### Single `[ai]` extra (breaking)
+
+The per-capability extras (`[asr]`, `[vision]`, `[separation]`, `[translation]`,
+`[tts]`, `[generation]`, `[dub]`) are collapsed into one `[ai]` extra that installs
+every AI capability. Heavy ML deps still load lazily at first use, so a plain
+`import videopython` stays light. Consumers pinning a granular extra (e.g.
+`videopython[vision]`) must switch to `videopython[ai]`.
+
 ## 0.47.0
 
 Pixel effects go back to numpy. After 0.46.0 migrated nine effects to native
