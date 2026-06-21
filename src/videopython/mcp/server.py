@@ -10,6 +10,8 @@ ids), not whole analysis blobs.
 from __future__ import annotations
 
 import json
+import sys
+from contextlib import redirect_stdout
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -41,7 +43,10 @@ def analyze_video(path: str) -> dict[str, Any]:
 
     Returns a short summary; call this once per source, then build_catalog.
     """
-    analysis = _get_analyzer().analyze_path(path)
+    # Heavy analyzer deps (e.g. transnetv2-pytorch) bare-print to stdout, which here is
+    # the stdio JSON-RPC channel; send that to stderr so the transport stays clean.
+    with redirect_stdout(sys.stderr):
+        analysis = _get_analyzer().analyze_path(path)
     _analyses[str(Path(path))] = analysis
     src = analysis.source
     return {

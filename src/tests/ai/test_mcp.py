@@ -127,6 +127,21 @@ def test_analyze_video_caches_and_summarizes() -> None:
     assert str(SMALL_VIDEO_PATH) in server._analyses
 
 
+def test_analyze_video_keeps_stdout_clean(capsys: pytest.CaptureFixture[str]) -> None:
+    analysis = _real_analysis()
+
+    class _NoisyAnalyzer:
+        def analyze_path(self, path: str) -> VideoAnalysis:
+            print("transnetv2-style stdout noise that would corrupt JSON-RPC")
+            return analysis
+
+    server._analyzer = _NoisyAnalyzer()  # type: ignore[assignment]
+    server.analyze_video(str(SMALL_VIDEO_PATH))
+    captured = capsys.readouterr()
+    assert captured.out == ""  # stdout (the transport channel) stays clean
+    assert "stdout noise" in captured.err  # dependency output is diverted to stderr
+
+
 def test_run_edit_renders(tmp_path: Path) -> None:
     server._analyses = {str(SMALL_VIDEO_PATH): _real_analysis()}
     server.build_catalog()
