@@ -10,11 +10,13 @@ Transforms are not applied to a `Video` directly. They run only through
 the streaming engine: add the operation(s) to a `VideoEdit` and render
 with `run_to_file`.
 
+The time cut is the segment's own `start`/`end`; resizing, cropping, and fps
+changes go in `operations`:
+
 ```python
-from videopython.editing import VideoEdit, SegmentConfig, Resize, Crop, CutSeconds
+from videopython.editing import VideoEdit, SegmentConfig, Resize, Crop
 
 edit = VideoEdit(segments=[SegmentConfig(source="input.mp4", start=0, end=10, operations=[
-    CutSeconds(start=0.0, end=10.0),
     Crop(width=0.5, height=0.5),        # 50% center crop
     Resize(width=1280, height=720),
 ])])
@@ -81,6 +83,12 @@ edit.run_to_file("out.mp4", context={"transcription": my_transcription})
 ```
 
 ## API Reference
+
+!!! note "`CutSeconds` / `CutFrames` are engine-internal"
+    These are documented because the engine constructs them from each segment's
+    `start`/`end`, but they are `internal_only` — not in the op registry or the LLM
+    schema, and rejected if placed in a plan's `operations` list. Cut via the
+    segment range instead.
 
 ### CutSeconds
 

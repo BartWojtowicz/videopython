@@ -62,7 +62,8 @@ edit.run_to_file("output.mp4", context={"transcription": transcription})
 ```
 
 See the [Operations](../api/operations.md#registered-operations) table for the
-list of streamable ops. Inspect `Operation.get(op_id).streamable` programmatically.
+list of streamable ops. Every registered op streams; `edit.streamability()` gives
+the per-op classification at each plan position without touching the disk.
 
 ## Solution: FrameIterator
 

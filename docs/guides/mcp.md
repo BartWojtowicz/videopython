@@ -18,11 +18,19 @@ server.
 
 ## Tools
 
-- **`analyze_video(path)`** — analyze a source (scenes + transcript + captions);
-  cached server-side for the catalog. Returns a short summary.
-- **`build_catalog(sources=None)`** — returns the candidate scenes (JSON) plus one
-  keyframe image per scene, so the model can see the footage. Author the edit by
-  referencing the returned `id` values.
+- **`analyze_video(path, profile="full")`** — analyze a source (scenes + transcript
+  + captions); cached server-side for the catalog. Returns a short summary. Pass
+  `profile="editing"` to skip audio classification — faster on long sources, since
+  the catalog never reads it.
+- **`build_catalog(sources=None)`** — returns the candidate scenes as one JSON text
+  block (id, duration, shot_type, caption, transcript per scene — enough to
+  shortlist from text alone), followed by up to 12 **downscaled** keyframe images.
+  If there are more scenes, a trailing note names the omitted ids so the agent
+  never assumes it saw every frame. Author the edit by referencing the returned
+  `id` values.
+- **`scene_keyframes(scene_ids)`** — fetch downscaled keyframe images for a chosen
+  shortlist of scene ids. Use after `build_catalog` to pull the frames that were
+  capped out, without re-inlining the whole library.
 - **`validate_edit(plan)`** — validate an `EditPlan` (references catalog
   `scene_id`s); returns every problem at once as structured errors.
 - **`repair_edit(plan)`** — clamp mechanical issues + normalize dimensions;
@@ -39,9 +47,21 @@ server.
 
 ## Flow
 
-`analyze_video` per source → `build_catalog` (see scenes + keyframes) → author an
+`analyze_video` per source → `build_catalog` (read the scene JSON + the first
+keyframes; pull any capped-out frames with `scene_keyframes`) → author an
 `EditPlan` (scene ids + operations) against the schema resource → `validate_edit`
 → `run_edit`. The server is a thin wrapper over the same primitives as the
 programmatic `AutoEditor`; the planner is the client's model. The server caches
 analyses + the catalog so the agent passes small payloads (scene ids), not whole
 analysis blobs.
+
+## Scaling to many scenes
+
+Keyframes are the payload that grows with the footage, so the server keeps it
+bounded: every image the MCP path returns is downscaled (longest side ≤ 768px,
+~10× smaller than a full-res PNG), and `build_catalog` inlines at most 12 of them,
+naming the rest. The agent shortlists from the always-complete catalog *text*, then
+calls `scene_keyframes(scene_ids)` for just the frames it wants to look at. This
+keeps a ~100-scene library from flooding the model's context in one result.
+(Downscaling is scoped to MCP — `SceneVLM` captioning and the local planner keep
+full-resolution frames.)

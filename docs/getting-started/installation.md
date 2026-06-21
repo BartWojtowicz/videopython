@@ -45,6 +45,33 @@ generation, dubbing, and the LLM auto-editing planner. The heavy ML dependencies
 still load lazily at first use (no top-level imports under `ai/`), so importing
 `videopython` stays light even with `[ai]` installed.
 
+### With the MCP Server
+
+To drive editing from an MCP-capable agent, add the `[mcp]` extra (it needs `[ai]` too):
+
+```bash
+pip install "videopython[ai,mcp]"
+```
+
+This installs the `videopython-mcp` console script (a stdio [Model Context
+Protocol](https://modelcontextprotocol.io) server). See the
+[MCP Server guide](../guides/mcp.md).
+
+!!! warning "Ollama is required for scene captioning, dubbing translation, and auto-editing"
+    Scene captioning (`SceneVLM`, used by `VideoAnalyzer`), dubbing translation,
+    and the `AutoEditor` / MCP planner run against a local
+    [Ollama](https://ollama.com) server — there is no in-process fallback. Install
+    Ollama, then pull the verified default model:
+
+    ```bash
+    ollama serve            # start the local daemon
+    ollama pull gemma3:27b  # the default vision/translation model
+    ```
+
+    The model must support Ollama's structured-output `format`; `gemma3:27b` is
+    verified. Generation (image/video/speech/music), transcription, detection, and
+    audio classification do **not** need Ollama.
+
 !!! note "Dubbing TTS"
     The dubbing pipeline synthesizes speech with a local Chatterbox
     `TextToSpeech` by default. To run synthesis out of process instead, inject
