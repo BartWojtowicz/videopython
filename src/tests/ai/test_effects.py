@@ -8,11 +8,23 @@ import json
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
+from pydantic import ValidationError
 
 from videopython.ai.effects import ObjectDetectionOverlay
 from videopython.base.description import BoundingBox, DetectedObject
 from videopython.base.video import VideoMetadata
 from videopython.editing.operation import Operation
+
+
+def test_object_detection_overlay_rejects_pixel_scale_fractions() -> None:
+    # label_font_size / line_thickness are fractions of the frame's longer side;
+    # pixel-scale values (e.g. 8.0, 1.0) render an absurd font and crash at draw time.
+    with pytest.raises(ValidationError):
+        ObjectDetectionOverlay(label_font_size=8.0)
+    with pytest.raises(ValidationError):
+        ObjectDetectionOverlay(line_thickness=1.0)
+    ObjectDetectionOverlay(label_font_size=0.05, line_thickness=0.01)  # in-range stays valid
 
 
 def _detection() -> DetectedObject:

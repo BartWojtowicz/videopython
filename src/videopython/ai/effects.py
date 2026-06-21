@@ -51,10 +51,16 @@ class ObjectDetectionOverlay(Effect):
         description="Fixed box color as [R, G, B] (0-255) for every box, or null for distinct per-class colors.",
     )
     line_thickness: float = Field(
-        0.003, gt=0, description="Box stroke width as a fraction of the frame's longer side (~3px at 1080p)."
+        0.003,
+        gt=0,
+        le=0.05,
+        description="Box stroke width as a fraction of the frame's longer side (0.003 = ~3px at 1080p).",
     )
     label_font_size: float = Field(
-        0.022, gt=0, description="Label text height as a fraction of the frame's longer side (~24px at 1080p)."
+        0.022,
+        gt=0,
+        le=0.2,
+        description="Label text height as a fraction of the frame's longer side (0.022 = ~24px at 1080p).",
     )
     detection_interval: int = Field(
         2,
