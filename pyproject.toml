@@ -1,6 +1,6 @@
 [project]
 name = "videopython"
-version = "0.47.0"
+version = "0.48.0"
 description = "Minimal video generation and processing library."
 authors = [
     { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
@@ -133,10 +133,21 @@ dub = [
     # Loudness measurement (BS.1770) for dub-vs-source loudness matching (M3)
     "pyloudnorm>=0.1.1",
 ]
+# LLM-authored editing planner (auto_edit/local.py OllamaVisionLLM). A light HTTP
+# client for a local Ollama server -- no torch -- so the user runs any pulled
+# vision model. Structured output uses Ollama's schema `format`.
+ollama = [
+    "ollama>=0.5.0",
+]
+# Convenience aggregate for the full auto-edit pipeline: scene analysis (vision +
+# asr) plus the Ollama planner. Mirrors how [dub] aggregates its stages.
+director = [
+    "videopython[asr,vision,ollama]",
+]
 # Convenience aggregate: installs every capability. PEP 685 self-references make
 # this the single "everything" install with no hand-duplicated dep list. This
 # combined resolve is what the [tool.uv].override-dependencies block exists for.
-ai = ["videopython[asr,vision,separation,translation,tts,generation,dub]"]
+ai = ["videopython[asr,vision,separation,translation,tts,generation,dub,ollama]"]
 
 [project.urls]
 Homepage = "https://videopython.com"

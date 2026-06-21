@@ -1,5 +1,37 @@
 # Release Notes
 
+## 0.48.0
+
+LLM-authored editing: a new `videopython.ai.auto_edit` layer turns one or more
+analyzed videos plus a creative brief into a runnable `VideoEdit`. It builds a
+scene **catalog** from `VideoAnalysis` (stable per-scene ids, exact CV-derived
+bounds, a keyframe, caption, transcript), asks a vision model to select and order
+scenes **by id** — never authoring timestamps — and resolves that plan back to
+exact source/start/end, so the model's temporal imprecision can't reach the cut
+points. Validity stays the existing `repair()` / `normalize_dimensions()` /
+`check()` loop; `auto_edit` adds no new validation.
+
+### Local-first, model-agnostic planner via Ollama
+
+The default planner, `OllamaVisionLLM`, talks to a local Ollama server, so you run
+any pulled vision model (`llama3.2-vision`, `qwen2.5vl`, ...) with no external API.
+The `EditPlan` schema is handed to Ollama's structured-output `format`, giving the
+local path grammar-constrained JSON decode. The planner is injected through the
+`StructuredVisionLLM` protocol, so swapping models or backends needs no SDK.
+
+```python
+from videopython.ai import AutoEditor, OllamaVisionLLM
+
+editor = AutoEditor(planner=OllamaVisionLLM(model="qwen2.5vl"))
+edit = editor.edit(["a.mp4", "b.mp4"], brief="20s highlight reel, captions on speech")
+edit.run_to_file("out.mp4")
+```
+
+Install with `pip install 'videopython[director]'` (scene analysis + the Ollama
+planner). New extras: `ollama` (planner only) and `director` (full pipeline). The
+schema-building helpers behind `VideoEdit.json_schema` moved to a shared
+`editing/_schema.py`, reused by `EditPlan.json_schema` (no behavior change).
+
 ## 0.47.0
 
 Pixel effects go back to numpy. After 0.46.0 migrated nine effects to native

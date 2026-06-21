@@ -73,7 +73,7 @@ _HEAVY_IMPORT_NAMES: set[str] = {
     "huggingface_hub",
 }
 
-_GRANULAR_EXTRAS = ["asr", "vision", "separation", "translation", "tts", "generation", "dub"]
+_GRANULAR_EXTRAS = ["asr", "vision", "separation", "translation", "tts", "generation", "dub", "ollama"]
 
 
 @pytest.fixture(scope="module")

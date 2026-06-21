@@ -2253,6 +2253,19 @@ wheels = [
 ]
 
 [[package]]
+name = "ollama"
+version = "0.6.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/fc/72/5f12423b6b39ca8430fbe56f77fcf4ef60f63067c7c4a2e30e200ed9ec16/ollama-0.6.2.tar.gz", hash = "sha256:936d55daa684f474364c098611c933626f8d6c7d67065c5b7ae0c477b508b07f", size = 53145, upload-time = "2026-04-29T21:21:15.018Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c4/ab/d6722beeb2d10f7a3b9ff49375708904fde18f82b5609a0bc4aeb5996a4d/ollama-0.6.2-py3-none-any.whl", hash = "sha256:3ad7daab28e5a973445c36a73882a3ef698c2ebb00e21e308652741577509f7d", size = 15115, upload-time = "2026-04-29T21:21:13.794Z" },
+]
+
+[[package]]
 name = "omegaconf"
 version = "2.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4491,7 +4504,7 @@ wheels = [
 
 [[package]]
 name = "videopython"
-version = "0.47.0"
+version = "0.48.0"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },
@@ -4510,6 +4523,7 @@ ai = [
     { name = "diffusers" },
     { name = "imagehash" },
     { name = "llama-cpp-python" },
+    { name = "ollama" },
     { name = "openai-whisper" },
     { name = "pyannote-audio" },
     { name = "pyloudnorm" },
@@ -4529,6 +4543,19 @@ asr = [
     { name = "torch" },
     { name = "torchaudio" },
 ]
+director = [
+    { name = "imagehash" },
+    { name = "ollama" },
+    { name = "openai-whisper" },
+    { name = "pyannote-audio" },
+    { name = "qwen-vl-utils" },
+    { name = "silero-vad" },
+    { name = "torch" },
+    { name = "torchaudio" },
+    { name = "transformers" },
+    { name = "transnetv2-pytorch" },
+    { name = "ultralytics" },
+]
 dub = [
     { name = "demucs" },
     { name = "llama-cpp-python" },
@@ -4547,6 +4574,9 @@ generation = [
     { name = "torch" },
     { name = "torchaudio" },
     { name = "transformers" },
+]
+ollama = [
+    { name = "ollama" },
 ]
 separation = [
     { name = "demucs" },
@@ -4599,6 +4629,7 @@ requires-dist = [
     { name = "imagehash", marker = "extra == 'vision'", specifier = ">=4.3" },
     { name = "llama-cpp-python", marker = "extra == 'translation'", specifier = ">=0.3.0" },
     { name = "numpy", specifier = ">=1.25.2" },
+    { name = "ollama", marker = "extra == 'ollama'", specifier = ">=0.5.0" },
     { name = "openai-whisper", marker = "extra == 'asr'", specifier = ">=20240930" },
     { name = "opencv-python-headless", specifier = ">=4.9.0.80" },
     { name = "pillow", specifier = ">=12.1.1" },
@@ -4625,9 +4656,10 @@ requires-dist = [
     { name = "transnetv2-pytorch", marker = "extra == 'vision'", specifier = ">=1.0.5" },
     { name = "ultralytics", marker = "extra == 'vision'", specifier = ">=8.0.0" },
     { name = "videopython", extras = ["asr", "separation", "translation"], marker = "extra == 'dub'" },
-    { name = "videopython", extras = ["asr", "vision", "separation", "translation", "tts", "generation", "dub"], marker = "extra == 'ai'" },
+    { name = "videopython", extras = ["asr", "vision", "ollama"], marker = "extra == 'director'" },
+    { name = "videopython", extras = ["asr", "vision", "separation", "translation", "tts", "generation", "dub", "ollama"], marker = "extra == 'ai'" },
 ]
-provides-extras = ["asr", "vision", "separation", "translation", "tts", "generation", "dub", "ai"]
+provides-extras = ["asr", "vision", "separation", "translation", "tts", "generation", "dub", "ollama", "director", "ai"]
 
 [package.metadata.requires-dev]
 ai = [{ name = "videopython", extras = ["ai"] }]

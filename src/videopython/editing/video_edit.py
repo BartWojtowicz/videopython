@@ -30,6 +30,7 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SerializeAsA
 from videopython.base import _ffmpeg
 from videopython.base.exceptions import PlanError, PlanErrorCode, PlanRepair, PlanValidationError
 from videopython.base.video import ALLOWED_VIDEO_FORMATS, ALLOWED_VIDEO_PRESETS, Video, VideoMetadata
+from videopython.editing._schema import array_field_schema, field_schema, optional_model_field_schema
 from videopython.editing.audio_ops import MusicBed, build_music_bed_filter_complex
 from videopython.editing.effects import Effect
 from videopython.editing.operation import FilterCtx, Operation, _to_strict_schema
@@ -925,54 +926,20 @@ class VideoEdit(BaseModel):
         # the same object is inlined as the `items` of both operation slots.
         op_schema = Operation.json_schema()
 
-        def _field(model: type[BaseModel], field_name: str) -> dict[str, Any]:
-            # Pydantic emits one self-contained property block per field
-            # (description, format, minimum, ...); drop the JSON-Schema `title`
-            # (a humanized field name) the hand-rolled version never carried.
-            prop = dict(model.model_json_schema()["properties"][field_name])
-            prop.pop("title", None)
-            return prop
-
-        def _array(model: type[BaseModel], field_name: str, items: dict[str, Any]) -> dict[str, Any]:
-            # An operation-list slot: keep the model's shape/description but
-            # inline the embedded op union for `items` and a `default: []` so
-            # the list is optional in the LLM-facing schema.
-            prop = _field(model, field_name)
-            prop["items"] = items
-            prop["default"] = []
-            return prop
-
-        def _optional_model_field(
-            inline_model: type[BaseModel], parent: type[BaseModel], field_name: str
-        ) -> dict[str, Any]:
-            # An optional `Model | None` slot (`transition_in`, `music_bed`):
-            # Pydantic emits it as an `anyOf` with a `$ref` to a buried
-            # `$defs/Model`. Inline a self-contained closed object (titles
-            # dropped, descriptions kept) so the field needs no external `$defs`
-            # -- the same self-containment the op union relies on.
-            inline = inline_model.model_json_schema()
-            inline.pop("title", None)
-            inline.pop("$defs", None)
-            for sub in inline.get("properties", {}).values():
-                sub.pop("title", None)
-            prop = _field(parent, field_name)
-            prop["anyOf"] = [inline, {"type": "null"}]
-            return prop
-
         segment_schema: dict[str, Any] = {
             "type": "object",
             "description": SegmentConfig.__doc__,
             "properties": {
-                "source": _field(SegmentConfig, "source"),
-                "start": _field(SegmentConfig, "start"),
-                "end": _field(SegmentConfig, "end"),
-                "operations": _array(SegmentConfig, "operations", op_schema),
-                "transition_in": _optional_model_field(TransitionSpec, SegmentConfig, "transition_in"),
+                "source": field_schema(SegmentConfig, "source"),
+                "start": field_schema(SegmentConfig, "start"),
+                "end": field_schema(SegmentConfig, "end"),
+                "operations": array_field_schema(SegmentConfig, "operations", op_schema),
+                "transition_in": optional_model_field_schema(TransitionSpec, SegmentConfig, "transition_in"),
             },
             "required": ["source", "start", "end"],
             "additionalProperties": False,
         }
-        segments = _field(cls, "segments")
+        segments = field_schema(cls, "segments")
         segments["items"] = segment_schema
         schema = {
             "$schema": "http://json-schema.org/draft-07/schema#",
@@ -980,10 +947,10 @@ class VideoEdit(BaseModel):
             "description": cls.__doc__,
             "properties": {
                 "segments": segments,
-                "post_operations": _array(cls, "post_operations", op_schema),
-                "match_to_lowest_fps": _field(cls, "match_to_lowest_fps"),
-                "match_to_lowest_resolution": _field(cls, "match_to_lowest_resolution"),
-                "music_bed": _optional_model_field(MusicBed, cls, "music_bed"),
+                "post_operations": array_field_schema(cls, "post_operations", op_schema),
+                "match_to_lowest_fps": field_schema(cls, "match_to_lowest_fps"),
+                "match_to_lowest_resolution": field_schema(cls, "match_to_lowest_resolution"),
+                "music_bed": optional_model_field_schema(MusicBed, cls, "music_bed"),
             },
             "required": ["segments"],
             "additionalProperties": False,
