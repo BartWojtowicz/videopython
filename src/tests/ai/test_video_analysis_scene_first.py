@@ -155,6 +155,19 @@ def test_config_defaults_and_rejects_unknown_ids() -> None:
         va.VideoAnalysisConfig(enabled_analyzers={"unknown"})
 
 
+def test_for_profile_editing_drops_audio_classifier() -> None:
+    assert va.VideoAnalysisConfig.for_profile("full").enabled_analyzers == set(va.ALL_ANALYZER_IDS)
+
+    editing = va.VideoAnalysisConfig.for_profile("editing").enabled_analyzers
+    assert editing == {va.SEMANTIC_SCENE_DETECTOR, va.SCENE_VLM, va.AUDIO_TO_TEXT, va.FACE_TRACKER}
+    assert va.AUDIO_CLASSIFIER not in editing
+
+    assert va.FACE_TRACKER not in va.VideoAnalysisConfig.for_profile("editing", faces=False).enabled_analyzers
+
+    with pytest.raises(ValueError, match="Unknown profile"):
+        va.VideoAnalysisConfig.for_profile("bogus")
+
+
 def test_scene_first_full_run_outputs_scene_payload(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_scene_first_analyzers(monkeypatch)
     analysis = va.VideoAnalyzer(config=va.VideoAnalysisConfig()).analyze(_video_4s())

@@ -173,6 +173,18 @@ class VideoAnalysisConfig(BaseModel):
         """Backward-compatible alias for the default config."""
         return cls()
 
+    @classmethod
+    def for_profile(cls, profile: str, *, faces: bool = True) -> VideoAnalysisConfig:
+        """Config for an analysis profile: 'full' (all analyzers) or 'editing' (catalog-only, no audio classifier)."""
+        if profile == "full":
+            return cls()
+        if profile == "editing":
+            enabled = {SEMANTIC_SCENE_DETECTOR, SCENE_VLM, AUDIO_TO_TEXT}
+            if faces:
+                enabled.add(FACE_TRACKER)
+            return cls(enabled_analyzers=enabled)
+        raise ValueError(f"Unknown profile: {profile!r} (expected 'full' or 'editing')")
+
 
 class AudioAnalysisSection(BaseModel):
     """Audio understanding outputs."""

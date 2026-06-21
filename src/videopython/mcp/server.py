@@ -13,13 +13,13 @@ import json
 import sys
 from contextlib import redirect_stdout
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ImageContent, TextContent
 from pydantic import ValidationError
 
-from videopython.ai._ollama import _encode_png_b64
+from videopython.ai._ollama import _downscale, _encode_png_b64
 from videopython.ai.auto_edit import EditPlan, UnknownSceneIdsError, resolve_plan
 from videopython.ai.auto_edit import build_catalog as _build_scene_catalog
 from videopython.editing import VideoEdit
@@ -33,20 +33,24 @@ mcp = FastMCP("videopython")
 
 # Session state for one stdio client (one process per client).
 _analyses: dict[str, VideoAnalysis] = {}
-_analyzer: VideoAnalyzer | None = None
+_analyzers: dict[str, VideoAnalyzer] = {}
 _bundle: CatalogBundle | None = None
+
+_MAX_INLINE_KEYFRAMES = 12  # cap inlined keyframes in build_catalog; pull the rest with scene_keyframes
 
 
 @mcp.tool()
-def analyze_video(path: str) -> dict[str, Any]:
+def analyze_video(path: str, profile: Literal["full", "editing"] = "full") -> dict[str, Any]:
     """Analyze a source video (scenes, transcript, captions) and cache it for build_catalog.
 
-    Returns a short summary; call this once per source, then build_catalog.
+    ``profile="editing"`` skips audio classification (faster on long sources); the
+    catalog (captions + transcript + face flag) is unaffected. Returns a short
+    summary; call this once per source, then build_catalog.
     """
     # Heavy analyzer deps (e.g. transnetv2-pytorch) bare-print to stdout, which here is
     # the stdio JSON-RPC channel; send that to stderr so the transport stays clean.
     with redirect_stdout(sys.stderr):
-        analysis = _get_analyzer().analyze_path(path)
+        analysis = _get_analyzer(profile).analyze_path(path)
     _analyses[str(Path(path))] = analysis
     src = analysis.source
     return {
@@ -63,10 +67,11 @@ def analyze_video(path: str) -> dict[str, Any]:
 def build_catalog(sources: list[str] | None = None) -> list[TextContent | ImageContent]:
     """Build the candidate-scene catalog from analyzed videos and cache it.
 
-    Returns the catalog as JSON text plus one keyframe image per scene (each
-    preceded by its scene id), so the model can see the footage. Pass ``sources``
-    to restrict to specific analyzed paths, or omit for all. Author the edit by
-    referencing the returned ``id`` values via the edit-plan schema resource.
+    The first text block is the full catalog JSON (id/duration/shot_type/caption/
+    transcript per scene -- enough to shortlist from text alone). Up to
+    ``_MAX_INLINE_KEYFRAMES`` downscaled keyframes follow; a final note names any
+    scene ids whose images were omitted (fetch them with scene_keyframes). Pass
+    ``sources`` to restrict to specific analyzed paths, or omit for all.
     """
     global _bundle
     analyses = _selected_analyses(sources)
@@ -74,13 +79,34 @@ def build_catalog(sources: list[str] | None = None) -> list[TextContent | ImageC
         raise ValueError("No analyzed videos cached; call analyze_video first.")
     _bundle = _build_scene_catalog(analyses)
 
-    blocks: list[TextContent | ImageContent] = [TextContent(type="text", text=_bundle.catalog.model_dump_json())]
-    for scene in _bundle.catalog.scenes:
-        frame = _bundle.keyframes.get(scene.id)
-        if frame is not None:
-            blocks.append(TextContent(type="text", text=f"scene {scene.id}:"))
-            blocks.append(ImageContent(type="image", data=_encode_png_b64(frame), mimeType="image/png"))
+    ids = [scene.id for scene in _bundle.catalog.scenes]
+    inlined, omitted = ids[:_MAX_INLINE_KEYFRAMES], ids[_MAX_INLINE_KEYFRAMES:]
+    blocks: list[TextContent | ImageContent] = [
+        TextContent(type="text", text=_bundle.catalog.model_dump_json()),
+        *_keyframe_blocks(inlined),
+    ]
+    if omitted:
+        blocks.append(
+            TextContent(
+                type="text",
+                text=f"Keyframes omitted for {len(omitted)} scenes "
+                f"(call scene_keyframes for these ids): {', '.join(omitted)}",
+            )
+        )
     return blocks
+
+
+@mcp.tool(structured_output=False)
+def scene_keyframes(scene_ids: list[str]) -> list[TextContent | ImageContent]:
+    """Return downscaled keyframe images for specific catalog scene ids (use after build_catalog)."""
+    if _bundle is None:
+        raise ValueError("No catalog cached; call build_catalog first.")
+    known = _bundle.catalog.by_id()
+    unknown = sorted({sid for sid in scene_ids if sid not in known})
+    if unknown:
+        error = {"code": "unknown_scene_ids", "value": unknown, "message": f"Unknown scene ids: {unknown}"}
+        return [TextContent(type="text", text=json.dumps(error))]
+    return _keyframe_blocks(list(dict.fromkeys(scene_ids)))
 
 
 @mcp.tool()
@@ -146,19 +172,29 @@ def edit_plan_schema() -> str:
     return json.dumps(EditPlan.json_schema(strict=True))
 
 
-def _get_analyzer() -> VideoAnalyzer:
-    global _analyzer
-    if _analyzer is None:
-        from videopython.ai.video_analysis import VideoAnalyzer
+def _get_analyzer(profile: str = "full") -> VideoAnalyzer:
+    if profile not in _analyzers:
+        from videopython.ai.video_analysis import VideoAnalysisConfig, VideoAnalyzer
 
-        _analyzer = VideoAnalyzer()
-    return _analyzer
+        _analyzers[profile] = VideoAnalyzer(config=VideoAnalysisConfig.for_profile(profile))
+    return _analyzers[profile]
 
 
 def _selected_analyses(sources: list[str] | None) -> list[VideoAnalysis]:
     if sources is None:
         return list(_analyses.values())
     return [_analyses[str(Path(s))] for s in sources if str(Path(s)) in _analyses]
+
+
+def _keyframe_blocks(scene_ids: list[str]) -> list[TextContent | ImageContent]:
+    assert _bundle is not None  # callers guard; narrows the module global for mypy
+    blocks: list[TextContent | ImageContent] = []
+    for sid in scene_ids:
+        frame = _bundle.keyframes.get(sid)
+        if frame is not None:
+            blocks.append(TextContent(type="text", text=f"scene {sid}:"))
+            blocks.append(ImageContent(type="image", data=_encode_png_b64(_downscale(frame)), mimeType="image/png"))
+    return blocks
 
 
 def _resolve(plan: dict[str, Any]) -> tuple[VideoEdit | None, list[dict[str, Any]]]:

@@ -1,5 +1,17 @@
 # Release Notes
 
+## 0.50.1
+
+MCP ergonomics at scale. MCP keyframes are downscaled (longest side <= 768px)
+before base64-encoding, shrinking the build_catalog / scene_keyframes payload by
+roughly 10x (SceneVLM captioning and the local planner keep full-resolution
+frames). `build_catalog` now always returns the full catalog text
+but caps inlined keyframes; the rest are fetched on demand with a new
+`scene_keyframes(scene_ids)` tool, and an explicit note lists any omitted scene
+ids so the agent never assumes it saw every frame. `analyze_video` gains a
+`profile="editing"` option that skips audio classification for a faster,
+catalog-only analysis on long sources.
+
 ## 0.50.0
 
 MCP server. A new `videopython/mcp/` exposes the auto-edit pipeline as Model
