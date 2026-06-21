@@ -11,8 +11,8 @@ import numpy as np
 import pytest
 from PIL import Image
 
+from videopython.ai._ollama import _encode_png_b64
 from videopython.ai.auto_edit import ImagePart, OllamaVisionLLM, Part, PlannerError, TextPart
-from videopython.ai.auto_edit.local import _encode_png_b64
 
 
 class _FakeClient:
@@ -27,16 +27,22 @@ class _FakeClient:
         return SimpleNamespace(message=SimpleNamespace(content=self.content))
 
 
+def _inject(backend: OllamaVisionLLM, fake: _FakeClient) -> None:
+    # OllamaVisionLLM composes an OllamaStructuredClient whose inner ollama client is _client.
+    backend._client._client = fake
+
+
 def test_generate_json_builds_messages_and_parses() -> None:
     backend = OllamaVisionLLM(model="m")
-    backend._client = _FakeClient('{"segments": [{"scene_id": "x"}]}')
+    fake = _FakeClient('{"segments": [{"scene_id": "x"}]}')
+    _inject(backend, fake)
     schema = {"type": "object", "properties": {}}
     parts: list[Part] = [TextPart("brief"), ImagePart(image=np.zeros((4, 4, 3), dtype=np.uint8), label="x")]
 
     out = backend.generate_json(system="sys", parts=parts, schema=schema)
 
     assert out == {"segments": [{"scene_id": "x"}]}
-    call = backend._client.calls[0]
+    call = fake.calls[0]
     assert call["model"] == "m"
     assert call["format"] == schema  # schema-constrained decode
     assert call["options"]["temperature"] == 0.0
@@ -48,14 +54,15 @@ def test_generate_json_builds_messages_and_parses() -> None:
 
 def test_no_images_omits_images_key() -> None:
     backend = OllamaVisionLLM()
-    backend._client = _FakeClient("{}")
+    fake = _FakeClient("{}")
+    _inject(backend, fake)
     backend.generate_json(system="s", parts=[TextPart("only text")], schema={})
-    assert "images" not in backend._client.calls[0]["messages"][1]
+    assert "images" not in fake.calls[0]["messages"][1]
 
 
 def test_non_json_raises_planner_error() -> None:
     backend = OllamaVisionLLM()
-    backend._client = _FakeClient("I cannot help with that.")
+    _inject(backend, _FakeClient("I cannot help with that."))
     with pytest.raises(PlannerError):
         backend.generate_json(system="s", parts=[TextPart("t")], schema={})
 

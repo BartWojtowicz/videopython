@@ -1,11 +1,10 @@
 """Local video dubbing functionality, lazily re-exported (PEP 562).
 
-The pipeline's translation backends (``MarianTranslator``/``Qwen3Translator``)
-top-level import transformers/llama-cpp/torch, so eagerly chaining ``pipeline``
-here would drag the ``[dub]`` translation stack in just to read
-``DubbingConfig`` (pydantic-only). Lazy re-exports keep the lightweight
-config/model symbols importable without that; only ``LocalDubbingPipeline`` /
-``VideoDubber`` access loads the heavy chain. The ``TYPE_CHECKING`` block keeps
+The pipeline pulls heavy stages (Whisper, Demucs, Chatterbox), so eagerly
+chaining ``pipeline`` here would drag them in just to read ``DubbingConfig``
+(pydantic-only). Lazy re-exports keep the lightweight config/model symbols
+importable without that; only ``LocalDubbingPipeline`` / ``VideoDubber`` access
+loads the heavy chain. The ``TYPE_CHECKING`` block keeps
 symbols visible to mypy and IDEs.
 """
 

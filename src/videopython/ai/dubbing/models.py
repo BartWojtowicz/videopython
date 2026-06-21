@@ -218,11 +218,9 @@ class DubbingResult(BaseModel):
         timing_summary: Aggregate stats over per-segment timing adjustments.
         transcript_quality: Heuristic quality assessment of the transcription
             (None when the pipeline returned early on an empty transcription).
-        translation_failures: Indices of segments where translation failed
-            entirely. Used by Qwen3Translator when both the primary call and
-            the per-segment Marian fallback fail; those segments are dubbed
-            with empty text. Empty list under MarianTranslator (Marian has
-            no failure mode that drops segments).
+        translation_failures: Indices of segments the translator could not
+            translate (missing after its parse-retry pass); those segments are
+            dubbed with empty text.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)

@@ -247,6 +247,6 @@ class VideoDubber:
 
     @staticmethod
     def get_supported_languages() -> dict[str, str]:
-        from videopython.ai.generation.translation import TextTranslator
+        from videopython.ai.generation.translation import OllamaTranslator
 
-        return TextTranslator.get_supported_languages()
+        return OllamaTranslator.get_supported_languages()

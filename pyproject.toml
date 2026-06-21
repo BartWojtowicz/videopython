@@ -1,6 +1,6 @@
 [project]
 name = "videopython"
-version = "0.48.0"
+version = "0.49.0"
 description = "Minimal video generation and processing library."
 authors = [
     { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
@@ -72,13 +72,9 @@ ai = [
     "ultralytics>=8.0.0",
     "transnetv2-pytorch>=1.0.5",
     "transformers>=5.2.0",
-    "qwen-vl-utils>=0.0.10",
     "imagehash>=4.3",
     # Audio source separation (understanding/separation.py)
     "demucs>=4.0.0",
-    # Translation backends (generation/translation.py MarianMT, generation/qwen3.py GGUF)
-    "sentencepiece>=0.1.99",
-    "llama-cpp-python>=0.3.0",
     # Voice cloning TTS (generation/audio.py — Chatterbox); its strict pins drive
     # the [tool.uv].override-dependencies block below.
     "chatterbox-tts>=0.1.7",
@@ -120,9 +116,7 @@ module = [
     "pyannote", "pyannote.*",
     "silero_vad", "silero_vad.*",
     "cv2", "cv2.*",
-    "llama_cpp", "llama_cpp.*",
     "pyloudnorm", "pyloudnorm.*",
-    "qwen_vl_utils", "qwen_vl_utils.*",
     "imagehash", "imagehash.*",
 ]
 ignore_missing_imports = true

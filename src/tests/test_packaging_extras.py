@@ -40,9 +40,7 @@ _DIST_TO_IMPORT_NAMES: dict[str, set[str]] = {
     "pyannote-audio": {"pyannote"},
     "silero-vad": {"silero_vad"},
     "transnetv2-pytorch": {"transnetv2_pytorch"},
-    "qwen-vl-utils": {"qwen_vl_utils"},
     "chatterbox-tts": {"chatterbox"},
-    "llama-cpp-python": {"llama_cpp"},
     "scikit-learn": {"sklearn"},
 }
 
@@ -59,10 +57,7 @@ _HEAVY_IMPORT_NAMES: set[str] = {
     "transnetv2_pytorch",
     "chatterbox",
     "demucs",
-    "llama_cpp",
-    "sentencepiece",
     "pyloudnorm",
-    "qwen_vl_utils",
     "imagehash",
     "accelerate",
     "numba",
@@ -132,9 +127,8 @@ def test_dependency_group_ai_matches_optional_ai(pyproject: Pyproject) -> None:
 # Deps that are declared as resolver co-pins/floors but have NO direct import
 # under ai/ — they're pulled transitively by a sibling dep that we DO import:
 #   torchaudio  -> co-pin for the torch stack (whisper/chatterbox/demucs)
-#   sentencepiece -> MarianTokenizer needs it transitively (no `import sentencepiece`)
 #   accelerate  -> diffusers/transformers device-map plumbing (transitive)
-_TRANSITIVE_ONLY_DEPS = {"torchaudio", "sentencepiece", "accelerate"}
+_TRANSITIVE_ONLY_DEPS = {"torchaudio", "accelerate"}
 
 
 def test_every_declared_dep_is_imported_somewhere(pyproject: Pyproject) -> None:

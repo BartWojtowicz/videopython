@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-TranslatorChoice = Literal["auto", "marian", "qwen3"]
+TranslatorChoice = Literal["auto", "ollama"]
 WhisperModel = Literal["tiny", "base", "small", "medium", "large", "turbo"]
 
 
@@ -18,7 +18,7 @@ class DubbingConfig(BaseModel):
 
     Attributes:
         device: Execution device (``cpu``, ``cuda``, ``mps``, or ``None`` for auto).
-        low_memory: When True, each pipeline stage (Whisper, Demucs, MarianMT,
+        low_memory: When True, each pipeline stage (Whisper, Demucs, translation,
             Chatterbox TTS) is unloaded from memory after it runs, so only one
             model is resident at a time. Trades per-run latency (~10-30s of
             extra model loads) for a much lower memory ceiling. Recommended
@@ -47,12 +47,9 @@ class DubbingConfig(BaseModel):
             WARNING but processing continues. Either way the
             :class:`TranscriptQuality` is exposed on ``DubbingResult`` for
             inspection.
-        translator: Translation backend to use. ``"auto"`` (default) picks
-            Qwen3 on GPU, MarianMT on CPU; ``"marian"`` and ``"qwen3"`` force
-            the named backend regardless of device. See
-            :class:`videopython.ai.generation.qwen3.Qwen3Translator` for
-            tradeoffs (Qwen3 is slower on CPU but produces context-aware,
-            length-budgeted output).
+        translator: Translation backend; ``"auto"`` and ``"ollama"`` both use the
+            local Ollama text model. ``translator_model`` sets the Ollama tag and
+            ``translator_host`` the server URL.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -66,6 +63,8 @@ class DubbingConfig(BaseModel):
     vocabulary: list[str] | None = None
     strict_quality: bool = False
     translator: TranslatorChoice = "auto"
+    translator_model: str | None = None
+    translator_host: str | None = None
 
     def init_log_fields(self) -> dict[str, object]:
         """Subset of fields surfaced in the init-log line.

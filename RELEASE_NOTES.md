@@ -1,5 +1,35 @@
 # Release Notes
 
+## 0.49.0
+
+Local AI models consolidated onto Ollama. Scene captioning (`SceneVLM`) and
+dubbing translation now run through a local **Ollama** server instead of
+in-process `transformers` / `llama-cpp-python`, behind one shared
+structured-generation client (`ai/_ollama.py`). This removes the heaviest,
+build-painful dependencies and gives both paths grammar-constrained JSON decode.
+
+### Breaking
+
+- **`SceneVLM`** talks to Ollama now. Its constructor takes `model` (an Ollama
+  tag you have pulled, e.g. `gemma3:27b`), `host`, and `options` instead of
+  `model_size` / `device` / transformers knobs. A running Ollama server with a
+  vision model that supports structured output is required.
+- **Translation** is a single `OllamaTranslator` (`generation/translation.py`).
+  `MarianTranslator` and the Qwen3 (`llama-cpp`) backend are gone, along with the
+  Marian-vs-Qwen3 auto-resolver. `DubbingConfig.translator` is now
+  `"auto"`/`"ollama"` (the old `"marian"`/`"qwen3"` values are removed); choose
+  the model via `translator_model` / `translator_host`.
+- **Dependencies dropped from `[ai]`**: `qwen-vl-utils`, `llama-cpp-python`,
+  `sentencepiece`. `transformers` stays (AudioClassifier + MusicGen still use it).
+
+### Why
+
+`llama-cpp-python` was the worst dependency to build/resolve, and the in-process
+`transformers` VLM path could not grammar-constrain its JSON. Routing both through
+Ollama deletes those deps, unifies the LLM/VLM calls behind one client, and makes
+the JSON reliable. Models that don't support Ollama's structured-output `format`
+(e.g. some MLX builds) won't work; `gemma3:27b` is verified.
+
 ## 0.48.0
 
 LLM-authored editing: a new `videopython.ai.auto_edit` layer turns one or more

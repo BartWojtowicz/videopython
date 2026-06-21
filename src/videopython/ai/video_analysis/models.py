@@ -146,7 +146,7 @@ class VideoAnalysisConfig(BaseModel):
         VideoAnalysisConfig(
             analyzer_params={
                 "audio_to_text": {"model_name": "large"},
-                "scene_vlm": {"model_size": "9b"},
+                "scene_vlm": {"model": "llama3.2-vision"},
             }
         )
     """

@@ -41,11 +41,6 @@ Usage:
 #     from the HF repo ``arnabdhar/YOLOv8-Face-Detection`` via
 #     hf_hub_download, and that one IS pinned below.)
 #
-#   * Dynamic Marian pairs -- ai/generation/translation.py builds the model
-#     name per language pair at runtime (e.g. "Helsinki-NLP/opus-mt-en-de").
-#     The set of repos is open-ended (one per direction), so pinning each pair
-#     to a SHA is impractical and out of scope; left unpinned by design.
-#
 #   * Chatterbox internal load -- ai/generation/audio.py calls
 #     ``ChatterboxMultilingualTTS.from_pretrained(device=...)`` with no repo
 #     argument. The repo id + revision are resolved internally by the
@@ -67,10 +62,6 @@ from __future__ import annotations
 # ``pinned(model_id)`` resolves with a plain dict lookup. SHAs captured from
 # the HuggingFace model API (see module docstring for refresh instructions).
 MODEL_REVISIONS: dict[str, str] = {
-    # SceneVLM (ai/understanding/image.py: SCENE_VLM_MODEL_IDS)
-    "Qwen/Qwen3.5-4B": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
-    "Qwen/Qwen3.5-9B": "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
-    "Qwen/Qwen3.5-27B": "fc05daec18b0a78c049392ed2e771dde82bdf654",
     # Speaker diarization (ai/understanding/audio.py: PYANNOTE_DIARIZATION_MODEL).
     # Gated repo (auto-approved); from_pretrained needs an accepted HF token.
     "pyannote/speaker-diarization-community-1": "3533c8cf8e369892e6b79ff1bf80f7b0286a54ee",
@@ -78,8 +69,6 @@ MODEL_REVISIONS: dict[str, str] = {
     "MIT/ast-finetuned-audioset-10-10-0.4593": "f826b80d28226b62986cc218e5cec390b1096902",
     # Face detection checkpoint (ai/understanding/faces.py: hf_hub_download)
     "arnabdhar/YOLOv8-Face-Detection": "52fa54977207fa4f021de949b515fb19dcab4488",
-    # Qwen3 translation GGUF (ai/generation/qwen3.py: DEFAULT_REPO_ID)
-    "unsloth/Qwen3-4B-Instruct-2507-GGUF": "a06e946bb6b655725eafa393f4a9745d460374c9",
     # MusicGen (ai/generation/audio.py: TextToMusic)
     "facebook/musicgen-small": "4c8334b02c6ec4e8664a91979669a501ec497792",
     # SDXL (ai/generation/image.py: TextToImage)
