@@ -205,7 +205,7 @@ class VideoAnalyzer:
         scene_vlm: SceneVLM | None
         try:
             scene_vlm = SceneVLM(**self.config.get_params(SCENE_VLM)) if SCENE_VLM in enabled else None
-        except (ImportError, OSError, RuntimeError, ValueError):
+        except (ImportError, OSError, RuntimeError, ValueError, TypeError):
             logger.warning("Failed to initialize SceneVLM, skipping visual understanding", exc_info=True)
             scene_vlm = None
 

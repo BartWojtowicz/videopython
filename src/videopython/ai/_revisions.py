@@ -41,11 +41,6 @@ Usage:
 #     from the HF repo ``arnabdhar/YOLOv8-Face-Detection`` via
 #     hf_hub_download, and that one IS pinned below.)
 #
-#   * Dynamic Marian pairs -- ai/generation/translation.py builds the model
-#     name per language pair at runtime (e.g. "Helsinki-NLP/opus-mt-en-de").
-#     The set of repos is open-ended (one per direction), so pinning each pair
-#     to a SHA is impractical and out of scope; left unpinned by design.
-#
 #   * Chatterbox internal load -- ai/generation/audio.py calls
 #     ``ChatterboxMultilingualTTS.from_pretrained(device=...)`` with no repo
 #     argument. The repo id + revision are resolved internally by the

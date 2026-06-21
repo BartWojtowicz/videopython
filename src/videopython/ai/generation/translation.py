@@ -288,6 +288,7 @@ class OllamaTranslator(ManagedPredictor):
         for chunk_num, chunk_positions in enumerate(chunks):
             chunk_result = self._translate_chunk([segments[p] for p in chunk_positions], target_lang, source_lang)
             for local_idx, text in chunk_result.items():
+                # Drop out-of-range model indices; those segments stay "missing" and get retried.
                 if 0 <= local_idx < len(chunk_positions):
                     results[chunk_positions[local_idx]] = text
             if progress_callback is not None:
@@ -321,7 +322,12 @@ class OllamaTranslator(ManagedPredictor):
         if missing_local:
             logger.info("OllamaTranslator: retrying %d/%d segments", len(missing_local), len(translatable_segments))
             retry = self._translate_chunked(
-                [translatable_segments[li] for li in missing_local], target_lang, effective_source
+                [translatable_segments[li] for li in missing_local],
+                target_lang,
+                effective_source,
+                progress_callback,
+                0.5,
+                0.9,
             )
             for retry_local, text in retry.items():
                 results[missing_local[retry_local]] = text

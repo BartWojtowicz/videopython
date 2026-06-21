@@ -123,3 +123,52 @@ def test_unload_and_protocol() -> None:
     translator.unload()  # idempotent
     assert OllamaTranslator.supports("en", "es")
     assert OllamaTranslator.get_supported_languages() == LANGUAGE_NAMES
+
+
+class _EchoOllama:
+    """Translates every input segment by echoing its per-call index (works for any chunking)."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def chat(self, *, model: str, messages: list[Any], format: Any, options: dict[str, Any]) -> SimpleNamespace:
+        self.calls += 1
+        indices: list[int] = []
+        for line in messages[1]["content"].splitlines():
+            line = line.strip()
+            if line.startswith("{") and '"i"' in line:
+                try:
+                    indices.append(int(json.loads(line)["i"]))
+                except (ValueError, KeyError, TypeError):
+                    pass
+        content = json.dumps({"translations": [{"i": i, "translated": f"t{i}"} for i in indices]})
+        return SimpleNamespace(message=SimpleNamespace(content=content))
+
+
+def test_translate_segments_multiple_chunks() -> None:
+    translator = OllamaTranslator(model="m", n_ctx=1000, max_tokens=100)  # small ctx forces splitting
+    fake = _EchoOllama()
+    translator._client._client = fake
+    segs = [_seg("w" * 200, start=float(i), end=float(i) + 1) for i in range(12)]
+
+    out = translator.translate_segments(segs, target_lang="es")
+
+    assert fake.calls > 1  # genuinely split into multiple chunks
+    assert all(s.translated_text for s in out)
+    assert translator.translation_failures == []
+
+
+def test_ollama_error_in_both_passes_records_failure() -> None:
+    translator, _ = _translator_with(["not json at all"])  # OllamaError on every call
+    out = translator.translate_segments([_seg("hello")], target_lang="es")
+    assert out[0].translated_text == ""
+    assert translator.translation_failures == [0]
+
+
+def test_translate_segments_progress_milestones() -> None:
+    content = json.dumps({"translations": [{"i": 0, "translated": "hola"}]})
+    translator, _ = _translator_with([content])
+    ticks: list[float] = []
+    translator.translate_segments([_seg("hello")], target_lang="es", progress_callback=ticks.append)
+    assert any(abs(t - 0.5) < 1e-9 for t in ticks)  # first pass reaches 0.5
+    assert ticks[-1] == 1.0

@@ -127,7 +127,6 @@ def test_dependency_group_ai_matches_optional_ai(pyproject: Pyproject) -> None:
 # Deps that are declared as resolver co-pins/floors but have NO direct import
 # under ai/ — they're pulled transitively by a sibling dep that we DO import:
 #   torchaudio  -> co-pin for the torch stack (whisper/chatterbox/demucs)
-#   sentencepiece -> MarianTokenizer needs it transitively (no `import sentencepiece`)
 #   accelerate  -> diffusers/transformers device-map plumbing (transitive)
 _TRANSITIVE_ONLY_DEPS = {"torchaudio", "accelerate"}
 
