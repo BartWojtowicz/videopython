@@ -36,8 +36,9 @@ class VideoDubber:
             raise TypeError("Pass either `config=` or knob kwargs, not both")
         self.config = config or DubbingConfig(**kwargs)
         # Optional injected speech backend. None -> the pipeline lazily builds
-        # the local chatterbox-backed TextToSpeech (requires the [tts] extra).
-        # Inject a SpeechBackend to dub with only [dub] installed.
+        # the local chatterbox-backed TextToSpeech (from the [ai] extra). Inject
+        # a SpeechBackend to run synthesis out-of-process (e.g. a remote/Modal
+        # function) without loading chatterbox here.
         self._tts_backend = tts_backend
         self._local_pipeline: Any = None
         logger.info(

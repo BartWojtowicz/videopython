@@ -9,7 +9,6 @@ from typing import Any
 from videopython.ai.generation.translation import (
     LANGUAGE_NAMES,
     OllamaTranslator,
-    TranslationBackend,
     _build_system_prompt,
     _build_user_prompt,
     _chunk_segment_indices,
@@ -117,11 +116,9 @@ def test_non_translatable_segments_skipped() -> None:
     assert translator.translation_failures == []
 
 
-def test_unload_and_protocol() -> None:
+def test_unload_and_languages() -> None:
     translator, _ = _translator_with(["{}"])
-    assert isinstance(translator, TranslationBackend)
     translator.unload()  # idempotent
-    assert OllamaTranslator.supports("en", "es")
     assert OllamaTranslator.get_supported_languages() == LANGUAGE_NAMES
 
 

@@ -110,8 +110,10 @@ class _StubPlanner:
         self.plan_dict = plan_dict
         self.calls: list[dict[str, Any]] = []
 
-    def generate_json(self, *, system: str, parts: list[Any], schema: dict[str, Any]) -> dict[str, Any]:
-        self.calls.append({"system": system, "parts": parts, "schema": schema})
+    def generate_json(
+        self, *, system: str, text: str, images: list[Any] | None, schema: dict[str, Any]
+    ) -> dict[str, Any]:
+        self.calls.append({"system": system, "text": text, "images": images, "schema": schema})
         return json.loads(json.dumps(self.plan_dict))  # deep copy
 
 
@@ -247,8 +249,8 @@ def test_autoeditor_full_loop_returns_valid_edit() -> None:
     assert edit.segments[0].start == 0.0
     edit.validate()  # raises if the produced plan is not actually runnable
     assert planner.calls, "planner should have been invoked"
-    parts = planner.calls[0]["parts"]
-    assert any(getattr(p, "image", None) is not None for p in parts), "planner should receive keyframes"
+    images = planner.calls[0]["images"]
+    assert images and all(img is not None for img in images), "planner should receive keyframes"
 
 
 def test_autoeditor_unknown_id_exhausts_rounds() -> None:
@@ -268,8 +270,10 @@ class _SequencePlanner:
         self.plans = list(plans)
         self.calls: list[dict[str, Any]] = []
 
-    def generate_json(self, *, system: str, parts: list[Any], schema: dict[str, Any]) -> dict[str, Any]:
-        self.calls.append({"system": system, "parts": parts, "schema": schema})
+    def generate_json(
+        self, *, system: str, text: str, images: list[Any] | None, schema: dict[str, Any]
+    ) -> dict[str, Any]:
+        self.calls.append({"system": system, "text": text, "images": images, "schema": schema})
         idx = min(len(self.calls) - 1, len(self.plans) - 1)
         return json.loads(json.dumps(self.plans[idx]))
 
@@ -375,7 +379,9 @@ def test_autoeditor_planner_error_is_retried() -> None:
         def __init__(self) -> None:
             self.calls = 0
 
-        def generate_json(self, *, system: str, parts: list[Any], schema: dict[str, Any]) -> dict[str, Any]:
+        def generate_json(
+            self, *, system: str, text: str, images: list[Any] | None, schema: dict[str, Any]
+        ) -> dict[str, Any]:
             self.calls += 1
             if self.calls == 1:
                 raise PlannerError("unparseable output")
@@ -391,7 +397,9 @@ def test_autoeditor_infra_error_propagates() -> None:
     analysis, _ = _real_video_analysis()
 
     class _BrokenPlanner:
-        def generate_json(self, *, system: str, parts: list[Any], schema: dict[str, Any]) -> dict[str, Any]:
+        def generate_json(
+            self, *, system: str, text: str, images: list[Any] | None, schema: dict[str, Any]
+        ) -> dict[str, Any]:
             raise RuntimeError("connection refused")
 
     with pytest.raises(RuntimeError, match="connection refused"):

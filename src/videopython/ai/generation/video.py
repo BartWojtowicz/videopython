@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from videopython.ai._device import log_device_initialization, release_device_memory, select_device
+from videopython.ai._device import log_device_initialization, select_device
 from videopython.ai._predictor import ManagedPredictor
 from videopython.ai._revisions import pinned
 from videopython.base.video import Video
@@ -28,6 +28,8 @@ def _get_torch_device_and_dtype(device: str | None) -> tuple[str, Any]:
 class TextToVideo(ManagedPredictor):
     """Generates videos from text descriptions using local diffusion models."""
 
+    _model_attrs = ("_pipeline",)
+
     def __init__(self, device: str | None = None):
         self.device = device
         self._pipeline: Any = None
@@ -35,7 +37,7 @@ class TextToVideo(ManagedPredictor):
     def _init_local(self) -> None:
         from videopython.ai._optional import require
 
-        CogVideoXPipeline = require("diffusers", "ai", feature="TextToVideo").CogVideoXPipeline
+        CogVideoXPipeline = require("diffusers", feature="TextToVideo").CogVideoXPipeline
 
         requested_device = self.device
         device, dtype = _get_torch_device_and_dtype(self.device)
@@ -73,14 +75,11 @@ class TextToVideo(ManagedPredictor):
         video_frames = np.asarray(video_frames, dtype=np.uint8)
         return Video.from_frames(video_frames, fps=16.0)
 
-    def unload(self) -> None:
-        """Release the diffusion pipeline so the next generate_video() re-initializes."""
-        self._pipeline = None
-        release_device_memory(self.device)
-
 
 class ImageToVideo(ManagedPredictor):
     """Generates videos from static images using local video diffusion."""
+
+    _model_attrs = ("_pipeline",)
 
     def __init__(self, device: str | None = None):
         self.device = device
@@ -89,7 +88,7 @@ class ImageToVideo(ManagedPredictor):
     def _init_local(self) -> None:
         from videopython.ai._optional import require
 
-        CogVideoXImageToVideoPipeline = require("diffusers", "ai", feature="ImageToVideo").CogVideoXImageToVideoPipeline
+        CogVideoXImageToVideoPipeline = require("diffusers", feature="ImageToVideo").CogVideoXImageToVideoPipeline
 
         requested_device = self.device
         device, dtype = _get_torch_device_and_dtype(self.device)
@@ -130,8 +129,3 @@ class ImageToVideo(ManagedPredictor):
         ).frames[0]
         video_frames = np.asarray(video_frames, dtype=np.uint8)
         return Video.from_frames(video_frames, fps=16.0)
-
-    def unload(self) -> None:
-        """Release the diffusion pipeline so the next generate_video() re-initializes."""
-        self._pipeline = None
-        release_device_memory(self.device)

@@ -1,18 +1,17 @@
 """Pluggable speech-synthesis backend protocol for the dubbing pipeline.
 
-Mirrors :class:`videopython.ai.generation.translation.TranslationBackend`: a
-dependency-free, ``runtime_checkable`` Protocol that the dubbing pipeline
+A dependency-free, ``runtime_checkable`` Protocol that the dubbing pipeline
 depends on instead of binding directly to the local
 :class:`videopython.ai.generation.audio.TextToSpeech` implementation.
 
-This is the seam that lets dubbing run WITHOUT chatterbox in the process. The
-local ``TextToSpeech`` (which pulls ``chatterbox-tts`` via the ``[tts]`` extra)
+This is the seam that lets a consumer run speech synthesis out-of-process. The
+local ``TextToSpeech`` (which pulls ``chatterbox-tts`` from the ``[ai]`` extra)
 satisfies this protocol structurally — no changes needed there. A consumer that
-can't or won't install chatterbox (e.g. a service running synthesis in a
+can't or won't load chatterbox in-process (e.g. a service running synthesis in a
 separate process or on a remote/Modal function) supplies its own object
-implementing :meth:`SpeechBackend.generate_audio` and injects it; the pipeline never
-imports chatterbox in that case. videopython ships ONLY this protocol plus the
-local backend — no reference remote/HTTP backend.
+implementing :meth:`SpeechBackend.generate_audio` and injects it; the pipeline
+never imports chatterbox in that case. videopython ships ONLY this protocol plus
+the local backend — no reference remote/HTTP backend.
 """
 
 from __future__ import annotations

@@ -6,12 +6,11 @@ method that needs it (there are no top-level ``import torch``/``transformers``/
 importable on a slim install: importing ``ai.understanding.objects`` only needs
 core deps until a detector is actually constructed.
 
-The granular extras (``asr``, ``vision``, ``tts``, ...) partition those heavy
-deps. When a user installs only one extra and reaches a code path needing a dep
-from another, the bare ``import`` would raise a stock ``ModuleNotFoundError``
-with no hint about which extra restores it. :func:`require` wraps the import and
-turns that into an actionable ``ImportError`` pointing at the right
-``pip install 'videopython[<extra>]'``.
+All those heavy deps ship in the single ``[ai]`` extra. When it isn't installed
+and a code path reaches one of them, the bare ``import`` would raise a stock
+``ModuleNotFoundError`` with no hint about how to fix it. :func:`require` wraps
+the import and turns that into an actionable ``ImportError`` pointing at
+``pip install 'videopython[ai]'``.
 """
 
 from __future__ import annotations
@@ -21,15 +20,13 @@ from types import ModuleType
 from typing import Callable
 
 
-def require(module: str, extra: str, *, feature: str | None = None) -> ModuleType:
-    """Import ``module`` or raise a clear, extra-pointing ``ImportError``.
+def require(module: str, *, feature: str | None = None) -> ModuleType:
+    """Import ``module`` or raise a clear, ``[ai]``-pointing ``ImportError``.
 
     Args:
         module: Dotted module name to import (e.g. ``"chatterbox.mtl_tts"``,
             ``"torch"``). The fully-imported module object is returned so the
             call site can bind the symbols it needs.
-        extra: The videopython extra that ships ``module`` (e.g. ``"tts"``,
-            ``"asr"``). Surfaced verbatim in the install hint.
         feature: Optional human-readable feature name for the message head. When
             omitted the top-level package of ``module`` is used.
 
@@ -38,14 +35,14 @@ def require(module: str, extra: str, *, feature: str | None = None) -> ModuleTyp
 
     Raises:
         ImportError: If ``module`` cannot be imported. The message always
-            contains the extra name and a ``pip install 'videopython[<extra>]'``
-            hint so the caller knows exactly how to fix it.
+            contains a ``pip install 'videopython[ai]'`` hint so the caller
+            knows exactly how to fix it.
     """
     try:
         return importlib.import_module(module)
     except ImportError as exc:
         label = feature or module.split(".")[0]
-        raise ImportError(f"{label} requires the '{extra}' extra: pip install 'videopython[{extra}]'") from exc
+        raise ImportError(f"{label} requires the 'ai' extra: pip install 'videopython[ai]'") from exc
 
 
 def lazy_exports(package: str, exports: dict[str, str]) -> tuple[Callable[[str], object], Callable[[], list[str]]]:
@@ -53,8 +50,9 @@ def lazy_exports(package: str, exports: dict[str, str]) -> tuple[Callable[[str],
 
     Re-exports a set of public symbols lazily: the submodule backing a symbol is
     imported only on first attribute access, so importing the package does not
-    pull in any sibling leaf module (this is what keeps the granular ``ai``
-    extras independently installable).
+    pull in any sibling leaf module. This keeps ``import videopython`` (and
+    importing a single leaf class) light by deferring the heavy ML imports
+    (torch / transformers / diffusers / ultralytics) until a symbol is used.
 
     Args:
         package: The ``__name__`` of the package defining the re-exports. Used

@@ -38,71 +38,6 @@ def _build_stream_maps(keep_original_audio: bool) -> list[str]:
     return maps
 
 
-def replace_audio_stream(
-    video_path: str | Path,
-    audio_path: str | Path,
-    output_path: str | Path,
-    audio_codec: str = "aac",
-    audio_bitrate: str = "192k",
-    keep_original_audio: bool = False,
-) -> None:
-    """Copy ``video_path``'s video stream and mux in ``audio_path`` as the audio track.
-
-    Uses ffmpeg stream-copy for video (no re-encode) and encodes audio to AAC.
-    Subtitle streams from ``video_path`` are carried through unchanged
-    (stream-copy). ``-shortest`` trims to the shorter of the two streams so
-    the output duration matches the source video when the dubbed audio is
-    slightly longer.
-
-    Args:
-        video_path: Source video file (video + subtitle streams are copied unchanged).
-        audio_path: Audio file to use as the new (default) audio track.
-        output_path: Destination file. Overwritten if it exists.
-        audio_codec: ffmpeg audio codec name. Defaults to ``aac`` (MP4-compatible).
-        audio_bitrate: Audio bitrate passed to ffmpeg (``-b:a``).
-        keep_original_audio: If True, retain the source audio as a secondary
-            track behind the dubbed one. Useful for editorial A/B.
-
-    Raises:
-        FileNotFoundError: If ``video_path`` or ``audio_path`` does not exist.
-        RemuxError: If ffmpeg returns a non-zero exit code.
-    """
-    video_path = Path(video_path)
-    audio_path = Path(audio_path)
-    output_path = Path(output_path)
-
-    if not video_path.exists():
-        raise FileNotFoundError(f"Video file not found: {video_path}")
-    if not audio_path.exists():
-        raise FileNotFoundError(f"Audio file not found: {audio_path}")
-
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-i",
-        str(video_path),
-        "-i",
-        str(audio_path),
-        *_build_stream_maps(keep_original_audio),
-        "-c:v",
-        "copy",
-        "-c:a",
-        audio_codec,
-        "-b:a",
-        audio_bitrate,
-        "-c:s",
-        "copy",
-        "-shortest",
-        str(output_path),
-    ]
-
-    logger.info("replace_audio_stream: %s + %s -> %s", video_path, audio_path, output_path)
-    try:
-        _ffmpeg.run(cmd)
-    except FFmpegRunError as e:
-        raise RemuxError(str(e)) from e
-
-
 def replace_audio_stream_from_audio(
     video_path: str | Path,
     audio: Audio,
@@ -111,13 +46,13 @@ def replace_audio_stream_from_audio(
     audio_bitrate: str = "192k",
     keep_original_audio: bool = False,
 ) -> None:
-    """Like ``replace_audio_stream`` but takes an in-memory ``Audio`` and pipes WAV to ffmpeg.
+    """Copy ``video_path``'s video stream and mux in an in-memory ``Audio`` as the audio track.
 
-    Avoids the ``Audio.save -> read-from-disk -> ffmpeg`` round-trip used by
-    the path-based variant: we serialize the WAV in memory and feed it to
-    ffmpeg via stdin. For long dubs this saves a full WAV write+read of the
-    output audio (~10 GB for a 2h source). Subtitle streams from
-    ``video_path`` are carried through unchanged (stream-copy).
+    Serializes the WAV in memory and feeds it to ffmpeg via stdin, avoiding an
+    ``Audio.save -> read-from-disk -> ffmpeg`` round-trip. For long dubs this
+    saves a full WAV write+read of the output audio (~10 GB for a 2h source).
+    Video is stream-copied (no re-encode); subtitle streams from ``video_path``
+    are carried through unchanged. ``-shortest`` trims to the shorter stream.
 
     Args:
         video_path: Source video file (video + subtitle streams are copied unchanged).

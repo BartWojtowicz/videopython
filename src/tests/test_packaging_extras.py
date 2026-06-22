@@ -220,7 +220,7 @@ def test_import_ai_package_does_not_load_leaf_modules() -> None:
 
 
 def test_import_one_symbol_does_not_load_siblings() -> None:
-    """Importing ObjectDetector ([vision]) must not pull audio/generation siblings."""
+    """Importing ObjectDetector must not pull audio/generation sibling leaf modules."""
     pulled = _import_in_clean_ai("from videopython.ai.understanding import ObjectDetector")
     siblings = {
         m
@@ -245,7 +245,7 @@ def test_require_raises_with_extra_and_pip_hint() -> None:
     from videopython.ai._optional import require
 
     with pytest.raises(ImportError) as exc_info:
-        require("definitely_not_a_real_module_xyz", "ai", feature="TextToSpeech")
+        require("definitely_not_a_real_module_xyz", feature="TextToSpeech")
 
     msg = str(exc_info.value)
     assert "pip install" in msg
@@ -255,7 +255,7 @@ def test_require_raises_with_extra_and_pip_hint() -> None:
 def test_require_returns_module_when_present() -> None:
     from videopython.ai._optional import require
 
-    mod = require("json", "asr")
+    mod = require("json")
     import json
 
     assert mod is json

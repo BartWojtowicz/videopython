@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from .backend import ImagePart, Part, PlannerError, StructuredVisionLLM, TextPart
+import videopython.ai.ops  # noqa: F401  -- registers the AI ops (face_crop, object_detection_overlay)
+
+from .backend import PlannerError, StructuredVisionLLM
 from .catalog import build_catalog
 from .editor import AutoEditError, AutoEditor
 from .local import OllamaVisionLLM
@@ -16,13 +18,10 @@ __all__ = [
     "CatalogScene",
     "EditCatalog",
     "EditPlan",
-    "ImagePart",
     "OllamaVisionLLM",
-    "Part",
     "PlanSegment",
     "PlannerError",
     "StructuredVisionLLM",
-    "TextPart",
     "UnknownSceneIdsError",
     "build_catalog",
     "resolve_plan",

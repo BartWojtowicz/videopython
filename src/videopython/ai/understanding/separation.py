@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from videopython.ai._device import log_device_initialization, release_device_memory, select_device
+from videopython.ai._device import log_device_initialization, select_device
 from videopython.ai._predictor import ManagedPredictor
 from videopython.ai.dubbing.models import SeparatedAudio
 from videopython.audio import Audio, AudioMetadata
@@ -75,7 +75,7 @@ class AudioSeparator(ManagedPredictor):
         """Initialize local Demucs model."""
         from videopython.ai._optional import require
 
-        get_model = require("demucs.pretrained", "ai", feature="AudioSeparator").get_model
+        get_model = require("demucs.pretrained", feature="AudioSeparator").get_model
 
         requested_device = self.device
         device = select_device(self.device, mps_allowed=False)
@@ -297,11 +297,3 @@ class AudioSeparator(ManagedPredictor):
     def extract_background(self, audio: Audio) -> Audio:
         """Convenience method to extract only background from audio."""
         return self.separate(audio).background
-
-    def unload(self) -> None:
-        """Release the Demucs model so the next separate() re-initializes.
-
-        Used by low-memory dubbing to free VRAM between pipeline stages.
-        """
-        self._model = None
-        release_device_memory(self.device)

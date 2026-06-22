@@ -35,7 +35,7 @@ class OllamaStructuredClient:
 
     def _get_client(self) -> Any:
         if self._client is None:
-            ollama = require("ollama", "ai", feature="Ollama")
+            ollama = require("ollama", feature="Ollama")
             self._client = ollama.Client(host=self.host)
         return self._client
 

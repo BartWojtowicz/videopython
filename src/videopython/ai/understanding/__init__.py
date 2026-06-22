@@ -1,9 +1,9 @@
 """Local understanding models, lazily re-exported (PEP 562).
 
 Each symbol's backing leaf module is imported only on first access, so
-``from videopython.ai.understanding import ObjectDetector`` (``[vision]``)
-does not pull in ``audio`` (whisper/pyannote — ``[asr]``). The
-``TYPE_CHECKING`` block keeps the symbols visible to mypy and IDEs.
+``from videopython.ai.understanding import ObjectDetector`` does not pull in
+``audio`` (whisper/pyannote) or its heavy deps. The ``TYPE_CHECKING`` block
+keeps the symbols visible to mypy and IDEs.
 """
 
 from __future__ import annotations

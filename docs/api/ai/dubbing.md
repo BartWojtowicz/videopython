@@ -202,8 +202,8 @@ Segments the model never returns (after the retry) are surfaced on
 `DubbingResult.translation_failures` as a list of indices; those land on the
 result with empty translated text.
 
-If neither backend covers the requested pair the auto resolver raises
-`UnsupportedLanguageError` (importable from `videopython.ai.dubbing`).
+The Ollama translator attempts any language pair, so the pipeline does not
+reject a requested target language up front.
 
 ### Pluggable TTS Backend
 
@@ -491,14 +491,6 @@ heuristic returns `recommendation="reject"`. Carries the triggering
 `TranscriptQuality` as `error.quality` for caller introspection.
 
 ::: videopython.ai.dubbing.GarbageTranscriptError
-
-## UnsupportedLanguageError
-
-Available for callers to catch. The Ollama translator attempts any language
-pair, so the pipeline no longer raises this itself; it carries both language
-fields for introspection without parsing the message.
-
-::: videopython.ai.dubbing.UnsupportedLanguageError
 
 ## Supported Languages
 

@@ -2,12 +2,13 @@
 
 Every public symbol is re-exported lazily via PEP 562 ``__getattr__`` so that
 ``import videopython.ai`` (or ``from videopython.ai import X``) loads ONLY the
-leaf module backing the requested symbol — not every sibling. This is what
-makes the granular extras (``asr``, ``vision``, ``tts``, ``generation``,
-``dub``, ...) usable: with only ``[asr]`` installed, ``from videopython.ai
-import AudioToText`` works, while touching ``TextToSpeech`` raises a clear
-``[tts]``-pointing ``ImportError`` at attribute access instead of failing the
-whole package import.
+leaf module backing the requested symbol — not every sibling. All AI capabilities
+ship in the single ``[ai]`` extra; the laziness keeps ``import videopython`` (and
+importing one leaf class) light by deferring the heavy ML imports (torch /
+transformers / diffusers / ultralytics) until a symbol is actually used. When
+``[ai]`` is not installed, touching a symbol raises a clear
+``pip install 'videopython[ai]'``-pointing ``ImportError`` at attribute access
+instead of failing the whole package import.
 
 The ``TYPE_CHECKING`` block below keeps the eager imports visible to mypy and
 IDEs (static autocompletion / re-export checking) without executing them at
@@ -28,11 +29,9 @@ if TYPE_CHECKING:
     from .auto_edit import AutoEditor as AutoEditor
     from .auto_edit import EditCatalog as EditCatalog
     from .auto_edit import EditPlan as EditPlan
-    from .auto_edit import ImagePart as ImagePart
     from .auto_edit import OllamaVisionLLM as OllamaVisionLLM
     from .auto_edit import PlannerError as PlannerError
     from .auto_edit import StructuredVisionLLM as StructuredVisionLLM
-    from .auto_edit import TextPart as TextPart
     from .auto_edit import build_catalog as build_catalog
     from .effects import ObjectDetectionOverlay as ObjectDetectionOverlay
     from .generation import ImageToVideo as ImageToVideo
@@ -82,8 +81,6 @@ _exports: dict[str, str] = {
     "OllamaVisionLLM": ".auto_edit",
     "StructuredVisionLLM": ".auto_edit",
     "PlannerError": ".auto_edit",
-    "TextPart": ".auto_edit",
-    "ImagePart": ".auto_edit",
     "EditCatalog": ".auto_edit",
     "EditPlan": ".auto_edit",
     "build_catalog": ".auto_edit",

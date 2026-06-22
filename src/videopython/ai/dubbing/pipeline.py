@@ -48,9 +48,9 @@ class LocalDubbingPipeline:
         self.config = config or DubbingConfig(**kwargs)
         # Injected speech backend (a SpeechBackend, e.g. a remote/out-of-process
         # synthesizer). When None, _init_tts lazily constructs the local
-        # chatterbox-backed TextToSpeech — which requires the [tts] extra.
-        # Supplying a backend lets dubbing run with only [dub] installed (no
-        # chatterbox in the process).
+        # chatterbox-backed TextToSpeech (from the [ai] extra). Supplying a
+        # backend lets dubbing run synthesis out-of-process without loading
+        # chatterbox here.
         self._tts_backend = tts_backend
         logger.info(
             "LocalDubbingPipeline initialized with %s%s",
@@ -211,8 +211,8 @@ class LocalDubbingPipeline:
         When a ``tts_backend`` was injected at construction it is used as-is
         (it owns its own language handling). Otherwise the local
         chatterbox-backed :class:`TextToSpeech` is constructed for ``language``
-        — importing it requires the ``[tts]`` extra; a bare ``[dub]`` install
-        raises a clear ``[tts]``-pointing ``ImportError`` at this point.
+        — importing it requires the ``[ai]`` extra and raises a clear
+        ``pip install 'videopython[ai]'``-pointing ``ImportError`` at this point.
         """
         if self._tts_backend is not None:
             self._tts = self._tts_backend

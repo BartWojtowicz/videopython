@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from videopython.ai._ollama import OllamaError, OllamaStructuredClient
 
-from .backend import ImagePart, Part, PlannerError, TextPart
+from .backend import PlannerError
+
+if TYPE_CHECKING:
+    import numpy as np
 
 DEFAULT_OLLAMA_MODEL = "gemma3:27b"
 
@@ -19,6 +22,10 @@ class OllamaVisionLLM:
     every model supports schema conditioning -- ``gemma3:27b`` is verified working;
     some builds (e.g. certain MLX ones) fail it. ``ollama pull <model>`` first;
     ``options`` are extra generation options merged over ``temperature=0``.
+
+    Thin wrapper over the shared :class:`OllamaStructuredClient`: its only job is
+    to translate :class:`OllamaError` into the :class:`PlannerError` the editor
+    retries on.
     """
 
     def __init__(
@@ -30,9 +37,9 @@ class OllamaVisionLLM:
     ) -> None:
         self._client = OllamaStructuredClient(model=model, host=host, options=options)
 
-    def generate_json(self, *, system: str, parts: list[Part], schema: dict[str, Any]) -> dict[str, Any]:
-        text = "\n\n".join(part.text for part in parts if isinstance(part, TextPart))
-        images = [part.image for part in parts if isinstance(part, ImagePart)]
+    def generate_json(
+        self, *, system: str, text: str, images: list[np.ndarray] | None, schema: dict[str, Any]
+    ) -> dict[str, Any]:
         try:
             return self._client.generate_json(system=system, text=text, schema=schema, images=images or None)
         except OllamaError as exc:
