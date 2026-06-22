@@ -19,9 +19,9 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ImageContent, TextContent
 from pydantic import ValidationError
 
-from videopython.ai._ollama import _downscale, _encode_png_b64
 from videopython.ai.auto_edit import EditPlan, UnknownSceneIdsError, resolve_plan
 from videopython.ai.auto_edit import build_catalog as _build_scene_catalog
+from videopython.ai.keyframe import keyframe_to_png_b64
 from videopython.editing import VideoEdit
 
 if TYPE_CHECKING:
@@ -193,7 +193,7 @@ def _keyframe_blocks(scene_ids: list[str]) -> list[TextContent | ImageContent]:
         frame = _bundle.keyframes.get(sid)
         if frame is not None:
             blocks.append(TextContent(type="text", text=f"scene {sid}:"))
-            blocks.append(ImageContent(type="image", data=_encode_png_b64(_downscale(frame)), mimeType="image/png"))
+            blocks.append(ImageContent(type="image", data=keyframe_to_png_b64(frame), mimeType="image/png"))
     return blocks
 
 

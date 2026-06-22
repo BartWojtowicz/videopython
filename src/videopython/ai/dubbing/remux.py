@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from videopython.ai.errors import AiError
 from videopython.base import _ffmpeg
 from videopython.base.exceptions import FFmpegRunError
 
@@ -19,7 +20,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class RemuxError(RuntimeError):
+class RemuxError(AiError, RuntimeError):
     """ffmpeg failed while replacing an audio stream."""
 
 

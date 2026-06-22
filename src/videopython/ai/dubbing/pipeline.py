@@ -7,16 +7,16 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
-from videopython.ai.dubbing import expressiveness, loudness, voice_sample
+from videopython.ai.dubbing import audio_ops, voice_sample
 from videopython.ai.dubbing.config import DubbingConfig
 from videopython.ai.dubbing.models import DubbingResult, Expressiveness, RevoiceResult, SeparatedAudio, TimingSummary
 from videopython.ai.dubbing.quality import GarbageTranscriptError, assess_transcript
 from videopython.ai.dubbing.timing import TimingSynchronizer
-from videopython.ai.generation.translation import DEFAULT_TRANSLATION_MODEL, OllamaTranslator
+from videopython.ai.dubbing.translation import DEFAULT_TRANSLATION_MODEL, OllamaTranslator
 
 if TYPE_CHECKING:
+    from videopython.ai.dubbing._tts_backend import SpeechBackend
     from videopython.ai.dubbing.models import TranslatedSegment
-    from videopython.ai.generation._tts_backend import SpeechBackend
     from videopython.audio import Audio
     from videopython.base.transcription import Transcription
 
@@ -40,12 +40,9 @@ class LocalDubbingPipeline:
         tts_backend: SpeechBackend | None = None,
         **kwargs: Any,
     ):
-        # ``DubbingConfig`` consolidates the nine knobs that used to be
-        # constructor kwargs. Either ``config=`` or the flat kwargs are
-        # accepted (not both) so existing callers don't need to change.
-        if config is not None and kwargs:
-            raise TypeError("Pass either `config=` or knob kwargs, not both")
-        self.config = config or DubbingConfig(**kwargs)
+        # ``DubbingConfig`` consolidates the knobs that used to be constructor
+        # kwargs. Either ``config=`` or the flat kwargs are accepted (not both).
+        self.config = DubbingConfig.from_args(config, **kwargs)
         # Injected speech backend (a SpeechBackend, e.g. a remote/out-of-process
         # synthesizer). When None, _init_tts lazily constructs the local
         # chatterbox-backed TextToSpeech (from the [ai] extra). Supplying a
@@ -224,7 +221,7 @@ class LocalDubbingPipeline:
 
     def _init_separator(self) -> None:
         """Initialize the audio separator."""
-        from videopython.ai.understanding.separation import AudioSeparator
+        from videopython.ai.dubbing.separation import AudioSeparator
 
         self._separator = AudioSeparator(device=self.config.device)
 
@@ -253,7 +250,7 @@ class LocalDubbingPipeline:
             final_audio = background_audio.overlay(dubbed_speech, position=0.0)
         else:
             final_audio = dubbed_speech
-        return loudness.loudness_match(final_audio, source_audio)
+        return audio_ops.loudness_match(final_audio, source_audio)
 
     def process(
         self,
@@ -368,9 +365,9 @@ class LocalDubbingPipeline:
             # isolate). On talk-heavy sources with silence/music gaps this
             # roughly halves separation time. When speech covers most of the
             # track separate_regions falls back to a full-track separate().
-            from videopython.ai.understanding.separation import _merge_regions
+            from videopython.ai.dubbing.separation import merge_regions
 
-            speech_regions = _merge_regions(
+            speech_regions = merge_regions(
                 [(s.start, s.end) for s in transcription.segments],
                 audio_duration=source_audio.metadata.duration_seconds,
             )
@@ -401,10 +398,10 @@ class LocalDubbingPipeline:
         # — transcription timestamps can drift past the buffer tail
         # (especially on synthetic test audio) and Audio.slice rejects
         # out-of-range ends past a 0.1s tolerance.
-        baseline_rms = expressiveness.rms(vocal_audio.data)
+        baseline_rms = audio_ops.rms(vocal_audio.data)
         vocal_duration = vocal_audio.metadata.duration_seconds
         expressiveness_per_segment = [
-            expressiveness.expressiveness_for(
+            audio_ops.expressiveness_for(
                 vocal_audio.slice(min(s.start, vocal_duration), min(s.end, vocal_duration)),
                 baseline_rms,
             )
@@ -534,9 +531,9 @@ class LocalDubbingPipeline:
             if self._separator is None:
                 self._init_separator()
 
-            from videopython.ai.understanding.separation import _merge_regions
+            from videopython.ai.dubbing.separation import merge_regions
 
-            speech_regions = _merge_regions(
+            speech_regions = merge_regions(
                 [(s.start, s.end) for s in transcription.segments],
                 audio_duration=source_audio.metadata.duration_seconds,
             )

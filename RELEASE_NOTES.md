@@ -1,5 +1,54 @@
 # Release Notes
 
+## 0.52.0
+
+`videopython.ai` technical-debt cleanup (PR-2 of 2): the taxonomy moves, file/class
+splits, and remaining cleanups from the `TODO.md` audit. Reorganization, not feature
+work — no AI capability changes. Follows 0.51.0 (PR-1).
+
+### Breaking
+
+- **Module moves** (dubbing-only concerns relocated into `dubbing/`, enforcing a
+  leaf-capabilities-vs-orchestrators layering). Import paths change:
+  - `videopython.ai.generation.translation` -> `videopython.ai.dubbing.translation`
+  - `videopython.ai.generation._tts_backend` -> `videopython.ai.dubbing._tts_backend`
+  - `videopython.ai.understanding.separation` -> `videopython.ai.dubbing.separation`
+    (fixes a leaf->orchestrator import inversion; `_merge_regions` is now public
+    `merge_regions`). `SeparatedAudio` already lived in `dubbing.models`.
+- **`FaceTracker` split into two focused classes** (the name is removed). It carried
+  two unrelated algorithms behind one ~10-arg constructor:
+  - `FaceSmoothingTracker` — single-subject EMA path (`detect_and_track` /
+    `track_video`), used by `FaceTrackingCrop`.
+  - `FaceShotTracker` — per-shot IoU multi-track (`track_shot`), used by analysis.
+  Both share a small internal `_FaceDetector` and are context-managed.
+- **`AudioClassifier` moved** from `understanding/audio.py` to
+  `understanding/classification.py` (the `videopython.ai` / `videopython.ai.understanding`
+  re-exports are unchanged, so `from videopython.ai import AudioClassifier` still works;
+  only the deep `understanding.audio` import path changed).
+- **`video_analysis.stages` renamed to `video_analysis.detectors`** (it is detector
+  adapters + timing helpers, not a plugin framework).
+
+### Added / Internal
+
+- `videopython.ai.AiError` — common base for the AI error types (`OllamaError`,
+  `PlannerError`, `AutoEditError`, `GarbageTranscriptError`, `RemuxError`,
+  `UnknownSceneIdsError`), so callers can `except AiError`. Each keeps its semantic
+  builtin base (`RuntimeError` / `ValueError`).
+- `videopython.ai.keyframe` — public `downscale_keyframe` / `encode_png_b64` /
+  `keyframe_to_png_b64`; the MCP server no longer imports `ai._ollama` privates.
+- `dubbing/audio_ops.py` merges the former `expressiveness` + `loudness` leaf modules;
+  `TimingAdjustment` moved from `timing.py` to `models.py`.
+- `DubbingConfig.from_args()` dedups the config-or-kwargs guard; `video_analysis`
+  source-metadata parsing (ffmpeg tags / ISO-6709 geo / creation-time) extracted into
+  `video_analysis/source_metadata.py` with a `try_init` best-effort helper.
+
+### Deferred (tracked in `TODO.md`)
+
+Two pure-internal Tier-5 items are left for a focused follow-up (no API/behavior
+change): deduplicating the Demucs block shared by the dubbing pipeline's `process()`
+and `revoice()`, and dropping the speculative single-entry `SUPPORTED_MODELS` /
+`STEM_NAMES_6S` config.
+
 ## 0.51.0
 
 `videopython.ai` technical-debt cleanup (PR-1 of 2): a correctness fix plus the

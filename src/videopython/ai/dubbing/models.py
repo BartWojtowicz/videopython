@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated, Any
+from dataclasses import dataclass
+from typing import Annotated, Any
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, PlainSerializer, model_validator
 
@@ -10,8 +11,26 @@ from videopython.ai.dubbing.quality import TranscriptQuality
 from videopython.audio import Audio
 from videopython.base.transcription import Transcription, TranscriptionSegment
 
-if TYPE_CHECKING:
-    from videopython.ai.dubbing.timing import TimingAdjustment
+
+@dataclass
+class TimingAdjustment:
+    """Information about a timing adjustment made to a segment.
+
+    Attributes:
+        segment_index: Index of the segment that was adjusted.
+        original_duration: Original duration of the segment in seconds.
+        target_duration: Target duration to fit into.
+        actual_duration: Actual duration after adjustment.
+        speed_factor: Speed factor applied (> 1 means sped up).
+        was_truncated: Whether the segment had to be truncated.
+    """
+
+    segment_index: int
+    original_duration: float
+    target_duration: float
+    actual_duration: float
+    speed_factor: float
+    was_truncated: bool
 
 
 # Speed factors within this band of 1.0 are treated as a "clean" timing

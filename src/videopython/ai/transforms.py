@@ -13,7 +13,7 @@ import numpy as np
 from pydantic import Field
 from tqdm import tqdm
 
-from videopython.ai.understanding.faces import FaceTracker
+from videopython.ai.understanding.faces import FaceSmoothingTracker
 from videopython.base._dimensions import floor_to_even
 from videopython.base._ffmpeg import escape_filter_value
 from videopython.base.video import FrameIterator, VideoMetadata
@@ -134,7 +134,7 @@ class FaceTrackingCrop(Operation):
         compile-time detection pass to build the per-frame crop command file.
         """
         out_w, out_h = self._resolved_output_dims(frame_w, frame_h)
-        tracker = FaceTracker(
+        tracker = FaceSmoothingTracker(
             selection_strategy=self.face_selection,
             face_index=self.face_index,
             smoothing=self.smoothing,

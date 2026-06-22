@@ -7,7 +7,7 @@ import pytest
 
 import videopython.ai.video_analysis as va
 from videopython.ai.video_analysis import analyzer as _analyzer
-from videopython.ai.video_analysis import stages as _stages
+from videopython.ai.video_analysis import detectors as _detectors
 from videopython.base.description import (
     AudioClassification,
     AudioEvent,
@@ -97,11 +97,11 @@ class _FakeFaceTracker:
 
 
 def _patch_scene_first_analyzers(monkeypatch: pytest.MonkeyPatch, *, failing_vlm: bool = False) -> None:
-    monkeypatch.setattr(_stages, "AudioToText", _FakeAudioToText)
-    monkeypatch.setattr(_stages, "SemanticSceneDetector", _FakeSceneDetector)
+    monkeypatch.setattr(_detectors, "AudioToText", _FakeAudioToText)
+    monkeypatch.setattr(_detectors, "SemanticSceneDetector", _FakeSceneDetector)
     monkeypatch.setattr(_analyzer, "SceneVLM", _FailingSceneVLM if failing_vlm else _FakeSceneVLM)
     monkeypatch.setattr(_analyzer, "AudioClassifier", _FakeAudioClassifier)
-    monkeypatch.setattr(_analyzer, "FaceTracker", _FakeFaceTracker)
+    monkeypatch.setattr(_analyzer, "FaceShotTracker", _FakeFaceTracker)
 
 
 def _video_4s() -> Video:

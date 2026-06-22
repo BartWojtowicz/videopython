@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from videopython.ai.transforms import (
-    FaceTracker,
+    FaceSmoothingTracker,
     FaceTrackingCrop,
 )
 from videopython.base.video import VideoMetadata
@@ -30,11 +30,11 @@ class MockDetectedFace:
 
 
 class TestFaceTracker:
-    """Tests for FaceTracker utility."""
+    """Tests for FaceSmoothingTracker utility."""
 
     def test_init_default_params(self):
         """Test default initialization."""
-        tracker = FaceTracker()
+        tracker = FaceSmoothingTracker()
         assert tracker.selection_strategy == "largest"
         assert tracker.face_index == 0
         assert tracker.smoothing == 0.8
@@ -43,7 +43,7 @@ class TestFaceTracker:
 
     def test_init_custom_params(self):
         """Test custom initialization."""
-        tracker = FaceTracker(
+        tracker = FaceSmoothingTracker(
             selection_strategy="centered",
             face_index=1,
             smoothing=0.5,
@@ -58,7 +58,7 @@ class TestFaceTracker:
 
     def test_select_face_largest(self):
         """Test largest face selection strategy."""
-        tracker = FaceTracker(selection_strategy="largest")
+        tracker = FaceSmoothingTracker(selection_strategy="largest")
 
         # Create mock faces (already sorted by area, largest first)
         faces = [
@@ -73,7 +73,7 @@ class TestFaceTracker:
 
     def test_select_face_centered(self):
         """Test centered face selection strategy."""
-        tracker = FaceTracker(selection_strategy="centered")
+        tracker = FaceSmoothingTracker(selection_strategy="centered")
 
         # Create mock faces with different positions
         faces = [
@@ -88,7 +88,7 @@ class TestFaceTracker:
 
     def test_select_face_by_index(self):
         """Test face selection by index."""
-        tracker = FaceTracker(selection_strategy="index", face_index=1)
+        tracker = FaceSmoothingTracker(selection_strategy="index", face_index=1)
 
         faces = [
             MockDetectedFace((0.5, 0.5), 0.3, 0.3),
@@ -101,7 +101,7 @@ class TestFaceTracker:
 
     def test_select_face_index_out_of_bounds(self):
         """Test face selection with index out of bounds falls back to largest."""
-        tracker = FaceTracker(selection_strategy="index", face_index=10)
+        tracker = FaceSmoothingTracker(selection_strategy="index", face_index=10)
 
         faces = [
             MockDetectedFace((0.5, 0.5), 0.3, 0.3),
@@ -114,13 +114,13 @@ class TestFaceTracker:
 
     def test_select_face_empty_list(self):
         """Test face selection with no faces."""
-        tracker = FaceTracker()
+        tracker = FaceSmoothingTracker()
         result = tracker._select_face([], 1920, 1080)
         assert result is None
 
     def test_reset_clears_state(self):
         """Test reset clears all tracking state."""
-        tracker = FaceTracker()
+        tracker = FaceSmoothingTracker()
         tracker._last_position = (0.5, 0.5)
         tracker._last_size = (0.1, 0.1)
         tracker._smoothed_position = (0.5, 0.5)
@@ -133,10 +133,10 @@ class TestFaceTracker:
         assert tracker._smoothed_position is None
         assert tracker._smoothed_size is None
 
-    @patch("videopython.ai.transforms.FaceTracker._init_detector")
+    @patch("videopython.ai.transforms.FaceSmoothingTracker._init_detector")
     def test_detect_and_track_with_mock(self, mock_init):
         """Test detect_and_track with mocked detector."""
-        tracker = FaceTracker(smoothing=0.0, detection_interval=1)
+        tracker = FaceSmoothingTracker(smoothing=0.0, detection_interval=1)
 
         mock_detector = MagicMock()
         mock_detector.detect.return_value = [
@@ -150,10 +150,10 @@ class TestFaceTracker:
         assert result is not None
         assert result == (0.5, 0.5, 0.2, 0.2)
 
-    @patch("videopython.ai.transforms.FaceTracker._init_detector")
+    @patch("videopython.ai.transforms.FaceSmoothingTracker._init_detector")
     def test_detect_and_track_smoothing(self, mock_init):
         """Test smoothing over multiple frames."""
-        tracker = FaceTracker(smoothing=0.5, detection_interval=1)
+        tracker = FaceSmoothingTracker(smoothing=0.5, detection_interval=1)
 
         mock_detector = MagicMock()
         tracker._detector = mock_detector
@@ -173,10 +173,10 @@ class TestFaceTracker:
         assert result2[0] == pytest.approx(0.4)
         assert result2[1] == pytest.approx(0.4)
 
-    @patch("videopython.ai.transforms.FaceTracker._init_detector")
+    @patch("videopython.ai.transforms.FaceSmoothingTracker._init_detector")
     def test_detection_interval_skips_frames(self, mock_init):
         """Test detection is only run on interval frames."""
-        tracker = FaceTracker(smoothing=0.0, detection_interval=3)
+        tracker = FaceSmoothingTracker(smoothing=0.0, detection_interval=3)
 
         mock_detector = MagicMock()
         mock_detector.detect.return_value = [MockDetectedFace((0.5, 0.5), 0.1, 0.1)]
@@ -244,7 +244,7 @@ class TestFaceTrackingCrop:
         """The crop window is the fixed aspect-fit box, centered on the face."""
         crop = FaceTrackingCrop(target_aspect=(9, 16), framing_rule="center", smoothing=0.0)
         frames = [np.zeros((1080, 1920, 3), dtype=np.uint8)] * 3
-        with patch("videopython.ai.transforms.FaceTracker") as tracker_cls:
+        with patch("videopython.ai.transforms.FaceSmoothingTracker") as tracker_cls:
             tracker_cls.return_value.detect_and_track.return_value = (0.5, 0.5, 0.1, 0.15)
             positions = crop._track_crop_positions(frames, 1920, 1080)
 
@@ -254,7 +254,7 @@ class TestFaceTrackingCrop:
     def test_track_positions_clamped_to_bounds(self):
         crop = FaceTrackingCrop(target_aspect=(9, 16), framing_rule="center", smoothing=0.0)
         frames = [np.zeros((1080, 1920, 3), dtype=np.uint8)]
-        with patch("videopython.ai.transforms.FaceTracker") as tracker_cls:
+        with patch("videopython.ai.transforms.FaceSmoothingTracker") as tracker_cls:
             tracker_cls.return_value.detect_and_track.return_value = (0.05, 0.5, 0.1, 0.15)
             positions = crop._track_crop_positions(frames, 1920, 1080)
 
@@ -290,7 +290,7 @@ class TestFaceTrackingCrop:
         assert predicted.frame_count == meta.frame_count
         assert predicted.total_seconds == meta.total_seconds
 
-    @patch("videopython.ai.transforms.FaceTracker")
+    @patch("videopython.ai.transforms.FaceSmoothingTracker")
     def test_track_positions_fallback_center(self, mock_tracker_class):
         """With no face detected, ``center`` fallback centers the crop window."""
         mock_tracker = MagicMock()
@@ -343,7 +343,7 @@ class TestFaceTrackingCropFraming:
         distance = (result[0] ** 2 + result[1] ** 2) ** 0.5
         assert distance == pytest.approx(0.1, abs=0.01)
 
-    @patch("videopython.ai.transforms.FaceTracker")
+    @patch("videopython.ai.transforms.FaceSmoothingTracker")
     def test_track_positions_headroom_without_face_uses_fallback(self, mock_tracker_class):
         mock_tracker = MagicMock()
         mock_tracker.detect_and_track.return_value = None
@@ -362,8 +362,8 @@ class TestGPUFaceTracking:
     """Tests for GPU-accelerated face tracking features."""
 
     def test_face_tracker_gpu_params(self):
-        """Test FaceTracker accepts GPU parameters."""
-        tracker = FaceTracker(
+        """Test FaceSmoothingTracker accepts GPU parameters."""
+        tracker = FaceSmoothingTracker(
             backend="gpu",
             sample_rate=5,
             batch_size=8,
@@ -373,8 +373,8 @@ class TestGPUFaceTracking:
         assert tracker.batch_size == 8
 
     def test_face_tracker_default_backend_is_auto(self):
-        """Test FaceTracker defaults to auto backend."""
-        tracker = FaceTracker()
+        """Test FaceSmoothingTracker defaults to auto backend."""
+        tracker = FaceSmoothingTracker()
         assert tracker.backend == "auto"
 
     def test_face_tracking_crop_gpu_params(self):
@@ -392,15 +392,15 @@ class TestGPUFaceTracking:
         bbox2 = (1.0, 1.0, 0.2, 0.2)
 
         # t=0 should return bbox1
-        result = FaceTracker._interpolate_bbox(bbox1, bbox2, 0.0)
+        result = FaceSmoothingTracker._interpolate_bbox(bbox1, bbox2, 0.0)
         assert result == bbox1
 
         # t=1 should return bbox2
-        result = FaceTracker._interpolate_bbox(bbox1, bbox2, 1.0)
+        result = FaceSmoothingTracker._interpolate_bbox(bbox1, bbox2, 1.0)
         assert result == bbox2
 
         # t=0.5 should return midpoint
-        result = FaceTracker._interpolate_bbox(bbox1, bbox2, 0.5)
+        result = FaceSmoothingTracker._interpolate_bbox(bbox1, bbox2, 0.5)
         assert result[0] == pytest.approx(0.5)
         assert result[1] == pytest.approx(0.5)
         assert result[2] == pytest.approx(0.15)
@@ -411,16 +411,16 @@ class TestGPUFaceTracking:
         bbox1 = (0.2, 0.2, 0.1, 0.1)
         bbox2 = (0.6, 0.6, 0.2, 0.2)
 
-        result = FaceTracker._interpolate_bbox(bbox1, bbox2, 0.25)
+        result = FaceSmoothingTracker._interpolate_bbox(bbox1, bbox2, 0.25)
         assert result[0] == pytest.approx(0.3)  # 0.2 + 0.25 * 0.4
         assert result[1] == pytest.approx(0.3)
         assert result[2] == pytest.approx(0.125)  # 0.1 + 0.25 * 0.1
         assert result[3] == pytest.approx(0.125)
 
-    @patch("videopython.ai.transforms.FaceTracker._init_detector")
+    @patch("videopython.ai.transforms.FaceSmoothingTracker._init_detector")
     def test_track_video_with_mock(self, mock_init):
         """Test track_video with mocked detector."""
-        tracker = FaceTracker(smoothing=0.0, sample_rate=1, backend="cpu")
+        tracker = FaceSmoothingTracker(smoothing=0.0, sample_rate=1, backend="cpu")
 
         mock_detector = MagicMock()
         # Return faces for batched detection
@@ -439,10 +439,10 @@ class TestGPUFaceTracking:
         # Check detector was called with batched frames
         mock_detector.detect_batch.assert_called_once()
 
-    @patch("videopython.ai.transforms.FaceTracker._init_detector")
+    @patch("videopython.ai.transforms.FaceSmoothingTracker._init_detector")
     def test_track_video_with_sampling(self, mock_init):
         """Test track_video with frame sampling and interpolation."""
-        tracker = FaceTracker(smoothing=0.0, sample_rate=3, backend="gpu")
+        tracker = FaceSmoothingTracker(smoothing=0.0, sample_rate=3, backend="gpu")
 
         mock_detector = MagicMock()
         # Return faces only for sampled frames (frames 0, 3, 6, 9)
@@ -465,10 +465,10 @@ class TestGPUFaceTracking:
         # Frame 1 should be interpolated between frame 0 and 3
         assert 0.3 < results[1][0] < 0.5
 
-    @patch("videopython.ai.transforms.FaceTracker._init_detector")
+    @patch("videopython.ai.transforms.FaceSmoothingTracker._init_detector")
     def test_track_video_empty_frames(self, mock_init):
         """Test track_video with empty frame list."""
-        tracker = FaceTracker()
+        tracker = FaceSmoothingTracker()
         mock_detector = MagicMock()
         tracker._detector = mock_detector
 
@@ -477,12 +477,12 @@ class TestGPUFaceTracking:
 
     @patch("videopython.ai.understanding.faces._FaceDetector")
     def test_face_tracker_passes_gpu_params_to_detector(self, mock_detector_class):
-        """Test FaceTracker passes GPU params to internal detector backend."""
+        """Test FaceSmoothingTracker passes GPU params to internal detector backend."""
         mock_detector = MagicMock()
         mock_detector.detect_batch.return_value = [[]]
         mock_detector_class.return_value = mock_detector
 
-        tracker = FaceTracker(
+        tracker = FaceSmoothingTracker(
             backend="gpu",
             min_face_size=50,
         )
@@ -497,9 +497,9 @@ class TestGPUFaceTracking:
             backend="gpu",
         )
 
-    @patch("videopython.ai.transforms.FaceTracker")
+    @patch("videopython.ai.transforms.FaceSmoothingTracker")
     def test_face_tracking_crop_passes_params_to_tracker(self, mock_tracker_class):
-        """Test FaceTrackingCrop passes GPU params to FaceTracker."""
+        """Test FaceTrackingCrop passes GPU params to FaceSmoothingTracker."""
         mock_tracker = MagicMock()
         mock_tracker.detect_and_track.return_value = (0.5, 0.5, 0.1, 0.1)
         mock_tracker_class.return_value = mock_tracker
@@ -512,7 +512,7 @@ class TestGPUFaceTracking:
         )
         crop._track_crop_positions(frames, 640, 480)
 
-        # Verify FaceTracker was created with GPU params
+        # Verify FaceSmoothingTracker was created with GPU params
         call_kwargs = mock_tracker_class.call_args[1]
         assert call_kwargs["backend"] == "gpu"
         assert call_kwargs["sample_rate"] == 5
@@ -593,7 +593,7 @@ class TestFaceCropStreaming:
 
         before = set(glob.glob(_tempfile.gettempdir() + "/*.cmd"))
         plan = self._plan()
-        with _patch("videopython.ai.transforms.FaceTracker") as tracker_cls:
+        with _patch("videopython.ai.transforms.FaceSmoothingTracker") as tracker_cls:
             # Face drifts left -> right across the clip.
             tracker_cls.return_value.detect_and_track.side_effect = lambda frame, i: (
                 0.3 + 0.4 * (i / 96),
@@ -644,7 +644,7 @@ class TestFaceCropStreaming:
                 ]
             }
         )
-        with _patch("videopython.ai.transforms.FaceTracker") as tracker_cls:
+        with _patch("videopython.ai.transforms.FaceSmoothingTracker") as tracker_cls:
             tracker_cls.return_value.detect_and_track.return_value = (0.5, 0.5, 0.1, 0.15)
             with _pytest.raises(PlanValidationError, match="cannot stream"):
                 plan.run_to_file(tmp_path / "out.mp4")

@@ -65,7 +65,7 @@ MODEL_REVISIONS: dict[str, str] = {
     # Speaker diarization (ai/understanding/audio.py: PYANNOTE_DIARIZATION_MODEL).
     # Gated repo (auto-approved); from_pretrained needs an accepted HF token.
     "pyannote/speaker-diarization-community-1": "3533c8cf8e369892e6b79ff1bf80f7b0286a54ee",
-    # Audio event classifier (ai/understanding/audio.py: AudioClassifier)
+    # Audio event classifier (ai/understanding/classification.py: AudioClassifier)
     "MIT/ast-finetuned-audioset-10-10-0.4593": "f826b80d28226b62986cc218e5cec390b1096902",
     # Face detection checkpoint (ai/understanding/faces.py: hf_hub_download)
     "arnabdhar/YOLOv8-Face-Detection": "52fa54977207fa4f021de949b515fb19dcab4488",

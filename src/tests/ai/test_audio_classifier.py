@@ -26,7 +26,7 @@ class TestAudioClassifierInit:
 
     def test_classifier_unsupported_model(self):
         """Test classifier raises error for unsupported model."""
-        from videopython.ai.understanding.audio import AudioClassifier
+        from videopython.ai.understanding.classification import AudioClassifier
 
         with pytest.raises(ValueError, match="not supported"):
             AudioClassifier(model_name="InvalidModel")
@@ -39,14 +39,14 @@ class TestAudioClassifier:
     @pytest.fixture
     def classifier(self):
         """Create AudioClassifier with local backend."""
-        from videopython.ai.understanding.audio import AudioClassifier
+        from videopython.ai.understanding.classification import AudioClassifier
 
         return AudioClassifier(confidence_threshold=0.3, device="cpu")
 
     @pytest.fixture
     def low_threshold_classifier(self):
         """Create AudioClassifier with low threshold for more detections."""
-        from videopython.ai.understanding.audio import AudioClassifier
+        from videopython.ai.understanding.classification import AudioClassifier
 
         return AudioClassifier(confidence_threshold=0.1, device="cpu")
 
@@ -141,7 +141,7 @@ class TestAudioClassifier:
 
     def test_confidence_threshold_filtering(self, test_audio):
         """Test that confidence threshold correctly filters events."""
-        from videopython.ai.understanding.audio import AudioClassifier
+        from videopython.ai.understanding.classification import AudioClassifier
 
         # Create classifiers with different thresholds
         low_classifier = AudioClassifier(confidence_threshold=0.1, device="cpu")
@@ -168,7 +168,7 @@ class TestAudioEventMerging:
     @pytest.fixture
     def classifier(self):
         """Create AudioClassifier for testing."""
-        from videopython.ai.understanding.audio import AudioClassifier
+        from videopython.ai.understanding.classification import AudioClassifier
 
         return AudioClassifier(confidence_threshold=0.1, device="cpu")
 

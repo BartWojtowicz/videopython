@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -62,6 +62,18 @@ class DubbingConfig(BaseModel):
     strict_quality: bool = False
     translator_model: str | None = None
     translator_host: str | None = None
+
+    @classmethod
+    def from_args(cls, config: DubbingConfig | None = None, /, **kwargs: Any) -> DubbingConfig:
+        """Resolve either a ``config`` object or flat knob kwargs into a config.
+
+        The shared accept-one-or-the-other guard for ``VideoDubber`` and
+        ``LocalDubbingPipeline``, which both take ``config=DubbingConfig(...)``
+        or the flat kwargs (not both).
+        """
+        if config is not None and kwargs:
+            raise TypeError("Pass either `config=` or knob kwargs, not both")
+        return config or cls(**kwargs)
 
     def init_log_fields(self) -> dict[str, object]:
         """Subset of fields surfaced in the init-log line.

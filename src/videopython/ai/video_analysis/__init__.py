@@ -1,4 +1,10 @@
-"""Scene-first video analysis: VideoAnalyzer plus its result models."""
+"""Scene-first video analysis: VideoAnalyzer plus its result models.
+
+Unlike the leaf packages (understanding / generation / dubbing) this uses eager
+imports: it is a thin orchestration package whose submodules are always loaded
+together when analysis runs, and the heavy ML deps it pulls in (via
+``understanding``) are themselves still lazily imported at first use.
+"""
 
 from __future__ import annotations
 

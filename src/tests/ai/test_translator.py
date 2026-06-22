@@ -6,7 +6,7 @@ import json
 from types import SimpleNamespace
 from typing import Any
 
-from videopython.ai.generation.translation import (
+from videopython.ai.dubbing.translation import (
     LANGUAGE_NAMES,
     OllamaTranslator,
     _build_system_prompt,

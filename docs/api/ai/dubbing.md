@@ -191,10 +191,8 @@ Whisper `avg_logprob`. Long sources are split into chunks that fit the model's
 context window, with one parse-retry on any segments the first pass misses.
 
 ```python
-# Translation always uses the local Ollama model (translator "auto" / "ollama").
-dubber = VideoDubber(translator="auto")
-
-# Pick the Ollama model + server (pull it first: `ollama pull gemma3:27b`).
+# Translation always uses the local Ollama model. Pick the Ollama model + server
+# (pull it first: `ollama pull gemma3:27b`).
 dubber = VideoDubber(translator_model="gemma3:27b", translator_host="http://localhost:11434")
 ```
 
@@ -208,7 +206,7 @@ reject a requested target language up front.
 ### Pluggable TTS Backend
 
 Speech synthesis is decoupled from the pipeline behind a `runtime_checkable`
-`SpeechBackend` protocol (`videopython.ai.generation._tts_backend`). The bundled
+`SpeechBackend` protocol (`videopython.ai.dubbing._tts_backend`). The bundled
 local `TextToSpeech` (Chatterbox) satisfies it structurally; when no backend is
 injected the pipeline constructs it lazily.
 

@@ -1,4 +1,10 @@
-"""LLM-authored editing: build a scene catalog and plan a VideoEdit from it."""
+"""LLM-authored editing: build a scene catalog and plan a VideoEdit from it.
+
+Uses eager imports (unlike the leaf packages): it is a thin orchestration
+package whose submodules load together, and it MUST eagerly import
+``videopython.ai.ops`` so the AI editing ops are registered before any
+``EditPlan.json_schema()`` call. Heavy ML deps it pulls in stay lazy.
+"""
 
 from __future__ import annotations
 

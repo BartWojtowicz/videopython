@@ -2,32 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import numpy as np
 
+from videopython.ai.dubbing.models import TimingAdjustment
 from videopython.audio import Audio, AudioMetadata
-
-
-@dataclass
-class TimingAdjustment:
-    """Information about a timing adjustment made to a segment.
-
-    Attributes:
-        segment_index: Index of the segment that was adjusted.
-        original_duration: Original duration of the segment in seconds.
-        target_duration: Target duration to fit into.
-        actual_duration: Actual duration after adjustment.
-        speed_factor: Speed factor applied (> 1 means sped up).
-        was_truncated: Whether the segment had to be truncated.
-    """
-
-    segment_index: int
-    original_duration: float
-    target_duration: float
-    actual_duration: float
-    speed_factor: float
-    was_truncated: bool
 
 
 class TimingSynchronizer:

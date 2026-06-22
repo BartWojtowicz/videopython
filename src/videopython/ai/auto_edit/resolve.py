@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from videopython.ai.errors import AiError
 from videopython.editing import SegmentConfig, VideoEdit
 
 from .models import EditCatalog, EditPlan
 
 
-class UnknownSceneIdsError(ValueError):
+class UnknownSceneIdsError(AiError, ValueError):
     """An EditPlan referenced scene ids absent from the catalog."""
 
     def __init__(self, ids: list[str]) -> None:

@@ -10,7 +10,7 @@ from videopython.ai.dubbing.config import DubbingConfig
 from videopython.ai.dubbing.models import DubbingResult, RevoiceResult
 
 if TYPE_CHECKING:
-    from videopython.ai.generation._tts_backend import SpeechBackend
+    from videopython.ai.dubbing._tts_backend import SpeechBackend
     from videopython.base.video import Video
 
 logger = logging.getLogger(__name__)
@@ -20,8 +20,8 @@ class VideoDubber:
     """Dubs videos into different languages using the local pipeline.
 
     Accepts either a :class:`DubbingConfig` or the same knobs as flat kwargs
-    (``device``, ``low_memory``, ``whisper_model``, ``translator``, etc.) --
-    the flat path builds a ``DubbingConfig`` internally. See
+    (``device``, ``low_memory``, ``whisper_model``, ``translator_model``, etc.)
+    -- the flat path builds a ``DubbingConfig`` internally. See
     :class:`DubbingConfig` for the full knob list and defaults.
     """
 
@@ -32,9 +32,7 @@ class VideoDubber:
         tts_backend: SpeechBackend | None = None,
         **kwargs: Any,
     ):
-        if config is not None and kwargs:
-            raise TypeError("Pass either `config=` or knob kwargs, not both")
-        self.config = config or DubbingConfig(**kwargs)
+        self.config = DubbingConfig.from_args(config, **kwargs)
         # Optional injected speech backend. None -> the pipeline lazily builds
         # the local chatterbox-backed TextToSpeech (from the [ai] extra). Inject
         # a SpeechBackend to run synthesis out-of-process (e.g. a remote/Modal
@@ -248,6 +246,6 @@ class VideoDubber:
 
     @staticmethod
     def get_supported_languages() -> dict[str, str]:
-        from videopython.ai.generation.translation import OllamaTranslator
+        from videopython.ai.dubbing.translation import OllamaTranslator
 
         return OllamaTranslator.get_supported_languages()

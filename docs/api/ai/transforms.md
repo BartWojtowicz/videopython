@@ -3,8 +3,8 @@
 AI-powered video transforms. Framing-oriented behavior (headroom / thirds /
 speed clamp) is implemented on `FaceTrackingCrop`.
 
-The underlying `FaceTracker` lives in
-[`videopython.ai.understanding.faces`](understanding.md#facetracker);
+The underlying `FaceSmoothingTracker` lives in
+[`videopython.ai.understanding.faces`](understanding.md#face-tracking);
 `FaceTrackingCrop` constructs one internally.
 
 ## Usage

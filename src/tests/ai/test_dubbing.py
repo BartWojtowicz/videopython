@@ -369,8 +369,7 @@ class TestTimingSummary:
 
     def test_classifies_clean_stretched_truncated(self):
         """Mixed adjustments are bucketed into clean / stretched / truncated."""
-        from videopython.ai.dubbing.models import TimingSummary
-        from videopython.ai.dubbing.timing import TimingAdjustment
+        from videopython.ai.dubbing.models import TimingAdjustment, TimingSummary
 
         adjustments = [
             # Clean: speed factor within tolerance, not truncated.
@@ -433,8 +432,7 @@ class TestTimingSummary:
 
     def test_max_truncation_picks_worst_case(self):
         """max_truncation_seconds is the largest (original - actual) across truncated segments."""
-        from videopython.ai.dubbing.models import TimingSummary
-        from videopython.ai.dubbing.timing import TimingAdjustment
+        from videopython.ai.dubbing.models import TimingAdjustment, TimingSummary
 
         adjustments = [
             TimingAdjustment(
@@ -755,7 +753,7 @@ class TestAudioSeparator:
 
     def test_initialization_default(self):
         """Test default initialization."""
-        from videopython.ai.understanding.separation import AudioSeparator
+        from videopython.ai.dubbing.separation import AudioSeparator
 
         separator = AudioSeparator()
 
@@ -763,7 +761,7 @@ class TestAudioSeparator:
 
     def test_initialization_custom_model(self):
         """Test custom model initialization."""
-        from videopython.ai.understanding.separation import AudioSeparator
+        from videopython.ai.dubbing.separation import AudioSeparator
 
         separator = AudioSeparator(model_name="htdemucs_ft")
 
@@ -771,62 +769,62 @@ class TestAudioSeparator:
 
     def test_initialization_invalid_model(self):
         """Test that invalid model raises error."""
-        from videopython.ai.understanding.separation import AudioSeparator
+        from videopython.ai.dubbing.separation import AudioSeparator
 
         with pytest.raises(ValueError, match="not supported"):
             AudioSeparator(model_name="invalid_model")
 
 
 class TestMergeRegions:
-    """Tests for the _merge_regions helper that prepares speech regions for Demucs."""
+    """Tests for the merge_regions helper that prepares speech regions for Demucs."""
 
     def test_empty_returns_empty(self):
-        from videopython.ai.understanding.separation import _merge_regions
+        from videopython.ai.dubbing.separation import merge_regions
 
-        assert _merge_regions([], audio_duration=10.0) == []
+        assert merge_regions([], audio_duration=10.0) == []
 
     def test_single_region_is_padded_and_clamped(self):
-        from videopython.ai.understanding.separation import _merge_regions
+        from videopython.ai.dubbing.separation import merge_regions
 
-        out = _merge_regions([(2.0, 4.0)], audio_duration=10.0, pad=0.5)
+        out = merge_regions([(2.0, 4.0)], audio_duration=10.0, pad=0.5)
         assert out == [(1.5, 4.5)]
 
     def test_pad_clamps_to_audio_bounds(self):
-        from videopython.ai.understanding.separation import _merge_regions
+        from videopython.ai.dubbing.separation import merge_regions
 
-        out = _merge_regions([(0.1, 9.8)], audio_duration=10.0, pad=0.5)
+        out = merge_regions([(0.1, 9.8)], audio_duration=10.0, pad=0.5)
         # left clamped to 0.0; right clamped to 10.0
         assert out == [(0.0, 10.0)]
 
     def test_overlapping_regions_merge(self):
-        from videopython.ai.understanding.separation import _merge_regions
+        from videopython.ai.dubbing.separation import merge_regions
 
-        out = _merge_regions([(0.0, 3.0), (2.0, 5.0)], audio_duration=10.0, pad=0.0)
+        out = merge_regions([(0.0, 3.0), (2.0, 5.0)], audio_duration=10.0, pad=0.0)
         assert out == [(0.0, 5.0)]
 
     def test_close_regions_merge_within_gap(self):
-        from videopython.ai.understanding.separation import _merge_regions
+        from videopython.ai.dubbing.separation import merge_regions
 
         # gaps of 0.8s after padding are merged (default merge_gap=1.0)
-        out = _merge_regions([(0.0, 2.0), (2.8, 5.0)], audio_duration=10.0, pad=0.0, merge_gap=1.0)
+        out = merge_regions([(0.0, 2.0), (2.8, 5.0)], audio_duration=10.0, pad=0.0, merge_gap=1.0)
         assert out == [(0.0, 5.0)]
 
     def test_distant_regions_stay_separate(self):
-        from videopython.ai.understanding.separation import _merge_regions
+        from videopython.ai.dubbing.separation import merge_regions
 
-        out = _merge_regions([(0.0, 2.0), (8.0, 10.0)], audio_duration=10.0, pad=0.0)
+        out = merge_regions([(0.0, 2.0), (8.0, 10.0)], audio_duration=10.0, pad=0.0)
         assert out == [(0.0, 2.0), (8.0, 10.0)]
 
     def test_unsorted_input_is_handled(self):
-        from videopython.ai.understanding.separation import _merge_regions
+        from videopython.ai.dubbing.separation import merge_regions
 
-        out = _merge_regions([(8.0, 9.0), (1.0, 2.0)], audio_duration=10.0, pad=0.0)
+        out = merge_regions([(8.0, 9.0), (1.0, 2.0)], audio_duration=10.0, pad=0.0)
         assert out == [(1.0, 2.0), (8.0, 9.0)]
 
     def test_zero_length_regions_dropped(self):
-        from videopython.ai.understanding.separation import _merge_regions
+        from videopython.ai.dubbing.separation import merge_regions
 
-        out = _merge_regions([(2.0, 2.0), (3.0, 4.0)], audio_duration=10.0, pad=0.0)
+        out = merge_regions([(2.0, 2.0), (3.0, 4.0)], audio_duration=10.0, pad=0.0)
         assert out == [(3.0, 4.0)]
 
 
@@ -856,7 +854,7 @@ class TestSeparateRegions:
     def test_no_regions_returns_passthrough(self, long_stereo_audio, monkeypatch):
         """No speech regions => silent vocals, original as background. No Demucs call."""
         from videopython.ai.dubbing.models import SeparatedAudio
-        from videopython.ai.understanding.separation import AudioSeparator
+        from videopython.ai.dubbing.separation import AudioSeparator
 
         separator = AudioSeparator()
 
@@ -875,7 +873,7 @@ class TestSeparateRegions:
 
     def test_full_coverage_falls_back_to_full_separation(self, long_stereo_audio, monkeypatch):
         """When regions cover >= threshold of audio, full-track separate() is called."""
-        from videopython.ai.understanding.separation import AudioSeparator
+        from videopython.ai.dubbing.separation import AudioSeparator
 
         separator = AudioSeparator()
         sentinel_calls: list[float] = []
@@ -902,7 +900,7 @@ class TestSeparateRegions:
 
     def test_partial_coverage_runs_per_region(self, long_stereo_audio, monkeypatch):
         """Partial speech => Demucs runs once per region; non-speech gaps stay original."""
-        from videopython.ai.understanding.separation import AudioSeparator
+        from videopython.ai.dubbing.separation import AudioSeparator
 
         separator = AudioSeparator()
         chunk_durations: list[float] = []
@@ -923,7 +921,7 @@ class TestSeparateRegions:
 
         monkeypatch.setattr(AudioSeparator, "_separate_local", fake_separate_local)
 
-        # Two distant regions, padded inside _merge_regions before this call;
+        # Two distant regions, padded inside merge_regions before this call;
         # we pass pre-merged regions directly.
         regions = [(1.0, 2.0), (6.0, 7.0)]
         result = separator.separate_regions(long_stereo_audio, regions, full_separation_threshold=0.9)
@@ -955,7 +953,7 @@ class TestSeparateRegions:
 
     def test_mono_input_produces_stereo_output(self, monkeypatch):
         """Mono input is upmixed; output matches full-track contract (always stereo)."""
-        from videopython.ai.understanding.separation import AudioSeparator
+        from videopython.ai.dubbing.separation import AudioSeparator
 
         sample_rate = 24000
         duration = 4.0
@@ -1007,7 +1005,7 @@ class TestUnloadMethods:
     """
 
     def test_audio_separator_unload(self):
-        from videopython.ai.understanding.separation import AudioSeparator
+        from videopython.ai.dubbing.separation import AudioSeparator
 
         separator = AudioSeparator()
         separator._model = object()  # stand-in for a loaded model
@@ -1015,7 +1013,7 @@ class TestUnloadMethods:
         assert separator._model is None
 
     def test_audio_separator_unload_is_idempotent(self):
-        from videopython.ai.understanding.separation import AudioSeparator
+        from videopython.ai.dubbing.separation import AudioSeparator
 
         separator = AudioSeparator()
         separator.unload()
@@ -2097,7 +2095,7 @@ class TestPeakMatch:
         return Audio(data, metadata)
 
     def test_scales_to_match_reference_peak(self):
-        from videopython.ai.dubbing.loudness import peak_match
+        from videopython.ai.dubbing.audio_ops import peak_match
 
         target = self._make_audio(0.3)
         reference = self._make_audio(0.9)
@@ -2109,7 +2107,7 @@ class TestPeakMatch:
         assert abs(float(np.max(np.abs(target.data))) - 0.3) < 1e-5
 
     def test_silent_target_is_returned_as_is(self):
-        from videopython.ai.dubbing.loudness import peak_match
+        from videopython.ai.dubbing.audio_ops import peak_match
 
         target = self._make_audio(0.0)
         reference = self._make_audio(0.5)
@@ -2118,7 +2116,7 @@ class TestPeakMatch:
         assert out is target
 
     def test_silent_reference_is_no_op(self):
-        from videopython.ai.dubbing.loudness import peak_match
+        from videopython.ai.dubbing.audio_ops import peak_match
 
         target = self._make_audio(0.4)
         reference = self._make_audio(0.0)
@@ -2128,7 +2126,7 @@ class TestPeakMatch:
 
     def test_near_unit_scale_is_no_op(self):
         """Tiny scale factors skip allocation — keeps the common 'already matched' path cheap."""
-        from videopython.ai.dubbing.loudness import peak_match
+        from videopython.ai.dubbing.audio_ops import peak_match
 
         target = self._make_audio(0.5001)
         reference = self._make_audio(0.5)
@@ -2159,7 +2157,7 @@ class TestLoudnessMatch:
         """Quiet target + loud reference: post-match LUFS difference should be < 1 LU."""
         import pyloudnorm
 
-        from videopython.ai.dubbing.loudness import loudness_match
+        from videopython.ai.dubbing.audio_ops import loudness_match
 
         target = self._make_tone(0.1)  # quiet
         reference = self._make_tone(0.5)  # ~14 dB louder
@@ -2173,7 +2171,7 @@ class TestLoudnessMatch:
 
     def test_clamps_post_gain_peak_below_unity(self):
         """When LUFS gain would push past 1.0, output is clamped to 0.99."""
-        from videopython.ai.dubbing.loudness import loudness_match
+        from videopython.ai.dubbing.audio_ops import loudness_match
 
         target = self._make_tone(0.05)
         reference = self._make_tone(0.95)  # demands ~25 dB gain → would peak well past 1.0
@@ -2183,7 +2181,7 @@ class TestLoudnessMatch:
 
     def test_short_clip_falls_back_to_peak_match(self, monkeypatch):
         """Below the 400 ms BS.1770 gating block, the helper must use peak match."""
-        from videopython.ai.dubbing import loudness as loudness_mod
+        from videopython.ai.dubbing import audio_ops as loudness_mod
 
         target = self._make_tone(0.3, duration=0.2)
         reference = self._make_tone(0.9, duration=0.2)
@@ -2205,7 +2203,7 @@ class TestLoudnessMatch:
 
     def test_silent_target_returns_target_unchanged(self):
         """All-silent target: no usable loudness, fall through to peak-match no-op."""
-        from videopython.ai.dubbing.loudness import loudness_match
+        from videopython.ai.dubbing.audio_ops import loudness_match
 
         sample_rate = 24000
         frame_count = sample_rate
@@ -2232,7 +2230,7 @@ class TestPipelineSpeechRegionGating:
         """Pipeline derives speech regions from transcription and forwards to separate_regions."""
         from videopython.ai.dubbing.models import SeparatedAudio
         from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
-        from videopython.ai.understanding.separation import AudioSeparator
+        from videopython.ai.dubbing.separation import AudioSeparator
         from videopython.base.transcription import Transcription, TranscriptionSegment, TranscriptionWord
 
         captured: dict = {}
@@ -2339,7 +2337,7 @@ class TestPipelineSpeechRegionGating:
             transcription=transcription,
         )
 
-        # Default _merge_regions: pad=0.5, merge_gap=1.0. The two regions are
+        # Default merge_regions: pad=0.5, merge_gap=1.0. The two regions are
         # 5s apart so they don't merge; each is padded by 0.5 on each side.
         assert captured["regions"] == [(0.5, 2.5), (6.5, 8.5)]
 
@@ -2840,14 +2838,14 @@ class TestProsody:
         return Audio(data, metadata)
 
     def test_rms_matches_known_amplitude(self):
-        from videopython.ai.dubbing.expressiveness import rms
+        from videopython.ai.dubbing.audio_ops import rms
 
         audio = self._audio_with_amplitude(0.3)
         assert rms(audio.data) == pytest.approx(0.3, abs=1e-4)
 
     def test_expressiveness_default_when_baseline_zero(self):
         from videopython.ai.dubbing import Expressiveness
-        from videopython.ai.dubbing.expressiveness import expressiveness_for
+        from videopython.ai.dubbing.audio_ops import expressiveness_for
 
         # Silent baseline → can't compute a ratio, must degrade safely.
         result = expressiveness_for(self._audio_with_amplitude(0.5), baseline_rms=0.0)
@@ -2855,13 +2853,13 @@ class TestProsody:
 
     def test_expressiveness_default_when_segment_silent(self):
         from videopython.ai.dubbing import Expressiveness
-        from videopython.ai.dubbing.expressiveness import expressiveness_for
+        from videopython.ai.dubbing.audio_ops import expressiveness_for
 
         result = expressiveness_for(self._audio_with_amplitude(0.0), baseline_rms=0.5)
         assert result == Expressiveness()
 
     def test_expressiveness_calm_when_quiet(self):
-        from videopython.ai.dubbing.expressiveness import expressiveness_for
+        from videopython.ai.dubbing.audio_ops import expressiveness_for
 
         # ratio = 0.3 / 1.0 = 0.3 < CALM_RATIO_THRESHOLD (0.7) → calm
         result = expressiveness_for(self._audio_with_amplitude(0.3), baseline_rms=1.0)
@@ -2869,7 +2867,7 @@ class TestProsody:
         assert result.cfg_weight == 0.7
 
     def test_expressiveness_dramatic_when_loud(self):
-        from videopython.ai.dubbing.expressiveness import expressiveness_for
+        from videopython.ai.dubbing.audio_ops import expressiveness_for
 
         # ratio = 1.5 > DRAMATIC_RATIO_THRESHOLD (1.3) → dramatic
         result = expressiveness_for(self._audio_with_amplitude(1.5), baseline_rms=1.0)
@@ -2878,7 +2876,7 @@ class TestProsody:
 
     def test_expressiveness_normal_in_band(self):
         from videopython.ai.dubbing import Expressiveness
-        from videopython.ai.dubbing.expressiveness import expressiveness_for
+        from videopython.ai.dubbing.audio_ops import expressiveness_for
 
         # ratio = 1.0 sits squarely in the normal band → no-knobs profile
         result = expressiveness_for(self._audio_with_amplitude(1.0), baseline_rms=1.0)
