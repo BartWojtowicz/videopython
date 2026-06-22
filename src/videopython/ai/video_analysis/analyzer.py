@@ -4,21 +4,17 @@ from __future__ import annotations
 
 import gc
 import logging
-import re
 import time
 from contextlib import nullcontext
-from datetime import datetime, timezone
 from pathlib import Path
 
 from videopython.ai.understanding import AudioClassifier, SceneVLM
-from videopython.ai.understanding.faces import FaceTracker
+from videopython.ai.understanding.faces import FaceShotTracker
 from videopython.audio import Audio
-from videopython.base import _ffmpeg
 from videopython.base.description import SceneBoundary, SceneDescription
-from videopython.base.exceptions import FFmpegProbeError
 from videopython.base.video import Video, VideoMetadata
 
-from . import stages
+from . import detectors, source_metadata
 from .models import (
     AUDIO_CLASSIFIER,
     AUDIO_TO_TEXT,
@@ -27,7 +23,6 @@ from .models import (
     SEMANTIC_SCENE_DETECTOR,
     AnalysisRunInfo,
     AudioAnalysisSection,
-    GeoMetadata,
     SceneAnalysisSample,
     SceneAnalysisSection,
     VideoAnalysis,
@@ -37,18 +32,6 @@ from .models import (
 from .sampling import DEFAULT_SAMPLING_PRESET, SAMPLING_PRESETS, SamplingPreset
 
 logger = logging.getLogger(__name__)
-
-_CREATION_TIME_TAG_KEYS: tuple[str, ...] = (
-    "creation_time",
-    "com.apple.quicktime.creationdate",
-    "date",
-)
-
-_GEO_TAG_KEYS: tuple[str, ...] = (
-    "com.apple.quicktime.location.iso6709",
-    "location",
-    "location-eng",
-)
 
 
 class VideoAnalyzer:
@@ -122,9 +105,9 @@ class VideoAnalyzer:
         enabled = self.config.enabled_analyzers
 
         run_info = AnalysisRunInfo(
-            created_at=stages.utc_now_iso(),
+            created_at=detectors.utc_now_iso(),
             mode=mode,
-            library_version=stages.library_version(),
+            library_version=detectors.library_version(),
         )
 
         t_analysis_start = time.perf_counter()
@@ -141,27 +124,27 @@ class VideoAnalyzer:
         # which corrupts Whisper's model weights if they're initialized at the
         # same time.
         if run_whisper and run_scene_det:
-            transcription, detected = stages.run_whisper_and_scene_detection(
+            transcription, detected = detectors.run_whisper_and_scene_detection(
                 config=self.config, source_path=source_path, video=video, run_info=run_info
             )
         else:
             if run_whisper:
-                with stages.record_stage(run_info, "whisper"):
-                    transcription = stages.run_whisper(config=self.config, source_path=source_path, video=video)
+                with detectors.record_stage(run_info, "whisper"):
+                    transcription = detectors.run_whisper(config=self.config, source_path=source_path, video=video)
 
             if run_scene_det:
-                with stages.record_stage(run_info, "scene_detection"):
-                    detected = stages.run_scene_detection(config=self.config, source_path=source_path, video=video)
+                with detectors.record_stage(run_info, "scene_detection"):
+                    detected = detectors.run_scene_detection(config=self.config, source_path=source_path, video=video)
 
         if run_scene_det:
-            stages.reset_transnetv2_torch_state()
+            detectors.reset_transnetv2_torch_state()
 
         # Whisper and TransNetV2 are done -- free their GPU memory before
         # loading SceneVLM (~9GB). Python GC doesn't guarantee immediate
         # cleanup, so force it and release the CUDA cache.
         if run_whisper or run_scene_det:
             gc.collect()
-            stages.release_gpu_cache()
+            detectors.release_gpu_cache()
 
         scenes = self._default_scene_boundaries(metadata)
         if detected is not None:
@@ -170,7 +153,7 @@ class VideoAnalyzer:
         if not scenes:
             scenes = self._default_scene_boundaries(metadata)
 
-        with stages.record_stage(run_info, "scene_analysis"):
+        with detectors.record_stage(run_info, "scene_analysis"):
             scene_section = self._analyze_scenes(
                 source_path=source_path,
                 video=video,
@@ -202,28 +185,25 @@ class VideoAnalyzer:
     ) -> SceneAnalysisSection:
         enabled = self.config.enabled_analyzers
 
-        scene_vlm: SceneVLM | None
-        try:
-            scene_vlm = SceneVLM(**self.config.get_params(SCENE_VLM)) if SCENE_VLM in enabled else None
-        except (ImportError, OSError, RuntimeError, ValueError, TypeError):
-            logger.warning("Failed to initialize SceneVLM, skipping visual understanding", exc_info=True)
-            scene_vlm = None
-
-        try:
-            audio_classifier = (
-                AudioClassifier(**self.config.get_params(AUDIO_CLASSIFIER)) if AUDIO_CLASSIFIER in enabled else None
+        # Best-effort init: a missing extra / model-load failure degrades that
+        # analyzer to "skipped" rather than aborting the whole run.
+        scene_vlm = (
+            source_metadata.try_init(lambda: SceneVLM(**self.config.get_params(SCENE_VLM)), "SceneVLM")
+            if SCENE_VLM in enabled
+            else None
+        )
+        audio_classifier = (
+            source_metadata.try_init(
+                lambda: AudioClassifier(**self.config.get_params(AUDIO_CLASSIFIER)), "AudioClassifier"
             )
-        except (ImportError, OSError, RuntimeError, ValueError):
-            logger.warning("Failed to initialize AudioClassifier, skipping audio classification", exc_info=True)
-            audio_classifier = None
-
-        face_tracker: FaceTracker | None = None
-        if FACE_TRACKER in enabled:
-            try:
-                face_tracker = FaceTracker(**self.config.get_params(FACE_TRACKER))
-            except (ImportError, OSError, RuntimeError, ValueError):
-                logger.warning("Failed to initialize FaceTracker, skipping face tracks", exc_info=True)
-                face_tracker = None
+            if AUDIO_CLASSIFIER in enabled
+            else None
+        )
+        face_tracker = (
+            source_metadata.try_init(lambda: FaceShotTracker(**self.config.get_params(FACE_TRACKER)), "FaceShotTracker")
+            if FACE_TRACKER in enabled
+            else None
+        )
 
         path_audio: Audio | None = None
         if audio_classifier is not None and source_path is not None:
@@ -238,9 +218,9 @@ class VideoAnalyzer:
 
         descriptions: list[SceneDescription | None] = [None] * len(scenes)
         if scene_vlm is not None:
-            with stages.record_stage(run_info, "scene_vlm"):
+            with detectors.record_stage(run_info, "scene_vlm"):
                 try:
-                    descriptions = stages.run_scene_vlm_batched(
+                    descriptions = detectors.run_scene_vlm_batched(
                         scene_vlm=scene_vlm,
                         profile=self._sampling_profile,
                         sampling=self.sampling,
@@ -254,9 +234,9 @@ class VideoAnalyzer:
 
         samples: list[SceneAnalysisSample] = []
         audio_ctx = (
-            stages.record_stage(run_info, "audio_classification") if audio_classifier is not None else nullcontext()
+            detectors.record_stage(run_info, "audio_classification") if audio_classifier is not None else nullcontext()
         )
-        face_ctx = stages.record_stage(run_info, "face_tracker") if face_tracker is not None else nullcontext()
+        face_ctx = detectors.record_stage(run_info, "face_tracker") if face_tracker is not None else nullcontext()
         with audio_ctx, face_ctx:
             for index, scene in enumerate(scenes):
                 sample = SceneAnalysisSample(
@@ -281,7 +261,7 @@ class VideoAnalyzer:
                                 )
                             except (OSError, RuntimeError, ValueError):
                                 scene_clip = None
-                        sample.audio_classification = stages.run_scene_audio_classification(
+                        sample.audio_classification = detectors.run_scene_audio_classification(
                             audio_classifier=audio_classifier,
                             path_audio=path_audio,
                             scene_clip=scene_clip,
@@ -299,7 +279,7 @@ class VideoAnalyzer:
 
                 if face_tracker is not None:
                     try:
-                        sample.faces = stages.run_scene_face_tracker(
+                        sample.faces = detectors.run_scene_face_tracker(
                             face_tracker=face_tracker,
                             source_path=source_path,
                             video=video,
@@ -308,7 +288,7 @@ class VideoAnalyzer:
                         )
                     except (IndexError, OSError, RuntimeError, ValueError):
                         logger.warning(
-                            "FaceTracker failed for scene %d (%.1f-%.1fs)",
+                            "FaceShotTracker failed for scene %d (%.1f-%.1fs)",
                             index,
                             scene.start,
                             scene.end,
@@ -331,7 +311,7 @@ class VideoAnalyzer:
             return None
         if source_path is not None:
             return Video.from_path(str(source_path), start_second=start_second, end_second=end_second)
-        v = stages.require_video(video)
+        v = detectors.require_video(video)
         return v[round(start_second * v.fps) : round(end_second * v.fps)]
 
     def _default_scene_boundaries(self, metadata: VideoMetadata) -> list[SceneBoundary]:
@@ -389,11 +369,9 @@ class VideoAnalyzer:
         duration_seconds: float,
         title_fallback: str | None,
     ) -> VideoAnalysisSource:
-        tags = self._extract_source_tags(path_obj) if path_obj else {}
-        creation_time = _normalize_creation_time(
-            next((tags[key] for key in _CREATION_TIME_TAG_KEYS if key in tags), None)
-        )
-        geo = _parse_geo_metadata(tags)
+        tags = source_metadata.extract_source_tags(path_obj) if path_obj else {}
+        creation_time = source_metadata.creation_time_from_tags(tags)
+        geo = source_metadata.parse_geo_metadata(tags)
         title = tags.get("title") or title_fallback
 
         return VideoAnalysisSource(
@@ -409,81 +387,3 @@ class VideoAnalyzer:
             geo=geo,
             raw_tags=tags or None,
         )
-
-    def _extract_source_tags(self, path: Path | None) -> dict[str, str]:
-        if path is None:
-            return {}
-
-        try:
-            payload = _ffmpeg.probe(path, extra_args=["-show_entries", "format_tags:stream_tags"])
-        except (FFmpegProbeError, OSError):
-            return {}
-
-        tags: dict[str, str] = {}
-
-        format_tags = payload.get("format", {}).get("tags", {})
-        if isinstance(format_tags, dict):
-            tags.update({str(k).lower(): str(v) for k, v in format_tags.items()})
-
-        for stream in payload.get("streams", []):
-            stream_tags = stream.get("tags", {})
-            if not isinstance(stream_tags, dict):
-                continue
-            for key, value in stream_tags.items():
-                lowered = str(key).lower()
-                tags.setdefault(lowered, str(value))
-
-        return tags
-
-
-def _normalize_creation_time(value: str | None) -> str | None:
-    if value is None:
-        return None
-
-    raw = value.strip()
-    if not raw:
-        return None
-
-    candidate = raw.replace("Z", "+00:00")
-    try:
-        parsed = datetime.fromisoformat(candidate)
-    except ValueError:
-        return raw
-
-    if parsed.tzinfo is None:
-        return parsed.isoformat()
-
-    return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def _parse_geo_metadata(tags: dict[str, str]) -> GeoMetadata | None:
-    for key in _GEO_TAG_KEYS:
-        value = tags.get(key)
-        if not value:
-            continue
-        geo = _parse_iso6709_or_pair(value)
-        if geo is not None:
-            geo.source = key
-            return geo
-    return None
-
-
-def _parse_iso6709_or_pair(value: str) -> GeoMetadata | None:
-    iso6709_match = re.match(
-        r"^\s*([+-]\d+(?:\.\d+)?)([+-]\d+(?:\.\d+)?)([+-]\d+(?:\.\d+)?)?/?\s*$",
-        value,
-    )
-    if iso6709_match:
-        lat = float(iso6709_match.group(1))
-        lon = float(iso6709_match.group(2))
-        alt = float(iso6709_match.group(3)) if iso6709_match.group(3) is not None else None
-        return GeoMetadata(latitude=lat, longitude=lon, altitude=alt)
-
-    pair_match = re.match(r"^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)(?:\s*,\s*(-?\d+(?:\.\d+)?))?\s*$", value)
-    if pair_match:
-        lat = float(pair_match.group(1))
-        lon = float(pair_match.group(2))
-        alt = float(pair_match.group(3)) if pair_match.group(3) is not None else None
-        return GeoMetadata(latitude=lat, longitude=lon, altitude=alt)
-
-    return None

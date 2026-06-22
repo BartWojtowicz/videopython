@@ -193,7 +193,7 @@ def _ai_leaf_modules_in_sys() -> set[str]:
         "videopython.ai.understanding",
         "videopython.ai.dubbing",
         "videopython.ai.video_analysis",
-        "videopython.ai.generation._tts_backend",
+        "videopython.ai.dubbing._tts_backend",
     }
     return {m for m in sys.modules if m.startswith("videopython.ai.") and m not in allowed}
 
@@ -228,7 +228,7 @@ def test_import_one_symbol_does_not_load_siblings() -> None:
         if m
         in {
             "videopython.ai.understanding.audio",
-            "videopython.ai.understanding.separation",
+            "videopython.ai.dubbing.separation",
             "videopython.ai.generation.audio",
             "videopython.ai.generation.video",
         }
@@ -267,7 +267,7 @@ def test_require_returns_module_when_present() -> None:
 
 
 def test_local_tts_satisfies_speech_backend() -> None:
-    from videopython.ai.generation._tts_backend import SpeechBackend
+    from videopython.ai.dubbing._tts_backend import SpeechBackend
 
     # Structural (runtime_checkable) match — TextToSpeech is never instantiated
     # here, so chatterbox is not imported.
@@ -278,8 +278,8 @@ def test_local_tts_satisfies_speech_backend() -> None:
 
 def test_pipeline_uses_injected_backend_without_chatterbox() -> None:
     """An injected SpeechBackend is used as-is; _init_tts never imports chatterbox."""
+    from videopython.ai.dubbing._tts_backend import SpeechBackend
     from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
-    from videopython.ai.generation._tts_backend import SpeechBackend
     from videopython.audio import Audio, AudioMetadata
 
     class FakeBackend:

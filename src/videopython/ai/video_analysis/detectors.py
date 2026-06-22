@@ -46,7 +46,7 @@ from .sampling import (
 
 if TYPE_CHECKING:
     from videopython.ai.understanding import AudioClassifier, SceneVLM
-    from videopython.ai.understanding.faces import FaceTracker
+    from videopython.ai.understanding.faces import FaceShotTracker
 
 logger = logging.getLogger(__name__)
 
@@ -324,7 +324,7 @@ def run_scene_audio_classification(
 
 def run_scene_face_tracker(
     *,
-    face_tracker: FaceTracker,
+    face_tracker: FaceShotTracker,
     source_path: Path | None,
     video: Video | None,
     metadata: VideoMetadata,

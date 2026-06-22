@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import ValidationError
 
+from videopython.ai.errors import AiError
+
 from .backend import PlannerError, StructuredVisionLLM
 from .catalog import build_catalog
 from .models import CatalogBundle, CatalogScene, EditPlan
@@ -30,7 +32,7 @@ _SYSTEM_PROMPT = (
 _NormalizeTarget = tuple[int, int] | Literal["first", "largest", "match"]
 
 
-class AutoEditError(RuntimeError):
+class AutoEditError(AiError, RuntimeError):
     """The planner could not produce a valid edit within the retry budget."""
 
 

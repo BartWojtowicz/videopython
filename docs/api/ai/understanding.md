@@ -12,7 +12,7 @@ For a single aggregate, serializable analysis object across multiple analyzers, 
 | AudioToText | Whisper |
 | AudioClassifier | AST |
 | SemanticSceneDetector | TransNetV2 |
-| FaceTracker | YOLOv8-face |
+| FaceShotTracker / FaceSmoothingTracker | YOLOv8-face |
 | ObjectDetector | YOLOv8-COCO |
 
 ## AudioToText
@@ -171,23 +171,22 @@ for scene in scenes:
 
 ::: videopython.ai.SemanticSceneDetector
 
-## FaceTracker
+## Face Tracking
 
-`FaceTracker` runs YOLOv8-face detection and stitches detections into
-per-shot tracks via IoU association — no embedding re-id, so a track
-does not survive across shot boundaries. Two surfaces:
+Two YOLOv8-face trackers share one detector, one per use case:
 
-- `track_shot(frames, frame_indices)` returns a list of
-  [`FaceTrack`](#facetrack) objects with stable ids within the shot.
-  This is the API the analyzer uses.
-- `detect_and_track(frame, frame_index)` / `track_video(frames)` are
-  the legacy single-subject smoothed-position APIs used by
+- `FaceShotTracker.track_shot(frames, frame_indices)` returns a list of
+  [`FaceTrack`](#facetrack) objects with stable ids within a shot, via IoU
+  association — no embedding re-id, so a track does not survive across shot
+  boundaries. This is the API the analyzer uses.
+- `FaceSmoothingTracker.detect_and_track(frame, frame_index)` /
+  `track_video(frames)` are the single-subject smoothed-position APIs used by
   `FaceTrackingCrop` (see [AI Transforms](transforms.md)).
 
 ```python
-from videopython.ai import FaceTracker
+from videopython.ai import FaceShotTracker
 
-tracker = FaceTracker(backend="auto")
+tracker = FaceShotTracker(backend="auto")
 tracks = tracker.track_shot(frames)
 
 for track in tracks:
@@ -195,14 +194,16 @@ for track in tracks:
           f"first frame {track.frame_indices[0]}")
 ```
 
-::: videopython.ai.FaceTracker
+::: videopython.ai.FaceShotTracker
+
+::: videopython.ai.FaceSmoothingTracker
 
 ## ObjectDetector
 
 `ObjectDetector` runs a YOLOv8-COCO model and returns a list of
 [`DetectedObject`](#detectedobject) per frame, with normalized bounding boxes
-sorted by confidence. It is the object-detection counterpart to `FaceTracker`
-and powers [`ObjectDetectionOverlay`](effects.md#objectdetectionoverlay).
+sorted by confidence. It is the object-detection counterpart to the face
+trackers and powers [`ObjectDetectionOverlay`](effects.md#objectdetectionoverlay).
 
 The Ultralytics weights auto-download on first use; class names come from the
 loaded model. Detection is gated by `confidence_threshold` and optionally

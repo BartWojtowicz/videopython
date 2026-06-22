@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from .auto_edit import StructuredVisionLLM as StructuredVisionLLM
     from .auto_edit import build_catalog as build_catalog
     from .effects import ObjectDetectionOverlay as ObjectDetectionOverlay
+    from .errors import AiError as AiError
     from .generation import ImageToVideo as ImageToVideo
     from .generation import TextToImage as TextToImage
     from .generation import TextToMusic as TextToMusic
@@ -42,7 +43,8 @@ if TYPE_CHECKING:
     from .transforms import FaceTrackingCrop as FaceTrackingCrop
     from .understanding import AudioClassifier as AudioClassifier
     from .understanding import AudioToText as AudioToText
-    from .understanding import FaceTracker as FaceTracker
+    from .understanding import FaceShotTracker as FaceShotTracker
+    from .understanding import FaceSmoothingTracker as FaceSmoothingTracker
     from .understanding import ObjectDetector as ObjectDetector
     from .understanding import SceneVLM as SceneVLM
     from .understanding import SemanticSceneDetector as SemanticSceneDetector
@@ -63,7 +65,8 @@ _exports: dict[str, str] = {
     # Understanding
     "AudioToText": ".understanding",
     "AudioClassifier": ".understanding",
-    "FaceTracker": ".understanding",
+    "FaceShotTracker": ".understanding",
+    "FaceSmoothingTracker": ".understanding",
     "ObjectDetector": ".understanding",
     "SceneVLM": ".understanding",
     "SemanticSceneDetector": ".understanding",
@@ -75,6 +78,8 @@ _exports: dict[str, str] = {
     "VideoAnalysis": ".video_analysis",
     "VideoAnalysisConfig": ".video_analysis",
     "VideoAnalyzer": ".video_analysis",
+    # Errors
+    "AiError": ".errors",
     # Auto-editing (LLM-authored edits)
     "AutoEditor": ".auto_edit",
     "AutoEditError": ".auto_edit",

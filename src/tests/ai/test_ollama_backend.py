@@ -11,8 +11,8 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from videopython.ai._ollama import KEYFRAME_MAX_DIM, _downscale, _encode_png_b64
 from videopython.ai.auto_edit import OllamaVisionLLM, PlannerError
+from videopython.ai.keyframe import KEYFRAME_MAX_DIM, downscale_keyframe, encode_png_b64
 
 
 class _FakeClient:
@@ -70,7 +70,7 @@ def test_non_json_raises_planner_error() -> None:
 def test_encode_png_b64_roundtrips() -> None:
     frame = np.zeros((4, 6, 3), dtype=np.uint8)
     frame[0, 0] = [255, 0, 0]
-    decoded = Image.open(io.BytesIO(base64.b64decode(_encode_png_b64(frame))))
+    decoded = Image.open(io.BytesIO(base64.b64decode(encode_png_b64(frame))))
     assert decoded.size == (6, 4)  # PIL size is (width, height)
 
 
@@ -78,13 +78,13 @@ def test_encode_png_b64_preserves_full_resolution() -> None:
     # Downscaling is scoped to the MCP keyframe path, not the shared encoder: SceneVLM
     # captioning and the local planner must keep full-resolution frames.
     frame = np.zeros((500, 1200, 3), dtype=np.uint8)
-    decoded = Image.open(io.BytesIO(base64.b64decode(_encode_png_b64(frame))))
+    decoded = Image.open(io.BytesIO(base64.b64decode(encode_png_b64(frame))))
     assert decoded.size == (1200, 500)
 
 
 def test_downscale_bounds_longest_side() -> None:
-    shrunk = _downscale(np.zeros((500, 1200, 3), dtype=np.uint8))
+    shrunk = downscale_keyframe(np.zeros((500, 1200, 3), dtype=np.uint8))
     assert max(shrunk.shape[:2]) == KEYFRAME_MAX_DIM
     assert shrunk.shape == (320, 768, 3)  # aspect preserved: 500 * 768 / 1200 == 320
     small = np.zeros((4, 6, 3), dtype=np.uint8)
-    assert _downscale(small) is small  # never upscales
+    assert downscale_keyframe(small) is small  # never upscales

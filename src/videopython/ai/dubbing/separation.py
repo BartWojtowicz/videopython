@@ -13,7 +13,7 @@ from videopython.audio import Audio, AudioMetadata
 logger = logging.getLogger(__name__)
 
 
-def _merge_regions(
+def merge_regions(
     regions: list[tuple[float, float]],
     audio_duration: float,
     pad: float = 0.5,
@@ -185,7 +185,7 @@ class AudioSeparator(ManagedPredictor):
             audio: Source audio (typically the full track).
             regions: List of ``(start, end)`` second pairs marking
                 speech-bearing portions. Caller is responsible for
-                merging/padding (use ``_merge_regions``).
+                merging/padding (use ``merge_regions``).
             full_separation_threshold: If the regions cover more than
                 this fraction of the audio, fall back to full-track
                 ``separate()`` since per-region slicing+stitching

@@ -24,6 +24,8 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field
 
+from videopython.ai.errors import AiError
+
 if TYPE_CHECKING:
     from videopython.base.transcription import Transcription
 
@@ -74,7 +76,7 @@ class TranscriptQuality(BaseModel):
     flags: list[str] = Field(default_factory=list)
 
 
-class GarbageTranscriptError(RuntimeError):
+class GarbageTranscriptError(AiError, RuntimeError):
     """Raised by the dubbing pipeline when ``strict_quality=True`` and the
     transcript heuristic returns ``recommendation="reject"``.
 

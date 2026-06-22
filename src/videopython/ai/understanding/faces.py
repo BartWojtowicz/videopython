@@ -40,7 +40,7 @@ class _FaceDetector(YoloDetector[DetectedFace]):
     """
 
     CONFIDENCE_THRESHOLD = 0.5
-    _FEATURE = "FaceTracker"
+    _FEATURE = "face tracking"
 
     def __init__(
         self,
@@ -115,19 +115,41 @@ def _bbox_iou(a: BoundingBox, b: BoundingBox) -> float:
     return intersection / union
 
 
-class FaceTracker(ManagedPredictor):
-    """Face tracking utility with per-frame smoothing and per-shot tracks.
+class _FaceTrackerBase(ManagedPredictor):
+    """Shared detector lifecycle for the face trackers.
 
-    Two surfaces:
+    Both trackers lazily build one :class:`_FaceDetector` and release it through
+    the :class:`ManagedPredictor` context-manager contract.
+    """
 
-    - ``detect_and_track(frame, frame_index)`` / ``track_video(frames)`` —
-      legacy single-subject API used by ``FaceTrackingCrop``. Returns a
-      smoothed ``(cx, cy, w, h)`` tuple.
-    - ``track_shot(frames, frame_indices)`` — new per-shot multi-track API
-      returning ``list[FaceTrack]``. Used by the analysis pipeline (M5)
-      and lip-sync (M6) to bind detections to subjects across the
-      frames of one shot. IoU-only association — tracks do not survive
-      across shot boundaries.
+    def __init__(self, *, min_face_size: int, backend: Backend) -> None:
+        self.min_face_size = min_face_size
+        self.backend: Backend = backend
+        self._detector: _FaceDetector | None = None
+
+    def _init_detector(self) -> None:
+        """Initialize the face detector lazily."""
+        self._detector = _FaceDetector(min_face_size=self.min_face_size, backend=self.backend)
+
+    def _ensure_detector(self) -> _FaceDetector:
+        if self._detector is None:
+            self._init_detector()
+        assert self._detector is not None
+        return self._detector
+
+    def unload(self) -> None:
+        """Release the underlying face-detection model (idempotent)."""
+        if self._detector is not None:
+            self._detector.unload()
+
+
+class FaceSmoothingTracker(_FaceTrackerBase):
+    """Single-subject face tracker with EMA position smoothing.
+
+    Selects one face per frame (``selection_strategy``) and returns a smoothed
+    ``(cx, cy, w, h)`` tuple in normalized coords via ``detect_and_track`` /
+    ``track_video``. Used by ``FaceTrackingCrop`` to drive a follow-the-speaker
+    crop.
     """
 
     def __init__(
@@ -137,62 +159,36 @@ class FaceTracker(ManagedPredictor):
         smoothing: float = 0.8,
         detection_interval: int = 3,
         min_face_size: int = 30,
-        backend: Literal["cpu", "gpu", "auto"] = "auto",
+        backend: Backend = "auto",
         sample_rate: int = 1,
         batch_size: int = 16,
-        iou_match_threshold: float = DEFAULT_IOU_MATCH_THRESHOLD,
-        max_missed_frames: int = DEFAULT_MAX_MISSED_FRAMES,
     ):
-        """Initialize face tracker.
+        """Initialize the smoothing tracker.
 
         Args:
-            selection_strategy: How to select which face to track (legacy
-                single-subject API).
-                - "largest": Track the face with the largest bounding box.
-                - "centered": Track the face closest to frame center.
-                - "index": Track the face at a specific index (sorted by area).
-            face_index: Index of face to track when using "index" strategy.
+            selection_strategy: Which face to track — "largest" (biggest box),
+                "centered" (closest to frame center), or "index" (``face_index``).
+            face_index: Index of face to track when using the "index" strategy.
             smoothing: Exponential moving average factor (0-1). Higher = smoother.
-            detection_interval: Run detection every N frames, interpolate between.
+            detection_interval: Run detection every N frames, hold position between.
             min_face_size: Minimum face size in pixels for detection.
             backend: Detection backend - "cpu", "gpu", or "auto".
             sample_rate: For GPU backend, detect every Nth frame and interpolate.
                 Only used by track_video(). Default 1 (every frame).
             batch_size: Batch size for GPU detection. Default 16.
-            iou_match_threshold: Minimum IoU between consecutive detections to
-                continue an existing per-shot track. Used by ``track_shot``.
-            max_missed_frames: How many consecutive frames a per-shot track
-                can go without a detection before it's closed.
         """
+        super().__init__(min_face_size=min_face_size, backend=backend)
         self.selection_strategy = selection_strategy
         self.face_index = face_index
         self.smoothing = smoothing
         self.detection_interval = detection_interval
-        self.min_face_size = min_face_size
-        self.backend: Literal["cpu", "gpu", "auto"] = backend
         self.sample_rate = sample_rate
         self.batch_size = batch_size
-        self.iou_match_threshold = iou_match_threshold
-        self.max_missed_frames = max_missed_frames
-
-        self._detector: _FaceDetector | None = None
         self._last_position: tuple[float, float] | None = None
         self._last_size: tuple[float, float] | None = None
         self._smoothed_position: tuple[float, float] | None = None
         self._smoothed_size: tuple[float, float] | None = None
-        logger.info("FaceTracker initialized with backend=%s", self.backend)
-
-    def unload(self) -> None:
-        """Release the underlying face-detection model (idempotent)."""
-        if self._detector is not None:
-            self._detector.unload()
-
-    def _init_detector(self) -> None:
-        """Initialize face detector lazily."""
-        self._detector = _FaceDetector(
-            min_face_size=self.min_face_size,
-            backend=self.backend,
-        )
+        logger.info("FaceSmoothingTracker initialized with backend=%s", self.backend)
 
     def _select_face(
         self,
@@ -405,6 +401,41 @@ class FaceTracker(ManagedPredictor):
         self.reset()
         return [self._smooth(face_info) for face_info in all_positions]
 
+
+class FaceShotTracker(_FaceTrackerBase):
+    """Per-shot multi-track face association via IoU.
+
+    Detects faces on every input frame and stitches them into ``FaceTrack``s
+    greedily by best IoU. Tracks do not survive across shot boundaries
+    (IoU-only association; no embedding re-id). Used by the video-analysis
+    pipeline to bind detections to subjects within one shot.
+    """
+
+    def __init__(
+        self,
+        min_face_size: int = 30,
+        backend: Backend = "auto",
+        batch_size: int = 16,
+        iou_match_threshold: float = DEFAULT_IOU_MATCH_THRESHOLD,
+        max_missed_frames: int = DEFAULT_MAX_MISSED_FRAMES,
+    ):
+        """Initialize the per-shot tracker.
+
+        Args:
+            min_face_size: Minimum face size in pixels for detection.
+            backend: Detection backend - "cpu", "gpu", or "auto".
+            batch_size: Batch size for detection. Default 16.
+            iou_match_threshold: Minimum IoU between consecutive detections to
+                continue an existing track.
+            max_missed_frames: Consecutive frames a track may go without a
+                detection before it is closed.
+        """
+        super().__init__(min_face_size=min_face_size, backend=backend)
+        self.batch_size = batch_size
+        self.iou_match_threshold = iou_match_threshold
+        self.max_missed_frames = max_missed_frames
+        logger.info("FaceShotTracker initialized with backend=%s", self.backend)
+
     def track_shot(
         self,
         frames: list[np.ndarray] | np.ndarray,
@@ -524,7 +555,7 @@ class FaceTracker(ManagedPredictor):
 
 
 class _OpenTrack:
-    """Mutable scratch state used by ``FaceTracker.track_shot``."""
+    """Mutable scratch state used by ``FaceShotTracker.track_shot``."""
 
     __slots__ = ("track_id", "last_box", "frame_indices", "boxes", "confidences", "missed")
 
@@ -538,7 +569,8 @@ class _OpenTrack:
 
 
 __all__ = [
-    "FaceTracker",
+    "FaceSmoothingTracker",
+    "FaceShotTracker",
     "_FaceDetector",
     "DEFAULT_IOU_MATCH_THRESHOLD",
     "DEFAULT_MAX_MISSED_FRAMES",

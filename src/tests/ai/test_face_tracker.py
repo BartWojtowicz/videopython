@@ -1,11 +1,11 @@
-"""Unit tests for ``FaceTracker.track_shot`` IoU association."""
+"""Unit tests for ``FaceShotTracker.track_shot`` IoU association."""
 
 from __future__ import annotations
 
 import numpy as np
 
 from videopython.ai.understanding import faces as faces_mod
-from videopython.ai.understanding.faces import FaceTracker
+from videopython.ai.understanding.faces import FaceShotTracker
 from videopython.base.description import BoundingBox, DetectedFace
 
 
@@ -40,7 +40,7 @@ def test_iou_helper_full_overlap_one() -> None:
 
 
 def test_track_shot_associates_two_consecutive_frames(monkeypatch) -> None:
-    tracker = FaceTracker()
+    tracker = FaceShotTracker()
     detector = _StaticDetector(
         [
             [_face(_box(0.10, 0.20))],
@@ -61,7 +61,7 @@ def test_track_shot_associates_two_consecutive_frames(monkeypatch) -> None:
 
 
 def test_track_shot_starts_new_track_when_iou_below_threshold(monkeypatch) -> None:
-    tracker = FaceTracker(iou_match_threshold=0.5)
+    tracker = FaceShotTracker(iou_match_threshold=0.5)
     detector = _StaticDetector(
         [
             [_face(_box(0.10, 0.10))],
@@ -79,7 +79,7 @@ def test_track_shot_starts_new_track_when_iou_below_threshold(monkeypatch) -> No
 
 
 def test_track_shot_preserves_two_distinct_subjects(monkeypatch) -> None:
-    tracker = FaceTracker()
+    tracker = FaceShotTracker()
     detector = _StaticDetector(
         [
             [_face(_box(0.10, 0.10)), _face(_box(0.70, 0.70))],
@@ -97,7 +97,7 @@ def test_track_shot_preserves_two_distinct_subjects(monkeypatch) -> None:
 
 
 def test_track_shot_closes_track_after_max_missed(monkeypatch) -> None:
-    tracker = FaceTracker(max_missed_frames=1)
+    tracker = FaceShotTracker(max_missed_frames=1)
     detector = _StaticDetector(
         [
             [_face(_box(0.10, 0.10))],

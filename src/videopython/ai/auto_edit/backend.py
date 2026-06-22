@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from videopython.ai.errors import AiError
+
 if TYPE_CHECKING:
     import numpy as np
 
 
-class PlannerError(RuntimeError):
+class PlannerError(AiError, RuntimeError):
     """A backend produced unusable output; the editor retries (infra errors should propagate instead)."""
 
 
