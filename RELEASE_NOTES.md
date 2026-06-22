@@ -1,5 +1,22 @@
 # Release Notes
 
+## 0.52.1
+
+`videopython.ai` internal cleanup (PR-3): the two Tier-5 items deferred from 0.52.0.
+No public API or behavior change.
+
+### Internal
+
+- **Dubbing pipeline dedup** — the Demucs source-separation block that was copy-pasted
+  between `LocalDubbingPipeline.process()` and `revoice()` is now a single
+  `_separate()` helper. Behavior-preserving; the only difference between the two call
+  sites was a progress fraction (0.15 vs 0.20), now a parameter.
+- **Dropped speculative config** — removed `AudioClassifier.SUPPORTED_MODELS` and its
+  single-model validation guard, and `AudioSeparator.SUPPORTED_MODELS` /
+  `STEM_NAMES_6S` (the 6-stem branch was never selected). `model_name` is now accepted
+  as-is; an unknown model surfaces a clear error at model-load time (HuggingFace /
+  Demucs) instead of a constructor `ValueError`.
+
 ## 0.52.0
 
 `videopython.ai` technical-debt cleanup (PR-2 of 2): the taxonomy moves, file/class

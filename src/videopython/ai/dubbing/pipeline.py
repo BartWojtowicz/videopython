@@ -229,6 +229,43 @@ class LocalDubbingPipeline:
         """Initialize the timing synchronizer."""
         self._synchronizer = TimingSynchronizer()
 
+    def _separate(
+        self,
+        source_audio: Audio,
+        transcription: Transcription,
+        progress_fraction: float,
+        report_progress: Callable[[str, float], None],
+    ) -> tuple[SeparatedAudio | None, Audio, Audio | None]:
+        """Demucs source separation over the speech regions; shared by process()/revoice().
+
+        Limits Demucs to the speech-bearing portion of the audio: the transcription
+        has already located every speech region, and separating outside those is pure
+        overhead (no vocals to isolate). On talk-heavy sources with silence/music gaps
+        this roughly halves separation time; when speech covers most of the track,
+        separate_regions falls back to a full-track separate().
+
+        Returns ``(separated_audio, vocal_audio, background_audio)``. In low_memory
+        mode the ``SeparatedAudio`` container is dropped (returned as ``None``) so
+        vocals and background release as soon as their last local reference goes.
+        """
+        report_progress("Separating audio", progress_fraction)
+        if self._separator is None:
+            self._init_separator()
+
+        from videopython.ai.dubbing.separation import merge_regions
+
+        speech_regions = merge_regions(
+            [(s.start, s.end) for s in transcription.segments],
+            audio_duration=source_audio.metadata.duration_seconds,
+        )
+        separated_audio = self._separator.separate_regions(source_audio, speech_regions)
+        self._maybe_unload("_separator")
+        vocal_audio = separated_audio.vocals
+        background_audio = separated_audio.background
+        if self.config.low_memory:
+            separated_audio = None
+        return separated_audio, vocal_audio, background_audio
+
     def _finalise_audio(
         self,
         dubbed_speech: Audio,
@@ -355,32 +392,9 @@ class LocalDubbingPipeline:
         background_audio: Audio | None = None
 
         if preserve_background:
-            report_progress("Separating audio", 0.15)
-            if self._separator is None:
-                self._init_separator()
-
-            # Limit Demucs to the speech-bearing portion of the audio. The
-            # transcription has already located every speech region; running
-            # source separation outside those is pure overhead (no vocals to
-            # isolate). On talk-heavy sources with silence/music gaps this
-            # roughly halves separation time. When speech covers most of the
-            # track separate_regions falls back to a full-track separate().
-            from videopython.ai.dubbing.separation import merge_regions
-
-            speech_regions = merge_regions(
-                [(s.start, s.end) for s in transcription.segments],
-                audio_duration=source_audio.metadata.duration_seconds,
+            separated_audio, vocal_audio, background_audio = self._separate(
+                source_audio, transcription, 0.15, report_progress
             )
-            separated_audio = self._separator.separate_regions(source_audio, speech_regions)
-            self._maybe_unload("_separator")
-            vocal_audio = separated_audio.vocals
-            background_audio = separated_audio.background
-            # In low_memory mode, drop the SeparatedAudio container so vocals
-            # and background can be released as soon as their last local
-            # reference goes (after voice-sample extraction and final overlay
-            # respectively). The result will report separated_audio=None.
-            if self.config.low_memory:
-                separated_audio = None
 
         voice_samples: dict[str, Audio] = {}
         if voice_clone:
@@ -527,22 +541,9 @@ class LocalDubbingPipeline:
         background_audio: Audio | None = None
 
         if preserve_background:
-            report_progress("Separating audio", 0.20)
-            if self._separator is None:
-                self._init_separator()
-
-            from videopython.ai.dubbing.separation import merge_regions
-
-            speech_regions = merge_regions(
-                [(s.start, s.end) for s in transcription.segments],
-                audio_duration=source_audio.metadata.duration_seconds,
+            separated_audio, vocal_audio, background_audio = self._separate(
+                source_audio, transcription, 0.20, report_progress
             )
-            separated_audio = self._separator.separate_regions(source_audio, speech_regions)
-            self._maybe_unload("_separator")
-            vocal_audio = separated_audio.vocals
-            background_audio = separated_audio.background
-            if self.config.low_memory:
-                separated_audio = None
 
         report_progress("Extracting voice sample", 0.40)
         chosen_sample: Audio | None = None

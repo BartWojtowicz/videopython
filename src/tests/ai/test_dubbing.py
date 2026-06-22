@@ -767,12 +767,11 @@ class TestAudioSeparator:
 
         assert separator.model_name == "htdemucs_ft"
 
-    def test_initialization_invalid_model(self):
-        """Test that invalid model raises error."""
+    def test_initialization_accepts_arbitrary_model(self):
+        """model_name is no longer validated at construction (deferred to Demucs)."""
         from videopython.ai.dubbing.separation import AudioSeparator
 
-        with pytest.raises(ValueError, match="not supported"):
-            AudioSeparator(model_name="invalid_model")
+        assert AudioSeparator(model_name="some_other_model").model_name == "some_other_model"
 
 
 class TestMergeRegions:

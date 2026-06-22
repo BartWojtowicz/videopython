@@ -24,12 +24,11 @@ SMALL_VIDEO_PATH = os.path.join(TEST_DATA_DIR, "small_video.mp4")
 class TestAudioClassifierInit:
     """Lightweight tests for AudioClassifier initialization (no model download needed)."""
 
-    def test_classifier_unsupported_model(self):
-        """Test classifier raises error for unsupported model."""
+    def test_classifier_accepts_arbitrary_model_name(self):
+        """model_name is no longer validated at construction (deferred to model load)."""
         from videopython.ai.understanding.classification import AudioClassifier
 
-        with pytest.raises(ValueError, match="not supported"):
-            AudioClassifier(model_name="InvalidModel")
+        assert AudioClassifier(model_name="some/other-ast-model").model_name == "some/other-ast-model"
 
 
 @requires_model_download

@@ -59,14 +59,9 @@ def merge_regions(
 class AudioSeparator(ManagedPredictor):
     """Separates audio into vocals and background components using Demucs."""
 
-    SUPPORTED_MODELS: list[str] = ["htdemucs", "htdemucs_ft", "htdemucs_6s", "mdx_extra"]
     STEM_NAMES = ["drums", "bass", "other", "vocals"]
-    STEM_NAMES_6S = ["drums", "bass", "other", "vocals", "guitar", "piano"]
 
     def __init__(self, model_name: str = "htdemucs", device: str | None = None):
-        if model_name not in self.SUPPORTED_MODELS:
-            raise ValueError(f"Model '{model_name}' not supported. Supported: {self.SUPPORTED_MODELS}")
-
         self.model_name = model_name
         self.device = device
         self._model: Any = None
@@ -129,7 +124,7 @@ class AudioSeparator(ManagedPredictor):
         sources_np = sources[0].cpu().numpy()
         del sources
 
-        stem_names = self.STEM_NAMES_6S if self.model_name == "htdemucs_6s" else self.STEM_NAMES
+        stem_names = self.STEM_NAMES
         vocals_idx = stem_names.index("vocals")
         non_vocal_indices = [i for i in range(len(stem_names)) if i != vocals_idx]
 
