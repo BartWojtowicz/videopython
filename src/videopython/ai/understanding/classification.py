@@ -23,7 +23,6 @@ class AudioClassifier(ManagedPredictor):
     """Audio event and sound classification using AST."""
 
     _model_attrs = ("_model", "_processor")
-    SUPPORTED_MODELS: list[str] = ["MIT/ast-finetuned-audioset-10-10-0.4593"]
     AST_SAMPLE_RATE: int = 16000
     AST_CHUNK_SECONDS: float = 10.0
     AST_HOP_SECONDS: float = 5.0
@@ -35,9 +34,6 @@ class AudioClassifier(ManagedPredictor):
         top_k: int = 10,
         device: str | None = None,
     ):
-        if model_name not in self.SUPPORTED_MODELS:
-            raise ValueError(f"Model '{model_name}' not supported. Supported: {self.SUPPORTED_MODELS}")
-
         self.model_name = model_name
         self.confidence_threshold = confidence_threshold
         self.top_k = top_k
