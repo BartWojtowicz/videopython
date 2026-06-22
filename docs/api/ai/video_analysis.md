@@ -90,16 +90,16 @@ preview.
 
 ## Rich Understanding Preset
 
-Use the built-in preset when you want broad understanding coverage across many video types:
+Use the `"full"` profile (the default config) when you want broad understanding coverage across many video types:
 
 ```python
 from videopython.ai import VideoAnalysisConfig, VideoAnalyzer
 
-config = VideoAnalysisConfig.rich_understanding_preset()
+config = VideoAnalysisConfig.for_profile("full")
 analysis = VideoAnalyzer(config=config).analyze_path("video.mp4")
 ```
 
-The preset enables every analyzer (`audio_to_text`, `audio_classifier`,
+The `"full"` profile enables every analyzer (`audio_to_text`, `audio_classifier`,
 `semantic_scene_detector`, `scene_vlm`, `face_tracker`) and is
 equivalent to bare `VideoAnalysisConfig()`.
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from videopython.ai._device import log_device_initialization, release_device_memory, select_device
+from videopython.ai._device import log_device_initialization, select_device
 from videopython.ai._predictor import ManagedPredictor
 from videopython.base.description import SceneBoundary
 
@@ -67,7 +67,7 @@ class SemanticSceneDetector(ManagedPredictor):
 
         from videopython.ai._optional import require
 
-        TransNetV2 = require("transnetv2_pytorch", "ai", feature="SemanticSceneDetector").TransNetV2
+        TransNetV2 = require("transnetv2_pytorch", feature="SemanticSceneDetector").TransNetV2
 
         requested_device = self.device
         device = select_device(self.device, mps_allowed=True)
@@ -79,11 +79,6 @@ class SemanticSceneDetector(ManagedPredictor):
         self.device = device
         self._model = TransNetV2(device=device)
         self._model.eval()
-
-    def unload(self) -> None:
-        """Release the TransNetV2 model so the next call re-initializes."""
-        self._model = None
-        release_device_memory(self.device)
 
     def detect(self, video: Video) -> list[SceneBoundary]:
         """Detect scenes in a video using ML-based boundary detection.

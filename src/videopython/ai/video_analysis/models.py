@@ -169,11 +169,6 @@ class VideoAnalysisConfig(BaseModel):
         return dict(self.analyzer_params.get(analyzer_id, {}))
 
     @classmethod
-    def rich_understanding_preset(cls) -> VideoAnalysisConfig:
-        """Backward-compatible alias for the default config."""
-        return cls()
-
-    @classmethod
     def for_profile(cls, profile: str, *, faces: bool = True) -> VideoAnalysisConfig:
         """Config for an analysis profile: 'full' (all analyzers) or 'editing' (catalog-only, no audio classifier)."""
         if profile == "full":

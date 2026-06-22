@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Literal
 
-from videopython.ai._device import log_device_initialization, release_device_memory, select_device
+from videopython.ai._device import log_device_initialization, select_device
 from videopython.ai._predictor import ManagedPredictor
 from videopython.ai._revisions import pinned
 from videopython.audio import Audio
@@ -59,7 +59,7 @@ def _build_initial_prompt(vocabulary: list[str]) -> str | None:
 
     from videopython.ai._optional import require
 
-    whisper_tokenizer = require("whisper.tokenizer", "ai", feature="AudioToText")
+    whisper_tokenizer = require("whisper.tokenizer", feature="AudioToText")
 
     tokenizer = whisper_tokenizer.get_tokenizer(multilingual=True, task="transcribe")
     kept = list(vocabulary)
@@ -139,6 +139,7 @@ class AudioToText(ManagedPredictor):
     """
 
     PYANNOTE_DIARIZATION_MODEL = "pyannote/speaker-diarization-community-1"
+    _model_attrs = ("_model", "_diarization_pipeline", "_vad_model")
 
     def __init__(
         self,
@@ -187,7 +188,7 @@ class AudioToText(ManagedPredictor):
         """Initialize local Whisper model."""
         from videopython.ai._optional import require
 
-        whisper = require("whisper", "ai", feature="AudioToText")
+        whisper = require("whisper", feature="AudioToText")
 
         # No revision pin: openai-whisper downloads weights by name from OpenAI's
         # own CDN, not via a HF from_pretrained repo, so there is no HF commit
@@ -200,7 +201,7 @@ class AudioToText(ManagedPredictor):
 
         from videopython.ai._optional import require
 
-        Pipeline = require("pyannote.audio", "ai", feature="AudioToText diarization").Pipeline
+        Pipeline = require("pyannote.audio", feature="AudioToText diarization").Pipeline
 
         self._diarization_pipeline = Pipeline.from_pretrained(
             self.PYANNOTE_DIARIZATION_MODEL, revision=pinned(self.PYANNOTE_DIARIZATION_MODEL)
@@ -216,19 +217,9 @@ class AudioToText(ManagedPredictor):
         """
         from videopython.ai._optional import require
 
-        load_silero_vad = require("silero_vad", "ai", feature="AudioToText VAD").load_silero_vad
+        load_silero_vad = require("silero_vad", feature="AudioToText VAD").load_silero_vad
 
         self._vad_model = load_silero_vad()
-
-    def unload(self) -> None:
-        """Release the Whisper, diarization, and VAD models so the next call re-initializes.
-
-        Used by low-memory dubbing to free VRAM between pipeline stages.
-        """
-        self._model = None
-        self._diarization_pipeline = None
-        self._vad_model = None
-        release_device_memory(self.device)
 
     def _process_transcription_result(self, transcription_result: dict[str, Any]) -> Transcription:
         """Process raw transcription result into a Transcription object."""
@@ -496,6 +487,7 @@ class AudioToText(ManagedPredictor):
 class AudioClassifier(ManagedPredictor):
     """Audio event and sound classification using AST."""
 
+    _model_attrs = ("_model", "_processor")
     SUPPORTED_MODELS: list[str] = ["MIT/ast-finetuned-audioset-10-10-0.4593"]
     AST_SAMPLE_RATE: int = 16000
     AST_CHUNK_SECONDS: float = 10.0
@@ -529,7 +521,7 @@ class AudioClassifier(ManagedPredictor):
         """Initialize local AST model from HuggingFace."""
         from videopython.ai._optional import require
 
-        _transformers = require("transformers", "ai", feature="AudioClassifier")
+        _transformers = require("transformers", feature="AudioClassifier")
         ASTFeatureExtractor = _transformers.ASTFeatureExtractor
         ASTForAudioClassification = _transformers.ASTForAudioClassification
 
@@ -539,15 +531,6 @@ class AudioClassifier(ManagedPredictor):
         self._model.eval()
 
         self._labels = [self._model.config.id2label[i] for i in range(len(self._model.config.id2label))]
-
-    def unload(self) -> None:
-        """Release the AST model so the next classify() re-initializes.
-
-        Used by low-memory dubbing to free VRAM between pipeline stages.
-        """
-        self._model = None
-        self._processor = None
-        release_device_memory(self.device)
 
     def _merge_events(self, events: list[AudioEvent], gap_threshold: float = 0.5) -> list[AudioEvent]:
         """Merge consecutive events of the same class."""

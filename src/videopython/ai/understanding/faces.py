@@ -16,8 +16,9 @@ from typing import Any, Literal
 
 import numpy as np
 
-from videopython.ai._device import select_device
+from videopython.ai._predictor import ManagedPredictor
 from videopython.ai._revisions import pinned
+from videopython.ai.understanding._yolo import Backend, YoloDetector
 from videopython.base.description import BoundingBox, DetectedFace, FaceTrack
 
 logger = logging.getLogger(__name__)
@@ -30,68 +31,39 @@ DEFAULT_IOU_MATCH_THRESHOLD = 0.3
 DEFAULT_MAX_MISSED_FRAMES = 3
 
 
-class _FaceDetector:
-    """Internal YOLOv8-face detector. Renamed from ``_FaceDetectionBackend``.
+class _FaceDetector(YoloDetector[DetectedFace]):
+    """Internal YOLOv8-face detector over the shared :class:`YoloDetector` base.
 
-    Identical behaviour to the previous transforms-layer implementation —
-    only the import path changed. Producers in ``transforms.py`` reach for
-    this class via the lifted module path.
+    Pulls the pinned ``arnabdhar/YOLOv8-Face-Detection`` checkpoint and filters
+    detections below ``min_face_size`` pixels. Producers in ``transforms.py``
+    reach for this class via the lifted module path.
     """
 
     CONFIDENCE_THRESHOLD = 0.5
+    _FEATURE = "FaceTracker"
 
     def __init__(
         self,
         min_face_size: int = 30,
-        backend: Literal["cpu", "gpu", "auto"] = "auto",
+        backend: Backend = "auto",
     ):
+        super().__init__(backend=backend)
         self.min_face_size = min_face_size
-        self.backend: Literal["cpu", "gpu", "auto"] = backend
-        self._resolved_device: Literal["cpu", "cuda"] | None = None
-        self._yolo_model: Any = None
 
-    def _resolve_device(self) -> Literal["cpu", "cuda"]:
-        if self._resolved_device is not None:
-            return self._resolved_device
+    def _conf(self) -> float:
+        return self.CONFIDENCE_THRESHOLD
 
-        if self.backend == "cpu":
-            self._resolved_device = "cpu"
-            return self._resolved_device
-
-        if self.backend == "gpu":
-            resolved = select_device(None, mps_allowed=False)
-            if resolved != "cuda":
-                raise ValueError("GPU backend requested but CUDA is not available.")
-            self._resolved_device = "cuda"
-            return self._resolved_device
-
-        resolved_auto = select_device(None, mps_allowed=False)
-        self._resolved_device = "cuda" if resolved_auto == "cuda" else "cpu"
-        return self._resolved_device
-
-    def execution_device(self) -> Literal["cpu", "cuda"]:
-        """Resolved execution device for this detector."""
-        return self._resolve_device()
-
-    def _init_yolo_face(self) -> None:
+    def _load_model(self) -> None:
         from huggingface_hub import hf_hub_download
-
-        from videopython.ai._optional import require
-
-        YOLO = require("ultralytics", "ai", feature="FaceTracker").YOLO
 
         model_path = hf_hub_download(
             repo_id="arnabdhar/YOLOv8-Face-Detection",
             filename="model.pt",
             revision=pinned("arnabdhar/YOLOv8-Face-Detection"),
         )
-        self._yolo_model = YOLO(model_path)
+        self._build_yolo(model_path)
 
-        device = self._resolve_device()
-        if device == "cuda":
-            self._yolo_model.to("cuda")
-
-    def _faces_from_yolo_result(self, result: Any) -> list[DetectedFace]:
+    def _parse(self, result: Any) -> list[DetectedFace]:
         detected_faces: list[DetectedFace] = []
         boxes = result.boxes
         if boxes is None:
@@ -121,29 +93,6 @@ class _FaceDetector:
         detected_faces.sort(key=lambda f: f.area or 0, reverse=True)
         return detected_faces
 
-    def detect(self, image: np.ndarray) -> list[DetectedFace]:
-        if self._yolo_model is None:
-            self._init_yolo_face()
-        assert self._yolo_model is not None
-
-        results = self._yolo_model(image, conf=self.CONFIDENCE_THRESHOLD, verbose=False)
-        if not results:
-            return []
-        return self._faces_from_yolo_result(results[0])
-
-    def detect_batch(self, images: list[np.ndarray] | np.ndarray) -> list[list[DetectedFace]]:
-        if isinstance(images, np.ndarray):
-            images = [images[i] for i in range(images.shape[0])] if images.ndim == 4 else [images]
-        if not images:
-            return []
-
-        if self._yolo_model is None:
-            self._init_yolo_face()
-        assert self._yolo_model is not None
-
-        results = self._yolo_model(images, conf=self.CONFIDENCE_THRESHOLD, verbose=False)
-        return [self._faces_from_yolo_result(result) for result in results]
-
 
 def _bbox_iou(a: BoundingBox, b: BoundingBox) -> float:
     """Standard IoU on normalized bounding boxes."""
@@ -166,7 +115,7 @@ def _bbox_iou(a: BoundingBox, b: BoundingBox) -> float:
     return intersection / union
 
 
-class FaceTracker:
+class FaceTracker(ManagedPredictor):
     """Face tracking utility with per-frame smoothing and per-shot tracks.
 
     Two surfaces:
@@ -232,6 +181,11 @@ class FaceTracker:
         self._smoothed_position: tuple[float, float] | None = None
         self._smoothed_size: tuple[float, float] | None = None
         logger.info("FaceTracker initialized with backend=%s", self.backend)
+
+    def unload(self) -> None:
+        """Release the underlying face-detection model (idempotent)."""
+        if self._detector is not None:
+            self._detector.unload()
 
     def _init_detector(self) -> None:
         """Initialize face detector lazily."""

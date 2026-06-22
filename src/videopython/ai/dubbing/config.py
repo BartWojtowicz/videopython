@@ -6,7 +6,6 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-TranslatorChoice = Literal["auto", "ollama"]
 WhisperModel = Literal["tiny", "base", "small", "medium", "large", "turbo"]
 
 
@@ -47,9 +46,8 @@ class DubbingConfig(BaseModel):
             WARNING but processing continues. Either way the
             :class:`TranscriptQuality` is exposed on ``DubbingResult`` for
             inspection.
-        translator: Translation backend; ``"auto"`` and ``"ollama"`` both use the
-            local Ollama text model. ``translator_model`` sets the Ollama tag and
-            ``translator_host`` the server URL.
+        translator_model: Ollama tag for the translation model (``None`` uses the
+            translator's default). ``translator_host`` sets the server URL.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -62,7 +60,6 @@ class DubbingConfig(BaseModel):
     logprob_threshold: float | None = -1.0
     vocabulary: list[str] | None = None
     strict_quality: bool = False
-    translator: TranslatorChoice = "auto"
     translator_model: str | None = None
     translator_host: str | None = None
 
@@ -75,5 +72,5 @@ class DubbingConfig(BaseModel):
             "device": self.device.lower() if isinstance(self.device, str) else "auto",
             "low_memory": self.low_memory,
             "whisper_model": self.whisper_model,
-            "translator": self.translator,
+            "translator_model": self.translator_model,
         }

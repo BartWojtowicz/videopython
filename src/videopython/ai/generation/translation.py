@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Callable
 
 from videopython.ai._ollama import OllamaError, OllamaStructuredClient
 from videopython.ai._predictor import ManagedPredictor
@@ -27,23 +27,6 @@ logger = logging.getLogger(__name__)
 DEFAULT_TRANSLATION_MODEL = "gemma3:27b"
 
 
-class UnsupportedLanguageError(ValueError):
-    """Raised when no translation backend supports a ``(source, target)`` pair.
-
-    Carries the requested pair so callers can introspect::
-
-        try:
-            dubber.dub(video, target_lang="xh")
-        except UnsupportedLanguageError as e:
-            print(f"No backend covers {e.source_lang}->{e.target_lang}")
-    """
-
-    def __init__(self, source_lang: str, target_lang: str, message: str | None = None):
-        self.source_lang = source_lang
-        self.target_lang = target_lang
-        super().__init__(message or f"No translation backend supports {source_lang}->{target_lang}")
-
-
 def _is_translatable_text(text: str) -> bool:
     """Return True if text has enough content to be worth translating.
 
@@ -51,29 +34,6 @@ def _is_translatable_text(text: str) -> bool:
     (" .", "...", "?", "♪"). Require at least 2 alphanumeric characters.
     """
     return sum(1 for c in text if c.isalnum()) >= 2
-
-
-@runtime_checkable
-class TranslationBackend(Protocol):
-    """Pipeline-facing translation interface."""
-
-    def translate_segments(
-        self,
-        segments: list[TranscriptionSegment],
-        target_lang: str,
-        source_lang: str | None = None,
-        progress_callback: Callable[[float], None] | None = None,
-    ) -> list[TranslatedSegment]: ...
-
-    def unload(self) -> None: ...
-
-    @property
-    def translation_failures(self) -> list[int]:
-        """Indices into the most recent ``segments`` input where translation failed."""
-        ...
-
-    @staticmethod
-    def get_supported_languages() -> dict[str, str]: ...
 
 
 LANGUAGE_NAMES = {
@@ -366,10 +326,3 @@ class OllamaTranslator(ManagedPredictor):
     @staticmethod
     def get_supported_languages() -> dict[str, str]:
         return LANGUAGE_NAMES.copy()
-
-    @classmethod
-    def supports(cls, source_lang: str, target_lang: str) -> bool:
-        """Coverage hint for the dubbing pipeline."""
-        if source_lang == target_lang:
-            return True
-        return source_lang in LANGUAGE_NAMES and target_lang in LANGUAGE_NAMES

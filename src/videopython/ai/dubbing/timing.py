@@ -45,18 +45,15 @@ class TimingSynchronizer:
         self,
         min_speed: float | None = None,
         max_speed: float | None = None,
-        gap_threshold: float = 0.1,
     ):
         """Initialize the timing synchronizer.
 
         Args:
             min_speed: Minimum speed factor (default: 0.8).
             max_speed: Maximum speed factor (default: 1.3).
-            gap_threshold: Minimum gap between segments in seconds (default: 0.1).
         """
         self.min_speed = min_speed if min_speed is not None else self.MIN_SPEED
         self.max_speed = max_speed if max_speed is not None else self.MAX_SPEED
-        self.gap_threshold = gap_threshold
 
         if self.min_speed <= 0:
             raise ValueError("min_speed must be positive")
@@ -235,39 +232,3 @@ class TimingSynchronizer:
             frame_count=end_sample,
         )
         return Audio(output, metadata)
-
-    def check_overlaps(
-        self,
-        start_times: list[float],
-        durations: list[float],
-    ) -> list[tuple[int, int, float]]:
-        """Check for overlapping segments.
-
-        Args:
-            start_times: Start time for each segment.
-            durations: Duration of each segment.
-
-        Returns:
-            List of overlapping pairs as (index1, index2, overlap_duration).
-        """
-        if len(start_times) != len(durations):
-            raise ValueError("Length mismatch between start_times and durations")
-
-        overlaps = []
-        n = len(start_times)
-
-        for i in range(n):
-            end_i = start_times[i] + durations[i]
-            for j in range(i + 1, n):
-                # Check if segment j starts before segment i ends
-                if start_times[j] < end_i and start_times[j] >= start_times[i]:
-                    overlap = end_i - start_times[j]
-                    if overlap > self.gap_threshold:
-                        overlaps.append((i, j, overlap))
-                # Check if segment i starts before segment j ends
-                elif start_times[i] < start_times[j] + durations[j] and start_times[i] >= start_times[j]:
-                    overlap = start_times[j] + durations[j] - start_times[i]
-                    if overlap > self.gap_threshold:
-                        overlaps.append((j, i, overlap))
-
-        return overlaps

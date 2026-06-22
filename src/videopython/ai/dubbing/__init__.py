@@ -29,7 +29,6 @@ if TYPE_CHECKING:
     from videopython.ai.dubbing.quality import TranscriptQuality as TranscriptQuality
     from videopython.ai.dubbing.quality import assess_transcript as assess_transcript
     from videopython.ai.dubbing.timing import TimingSynchronizer as TimingSynchronizer
-    from videopython.ai.generation.translation import UnsupportedLanguageError as UnsupportedLanguageError
 
 # Public symbol -> fully-qualified module that defines it.
 _exports: dict[str, str] = {
@@ -45,7 +44,6 @@ _exports: dict[str, str] = {
     "GarbageTranscriptError": "videopython.ai.dubbing.quality",
     "TranscriptQuality": "videopython.ai.dubbing.quality",
     "assess_transcript": "videopython.ai.dubbing.quality",
-    "UnsupportedLanguageError": "videopython.ai.generation.translation",
 }
 
 __all__ = list(_exports)

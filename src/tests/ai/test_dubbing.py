@@ -132,15 +132,13 @@ class TestTimingSynchronizer:
 
         assert sync.min_speed == 0.8
         assert sync.max_speed == 1.3
-        assert sync.gap_threshold == 0.1
 
     def test_initialization_custom(self):
         """Test custom initialization values."""
-        sync = TimingSynchronizer(min_speed=0.5, max_speed=2.0, gap_threshold=0.2)
+        sync = TimingSynchronizer(min_speed=0.5, max_speed=2.0)
 
         assert sync.min_speed == 0.5
         assert sync.max_speed == 2.0
-        assert sync.gap_threshold == 0.2
 
     def test_initialization_invalid(self):
         """Test that invalid parameters raise errors."""
@@ -282,31 +280,6 @@ class TestTimingSynchronizer:
         peak = float(np.max(np.abs(result.data)))
         # sample_audio peaks at 0.5; with no overlap, output peak should match
         assert abs(peak - 0.5) < 0.01
-
-    def test_check_overlaps_no_overlaps(self):
-        """Test check_overlaps with non-overlapping segments."""
-        sync = TimingSynchronizer()
-        start_times = [0.0, 2.0, 4.0]
-        durations = [1.0, 1.0, 1.0]
-
-        overlaps = sync.check_overlaps(start_times, durations)
-
-        assert len(overlaps) == 0
-
-    def test_check_overlaps_with_overlaps(self):
-        """Test check_overlaps with overlapping segments."""
-        sync = TimingSynchronizer()
-        start_times = [0.0, 1.5, 3.0]
-        durations = [2.0, 2.0, 1.0]  # First overlaps with second
-
-        overlaps = sync.check_overlaps(start_times, durations)
-
-        assert len(overlaps) >= 1
-        # First pair should overlap
-        first_overlap = overlaps[0]
-        assert first_overlap[0] == 0  # First segment index
-        assert first_overlap[1] == 1  # Second segment index
-        assert first_overlap[2] > 0  # Overlap duration
 
 
 class TestDubbingResult:
@@ -1815,107 +1788,8 @@ class TestVoiceSampleCache:
             assert call["voice_sample_path"] is None
 
 
-class TestReplaceAudioStream:
-    """Tests for the ffmpeg audio-stream replacement helper."""
-
-    def test_missing_video_raises(self, tmp_path):
-        from videopython.ai.dubbing.remux import replace_audio_stream
-
-        audio = tmp_path / "a.wav"
-        audio.write_bytes(b"")
-
-        with pytest.raises(FileNotFoundError, match="Video file not found"):
-            replace_audio_stream(tmp_path / "missing.mp4", audio, tmp_path / "out.mp4")
-
-    def test_missing_audio_raises(self, tmp_path):
-        from videopython.ai.dubbing.remux import replace_audio_stream
-
-        video = tmp_path / "v.mp4"
-        video.write_bytes(b"")
-
-        with pytest.raises(FileNotFoundError, match="Audio file not found"):
-            replace_audio_stream(video, tmp_path / "missing.wav", tmp_path / "out.mp4")
-
-    def test_ffmpeg_failure_raises_remux_error(self, tmp_path, monkeypatch):
-        """Non-zero ffmpeg exit code is wrapped in RemuxError with stderr."""
-        import videopython.ai.dubbing.remux as remux_mod
-        from videopython.base.exceptions import FFmpegRunError
-
-        video = tmp_path / "v.mp4"
-        video.write_bytes(b"not a real video")
-        audio = tmp_path / "a.wav"
-        audio.write_bytes(b"not a real wav")
-
-        def fake_run(cmd, *, stdin=None):
-            raise FFmpegRunError("simulated ffmpeg error")
-
-        monkeypatch.setattr(remux_mod._ffmpeg, "run", fake_run)
-
-        with pytest.raises(remux_mod.RemuxError, match="simulated ffmpeg error"):
-            remux_mod.replace_audio_stream(video, audio, tmp_path / "out.mp4")
-
-    def test_ffmpeg_command_structure(self, tmp_path, monkeypatch):
-        """ffmpeg is invoked with stream-copy video and mapped audio."""
-        import videopython.ai.dubbing.remux as remux_mod
-
-        video = tmp_path / "v.mp4"
-        video.write_bytes(b"fake")
-        audio = tmp_path / "a.wav"
-        audio.write_bytes(b"fake")
-        out = tmp_path / "out.mp4"
-
-        captured: dict = {}
-
-        def fake_run(cmd, *, stdin=None):
-            captured["cmd"] = cmd
-            return b""
-
-        monkeypatch.setattr(remux_mod._ffmpeg, "run", fake_run)
-
-        remux_mod.replace_audio_stream(video, audio, out)
-
-        cmd = captured["cmd"]
-        assert cmd[0] == "ffmpeg"
-        assert "-c:v" in cmd and cmd[cmd.index("-c:v") + 1] == "copy"
-        assert "-map" in cmd
-        # Three -map args: video, dubbed audio, subtitles (?-tolerant)
-        map_indices = [i for i, v in enumerate(cmd) if v == "-map"]
-        assert len(map_indices) == 3
-        assert cmd[map_indices[0] + 1] == "0:v:0"
-        assert cmd[map_indices[1] + 1] == "1:a:0"
-        assert cmd[map_indices[2] + 1] == "0:s?"
-        assert "-c:s" in cmd and cmd[cmd.index("-c:s") + 1] == "copy"
-        assert "-shortest" in cmd
-        assert cmd[-1] == str(out)
-
-    def test_keep_original_audio_adds_extra_map(self, tmp_path, monkeypatch):
-        """``keep_original_audio=True`` adds ``-map 0:a?`` between dub and subs."""
-        import videopython.ai.dubbing.remux as remux_mod
-
-        video = tmp_path / "v.mp4"
-        video.write_bytes(b"fake")
-        audio = tmp_path / "a.wav"
-        audio.write_bytes(b"fake")
-        out = tmp_path / "out.mp4"
-
-        captured: dict = {}
-
-        def fake_run(cmd, *, stdin=None):
-            captured["cmd"] = cmd
-            return b""
-
-        monkeypatch.setattr(remux_mod._ffmpeg, "run", fake_run)
-
-        remux_mod.replace_audio_stream(video, audio, out, keep_original_audio=True)
-
-        cmd = captured["cmd"]
-        map_args = [cmd[i + 1] for i, v in enumerate(cmd) if v == "-map"]
-        # Dubbed audio first (default track), then original, then subs.
-        assert map_args == ["0:v:0", "1:a:0", "0:a?", "0:s?"]
-
-
 class TestReplaceAudioStreamFromAudio:
-    """Tests for the streaming-audio variant of replace_audio_stream."""
+    """Tests for replace_audio_stream_from_audio (the in-memory audio remux)."""
 
     def test_missing_video_raises(self, tmp_path, sample_audio):
         from videopython.ai.dubbing.remux import replace_audio_stream_from_audio
@@ -2802,20 +2676,20 @@ class TestStrictQualityIntegration:
 
 
 class TestDubberTranslatorKwarg:
-    """VideoDubber forwards the translator choice into the pipeline config."""
+    """VideoDubber forwards the translator model kwarg into the pipeline config."""
 
-    def test_dubber_propagates_translator_kwarg(self):
+    def test_dubber_propagates_translator_model_kwarg(self):
         from videopython.ai.dubbing import VideoDubber
 
-        dubber = VideoDubber(translator="ollama")
+        dubber = VideoDubber(translator_model="gemma3:27b")
         dubber._init_local_pipeline()
 
-        assert dubber._local_pipeline.config.translator == "ollama"
+        assert dubber._local_pipeline.config.translator_model == "gemma3:27b"
 
-    def test_dubber_default_translator_is_auto(self):
+    def test_dubber_default_translator_model_is_none(self):
         from videopython.ai.dubbing import VideoDubber
 
-        assert VideoDubber().config.translator == "auto"
+        assert VideoDubber().config.translator_model is None
 
 
 class TestTranslationFailuresOnResult:

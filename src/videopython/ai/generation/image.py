@@ -6,13 +6,15 @@ from typing import Any
 
 from PIL import Image
 
-from videopython.ai._device import log_device_initialization, release_device_memory, select_device
+from videopython.ai._device import log_device_initialization, select_device
 from videopython.ai._predictor import ManagedPredictor
 from videopython.ai._revisions import pinned
 
 
 class TextToImage(ManagedPredictor):
     """Generates images from text descriptions using local models."""
+
+    _model_attrs = ("_pipeline",)
 
     def __init__(self, device: str | None = None):
         self.device = device
@@ -24,7 +26,7 @@ class TextToImage(ManagedPredictor):
 
         from videopython.ai._optional import require
 
-        DiffusionPipeline = require("diffusers", "ai", feature="TextToImage").DiffusionPipeline
+        DiffusionPipeline = require("diffusers", feature="TextToImage").DiffusionPipeline
 
         requested_device = self.device
         device = select_device(self.device, mps_allowed=True)
@@ -55,8 +57,3 @@ class TextToImage(ManagedPredictor):
         if self._pipeline is None:
             self._init_local()
         return self._pipeline(prompt=prompt).images[0]
-
-    def unload(self) -> None:
-        """Release the diffusion pipeline so the next generate_image() re-initializes."""
-        self._pipeline = None
-        release_device_memory(self.device)

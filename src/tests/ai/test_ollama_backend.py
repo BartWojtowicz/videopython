@@ -12,7 +12,7 @@ import pytest
 from PIL import Image
 
 from videopython.ai._ollama import KEYFRAME_MAX_DIM, _downscale, _encode_png_b64
-from videopython.ai.auto_edit import ImagePart, OllamaVisionLLM, Part, PlannerError, TextPart
+from videopython.ai.auto_edit import OllamaVisionLLM, PlannerError
 
 
 class _FakeClient:
@@ -37,9 +37,9 @@ def test_generate_json_builds_messages_and_parses() -> None:
     fake = _FakeClient('{"segments": [{"scene_id": "x"}]}')
     _inject(backend, fake)
     schema = {"type": "object", "properties": {}}
-    parts: list[Part] = [TextPart("brief"), ImagePart(image=np.zeros((4, 4, 3), dtype=np.uint8), label="x")]
+    images = [np.zeros((4, 4, 3), dtype=np.uint8)]
 
-    out = backend.generate_json(system="sys", parts=parts, schema=schema)
+    out = backend.generate_json(system="sys", text="brief", images=images, schema=schema)
 
     assert out == {"segments": [{"scene_id": "x"}]}
     call = fake.calls[0]
@@ -56,7 +56,7 @@ def test_no_images_omits_images_key() -> None:
     backend = OllamaVisionLLM()
     fake = _FakeClient("{}")
     _inject(backend, fake)
-    backend.generate_json(system="s", parts=[TextPart("only text")], schema={})
+    backend.generate_json(system="s", text="only text", images=None, schema={})
     assert "images" not in fake.calls[0]["messages"][1]
 
 
@@ -64,7 +64,7 @@ def test_non_json_raises_planner_error() -> None:
     backend = OllamaVisionLLM()
     _inject(backend, _FakeClient("I cannot help with that."))
     with pytest.raises(PlannerError):
-        backend.generate_json(system="s", parts=[TextPart("t")], schema={})
+        backend.generate_json(system="s", text="t", images=None, schema={})
 
 
 def test_encode_png_b64_roundtrips() -> None:

@@ -2,28 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-import numpy as np
-
-
-@dataclass
-class TextPart:
-    """A text chunk in a planner prompt."""
-
-    text: str
-
-
-@dataclass
-class ImagePart:
-    """A keyframe in a planner prompt: an RGB (H, W, 3) uint8 array."""
-
-    image: np.ndarray
-    label: str | None = None
-
-
-Part = TextPart | ImagePart
+if TYPE_CHECKING:
+    import numpy as np
 
 
 class PlannerError(RuntimeError):
@@ -32,6 +14,15 @@ class PlannerError(RuntimeError):
 
 @runtime_checkable
 class StructuredVisionLLM(Protocol):
-    """Returns schema-shaped JSON from interleaved text + images; raises PlannerError on bad output."""
+    """Returns schema-shaped JSON from a system prompt + text + optional keyframes.
 
-    def generate_json(self, *, system: str, parts: list[Part], schema: dict[str, Any]) -> dict[str, Any]: ...
+    The signature mirrors
+    :meth:`videopython.ai._ollama.OllamaStructuredClient.generate_json`, so any
+    structured-generation client satisfies it structurally. Implementations
+    raise :class:`PlannerError` on unusable output (the editor retries those);
+    infra errors should propagate so they are not silently retried.
+    """
+
+    def generate_json(
+        self, *, system: str, text: str, images: list[np.ndarray] | None, schema: dict[str, Any]
+    ) -> dict[str, Any]: ...

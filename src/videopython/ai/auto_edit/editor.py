@@ -8,12 +8,14 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import ValidationError
 
-from .backend import ImagePart, Part, PlannerError, StructuredVisionLLM, TextPart
+from .backend import PlannerError, StructuredVisionLLM
 from .catalog import build_catalog
 from .models import CatalogBundle, CatalogScene, EditPlan
 from .resolve import UnknownSceneIdsError, resolve_plan
 
 if TYPE_CHECKING:
+    import numpy as np
+
     from videopython.ai.video_analysis import VideoAnalysis, VideoAnalyzer
     from videopython.base.video import VideoMetadata
     from videopython.editing import VideoEdit
@@ -61,13 +63,13 @@ class AutoEditor:
         metadata = _metadata_by_source(analyses)
         run_context = _merge_context(analyses, context)
         schema = EditPlan.json_schema(strict=True)
-        base_parts = _build_parts(brief, bundle)
+        base_text, images = _build_prompt(brief, bundle)
 
         feedback: str | None = None
         for _ in range(self.max_rounds):
-            parts = base_parts if feedback is None else [*base_parts, TextPart(feedback)]
+            text = base_text if feedback is None else f"{base_text}\n\n{feedback}"
             try:
-                raw = self.planner.generate_json(system=_SYSTEM_PROMPT, parts=parts, schema=schema)
+                raw = self.planner.generate_json(system=_SYSTEM_PROMPT, text=text, images=images or None, schema=schema)
                 edit = resolve_plan(EditPlan.model_validate(raw), bundle.catalog)
             except (PlannerError, ValidationError, UnknownSceneIdsError) as exc:
                 feedback = _shape_feedback(exc)
@@ -89,14 +91,16 @@ class AutoEditor:
         return self._analyzer
 
 
-def _build_parts(brief: str, bundle: CatalogBundle) -> list[Part]:
-    parts: list[Part] = [TextPart(f"Brief: {brief}\n\nCandidate scenes:")]
+def _build_prompt(brief: str, bundle: CatalogBundle) -> tuple[str, list[np.ndarray]]:
+    """The planner prompt: scene-line text plus the keyframes, in catalog order."""
+    lines = [f"Brief: {brief}\n\nCandidate scenes:"]
+    images: list[np.ndarray] = []
     for scene in bundle.catalog.scenes:
-        parts.append(TextPart(_scene_line(scene)))
+        lines.append(_scene_line(scene))
         frame = bundle.keyframes.get(scene.id)
         if frame is not None:
-            parts.append(ImagePart(image=frame, label=scene.id))
-    return parts
+            images.append(frame)
+    return "\n\n".join(lines), images
 
 
 def _scene_line(scene: CatalogScene) -> str:

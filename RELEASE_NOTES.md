@@ -1,5 +1,56 @@
 # Release Notes
 
+## 0.51.0
+
+`videopython.ai` technical-debt cleanup (PR-1 of 2): a correctness fix plus the
+removal of abstraction residue left behind when the granular extras (0.43.0) were
+collapsed into one `[ai]` (0.48.0) and the alternative translator/TTS backends
+were deleted (0.49.0). Net ~430 fewer lines; no capability removed. See `TODO.md`
+for the full audit and the PR-2 (taxonomy) follow-up.
+
+### Fixed
+
+- **AI plan-ops are now always in the planner / MCP op schema.** `FaceTrackingCrop`
+  (`face_crop`) and `ObjectDetectionOverlay` (`object_detection_overlay`) register
+  only as an import side-effect, and `ai/__init__` re-exports them lazily — so in a
+  fresh process that built `EditPlan.json_schema()` / `Operation.llm_registry()`
+  (the auto-edit planner, the MCP `edit_plan_schema` resource) before touching them,
+  both ops were silently absent and `Operation.get("face_crop")` raised. A new
+  `videopython.ai.ops` self-registration module, imported by `ai.auto_edit`, fixes
+  this; regression-tested from a clean interpreter.
+
+### Breaking
+
+- **Planner seam mirrors the Ollama client.** `StructuredVisionLLM.generate_json`
+  now takes `(system, text, images, schema)` instead of a `parts` list; the
+  `TextPart` / `ImagePart` / `Part` types are removed (the planner flattened them
+  straight back to text+images, so they added only indirection). `OllamaVisionLLM`
+  and the `StructuredVisionLLM` protocol stay. Removed from `videopython.ai` and
+  `videopython.ai.auto_edit` exports: `TextPart`, `ImagePart`, `Part`.
+- **Dead API removed**: `UnsupportedLanguageError` (never raised),
+  `TranslationBackend` (single implementor; translation is hardwired to
+  `OllamaTranslator`), `OllamaTranslator.supports()`, `DubbingConfig.translator`
+  (the `"auto"`/`"ollama"` values were behaviorally identical — use
+  `translator_model` / `translator_host`), `TimingSynchronizer.check_overlaps` +
+  its `gap_threshold` arg, `VideoAnalysisConfig.rich_understanding_preset()` (use
+  `for_profile("full")`), and the path-based `remux.replace_audio_stream` (the
+  in-memory `replace_audio_stream_from_audio` is the only caller path).
+- **`ai._optional.require()` signature**: dropped the always-`"ai"` `extra`
+  positional — now `require(module, *, feature=...)` with a hardcoded `[ai]` install
+  hint. Internal helper; call sites updated.
+
+### Internal
+
+- New `ai.understanding._yolo.YoloDetector` base unifies the duplicated YOLO wrapper
+  behind `ObjectDetector` and the face detector (lazy load, device resolution,
+  `detect`/`detect_batch`).
+- `ManagedPredictor` now provides a default `unload()` driven by a `_model_attrs`
+  class attribute, replacing ~10 near-identical hand-written `unload()` bodies.
+  `ObjectDetector` and `FaceTracker` are now context-managed and expose `unload()`,
+  closing a VRAM-release gap.
+- Docstrings/comments that still described the removed granular extras
+  (`[asr]`/`[vision]`/`[tts]`/`[dub]`/...) were rewritten for the single `[ai]` extra.
+
 ## 0.50.1
 
 MCP ergonomics at scale. MCP keyframes are downscaled (longest side <= 768px)

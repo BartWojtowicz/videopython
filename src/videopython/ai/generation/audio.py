@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from videopython.ai._device import log_device_initialization, release_device_memory, select_device
+from videopython.ai._device import log_device_initialization, select_device
 from videopython.ai._predictor import ManagedPredictor
 from videopython.ai._revisions import pinned
 from videopython.audio import Audio, AudioMetadata
@@ -37,9 +37,7 @@ class TextToSpeech(ManagedPredictor):
     def _init_local(self) -> None:
         from videopython.ai._optional import require
 
-        ChatterboxMultilingualTTS = require(
-            "chatterbox.mtl_tts", "ai", feature="TextToSpeech"
-        ).ChatterboxMultilingualTTS
+        ChatterboxMultilingualTTS = require("chatterbox.mtl_tts", feature="TextToSpeech").ChatterboxMultilingualTTS
 
         requested_device = self.device
         device = select_device(self.device, mps_allowed=False)
@@ -141,17 +139,11 @@ class TextToSpeech(ManagedPredictor):
             if cleanup_path and speaker_wav_path is not None:
                 speaker_wav_path.unlink(missing_ok=True)
 
-    def unload(self) -> None:
-        """Release the TTS model so the next generate_audio() re-initializes.
-
-        Used by low-memory dubbing to free VRAM between pipeline stages.
-        """
-        self._model = None
-        release_device_memory(self.device)
-
 
 class TextToMusic(ManagedPredictor):
     """Generates music from text descriptions using MusicGen."""
+
+    _model_attrs = ("_model", "_processor")
 
     def __init__(self, device: str | None = None):
         self.device = device
@@ -164,7 +156,7 @@ class TextToMusic(ManagedPredictor):
 
         from videopython.ai._optional import require
 
-        _transformers = require("transformers", "ai", feature="TextToMusic")
+        _transformers = require("transformers", feature="TextToMusic")
         AutoProcessor = _transformers.AutoProcessor
         MusicgenForConditionalGeneration = _transformers.MusicgenForConditionalGeneration
 
@@ -204,9 +196,3 @@ class TextToMusic(ManagedPredictor):
             frame_count=len(audio_data),
         )
         return Audio(audio_data, metadata)
-
-    def unload(self) -> None:
-        """Release the MusicGen model so the next generate_audio() re-initializes."""
-        self._model = None
-        self._processor = None
-        release_device_memory(self.device)
