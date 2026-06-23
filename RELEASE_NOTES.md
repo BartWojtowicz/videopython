@@ -19,6 +19,9 @@ Replace the restricted-license media-generation defaults with permissively-licen
 - **Image-to-video: CogVideoX1.5-5B-I2V -> Wan2.2-I2V-A14B (Apache-2.0)** via
   `WanImageToVideoPipeline`. The input image is resized to Wan's area budget snapped to the
   model grid. Default `num_steps` 50->40, `guidance_scale` 6.0->3.5.
+- **Generation now requires a CUDA GPU.** `TextToImage`/`TextToVideo`/`ImageToVideo` raise on
+  CPU/MPS instead of silently falling back — these ~20-28B models are impractical off-GPU.
+  (Detection/understanding models still run on CPU.)
 
 ### Changed
 

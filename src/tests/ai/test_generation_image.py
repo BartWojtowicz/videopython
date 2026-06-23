@@ -2,6 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
 from PIL import Image
 
 from videopython.ai.generation.image import TextToImage
@@ -38,19 +39,10 @@ class TestInit:
         assert "variant" not in kwargs  # Qwen-Image has no fp16 variant
 
     @patch("videopython.ai.generation.image.select_device", return_value="cpu")
-    @patch("videopython.ai._optional.require")
-    def test_cpu_calls_to_and_does_not_offload(self, mock_require, _sd):
-        import torch
-
-        pipe = MagicMock()
-        mock_require.return_value = _fake_diffusers(pipe)
-
-        TextToImage(device="cpu")._init_local()
-
-        pipe.to.assert_called_once_with("cpu")
-        pipe.enable_model_cpu_offload.assert_not_called()
-        _, kwargs = mock_require.return_value.QwenImagePipeline.from_pretrained.call_args
-        assert kwargs["torch_dtype"] == torch.float32
+    def test_non_cuda_raises(self, _sd):
+        # Qwen-Image is CUDA-only; a non-CUDA device fails loudly (no CPU/MPS fallback).
+        with pytest.raises(RuntimeError, match="CUDA"):
+            TextToImage(device="cpu")._init_local()
 
 
 class TestGenerate:

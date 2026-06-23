@@ -27,36 +27,28 @@ class TextToImage(ManagedPredictor):
         self._pipeline: Any = None
 
     def _init_local(self) -> None:
-        """Initialize the local Qwen-Image diffusion pipeline."""
+        """Initialize the local Qwen-Image diffusion pipeline (CUDA-only)."""
         import torch
 
         from videopython.ai._optional import require
 
-        QwenImagePipeline = require("diffusers", feature="TextToImage").QwenImagePipeline
-
         requested_device = self.device
-        device = select_device(self.device, mps_allowed=True)
-        # Qwen-Image is published in bf16; fp16 has no published weight variant. Only
-        # CUDA uses bf16 (bf16 on MPS is unreliable); CPU/MPS fall back to fp32.
-        dtype = torch.bfloat16 if device == "cuda" else torch.float32
+        device = select_device(self.device, mps_allowed=False)
+        if device != "cuda":
+            raise RuntimeError("TextToImage requires a CUDA GPU; Qwen-Image (~20B) is impractical on CPU/MPS.")
 
+        QwenImagePipeline = require("diffusers", feature="TextToImage").QwenImagePipeline
         self._pipeline = QwenImagePipeline.from_pretrained(
             _MODEL_NAME,
             revision=pinned(_MODEL_NAME),
-            torch_dtype=dtype,
+            torch_dtype=torch.bfloat16,
             use_safetensors=True,
         )
-
-        if device == "cuda":
-            # ~20B params (Qwen2.5-VL text encoder + transformer + VAE). Offload
-            # submodules to the GPU on demand so it fits a single GPU; offload manages
-            # device placement, so we must NOT also call .to("cuda").
-            self._pipeline.enable_model_cpu_offload()
-            self._pipeline.enable_vae_tiling()
-        else:
-            self._pipeline.to(device)
-            if device == "mps":
-                self._pipeline.enable_attention_slicing()
+        # ~20B params (Qwen2.5-VL text encoder + transformer + VAE). Offload submodules
+        # to the GPU on demand so it fits a single GPU; offload manages device placement,
+        # so we must NOT also call .to("cuda").
+        self._pipeline.enable_model_cpu_offload()
+        self._pipeline.enable_vae_tiling()
 
         self.device = device
         log_device_initialization(

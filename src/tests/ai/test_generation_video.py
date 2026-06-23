@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 from PIL import Image
 
 from videopython.ai.generation.video import ImageToVideo, TextToVideo
@@ -67,17 +68,10 @@ class TestTextToVideo:
         assert pipe_kw["torch_dtype"] == torch.bfloat16
 
     @patch("videopython.ai.generation.video.select_device", return_value="cpu")
-    @patch("videopython.ai._optional.require")
-    def test_cpu_calls_to_not_offload(self, mock_require, _sd):
-        diff = MagicMock()
-        pipe = MagicMock()
-        diff.WanPipeline.from_pretrained.return_value = pipe
-        mock_require.return_value = diff
-
-        TextToVideo(device="cpu")._init_local()
-
-        pipe.to.assert_called_once_with("cpu")
-        pipe.enable_model_cpu_offload.assert_not_called()
+    def test_non_cuda_raises(self, _sd):
+        # Wan2.2 is CUDA-only; a non-CUDA device fails loudly (no CPU/MPS fallback).
+        with pytest.raises(RuntimeError, match="CUDA"):
+            TextToVideo(device="cpu")._init_local()
 
 
 class TestImageToVideo:

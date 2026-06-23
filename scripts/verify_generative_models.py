@@ -7,10 +7,10 @@ is NOT a CI test -- run it on a GPU machine before merging the generative swaps:
   - TextToVideo  -> Wan-AI/Wan2.2-T2V-A14B       (~28B MoE, Apache-2.0)
   - ImageToVideo -> Wan-AI/Wan2.2-I2V-A14B       (~28B MoE, Apache-2.0)
 
-Each model is large; first run downloads many GB and needs a CUDA GPU (the classes
-fall back to CPU/MPS but that is impractically slow for these sizes). Outputs are
-written to --out-dir and each task is checked for non-black output (guards the
-diffusers ``output_type`` frame-conversion bug).
+Each model is large and CUDA-only; first run downloads many GB and requires a CUDA
+GPU (the generation classes raise on CPU/MPS). Outputs are written to --out-dir and
+each task is checked for non-black output (guards the diffusers ``output_type``
+frame-conversion bug).
 
 Usage (with the [ai] extra installed):
 
@@ -48,7 +48,7 @@ def _device_banner() -> None:
     if cuda:
         _log(f"gpu={torch.cuda.get_device_name(0)}")
     else:
-        _log("WARNING: no CUDA GPU detected -- these ~20-28B models will be impractically slow.")
+        _log("WARNING: no CUDA GPU detected -- generation is CUDA-only and every task will raise.")
 
 
 def verify_image(out_dir: Path, steps: int, device: str | None) -> tuple[bool, str]:

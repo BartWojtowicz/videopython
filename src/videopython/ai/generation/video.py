@@ -25,18 +25,16 @@ _WAN_NEGATIVE_PROMPT = (
 )
 
 
-def _get_torch_device_and_dtype(device: str | None) -> tuple[str, Any]:
-    """Get the best available torch device and transformer dtype for Wan2.2.
+def _require_cuda_device(device: str | None, component: str) -> str:
+    """Resolve to a CUDA device or raise.
 
-    The Wan VAE is always loaded in float32 for decode quality; this dtype applies
-    to the transformer/pipeline only (bf16 on CUDA, float32 otherwise).
+    Wan2.2-A14B (~28B MoE) is too large to run on CPU/MPS, so generation requires
+    a CUDA GPU rather than silently falling back to an unusable device.
     """
-    import torch
-
     selected_device = select_device(device, mps_allowed=False)
-    if selected_device == "cuda":
-        return selected_device, torch.bfloat16
-    return selected_device, torch.float32
+    if selected_device != "cuda":
+        raise RuntimeError(f"{component} requires a CUDA GPU; Wan2.2-A14B (~28B) is impractical on CPU/MPS.")
+    return selected_device
 
 
 class TextToVideo(ManagedPredictor):
@@ -58,23 +56,18 @@ class TextToVideo(ManagedPredictor):
         AutoencoderKLWan = diffusers.AutoencoderKLWan
 
         requested_device = self.device
-        device, dtype = _get_torch_device_and_dtype(self.device)
+        device = _require_cuda_device(self.device, "TextToVideo")
 
         model_name = "Wan-AI/Wan2.2-T2V-A14B-Diffusers"
         revision = pinned(model_name)
-        # VAE stays float32 for decode quality; the transformer/pipeline use ``dtype``.
+        # VAE stays float32 for decode quality; the transformer/pipeline use bf16.
         vae = AutoencoderKLWan.from_pretrained(
             model_name, subfolder="vae", revision=revision, torch_dtype=torch.float32
         )
-        self._pipeline = WanPipeline.from_pretrained(model_name, vae=vae, revision=revision, torch_dtype=dtype)
-
-        if device == "cuda":
-            # A14B is a MoE (high+low-noise experts), too large for a single-GPU
-            # .to("cuda"); offload submodules on demand (offload manages placement,
-            # so do NOT also call .to("cuda")).
-            self._pipeline.enable_model_cpu_offload()
-        else:
-            self._pipeline.to(device)
+        self._pipeline = WanPipeline.from_pretrained(model_name, vae=vae, revision=revision, torch_dtype=torch.bfloat16)
+        # A14B is a MoE (high+low-noise experts), too large for a single-GPU .to("cuda");
+        # offload submodules on demand (offload manages placement, so do NOT also call .to).
+        self._pipeline.enable_model_cpu_offload()
 
         self.device = device
         log_device_initialization(
@@ -133,7 +126,7 @@ class ImageToVideo(ManagedPredictor):
         AutoencoderKLWan = diffusers.AutoencoderKLWan
 
         requested_device = self.device
-        device, dtype = _get_torch_device_and_dtype(self.device)
+        device = _require_cuda_device(self.device, "ImageToVideo")
 
         model_name = "Wan-AI/Wan2.2-I2V-A14B-Diffusers"
         revision = pinned(model_name)
@@ -141,13 +134,10 @@ class ImageToVideo(ManagedPredictor):
             model_name, subfolder="vae", revision=revision, torch_dtype=torch.float32
         )
         self._pipeline = WanImageToVideoPipeline.from_pretrained(
-            model_name, vae=vae, revision=revision, torch_dtype=dtype
+            model_name, vae=vae, revision=revision, torch_dtype=torch.bfloat16
         )
-
-        if device == "cuda":
-            self._pipeline.enable_model_cpu_offload()
-        else:
-            self._pipeline.to(device)
+        # A14B MoE is too large for a single-GPU .to("cuda"); offload submodules on demand.
+        self._pipeline.enable_model_cpu_offload()
 
         self.device = device
         log_device_initialization(
