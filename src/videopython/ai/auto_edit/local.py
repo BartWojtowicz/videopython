@@ -11,16 +11,17 @@ from .backend import PlannerError
 if TYPE_CHECKING:
     import numpy as np
 
-DEFAULT_OLLAMA_MODEL = "gemma3:27b"
+DEFAULT_OLLAMA_MODEL = "qwen3.6:27b"
 
 
 class OllamaVisionLLM:
     """A StructuredVisionLLM backed by a local Ollama server.
 
     The model must be vision-capable (it is sent keyframes) AND support Ollama's
-    structured-output ``format`` (the EditPlan schema constrains the decode). Not
-    every model supports schema conditioning -- ``gemma3:27b`` is verified working;
-    some builds (e.g. certain MLX ones) fail it. ``ollama pull <model>`` first;
+    structured-output ``format`` (the EditPlan schema constrains the decode). The
+    default ``qwen3.6:27b`` is an Apache-2.0 vision model; not every model supports
+    schema conditioning (some builds, e.g. certain MLX ones, fail it), so confirm
+    ``format`` works for a custom model locally. ``ollama pull <model>`` first;
     ``options`` are extra generation options merged over ``temperature=0``.
 
     Thin wrapper over the shared :class:`OllamaStructuredClient`: its only job is

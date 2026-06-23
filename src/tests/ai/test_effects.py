@@ -109,7 +109,7 @@ class TestStreamingDraw:
 
         _, kwargs = mock_cls.call_args
         assert kwargs["class_filter"] == ("person", "car")
-        assert kwargs["model_name"] == "yolov8n.pt"
+        assert kwargs["model_name"] == "ustc-community/dfine-nano-coco"
 
     @patch("videopython.ai.effects.ObjectDetector")
     def test_model_size_maps_to_weights(self, mock_cls):
@@ -118,7 +118,7 @@ class TestStreamingDraw:
 
         _stream(ObjectDetectionOverlay(model_size="m"), frames)
         _, kwargs = mock_cls.call_args
-        assert kwargs["model_name"] == "yolov8m.pt"
+        assert kwargs["model_name"] == "ustc-community/dfine-medium-coco"
 
 
 class TestStreamingContract:

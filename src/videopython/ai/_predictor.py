@@ -19,9 +19,9 @@ Subclasses with non-default model fields just declare ``_model_attrs``; those
 whose teardown isn't "null the fields + release" (e.g. delegating to a client's
 own ``unload()``) override ``unload()`` instead.
 
-The base imports no torch / transformers / ultralytics (``release_device_memory``
-defers its torch import), so it stays safe to mix into any predictor regardless
-of how it is constructed.
+The base imports no torch / transformers (``release_device_memory`` defers its
+torch import), so it stays safe to mix into any predictor regardless of how it is
+constructed.
 """
 
 from __future__ import annotations

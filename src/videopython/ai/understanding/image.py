@@ -11,7 +11,7 @@ from videopython.ai._ollama import OllamaStructuredClient
 from videopython.ai._predictor import ManagedPredictor
 from videopython.base.description import SceneDescription
 
-DEFAULT_SCENE_VLM_MODEL = "gemma3:27b"
+DEFAULT_SCENE_VLM_MODEL = "qwen3.6:27b"
 
 _SHOT_TYPES = ("wide", "medium", "close-up", "extreme close-up", "establishing", "other")
 

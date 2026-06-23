@@ -52,7 +52,7 @@ def lazy_exports(package: str, exports: dict[str, str]) -> tuple[Callable[[str],
     imported only on first attribute access, so importing the package does not
     pull in any sibling leaf module. This keeps ``import videopython`` (and
     importing a single leaf class) light by deferring the heavy ML imports
-    (torch / transformers / diffusers / ultralytics) until a symbol is used.
+    (torch / transformers / diffusers / chatterbox) until a symbol is used.
 
     Args:
         package: The ``__name__`` of the package defining the re-exports. Used

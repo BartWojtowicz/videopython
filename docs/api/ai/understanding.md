@@ -12,8 +12,8 @@ For a single aggregate, serializable analysis object across multiple analyzers, 
 | AudioToText | Whisper |
 | AudioClassifier | AST |
 | SemanticSceneDetector | TransNetV2 |
-| FaceShotTracker / FaceSmoothingTracker | YOLOv8-face |
-| ObjectDetector | YOLOv8-COCO |
+| FaceShotTracker / FaceSmoothingTracker | OpenCV YuNet |
+| ObjectDetector | D-FINE (COCO) |
 
 ## AudioToText
 
@@ -132,7 +132,7 @@ for event in result.events:
 ## SceneVLM
 
 `SceneVLM` describes scenes with a local Ollama vision model (`model` kwarg, an
-Ollama tag you have pulled; default `gemma3:27b`). It needs a running Ollama
+Ollama tag you have pulled; default `qwen3.6:27b`). It needs a running Ollama
 server and a vision-capable model that supports structured output.
 
 `analyze_scene()` and `analyze_frame()` return a structured
@@ -173,7 +173,7 @@ for scene in scenes:
 
 ## Face Tracking
 
-Two YOLOv8-face trackers share one detector, one per use case:
+Two YuNet-based face trackers share one detector, one per use case:
 
 - `FaceShotTracker.track_shot(frames, frame_indices)` returns a list of
   [`FaceTrack`](#facetrack) objects with stable ids within a shot, via IoU
@@ -186,7 +186,7 @@ Two YOLOv8-face trackers share one detector, one per use case:
 ```python
 from videopython.ai import FaceShotTracker
 
-tracker = FaceShotTracker(backend="auto")
+tracker = FaceShotTracker()
 tracks = tracker.track_shot(frames)
 
 for track in tracks:
@@ -200,14 +200,15 @@ for track in tracks:
 
 ## ObjectDetector
 
-`ObjectDetector` runs a YOLOv8-COCO model and returns a list of
+`ObjectDetector` runs a D-FINE COCO model and returns a list of
 [`DetectedObject`](#detectedobject) per frame, with normalized bounding boxes
 sorted by confidence. It is the object-detection counterpart to the face
 trackers and powers [`ObjectDetectionOverlay`](effects.md#objectdetectionoverlay).
 
-The Ultralytics weights auto-download on first use; class names come from the
-loaded model. Detection is gated by `confidence_threshold` and optionally
-restricted to `class_filter`.
+The D-FINE weights (Apache-2.0) download from HuggingFace on first use; class
+names come from the model config. Detection is gated by `confidence_threshold`
+and optionally restricted to `class_filter`. D-FINE uses VOC-style COCO names, so
+`class_filter` must use the model's exact spellings (e.g. `motorbike`, `tvmonitor`).
 
 ```python
 from videopython.ai import ObjectDetector
@@ -215,7 +216,7 @@ from videopython.base import Video
 
 video = Video.from_path("street.mp4")
 
-detector = ObjectDetector(model_name="yolov8n.pt", class_filter=("person", "car"))
+detector = ObjectDetector(model_name="ustc-community/dfine-nano-coco", class_filter=("person", "car"))
 for obj in detector.detect(video.frames[0]):
     print(f"{obj.label} {obj.confidence:.2f} @ {obj.bounding_box}")
 

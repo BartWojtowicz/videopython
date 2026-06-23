@@ -14,14 +14,19 @@ from __future__ import annotations
 import logging
 from typing import Any, Literal
 
+import cv2
 import numpy as np
 
 from videopython.ai._predictor import ManagedPredictor
 from videopython.ai._revisions import pinned
-from videopython.ai.understanding._yolo import Backend, YoloDetector
+from videopython.ai.understanding._detector import DetectorBase
 from videopython.base.description import BoundingBox, DetectedFace, FaceTrack
 
 logger = logging.getLogger(__name__)
+
+# OpenCV YuNet face detector (MIT). Pinned in ``_revisions.py``.
+_YUNET_REPO = "opencv/face_detection_yunet"
+_YUNET_FILENAME = "face_detection_yunet_2023mar.onnx"
 
 
 # Hamming/IoU tunables. Module-level constants — same convention as the
@@ -31,59 +36,81 @@ DEFAULT_IOU_MATCH_THRESHOLD = 0.3
 DEFAULT_MAX_MISSED_FRAMES = 3
 
 
-class _FaceDetector(YoloDetector[DetectedFace]):
-    """Internal YOLOv8-face detector over the shared :class:`YoloDetector` base.
+class _FaceDetector(DetectorBase[DetectedFace]):
+    """Internal OpenCV YuNet face detector over the shared :class:`DetectorBase`.
 
-    Pulls the pinned ``arnabdhar/YOLOv8-Face-Detection`` checkpoint and filters
-    detections below ``min_face_size`` pixels. Producers in ``transforms.py``
-    reach for this class via the lifted module path.
+    Pulls the pinned ``opencv/face_detection_yunet`` ONNX checkpoint (MIT) and
+    filters detections below ``min_face_size`` pixels. Runs on CPU via OpenCV DNN.
+    Producers in ``transforms.py`` reach for this class via the lifted module path.
     """
 
     CONFIDENCE_THRESHOLD = 0.5
+    NMS_THRESHOLD = 0.3
+    TOP_K = 5000
     _FEATURE = "face tracking"
+    _model_attrs = ("_yunet",)
 
-    def __init__(
-        self,
-        min_face_size: int = 30,
-        backend: Backend = "auto",
-    ):
-        super().__init__(backend=backend)
+    def __init__(self, min_face_size: int = 30):
+        super().__init__(backend="cpu")  # YuNet runs on CPU via OpenCV DNN
         self.min_face_size = min_face_size
+        self._yunet: Any = None
+        self._input_size: tuple[int, int] | None = None  # (w, h) currently set on the model
 
-    def _conf(self) -> float:
-        return self.CONFIDENCE_THRESHOLD
+    def execution_device(self) -> Literal["cpu", "cuda"]:
+        """YuNet runs on CPU via OpenCV DNN."""
+        return "cpu"
 
     def _load_model(self) -> None:
         from huggingface_hub import hf_hub_download
 
         model_path = hf_hub_download(
-            repo_id="arnabdhar/YOLOv8-Face-Detection",
-            filename="model.pt",
-            revision=pinned("arnabdhar/YOLOv8-Face-Detection"),
+            repo_id=_YUNET_REPO,
+            filename=_YUNET_FILENAME,
+            revision=pinned(_YUNET_REPO),
         )
-        self._build_yolo(model_path)
+        # input_size is a placeholder; setInputSize() per frame overrides it.
+        self._yunet = cv2.FaceDetectorYN.create(  # type: ignore[attr-defined]
+            model_path,
+            "",
+            (320, 320),
+            self.CONFIDENCE_THRESHOLD,
+            self.NMS_THRESHOLD,
+            self.TOP_K,
+        )
+        self._input_size = (320, 320)
 
-    def _parse(self, result: Any) -> list[DetectedFace]:
+    def _infer(self, images: list[np.ndarray]) -> list[list[DetectedFace]]:
+        # YuNet has no batch API; detect one frame at a time.
+        return [self._detect_one(image) for image in images]
+
+    def _detect_one(self, frame: np.ndarray) -> list[DetectedFace]:
+        img_h, img_w = frame.shape[:2]
+        size = (img_w, img_h)
+        if self._input_size != size:
+            self._yunet.setInputSize(size)
+            self._input_size = size
+        # videopython frames are RGB; OpenCV DNN expects BGR.
+        bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        _, faces = self._yunet.detect(bgr)
+        return self._parse(faces, img_w, img_h)
+
+    def _parse(self, faces: np.ndarray | None, img_w: int, img_h: int) -> list[DetectedFace]:
         detected_faces: list[DetectedFace] = []
-        boxes = result.boxes
-        if boxes is None:
+        if faces is None or len(faces) == 0:
             return detected_faces
 
-        img_h, img_w = result.orig_shape
-        for i in range(len(boxes)):
-            x1, y1, x2, y2 = boxes.xyxy[i].tolist()
-            conf = float(boxes.conf[i])
-
-            face_w = x2 - x1
-            face_h = y2 - y1
+        # YuNet rows: [x, y, w, h, 5x(lx, ly) landmarks, score]; coords are pixels.
+        for row in faces:
+            x, y, face_w, face_h = float(row[0]), float(row[1]), float(row[2]), float(row[3])
+            conf = float(row[14])
             if face_w < self.min_face_size or face_h < self.min_face_size:
                 continue
 
             detected_faces.append(
                 DetectedFace(
                     bounding_box=BoundingBox(
-                        x=x1 / img_w,
-                        y=y1 / img_h,
+                        x=x / img_w,
+                        y=y / img_h,
                         width=face_w / img_w,
                         height=face_h / img_h,
                     ),
@@ -122,14 +149,13 @@ class _FaceTrackerBase(ManagedPredictor):
     the :class:`ManagedPredictor` context-manager contract.
     """
 
-    def __init__(self, *, min_face_size: int, backend: Backend) -> None:
+    def __init__(self, *, min_face_size: int) -> None:
         self.min_face_size = min_face_size
-        self.backend: Backend = backend
         self._detector: _FaceDetector | None = None
 
     def _init_detector(self) -> None:
         """Initialize the face detector lazily."""
-        self._detector = _FaceDetector(min_face_size=self.min_face_size, backend=self.backend)
+        self._detector = _FaceDetector(min_face_size=self.min_face_size)
 
     def _ensure_detector(self) -> _FaceDetector:
         if self._detector is None:
@@ -159,8 +185,6 @@ class FaceSmoothingTracker(_FaceTrackerBase):
         smoothing: float = 0.8,
         detection_interval: int = 3,
         min_face_size: int = 30,
-        backend: Backend = "auto",
-        sample_rate: int = 1,
         batch_size: int = 16,
     ):
         """Initialize the smoothing tracker.
@@ -172,23 +196,19 @@ class FaceSmoothingTracker(_FaceTrackerBase):
             smoothing: Exponential moving average factor (0-1). Higher = smoother.
             detection_interval: Run detection every N frames, hold position between.
             min_face_size: Minimum face size in pixels for detection.
-            backend: Detection backend - "cpu", "gpu", or "auto".
-            sample_rate: For GPU backend, detect every Nth frame and interpolate.
-                Only used by track_video(). Default 1 (every frame).
-            batch_size: Batch size for GPU detection. Default 16.
+            batch_size: Frames per detection batch in ``track_video``. Default 16.
         """
-        super().__init__(min_face_size=min_face_size, backend=backend)
+        super().__init__(min_face_size=min_face_size)
         self.selection_strategy = selection_strategy
         self.face_index = face_index
         self.smoothing = smoothing
         self.detection_interval = detection_interval
-        self.sample_rate = sample_rate
         self.batch_size = batch_size
         self._last_position: tuple[float, float] | None = None
         self._last_size: tuple[float, float] | None = None
         self._smoothed_position: tuple[float, float] | None = None
         self._smoothed_size: tuple[float, float] | None = None
-        logger.info("FaceSmoothingTracker initialized with backend=%s", self.backend)
+        logger.info("FaceSmoothingTracker initialized (detection_interval=%s)", self.detection_interval)
 
     def _select_face(
         self,
@@ -297,35 +317,21 @@ class FaceSmoothingTracker(_FaceTrackerBase):
         self._smoothed_position = None
         self._smoothed_size = None
 
-    @staticmethod
-    def _interpolate_bbox(
-        bbox1: tuple[float, float, float, float],
-        bbox2: tuple[float, float, float, float],
-        t: float,
-    ) -> tuple[float, float, float, float]:
-        """Linearly interpolate between two bounding boxes."""
-        return (
-            bbox1[0] + (bbox2[0] - bbox1[0]) * t,
-            bbox1[1] + (bbox2[1] - bbox1[1]) * t,
-            bbox1[2] + (bbox2[2] - bbox1[2]) * t,
-            bbox1[3] + (bbox2[3] - bbox1[3]) * t,
-        )
-
     def track_video(
         self,
         frames: np.ndarray,
     ) -> list[tuple[float, float, float, float] | None]:
-        """Track face through entire video using optimized batch detection.
+        """Track the face through a whole clip via batched per-frame detection.
 
-        Optimized for GPU backends with frame sampling and interpolation
-        for smooth tracking with reduced computation.
+        Detection runs on every frame (the YuNet detector is CPU-only), then each
+        frame's selected face is EMA-smoothed.
 
         Args:
             frames: Video frames array of shape (N, H, W, 3).
 
         Returns:
-            List of face positions (cx, cy, w, h) for each frame, or None if
-            no face detected and no fallback available.
+            List of face positions (cx, cy, w, h) for each frame, or None where
+            no face was detected and no fallback was available.
         """
         if self._detector is None:
             self._init_detector()
@@ -337,69 +343,14 @@ class FaceSmoothingTracker(_FaceTrackerBase):
 
         h, w = frames[0].shape[:2]
 
-        execution_device_getter = getattr(self._detector, "execution_device", None)
-        if callable(execution_device_getter):
-            resolved = execution_device_getter()
-            backend_execution_device = resolved if resolved in {"cpu", "cuda"} else None
-        else:
-            backend_execution_device = None
-        if backend_execution_device is None:
-            backend_execution_device = "cuda" if self.backend == "gpu" else "cpu"
+        detections: list[list[DetectedFace]] = []
+        for batch_start in range(0, n_frames, self.batch_size):
+            batch = [frames[i] for i in range(batch_start, min(batch_start + self.batch_size, n_frames))]
+            detections.extend(self._detector.detect_batch(batch))
 
-        use_sampled_interpolation = self.sample_rate > 1 and backend_execution_device == "cuda"
-
-        if use_sampled_interpolation:
-            sample_indices = list(range(0, n_frames, self.sample_rate))
-            if sample_indices[-1] != n_frames - 1:
-                sample_indices.append(n_frames - 1)
-        else:
-            sample_indices = list(range(n_frames))
-
-        sampled_frames = [frames[i] for i in sample_indices]
-
-        sampled_detections: list[list[DetectedFace]] = []
-        for batch_start in range(0, len(sampled_frames), self.batch_size):
-            batch_end = min(batch_start + self.batch_size, len(sampled_frames))
-            batch = sampled_frames[batch_start:batch_end]
-            batch_results = self._detector.detect_batch(batch)
-            sampled_detections.extend(batch_results)
-
-        sampled_faces: list[tuple[float, float, float, float] | None] = []
-        for faces in sampled_detections:
-            face_info = self._select_face(faces, w, h)
-            sampled_faces.append(face_info)
-
-        if not use_sampled_interpolation:
-            self.reset()
-            return [self._smooth(face_info) for face_info in sampled_faces]
-
-        all_positions: list[tuple[float, float, float, float] | None] = [None] * n_frames
-
-        for idx, sample_idx in enumerate(sample_indices):
-            all_positions[sample_idx] = sampled_faces[idx]
-
-        for i in range(len(sample_indices) - 1):
-            start_idx = sample_indices[i]
-            end_idx = sample_indices[i + 1]
-            start_face = sampled_faces[i]
-            end_face = sampled_faces[i + 1]
-
-            if start_face is None and end_face is None:
-                continue
-            elif start_face is None:
-                for j in range(start_idx, end_idx):
-                    all_positions[j] = end_face
-            elif end_face is None:
-                for j in range(start_idx + 1, end_idx + 1):
-                    all_positions[j] = start_face
-            else:
-                gap = end_idx - start_idx
-                for j in range(start_idx + 1, end_idx):
-                    t = (j - start_idx) / gap
-                    all_positions[j] = self._interpolate_bbox(start_face, end_face, t)
-
+        faces = [self._select_face(frame_faces, w, h) for frame_faces in detections]
         self.reset()
-        return [self._smooth(face_info) for face_info in all_positions]
+        return [self._smooth(face_info) for face_info in faces]
 
 
 class FaceShotTracker(_FaceTrackerBase):
@@ -414,7 +365,6 @@ class FaceShotTracker(_FaceTrackerBase):
     def __init__(
         self,
         min_face_size: int = 30,
-        backend: Backend = "auto",
         batch_size: int = 16,
         iou_match_threshold: float = DEFAULT_IOU_MATCH_THRESHOLD,
         max_missed_frames: int = DEFAULT_MAX_MISSED_FRAMES,
@@ -423,18 +373,17 @@ class FaceShotTracker(_FaceTrackerBase):
 
         Args:
             min_face_size: Minimum face size in pixels for detection.
-            backend: Detection backend - "cpu", "gpu", or "auto".
             batch_size: Batch size for detection. Default 16.
             iou_match_threshold: Minimum IoU between consecutive detections to
                 continue an existing track.
             max_missed_frames: Consecutive frames a track may go without a
                 detection before it is closed.
         """
-        super().__init__(min_face_size=min_face_size, backend=backend)
+        super().__init__(min_face_size=min_face_size)
         self.batch_size = batch_size
         self.iou_match_threshold = iou_match_threshold
         self.max_missed_frames = max_missed_frames
-        logger.info("FaceShotTracker initialized with backend=%s", self.backend)
+        logger.info("FaceShotTracker initialized (min_face_size=%s)", self.min_face_size)
 
     def track_shot(
         self,

@@ -53,7 +53,6 @@ _HEAVY_IMPORT_NAMES: set[str] = {
     "whisper",
     "pyannote",
     "silero_vad",
-    "ultralytics",
     "transnetv2_pytorch",
     "chatterbox",
     "demucs",
@@ -126,9 +125,10 @@ def test_dependency_group_ai_matches_optional_ai(pyproject: Pyproject) -> None:
 
 # Deps that are declared as resolver co-pins/floors but have NO direct import
 # under ai/ — they're pulled transitively by a sibling dep that we DO import:
-#   torchaudio  -> co-pin for the torch stack (whisper/chatterbox/demucs)
-#   accelerate  -> diffusers/transformers device-map plumbing (transitive)
-_TRANSITIVE_ONLY_DEPS = {"torchaudio", "accelerate"}
+#   torchaudio   -> co-pin for the torch stack (whisper/chatterbox/demucs)
+#   torchvision  -> backs the transformers "fast" image processor used by D-FINE
+#   accelerate   -> diffusers/transformers device-map plumbing (transitive)
+_TRANSITIVE_ONLY_DEPS = {"torchaudio", "torchvision", "accelerate"}
 
 
 def test_every_declared_dep_is_imported_somewhere(pyproject: Pyproject) -> None:

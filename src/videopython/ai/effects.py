@@ -14,7 +14,7 @@ from typing import Any, Literal
 import numpy as np
 from pydantic import Field, PrivateAttr
 
-from videopython.ai.understanding.objects import ObjectDetector
+from videopython.ai.understanding.objects import MODEL_SIZES, ObjectDetector
 from videopython.base.description import DetectedObject
 from videopython.base.draw_detections import DetectionStyle, draw_detections
 from videopython.editing.operation import Effect
@@ -25,7 +25,7 @@ __all__ = ["ObjectDetectionOverlay"]
 class ObjectDetectionOverlay(Effect):
     """Detect objects per frame and overlay labelled bounding boxes.
 
-    Runs a YOLOv8-COCO detector and composites tidy, colour-coded boxes with
+    Runs a D-FINE COCO detector and composites tidy, colour-coded boxes with
     class labels (and optional confidence) onto every frame in the window.
 
     Detection runs on a ``detection_interval`` cadence in the streaming path and
@@ -70,7 +70,7 @@ class ObjectDetectionOverlay(Effect):
     model_size: Literal["n", "s", "m"] = Field(
         "n",
         description=(
-            "YOLOv8 model size: 'n' (nano, fastest), 's' (small), 'm' (medium, most accurate). "
+            "D-FINE detector size: 'n' (nano, fastest), 's' (small), 'm' (medium, most accurate). "
             "Larger detects better but is slower."
         ),
     )
@@ -96,7 +96,7 @@ class ObjectDetectionOverlay(Effect):
         """Build the detector lazily. Single patch point for tests."""
         if self._detector is None:
             self._detector = ObjectDetector(
-                model_name=f"yolov8{self.model_size}.pt",
+                model_name=MODEL_SIZES[self.model_size],
                 confidence_threshold=self.confidence_threshold,
                 class_filter=tuple(self.class_filter or ()),
                 backend=self.backend,

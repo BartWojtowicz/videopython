@@ -6,7 +6,7 @@ Test structure:
 
 AI test markers:
 - @pytest.mark.requires_model_download - Tests that download models 100MB+
-  (e.g., YOLOv8-face, Qwen3.5, PANNs). These are skipped in CI.
+  (e.g., D-FINE, YuNet, Whisper). These are skipped in CI.
 
 CI runs: uv run pytest src/tests/ai -m "not requires_model_download"
 Local runs: uv run pytest src/tests/ai -v (all tests including model downloads)
@@ -68,8 +68,7 @@ def pytest_configure(config):
     """Register custom pytest markers."""
     config.addinivalue_line(
         "markers",
-        "requires_model_download: marks tests that download heavy AI models "
-        "(YOLOv8-face, Qwen3.5, PANNs, Whisper) - skipped in CI",
+        "requires_model_download: marks tests that download heavy AI models (D-FINE, YuNet, Whisper) - skipped in CI",
     )
 
 

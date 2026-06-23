@@ -1,6 +1,6 @@
 [project]
 name = "videopython"
-version = "0.52.1"
+version = "0.53.0"
 description = "Minimal video generation and processing library."
 authors = [
     { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
@@ -68,8 +68,8 @@ ai = [
     "openai-whisper>=20240930",
     "pyannote-audio>=4.0.0",
     "silero-vad>=5.1",
-    # Visual understanding: detection, scene/temporal, VLM (understanding/*, video_analysis)
-    "ultralytics>=8.0.0",
+    # Visual understanding: detection (D-FINE/YuNet via transformers + opencv core
+    # dep), scene/temporal, VLM (understanding/*, video_analysis)
     "transnetv2-pytorch>=1.0.5",
     "transformers>=5.2.0",
     "imagehash>=4.3",
@@ -85,9 +85,13 @@ ai = [
     "pyloudnorm>=0.1.1",
     # LLM-authored editing planner (auto_edit/local.py OllamaVisionLLM)
     "ollama>=0.5.0",
-    # Shared torch stack
+    # Shared torch stack. torchvision backs the transformers "fast" image
+    # processor used by the D-FINE object detector (understanding/objects.py).
     "torch>=2.8.0",
     "torchaudio>=2.8.0",
+    # Capped to the torch-2.8-compatible line; torchvision<->torch are ABI-coupled
+    # and uv does not know it (0.23.x pairs with torch 2.8.x).
+    "torchvision>=0.23.0,<0.24.0",
 ]
 # MCP server (videopython/mcp/). Pin <2 — v2 is pre-release/breaking.
 mcp = ["mcp>=1.27,<2"]
@@ -112,7 +116,6 @@ module = [
     "torch", "torch.*",
     "diffusers", "diffusers.*",
     "ollama", "ollama.*",
-    "ultralytics", "ultralytics.*",
     "transformers", "transformers.*",
     "transnetv2_pytorch", "transnetv2_pytorch.*",
     "chatterbox", "chatterbox.*",
@@ -133,8 +136,8 @@ ignore_missing_imports = true
 # These overrides let the combined [ai] resolve pick compatible versions; the
 # floors in [ai] are aligned with them so pip and uv resolve similar versions.
 override-dependencies = [
-    "torch>=2.8.0", "torchaudio>=2.8.0", "numpy>=2.0.0", "diffusers>=0.30.0",
-    # ultralytics depends on opencv-python which conflicts with our
+    "torch>=2.8.0", "torchaudio>=2.8.0", "torchvision>=0.23.0,<0.24.0", "numpy>=2.0.0", "diffusers>=0.30.0",
+    # Some transitive deps pull opencv-python, which conflicts with our
     # opencv-python-headless (both provide cv2). Exclude opencv-python so
     # only the headless variant is installed.
     "opencv-python ; sys_platform == '_'",

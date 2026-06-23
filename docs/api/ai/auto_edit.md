@@ -10,7 +10,7 @@ and the [MCP server](../../guides/mcp.md) for the agent-driven variant.
 ```python
 from videopython.ai import AutoEditor, OllamaVisionLLM
 
-editor = AutoEditor(planner=OllamaVisionLLM(model="gemma3:27b"))
+editor = AutoEditor(planner=OllamaVisionLLM(model="qwen3.6:27b"))
 edit = editor.edit(["a.mp4", "b.mp4"], brief="A 15s teaser, most dynamic shot first.")
 edit.run_to_file("teaser.mp4")
 ```
