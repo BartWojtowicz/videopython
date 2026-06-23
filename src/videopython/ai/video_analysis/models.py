@@ -146,7 +146,7 @@ class VideoAnalysisConfig(BaseModel):
         VideoAnalysisConfig(
             analyzer_params={
                 "audio_to_text": {"model_name": "large"},
-                "scene_vlm": {"model": "gemma3:27b"},
+                "scene_vlm": {"model": "qwen3.6:27b"},
             }
         )
     """

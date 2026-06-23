@@ -74,8 +74,6 @@ class FaceTrackingCrop(Operation):
         ),
     )
     detection_interval: int = Field(3, ge=1, description="Frames between face detections.")
-    backend: Literal["cpu", "gpu", "auto"] = Field("auto", description='Detection backend - "cpu", "gpu", or "auto".')
-    sample_rate: int = Field(1, ge=1, description="For GPU backend, detect every Nth frame and interpolate.")
 
     def _apply_framing_offset(self, face_cx: float, face_cy: float, face_h: float) -> tuple[float, float]:
         if self.framing_rule == "offset":
@@ -139,8 +137,6 @@ class FaceTrackingCrop(Operation):
             face_index=self.face_index,
             smoothing=self.smoothing,
             detection_interval=self.detection_interval,
-            backend=self.backend,
-            sample_rate=self.sample_rate,
         )
         default = ((frame_w - out_w) // 2, (frame_h - out_h) // 2)
         last = default

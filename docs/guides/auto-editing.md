@@ -7,8 +7,8 @@ editorial selection. No cloud API keys, no timestamps to hand-author.
 ```python
 from videopython.ai import AutoEditor, OllamaVisionLLM
 
-# The planner is a local Ollama vision model. Pull it first: `ollama pull gemma3:27b`.
-editor = AutoEditor(planner=OllamaVisionLLM(model="gemma3:27b"))
+# The planner is a local Ollama vision model. Pull it first: `ollama pull qwen3.6:27b`.
+editor = AutoEditor(planner=OllamaVisionLLM(model="qwen3.6:27b"))
 
 edit = editor.edit(
     ["clip_a.mp4", "clip_b.mp4", "clip_c.mp4"],
@@ -50,7 +50,7 @@ budget it raises `AutoEditError`.
 
 ```python
 editor = AutoEditor(
-    planner=OllamaVisionLLM(model="gemma3:27b"),
+    planner=OllamaVisionLLM(model="qwen3.6:27b"),
     max_rounds=3,
     normalize_target="largest",   # unify segment dimensions to the largest source
 )
@@ -71,8 +71,8 @@ edit = editor.edit_from_analyses(analyses, brief="A calm, scenic 20s intro.")
 ## Choosing a planner model
 
 The planner must be **vision-capable** (it is sent keyframes) **and** support
-Ollama's structured-output `format` (schema-conditioned decoding). `gemma3:27b`
-is the verified default. Some builds — e.g. certain MLX vision models — accept
+Ollama's structured-output `format` (schema-conditioned decoding). `qwen3.6:27b`
+is the default (Apache-2.0). Some builds — e.g. certain MLX vision models — accept
 images but ignore `format`, and planning fails; if a model returns prose instead
 of JSON, pick another tag. `OllamaVisionLLM` is model-agnostic via `model=`, and
 `StructuredVisionLLM` is the seam if you want to back the planner with something

@@ -5,7 +5,7 @@ Every public symbol is re-exported lazily via PEP 562 ``__getattr__`` so that
 leaf module backing the requested symbol — not every sibling. All AI capabilities
 ship in the single ``[ai]`` extra; the laziness keeps ``import videopython`` (and
 importing one leaf class) light by deferring the heavy ML imports (torch /
-transformers / diffusers / ultralytics) until a symbol is actually used. When
+transformers / diffusers / chatterbox) until a symbol is actually used. When
 ``[ai]`` is not installed, touching a symbol raises a clear
 ``pip install 'videopython[ai]'``-pointing ``ImportError`` at attribute access
 instead of failing the whole package import.

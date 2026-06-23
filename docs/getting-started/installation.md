@@ -61,15 +61,15 @@ Protocol](https://modelcontextprotocol.io) server). See the
     Scene captioning (`SceneVLM`, used by `VideoAnalyzer`), dubbing translation,
     and the `AutoEditor` / MCP planner run against a local
     [Ollama](https://ollama.com) server — there is no in-process fallback. Install
-    Ollama, then pull the verified default model:
+    Ollama, then pull the default model:
 
     ```bash
     ollama serve            # start the local daemon
-    ollama pull gemma3:27b  # the default vision/translation model
+    ollama pull qwen3.6:27b  # the default vision/translation model
     ```
 
-    The model must support Ollama's structured-output `format`; `gemma3:27b` is
-    verified. Generation (image/video/speech/music), transcription, detection, and
+    The model must support Ollama's structured-output `format`. The default
+    `qwen3.6:27b` is an Apache-2.0 vision model. Generation (image/video/speech/music), transcription, detection, and
     audio classification do **not** need Ollama.
 
 !!! note "Dubbing TTS"

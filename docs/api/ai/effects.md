@@ -6,7 +6,7 @@ core editing layer keeps no AI dependency.
 
 ## ObjectDetectionOverlay
 
-Detects objects in every frame with a YOLOv8-COCO model and composites tidy,
+Detects objects in every frame with a D-FINE COCO model and composites tidy,
 colour-coded bounding boxes with class labels (and optional confidence). The
 detector ([`ObjectDetector`](understanding.md#objectdetector)) is constructed
 internally; the box/label drawing is done by the AI-free renderer
@@ -48,7 +48,7 @@ In a JSON editing plan (it is exposed in the LLM-facing schema):
 ### Performance
 
 `object_detection_overlay` is **streamable** — memory stays bounded on long
-clips — but detection is **compute**-bound: a YOLO forward pass runs per
+clips — but detection is **compute**-bound: a D-FINE forward pass runs per
 sampled frame. To cap cost:
 
 - **`window`** — restrict the overlay (and therefore detection) to a time range.

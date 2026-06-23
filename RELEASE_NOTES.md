@@ -1,5 +1,36 @@
 # Release Notes
 
+## 0.53.0
+
+Replace the AGPL-3.0 and restricted-license default models with permissively-licensed
+(Apache-2.0 / MIT) alternatives, removing the AGPL dependency from the `[ai]` extra.
+
+### Breaking
+
+- **Object detection: Ultralytics YOLOv8 (AGPL-3.0) -> D-FINE (Apache-2.0)** via
+  `transformers`. `ObjectDetector(model_name=...)` now takes a D-FINE HuggingFace repo id
+  (default `ustc-community/dfine-nano-coco`), not `yolov8*.pt`. `class_filter` must use
+  D-FINE's VOC-style COCO names (e.g. `motorbike`, `tvmonitor`) — there is no YOLO-spelling
+  alias. `ObjectDetectionOverlay.model_size` (n/s/m) maps to D-FINE nano/small/medium.
+  Higher accuracy (~42.8 vs ~37 nano mAP); somewhat slower on CPU, comparable on GPU.
+- **Face detection: YOLOv8-Face (AGPL-3.0) -> OpenCV YuNet (MIT)**, CPU-only via OpenCV
+  DNN. The face detector/trackers (`FaceSmoothingTracker`, `FaceShotTracker`) and the
+  `face_crop` op no longer accept a `backend` param, and the dead GPU `sample_rate` /
+  interpolation path was removed from `FaceSmoothingTracker.track_video`.
+- **Default local LLM: `gemma3:27b` (Gemma Terms) -> `qwen3.6:27b` (Apache-2.0)** for
+  translation, scene description, and auto-edit planning. Confirm a custom model supports
+  Ollama's structured-output `format` locally; `qwen3.6:35b` is a higher-quality option.
+
+### Changed
+
+- Removed `ultralytics` from the `[ai]` extra, `uv.lock`, and mypy config. Added
+  `torchvision` (BSD, `<0.24` to match torch 2.8) — it backs the `transformers` fast image
+  processor used by D-FINE.
+- Renamed the internal shared detector base `understanding/_yolo.py:YoloDetector` to
+  `understanding/_detector.py:DetectorBase` (backend-agnostic; D-FINE and YuNet share it).
+- Added HuggingFace revision pins for the D-FINE COCO repos and the YuNet ONNX checkpoint;
+  removed the `arnabdhar/YOLOv8-Face-Detection` pin.
+
 ## 0.52.1
 
 `videopython.ai` internal cleanup (PR-3): the two Tier-5 items deferred from 0.52.0.

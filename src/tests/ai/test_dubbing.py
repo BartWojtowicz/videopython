@@ -2678,10 +2678,10 @@ class TestDubberTranslatorKwarg:
     def test_dubber_propagates_translator_model_kwarg(self):
         from videopython.ai.dubbing import VideoDubber
 
-        dubber = VideoDubber(translator_model="gemma3:27b")
+        dubber = VideoDubber(translator_model="qwen3.6:27b")
         dubber._init_local_pipeline()
 
-        assert dubber._local_pipeline.config.translator_model == "gemma3:27b"
+        assert dubber._local_pipeline.config.translator_model == "qwen3.6:27b"
 
     def test_dubber_default_translator_model_is_none(self):
         from videopython.ai.dubbing import VideoDubber

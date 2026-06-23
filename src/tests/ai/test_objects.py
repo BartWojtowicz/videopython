@@ -1,4 +1,4 @@
-"""Tests for the ObjectDetector understanding primitive (mocked YOLO)."""
+"""Tests for the ObjectDetector understanding primitive (mocked D-FINE)."""
 
 from unittest.mock import MagicMock
 
@@ -8,40 +8,39 @@ import pytest
 from videopython.ai.understanding.objects import ObjectDetector
 
 
-class FakeBoxes:
-    """Minimal stand-in for an Ultralytics Results.boxes object."""
+def _result(scores, labels, boxes):
+    """A post_process_object_detection result dict (one per image).
 
-    def __init__(self, xyxy, conf, cls):
-        self.xyxy = [np.array(b, dtype=float) for b in xyxy]
-        self.conf = list(conf)
-        self.cls = list(cls)
-
-    def __len__(self):
-        return len(self.xyxy)
-
-
-class FakeResult:
-    def __init__(self, boxes, orig_shape):
-        self.boxes = boxes
-        self.orig_shape = orig_shape
+    ``.tolist()`` is all ObjectDetector reads, so numpy arrays stand in for the
+    torch tensors transformers returns.
+    """
+    return {
+        "scores": np.array(scores, dtype=float),
+        "labels": np.array(labels, dtype=int),
+        "boxes": np.array(boxes, dtype=float).reshape(-1, 4),
+    }
 
 
 def _detector_with(results, class_names=None, **kwargs):
-    """Build an ObjectDetector whose model is a mock returning ``results``."""
+    """Build an ObjectDetector whose processor/model are mocked.
+
+    ``results`` is the list (one dict per image) that the mocked
+    ``post_process_object_detection`` returns. The real ``_infer`` body (torch
+    no_grad, target_sizes) still runs; only the model + processor are faked.
+    """
     det = ObjectDetector(**kwargs)
     det._class_names = class_names or {0: "person", 2: "car"}
-    det._yolo_model = MagicMock(return_value=results)
+    processor = MagicMock()
+    processor.return_value = {"pixel_values": np.zeros((len(results), 3, 8, 8), dtype=np.float32)}
+    processor.post_process_object_detection.return_value = results
+    det._processor = processor
+    det._model = MagicMock(return_value=MagicMock())
     return det
 
 
 def _two_object_result():
     # person (conf 0.9) and car (conf 0.8) in a 100h x 200w image.
-    boxes = FakeBoxes(
-        xyxy=[[20.0, 10.0, 120.0, 60.0], [0.0, 0.0, 100.0, 50.0]],
-        conf=[0.9, 0.8],
-        cls=[0, 2],
-    )
-    return [FakeResult(boxes, orig_shape=(100, 200))]
+    return [_result(scores=[0.9, 0.8], labels=[0, 2], boxes=[[20.0, 10.0, 120.0, 60.0], [0.0, 0.0, 100.0, 50.0]])]
 
 
 class TestObjectDetector:
@@ -62,14 +61,22 @@ class TestObjectDetector:
 
     def test_results_sorted_by_confidence(self):
         # Provide lower-confidence first; detector should sort descending.
-        boxes = FakeBoxes(
-            xyxy=[[0, 0, 10, 10], [0, 0, 20, 20]],
-            conf=[0.4, 0.95],
-            cls=[2, 0],
-        )
-        det = _detector_with([FakeResult(boxes, (100, 100))])
+        results = [_result(scores=[0.4, 0.95], labels=[2, 0], boxes=[[0, 0, 10, 10], [0, 0, 20, 20]])]
+        det = _detector_with(results)
         objs = det.detect(np.zeros((100, 100, 3), dtype=np.uint8))
         assert [o.confidence for o in objs] == [0.95, 0.4]
+
+    def test_boxes_out_of_bounds_are_clamped(self):
+        # D-FINE can emit boxes slightly outside the frame; they must clamp to 0..1.
+        results = [_result(scores=[0.9], labels=[0], boxes=[[-5.0, -2.0, 220.0, 110.0]])]
+        det = _detector_with(results)
+        obj = det.detect(np.zeros((100, 200, 3), dtype=np.uint8))[0]
+        bb = obj.bounding_box
+        assert bb is not None
+        assert bb.x == pytest.approx(0.0)
+        assert bb.y == pytest.approx(0.0)
+        assert bb.x + bb.width == pytest.approx(1.0)
+        assert bb.y + bb.height == pytest.approx(1.0)
 
     def test_class_filter_drops_other_labels(self):
         det = _detector_with(_two_object_result(), class_filter=("person",))
@@ -77,7 +84,7 @@ class TestObjectDetector:
         assert [o.label for o in objs] == ["person"]
 
     def test_detect_handles_empty_results(self):
-        det = _detector_with([])
+        det = _detector_with([_result(scores=[], labels=[], boxes=[])])
         assert det.detect(np.zeros((10, 10, 3), dtype=np.uint8)) == []
 
     def test_detect_batch_list(self):
@@ -101,8 +108,8 @@ class TestObjectDetector:
         det = ObjectDetector(backend="cpu")
         assert det.execution_device() == "cpu"
 
-    def test_confidence_threshold_passed_to_model(self):
+    def test_confidence_threshold_passed_to_post_process(self):
         det = _detector_with(_two_object_result(), confidence_threshold=0.7)
         det.detect(np.zeros((100, 200, 3), dtype=np.uint8))
-        _, kwargs = det._yolo_model.call_args
-        assert kwargs["conf"] == 0.7
+        _, kwargs = det._processor.post_process_object_detection.call_args
+        assert kwargs["threshold"] == 0.7

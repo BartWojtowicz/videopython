@@ -9,7 +9,7 @@ drives the edit with **its own model as the planner** (no in-process LLM).
 ```bash
 pip install "videopython[ai,mcp]"
 ollama serve         # scene captioning uses a local Ollama vision model
-ollama pull gemma3:27b   # the default scene-VLM model
+ollama pull qwen3.6:27b   # the default scene-VLM model
 videopython-mcp      # stdio server
 ```
 

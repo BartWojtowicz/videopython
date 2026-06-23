@@ -19,7 +19,7 @@ pip install "videopython[ai]"        # + ALL local AI features (GPU recommended)
 pip install "videopython[ai,mcp]"    # + MCP server for agent-driven editing
 ```
 
-Python `>=3.11, <3.14`. AI features run locally — no cloud API keys required, but model weights are downloaded on first use. LLM-driven editing and scene captioning use a local [Ollama](https://ollama.com) server (`ollama pull gemma3:27b`).
+Python `>=3.11, <3.14`. AI features run locally — no cloud API keys required, but model weights are downloaded on first use. LLM-driven editing and scene captioning use a local [Ollama](https://ollama.com) server (`ollama pull qwen3.6:27b`).
 
 ## Quick Start
 
@@ -55,7 +55,7 @@ Give `AutoEditor` your clips and a brief; a local Ollama vision model selects an
 ```python
 from videopython.ai import AutoEditor, OllamaVisionLLM
 
-editor = AutoEditor(planner=OllamaVisionLLM(model="gemma3:27b"))  # ollama pull gemma3:27b
+editor = AutoEditor(planner=OllamaVisionLLM(model="qwen3.6:27b"))  # ollama pull qwen3.6:27b
 edit = editor.edit(
     ["clip_a.mp4", "clip_b.mp4", "clip_c.mp4"],
     brief="A punchy 15-second teaser; lead with the most dynamic shot.",

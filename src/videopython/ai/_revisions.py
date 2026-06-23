@@ -33,14 +33,6 @@ Usage:
 # documented here rather than registered above. ``pinned()`` returns None for
 # them, which leaves the caller on its current (unpinned) behavior.
 #
-#   * ultralytics YOLO asset -- ai/understanding/objects.py loads
-#     ``YOLO(self.model_name)`` (e.g. "yolov8n.pt"). Ultralytics resolves and
-#     downloads this from its own GitHub release assets, not from a HF repo,
-#     so there is no HF revision to pin. (The face detector in
-#     ai/understanding/faces.py is different: it pulls a YOLOv8 *checkpoint*
-#     from the HF repo ``arnabdhar/YOLOv8-Face-Detection`` via
-#     hf_hub_download, and that one IS pinned below.)
-#
 #   * Chatterbox internal load -- ai/generation/audio.py calls
 #     ``ChatterboxMultilingualTTS.from_pretrained(device=...)`` with no repo
 #     argument. The repo id + revision are resolved internally by the
@@ -67,8 +59,16 @@ MODEL_REVISIONS: dict[str, str] = {
     "pyannote/speaker-diarization-community-1": "3533c8cf8e369892e6b79ff1bf80f7b0286a54ee",
     # Audio event classifier (ai/understanding/classification.py: AudioClassifier)
     "MIT/ast-finetuned-audioset-10-10-0.4593": "f826b80d28226b62986cc218e5cec390b1096902",
-    # Face detection checkpoint (ai/understanding/faces.py: hf_hub_download)
-    "arnabdhar/YOLOv8-Face-Detection": "52fa54977207fa4f021de949b515fb19dcab4488",
+    # Object detection — D-FINE COCO (ai/understanding/objects.py: ObjectDetector).
+    # Apache-2.0; replaced the AGPL Ultralytics YOLO weights. Loaded by AutoImageProcessor
+    # AND DFineForObjectDetection.from_pretrained, both keyed on the full repo id.
+    "ustc-community/dfine-nano-coco": "066438d3d8f0da137a37b38fdf3368fd4afceced",
+    "ustc-community/dfine-small-coco": "f79e65b5fbb33ceb9d3ebba042955d7410c608f8",
+    "ustc-community/dfine-medium-coco": "4ab9f5e466432f4fcf9a9a023da6aa5ecc9c9829",
+    "ustc-community/dfine-large-coco": "aa8f8211545e4cff5adf52ea512f9ac74a9824ec",
+    # Face detection checkpoint — OpenCV YuNet ONNX, MIT (ai/understanding/faces.py:
+    # hf_hub_download). Replaced the AGPL arnabdhar/YOLOv8-Face-Detection weights.
+    "opencv/face_detection_yunet": "3cc26e7f1014a5ee5d74a42acee58bafc9d0a310",
     # MusicGen (ai/generation/audio.py: TextToMusic)
     "facebook/musicgen-small": "4c8334b02c6ec4e8664a91979669a501ec497792",
     # SDXL (ai/generation/image.py: TextToImage)

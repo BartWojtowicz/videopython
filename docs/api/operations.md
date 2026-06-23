@@ -235,7 +235,7 @@ and the default LLM-facing schema because they need a server-resolved
 | ID | Class | Category | Streamable |
 |---|---|---|---|
 | `face_crop` | `FaceTrackingCrop` | transform | yes — compile-time detection pass drives a per-frame crop track |
-| `object_detection_overlay` | `ObjectDetectionOverlay` | effect | yes — per-frame box overlay; YOLOv8 detection on a `detection_interval` cadence; bounded memory, not bounded compute |
+| `object_detection_overlay` | `ObjectDetectionOverlay` | effect | yes — per-frame box overlay; D-FINE detection on a `detection_interval` cadence; bounded memory, not bounded compute |
 
 ## API Reference
 

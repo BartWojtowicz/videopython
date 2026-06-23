@@ -58,7 +58,7 @@ config = VideoAnalysisConfig(
         "face_tracker",
     },
     analyzer_params={
-        "scene_vlm": {"model": "gemma3:27b"},  # any vision tag you've pulled
+        "scene_vlm": {"model": "qwen3.6:27b"},  # any vision tag you've pulled
         "audio_to_text": {
             "model_name": "large",
             "vocabulary": ["Klarna", "Allegro", "InPost"],  # brand-name biasing
