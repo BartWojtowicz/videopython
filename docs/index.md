@@ -83,7 +83,7 @@ Expose the auto-edit pipeline as [Model Context Protocol](https://modelcontextpr
 
 ### AI Generation
 
-Generate images, video, speech, and music from text prompts. SDXL, CogVideoX, Chatterbox Multilingual TTS, MusicGen — all local, no API keys. [Learn more →](api/ai/generation.md)
+Generate images, video, speech, and music from text prompts. Qwen-Image, Wan2.2, Chatterbox Multilingual TTS, MusicGen — all local, no API keys. [Learn more →](api/ai/generation.md)
 
 </div>
 

@@ -2,7 +2,7 @@
 
 Each symbol's backing leaf module is imported only on first access, so
 ``from videopython.ai.generation import TextToImage`` does not pull in
-``audio`` (chatterbox/musicgen) or ``video`` (diffusers/CogVideoX). The
+``audio`` (chatterbox/musicgen) or ``video`` (diffusers/Wan2.2). The
 ``TYPE_CHECKING`` block keeps the symbols visible to mypy and IDEs.
 """
 

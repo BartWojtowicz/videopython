@@ -1,5 +1,35 @@
 # Release Notes
 
+## 0.54.0
+
+Replace the restricted-license media-generation defaults with permissively-licensed
+(Apache-2.0) alternatives. Follows 0.53.0 (detection + LLM swaps).
+
+### Breaking
+
+- **Text-to-image: SDXL (OpenRAIL++) -> Qwen-Image (`Qwen/Qwen-Image-2512`, Apache-2.0)**
+  via `diffusers` `QwenImagePipeline`. `TextToImage.generate_image` gains keyword args
+  (`negative_prompt`, `true_cfg_scale`, `num_inference_steps`, `width`/`height`,
+  `add_magic`, `seed`); it uses Qwen's `true_cfg_scale` (not `guidance_scale`) and appends
+  the model's recommended quality suffix by default. bf16 on CUDA with
+  `enable_model_cpu_offload()` + VAE tiling (~20B).
+- **Text-to-video: CogVideoX1.5-5B (custom license) -> Wan2.2-T2V-A14B (Apache-2.0)**
+  via `WanPipeline` + `AutoencoderKLWan`. Default `num_steps` 50->40, `guidance_scale` 6.0->4.0
+  (Wan2.2 A14B recommendations); MoE low-noise expert at `guidance_scale_2=3.0`.
+- **Image-to-video: CogVideoX1.5-5B-I2V -> Wan2.2-I2V-A14B (Apache-2.0)** via
+  `WanImageToVideoPipeline`. The input image is resized to Wan's area budget snapped to the
+  model grid. Default `num_steps` 50->40, `guidance_scale` 6.0->3.5.
+
+### Changed
+
+- `diffusers` floor raised `>=0.30.0` -> `>=0.35.0` (ships `QwenImagePipeline` + Wan2.2
+  support; tested on 0.37.1) in the `[ai]` extra and the uv override.
+- `_revisions.py`: removed the SDXL + two CogVideoX pins; added Qwen-Image-2512 + Wan2.2
+  T2V/I2V (the fp32 VAE loads from the same repo, so one pin covers both `from_pretrained`s).
+- Added `scripts/verify_generative_models.py` — a manual GPU smoke test that runs all three
+  pipelines end-to-end and checks for non-black output (not a CI test).
+- Added mocked unit tests for `TextToImage`/`TextToVideo`/`ImageToVideo` (previously untested).
+
 ## 0.53.0
 
 Replace the AGPL-3.0 and restricted-license default models with permissively-licensed

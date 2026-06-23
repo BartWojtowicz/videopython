@@ -16,7 +16,7 @@ constraints = [
     { name = "requests", specifier = ">=2.33.0" },
 ]
 overrides = [
-    { name = "diffusers", specifier = ">=0.30.0" },
+    { name = "diffusers", specifier = ">=0.35.0" },
     { name = "numpy", specifier = ">=2.0.0" },
     { name = "opencv-python", marker = "sys_platform == '_'" },
     { name = "torch", specifier = ">=2.8.0" },
@@ -4605,7 +4605,7 @@ wheels = [
 
 [[package]]
 name = "videopython"
-version = "0.53.0"
+version = "0.54.0"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },
@@ -4661,7 +4661,7 @@ requires-dist = [
     { name = "accelerate", marker = "extra == 'ai'", specifier = ">=0.29.2" },
     { name = "chatterbox-tts", marker = "extra == 'ai'", specifier = ">=0.1.7" },
     { name = "demucs", marker = "extra == 'ai'", specifier = ">=4.0.0" },
-    { name = "diffusers", marker = "extra == 'ai'", specifier = ">=0.30.0" },
+    { name = "diffusers", marker = "extra == 'ai'", specifier = ">=0.35.0" },
     { name = "imagehash", marker = "extra == 'ai'", specifier = ">=4.3" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.27,<2" },
     { name = "numpy", specifier = ">=1.25.2" },

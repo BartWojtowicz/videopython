@@ -71,11 +71,14 @@ MODEL_REVISIONS: dict[str, str] = {
     "opencv/face_detection_yunet": "3cc26e7f1014a5ee5d74a42acee58bafc9d0a310",
     # MusicGen (ai/generation/audio.py: TextToMusic)
     "facebook/musicgen-small": "4c8334b02c6ec4e8664a91979669a501ec497792",
-    # SDXL (ai/generation/image.py: TextToImage)
-    "stabilityai/stable-diffusion-xl-base-1.0": "462165984030d82259a11f4367a4eed129e94a7b",
-    # CogVideoX (ai/generation/video.py: TextToVideo / ImageToVideo)
-    "THUDM/CogVideoX1.5-5B": "fdc5267c90b5c06492985b966e43aae984e189e0",
-    "THUDM/CogVideoX1.5-5B-I2V": "46c90528707aebbe69066390b4fe7e7d24c9c2a4",
+    # Text-to-image — Qwen-Image (ai/generation/image.py: TextToImage), Apache-2.0;
+    # replaced the OpenRAIL++-licensed SDXL.
+    "Qwen/Qwen-Image-2512": "25468b98e3276ca6700de15c6628e51b7de54a26",
+    # Text/image-to-video — Wan2.2 (ai/generation/video.py: TextToVideo / ImageToVideo),
+    # Apache-2.0; replaced the custom-licensed CogVideoX. The fp32 VAE is loaded from the
+    # same repo (subfolder="vae"), so revision=pinned(repo) covers both from_pretrained calls.
+    "Wan-AI/Wan2.2-T2V-A14B-Diffusers": "5be7df9619b54f4e2667b2755bc6a756675b5cd7",
+    "Wan-AI/Wan2.2-I2V-A14B-Diffusers": "596658fd9ca6b7b71d5057529bbf319ecbc61d74",
 }
 
 

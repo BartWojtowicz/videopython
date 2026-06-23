@@ -1,6 +1,6 @@
 [project]
 name = "videopython"
-version = "0.53.0"
+version = "0.54.0"
 description = "Minimal video generation and processing library."
 authors = [
     { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
@@ -78,8 +78,9 @@ ai = [
     # Voice cloning TTS (generation/audio.py — Chatterbox); its strict pins drive
     # the [tool.uv].override-dependencies block below.
     "chatterbox-tts>=0.1.7",
-    # Local media generation: SDXL/CogVideoX + MusicGen (generation/*)
-    "diffusers>=0.30.0",
+    # Local media generation: Qwen-Image/Wan2.2 + MusicGen (generation/*).
+    # >=0.35 is the floor that ships QwenImagePipeline + Wan2.2 support (tested on 0.37.1).
+    "diffusers>=0.35.0",
     "accelerate>=0.29.2",
     # Dubbing loudness matching (dubbing/loudness.py)
     "pyloudnorm>=0.1.1",
@@ -136,7 +137,7 @@ ignore_missing_imports = true
 # These overrides let the combined [ai] resolve pick compatible versions; the
 # floors in [ai] are aligned with them so pip and uv resolve similar versions.
 override-dependencies = [
-    "torch>=2.8.0", "torchaudio>=2.8.0", "torchvision>=0.23.0,<0.24.0", "numpy>=2.0.0", "diffusers>=0.30.0",
+    "torch>=2.8.0", "torchaudio>=2.8.0", "torchvision>=0.23.0,<0.24.0", "numpy>=2.0.0", "diffusers>=0.35.0",
     # Some transitive deps pull opencv-python, which conflicts with our
     # opencv-python-headless (both provide cv2). Exclude opencv-python so
     # only the headless variant is installed.

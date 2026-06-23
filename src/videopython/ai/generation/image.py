@@ -1,4 +1,4 @@
-"""Image generation using local diffusion models."""
+"""Image generation using local diffusion models (Qwen-Image)."""
 
 from __future__ import annotations
 
@@ -10,9 +10,15 @@ from videopython.ai._device import log_device_initialization, select_device
 from videopython.ai._predictor import ManagedPredictor
 from videopython.ai._revisions import pinned
 
+_MODEL_NAME = "Qwen/Qwen-Image-2512"
+
+# Qwen-Image recommends appending a quality "magic" suffix to the prompt
+# (verbatim from the model card).
+_POSITIVE_MAGIC = ", Ultra HD, 4K, cinematic composition."
+
 
 class TextToImage(ManagedPredictor):
-    """Generates images from text descriptions using local models."""
+    """Generates images from text descriptions using local models (Qwen-Image, Apache-2.0)."""
 
     _model_attrs = ("_pipeline",)
 
@@ -21,27 +27,37 @@ class TextToImage(ManagedPredictor):
         self._pipeline: Any = None
 
     def _init_local(self) -> None:
-        """Initialize local diffusion pipeline."""
+        """Initialize the local Qwen-Image diffusion pipeline."""
         import torch
 
         from videopython.ai._optional import require
 
-        DiffusionPipeline = require("diffusers", feature="TextToImage").DiffusionPipeline
+        QwenImagePipeline = require("diffusers", feature="TextToImage").QwenImagePipeline
 
         requested_device = self.device
         device = select_device(self.device, mps_allowed=True)
-        dtype = torch.float16 if device == "cuda" else torch.float32
-        variant = "fp16" if device == "cuda" else None
+        # Qwen-Image is published in bf16; fp16 has no published weight variant. Only
+        # CUDA uses bf16 (bf16 on MPS is unreliable); CPU/MPS fall back to fp32.
+        dtype = torch.bfloat16 if device == "cuda" else torch.float32
 
-        model_name = "stabilityai/stable-diffusion-xl-base-1.0"
-        self._pipeline = DiffusionPipeline.from_pretrained(
-            model_name,
-            revision=pinned(model_name),
+        self._pipeline = QwenImagePipeline.from_pretrained(
+            _MODEL_NAME,
+            revision=pinned(_MODEL_NAME),
             torch_dtype=dtype,
-            variant=variant,
             use_safetensors=True,
         )
-        self._pipeline.to(device)
+
+        if device == "cuda":
+            # ~20B params (Qwen2.5-VL text encoder + transformer + VAE). Offload
+            # submodules to the GPU on demand so it fits a single GPU; offload manages
+            # device placement, so we must NOT also call .to("cuda").
+            self._pipeline.enable_model_cpu_offload()
+            self._pipeline.enable_vae_tiling()
+        else:
+            self._pipeline.to(device)
+            if device == "mps":
+                self._pipeline.enable_attention_slicing()
+
         self.device = device
         log_device_initialization(
             "TextToImage",
@@ -49,11 +65,37 @@ class TextToImage(ManagedPredictor):
             resolved_device=device,
         )
 
-        if device == "mps":
-            self._pipeline.enable_attention_slicing()
+    def generate_image(
+        self,
+        prompt: str,
+        *,
+        negative_prompt: str = " ",
+        true_cfg_scale: float = 4.0,
+        num_inference_steps: int = 50,
+        width: int = 1328,
+        height: int = 1328,
+        add_magic: bool = True,
+        seed: int = 42,
+    ) -> Image.Image:
+        """Generate an image from a text prompt.
 
-    def generate_image(self, prompt: str) -> Image.Image:
-        """Generate an image from a text prompt."""
+        Qwen-Image uses ``true_cfg_scale`` (not ``guidance_scale``) for
+        classifier-free guidance; a non-empty ``negative_prompt`` (default a single
+        space) is required to enable it. ``add_magic`` appends the model's
+        recommended quality suffix to ``prompt``.
+        """
+        import torch
+
         if self._pipeline is None:
             self._init_local()
-        return self._pipeline(prompt=prompt).images[0]
+
+        full_prompt = prompt + _POSITIVE_MAGIC if add_magic else prompt
+        return self._pipeline(
+            prompt=full_prompt,
+            negative_prompt=negative_prompt,
+            true_cfg_scale=true_cfg_scale,
+            num_inference_steps=num_inference_steps,
+            width=width,
+            height=height,
+            generator=torch.Generator(device=self.device).manual_seed(seed),
+        ).images[0]
