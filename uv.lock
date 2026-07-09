@@ -16,7 +16,7 @@ constraints = [
     { name = "requests", specifier = ">=2.33.0" },
 ]
 overrides = [
-    { name = "diffusers", specifier = ">=0.30.0" },
+    { name = "diffusers", specifier = ">=0.35.0" },
     { name = "numpy", specifier = ">=2.0.0" },
     { name = "opencv-python", marker = "sys_platform == '_'" },
     { name = "torch", specifier = ">=2.8.0" },
@@ -972,6 +972,18 @@ wheels = [
 [package.optional-dependencies]
 http = [
     { name = "aiohttp" },
+]
+
+[[package]]
+name = "ftfy"
+version = "6.3.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "wcwidth" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a5/d3/8650919bc3c7c6e90ee3fa7fd618bf373cbbe55dff043bd67353dbb20cd8/ftfy-6.3.1.tar.gz", hash = "sha256:9b3c3d90f84fb267fe64d375a07b7f8912d817cf86009ae134aa03e1819506ec", size = 308927, upload-time = "2024-10-26T00:50:35.149Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ab/6e/81d47999aebc1b155f81eca4477a616a70f238a2549848c38983f3c22a82/ftfy-6.3.1-py3-none-any.whl", hash = "sha256:7c70eb532015cd2f9adb53f101fb6c7945988d023a085d127d1573dc49dd0083", size = 44821, upload-time = "2024-10-26T00:50:33.425Z" },
 ]
 
 [[package]]
@@ -4605,7 +4617,7 @@ wheels = [
 
 [[package]]
 name = "videopython"
-version = "0.53.0"
+version = "0.54.0"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },
@@ -4622,6 +4634,7 @@ ai = [
     { name = "chatterbox-tts" },
     { name = "demucs" },
     { name = "diffusers" },
+    { name = "ftfy" },
     { name = "imagehash" },
     { name = "ollama" },
     { name = "openai-whisper" },
@@ -4661,7 +4674,8 @@ requires-dist = [
     { name = "accelerate", marker = "extra == 'ai'", specifier = ">=0.29.2" },
     { name = "chatterbox-tts", marker = "extra == 'ai'", specifier = ">=0.1.7" },
     { name = "demucs", marker = "extra == 'ai'", specifier = ">=4.0.0" },
-    { name = "diffusers", marker = "extra == 'ai'", specifier = ">=0.30.0" },
+    { name = "diffusers", marker = "extra == 'ai'", specifier = ">=0.35.0" },
+    { name = "ftfy", marker = "extra == 'ai'", specifier = ">=6.1" },
     { name = "imagehash", marker = "extra == 'ai'", specifier = ">=4.3" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.27,<2" },
     { name = "numpy", specifier = ">=1.25.2" },
@@ -4739,6 +4753,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/07/f6/d0e5b343768e8bcb4cda79f0f2f55051bf26177ecd5651f84c07567461cf/watchdog-6.0.0-py3-none-win32.whl", hash = "sha256:07df1fdd701c5d4c8e55ef6cf55b8f0120fe1aef7ef39a1c6fc6bc2e606d517a", size = 79065, upload-time = "2024-11-01T14:07:09.525Z" },
     { url = "https://files.pythonhosted.org/packages/db/d9/c495884c6e548fce18a8f40568ff120bc3a4b7b99813081c8ac0c936fa64/watchdog-6.0.0-py3-none-win_amd64.whl", hash = "sha256:cbafb470cf848d93b5d013e2ecb245d4aa1c8fd0504e863ccefa32445359d680", size = 79070, upload-time = "2024-11-01T14:07:10.686Z" },
     { url = "https://files.pythonhosted.org/packages/33/e8/e40370e6d74ddba47f002a32919d91310d6074130fe4e17dabcafc15cbf1/watchdog-6.0.0-py3-none-win_ia64.whl", hash = "sha256:a1914259fa9e1454315171103c6a30961236f508b9b623eae470268bbcc6a22f", size = 79067, upload-time = "2024-11-01T14:07:11.845Z" },
+]
+
+[[package]]
+name = "wcwidth"
+version = "0.8.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/34/74/c6428f875774288bec1396f5bfcbc2d925700a4dad61727fd5f2b12f249d/wcwidth-0.8.2.tar.gz", hash = "sha256:91fbef97204b96a3d4d421609b80340b760cf33e26da123ff243d76b1fda8dda", size = 1466253, upload-time = "2026-06-29T18:11:11.601Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/96/42/3e5985a0a7e57de470b320c6d6a1a67c844f6737a587f3d44dd13d1819e7/wcwidth-0.8.2-py3-none-any.whl", hash = "sha256:d63947694a0539a1d51e01eda7caf800c291020e6cdd7e28ad7b14dd33ad4f85", size = 323166, upload-time = "2026-06-29T18:11:09.888Z" },
 ]
 
 [[package]]

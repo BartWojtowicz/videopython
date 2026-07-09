@@ -130,6 +130,12 @@ def test_dependency_group_ai_matches_optional_ai(pyproject: Pyproject) -> None:
 #   accelerate   -> diffusers/transformers device-map plumbing (transitive)
 _TRANSITIVE_ONLY_DEPS = {"torchaudio", "torchvision", "accelerate"}
 
+# Deps we must declare for a *dependency's* runtime code path, never imported by our code:
+#   ftfy -> diffusers' Wan2.2 i2v pipeline (pipeline_wan_i2v) imports ftfy at runtime to
+#           clean prompts, but diffusers marks it optional and does not pull it in, so
+#           ImageToVideo crashes without it -> we pin it here.
+_RUNTIME_ONLY_DEPS = {"ftfy"}
+
 
 def test_every_declared_dep_is_imported_somewhere(pyproject: Pyproject) -> None:
     """Each dep declared in [ai] is actually imported under ai/ (lazily, anywhere)
@@ -152,7 +158,7 @@ def test_every_declared_dep_is_imported_somewhere(pyproject: Pyproject) -> None:
 
     missing: list[str] = []
     for dist in declared:
-        if dist in _TRANSITIVE_ONLY_DEPS:
+        if dist in _TRANSITIVE_ONLY_DEPS or dist in _RUNTIME_ONLY_DEPS:
             continue
         import_names = _DIST_TO_IMPORT_NAMES.get(dist, {dist.replace("-", "_")})
         if not any(_is_referenced(imp) for imp in import_names):
