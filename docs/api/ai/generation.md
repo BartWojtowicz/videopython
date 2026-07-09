@@ -6,11 +6,11 @@ Generate videos, images, audio, and music from text prompts.
 
 | Class | Local Model Family |
 |-------|--------------------|
-| TextToVideo | CogVideoX1.5-5B |
-| ImageToVideo | CogVideoX1.5-5B-I2V |
+| TextToVideo | Wan2.2-T2V-A14B |
+| ImageToVideo | Wan2.2-I2V-A14B |
 | TextToSpeech | Chatterbox Multilingual |
 | TextToMusic | MusicGen |
-| TextToImage | SDXL |
+| TextToImage | Qwen-Image |
 
 ## TextToVideo
 

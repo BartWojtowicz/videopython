@@ -75,14 +75,14 @@ create_ai_video("ai_generated.mp4")
 ### 1. Generate Images
 
 ```python
-image_gen = TextToImage()  # Uses local SDXL pipeline
+image_gen = TextToImage()  # Uses local Qwen-Image pipeline
 image = image_gen.generate_image("A serene mountain landscape at sunrise")
 ```
 
 ### 2. Animate to Video
 
 ```python
-video_gen = ImageToVideo()  # Uses local CogVideoX1.5-5B-I2V (outputs at 16 fps)
+video_gen = ImageToVideo()  # Uses local Wan2.2-I2V-A14B (outputs at 16 fps)
 video = video_gen.generate_video(image=image)
 ```
 

@@ -78,8 +78,11 @@ Protocol](https://modelcontextprotocol.io) server). See the
     your own `SpeechBackend` into `VideoDubber` (e.g. a remote synthesizer).
 
 !!! note "Hardware Requirements"
-    Local AI models (video generation, music generation) require a GPU.
-    CUDA (NVIDIA) or MPS (Apple Silicon) is supported. An NVIDIA A40 or better is recommended for video generation.
+    Image and video generation (`TextToImage`, `TextToVideo`, `ImageToVideo`) require an
+    **NVIDIA CUDA GPU** — these ~20–28B models raise on CPU/MPS rather than falling back. An
+    NVIDIA A40 or better is recommended for video generation. Music generation (`TextToMusic`)
+    runs on CUDA, Apple MPS, or CPU, and speech (`TextToSpeech`) on CUDA or CPU. Detection and
+    understanding models run on CPU (GPU optional).
 
 ## Local-Only AI Runtime
 
@@ -88,7 +91,8 @@ Protocol](https://modelcontextprotocol.io) server). See the
 Practical setup notes:
 
 - First AI run may download model weights.
-- Prefer GPU (`cuda` or `mps`) for generation-heavy workflows.
+- Image/video generation require a CUDA GPU; other AI models prefer a GPU (`cuda`, or `mps`
+  where supported) but run on CPU too.
 - Use the `device` argument where supported to force placement.
 
 ```python
