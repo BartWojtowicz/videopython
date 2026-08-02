@@ -77,6 +77,17 @@ Protocol](https://modelcontextprotocol.io) server). See the
     `TextToSpeech` by default. To run synthesis out of process instead, inject
     your own `SpeechBackend` into `VideoDubber` (e.g. a remote synthesizer).
 
+    `[ai]` pulls TTS from
+    [`videopython-chatterbox`](https://pypi.org/project/videopython-chatterbox/)
+    rather than `chatterbox-tts`. Upstream pins `diffusers==0.29.0`,
+    `torch==2.6.0` and `transformers==5.2.0` with `==`, which cannot be satisfied
+    alongside the rest of `[ai]` (`pyannote-audio` alone requires `torch>=2.8`).
+    The fork is upstream's source with corrected dependency metadata; the import
+    name is still `chatterbox`, so nothing in your code changes.
+
+    Because both distributions install a top-level `chatterbox` package, do not
+    install `chatterbox-tts` alongside `[ai]` — pick one.
+
 !!! note "Hardware Requirements"
     Image and video generation (`TextToImage`, `TextToVideo`, `ImageToVideo`) require an
     **NVIDIA CUDA GPU** — these ~20–28B models raise on CPU/MPS rather than falling back. An

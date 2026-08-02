@@ -11,7 +11,10 @@ pip install "videopython[ai]"
 ```
 
 By default speech is synthesized locally with the bundled `TextToSpeech`
-(Chatterbox). Synthesis runs through the pluggable
+(Chatterbox, supplied by the
+[`videopython-chatterbox`](https://pypi.org/project/videopython-chatterbox/)
+package — see [Installation](../../getting-started/installation.md#with-ai-features)
+for why). Synthesis runs through the pluggable
 [`SpeechBackend`](#pluggable-tts-backend) protocol, so you can inject your own
 backend (e.g. an out-of-process / remote synthesizer) into `VideoDubber` to keep
 chatterbox out of the process.

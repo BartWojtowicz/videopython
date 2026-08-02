@@ -427,8 +427,9 @@ def extract_frames_at_indices(
     # Truncate to complete frames only
     raw_data = raw_data[: actual_frames * frame_size]
 
-    frames = np.frombuffer(raw_data, dtype=np.uint8).copy()
-    frames = frames.reshape(-1, metadata.height, metadata.width, 3)
+    # Chained rather than reshaped in place: numpy>=2.5 shape-types ndarray, so
+    # rebinding a 1-D frombuffer result to a 4-D view is an assignment error.
+    frames = np.frombuffer(raw_data, dtype=np.uint8).copy().reshape(-1, metadata.height, metadata.width, 3)
 
     # Reorder to match original frame_indices order if needed
     if unique_sorted_indices != frame_indices:

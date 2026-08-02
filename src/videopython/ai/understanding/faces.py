@@ -236,7 +236,7 @@ class FaceSmoothingTracker(_FaceTrackerBase):
             frame_center = (0.5, 0.5)
             _, bbox = min(
                 faces_with_box,
-                key=lambda fb: ((fb[1].center[0] - frame_center[0]) ** 2 + (fb[1].center[1] - frame_center[1]) ** 2),
+                key=lambda fb: (fb[1].center[0] - frame_center[0]) ** 2 + (fb[1].center[1] - frame_center[1]) ** 2,
             )
         elif self.selection_strategy == "index":
             idx = self.face_index if self.face_index < len(faces_with_box) else 0
