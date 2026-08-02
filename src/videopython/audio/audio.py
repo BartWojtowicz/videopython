@@ -224,16 +224,12 @@ class Audio:
                     if dtype is None:
                         raise AudioLoadError(f"Unsupported sample width: {sample_width}")
 
-                    data = np.frombuffer(raw_data, dtype=dtype)
+                    # Explicitly annotated: numpy>=2.5 shape-types ndarray, so the
+                    # 1-D frombuffer result cannot be rebound to a 2-D view below.
+                    data: np.ndarray[Any, np.dtype[np.float32]]
+                    data = np.frombuffer(raw_data, dtype=dtype).astype(np.float32)
 
-                    # Reshape if stereo
-                    if channels == 2:
-                        data = data.reshape(-1, 2)
-
-                    # Convert to float32
-                    data = data.astype(np.float32)
-
-                    # Reshape before normalization if stereo
+                    # Reshape to (frames, channels) if stereo
                     if channels == 2:
                         data = data.reshape(-1, 2)
 

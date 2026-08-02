@@ -40,7 +40,8 @@ _DIST_TO_IMPORT_NAMES: dict[str, set[str]] = {
     "pyannote-audio": {"pyannote"},
     "silero-vad": {"silero_vad"},
     "transnetv2-pytorch": {"transnetv2_pytorch"},
-    "chatterbox-tts": {"chatterbox"},
+    # Fork of chatterbox-tts with corrected dep metadata; import name is unchanged.
+    "videopython-chatterbox": {"chatterbox"},
     "scikit-learn": {"sklearn"},
 }
 
@@ -128,7 +129,11 @@ def test_dependency_group_ai_matches_optional_ai(pyproject: Pyproject) -> None:
 #   torchaudio   -> co-pin for the torch stack (whisper/chatterbox/demucs)
 #   torchvision  -> backs the transformers "fast" image processor used by D-FINE
 #   accelerate   -> diffusers/transformers device-map plumbing (transitive)
-_TRANSITIVE_ONLY_DEPS = {"torchaudio", "torchvision", "accelerate"}
+#   torchcodec   -> torchaudio 2.11+ routes save()/load() through it; arrives via
+#                   pyannote-audio, declared so the torch-coupled set is explicit
+#   numba        -> pulled by openai-whisper; floored so its own numpy cap binds
+#                   rather than being dodged by backtracking to an old release
+_TRANSITIVE_ONLY_DEPS = {"torchaudio", "torchvision", "torchcodec", "accelerate", "numba"}
 
 # Deps we must declare for a *dependency's* runtime code path, never imported by our code:
 #   ftfy -> diffusers' Wan2.2 i2v pipeline (pipeline_wan_i2v) imports ftfy at runtime to

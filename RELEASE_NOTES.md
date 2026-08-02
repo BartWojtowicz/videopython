@@ -1,5 +1,37 @@
 # Release Notes
 
+## 0.54.1
+
+Packaging fix: `pip install "videopython[ai]"` was unsatisfiable for consumers. The uv
+override table masked it in-repo, and overrides don't ship in the wheel.
+
+### Fixed
+
+- **`[ai]` installs again.** `chatterbox-tts` 0.1.7's `==` pins (`diffusers==0.29.0`,
+  `torch==2.6.0`) conflict with `diffusers>=0.35.0` and `pyannote-audio` (`torch>=2.8`).
+  `[ai]` now uses [`videopython-chatterbox`](https://pypi.org/project/videopython-chatterbox/),
+  the same source with corrected metadata — import name is still `chatterbox`. Verified
+  bit-identical output on the newer stack. Don't install `chatterbox-tts` alongside it;
+  both provide `chatterbox`.
+- **CUDA-major mismatch.** Capping only `torchvision<0.24.0` pinned torch to cu12 while
+  `torchaudio` floated to cu13, resolving cleanly then failing at import
+  (`libcudart.so.13`). Cap removed; torchvision's own exact torch pin handles pairing.
+- **`setuptools<81`** (via the fork) — `resemble-perth` imports `pkg_resources`, gone in
+  setuptools 82+, which surfaced as a `NoneType` error at model load.
+
+### Changed
+
+- `[ai]`: added `torchcodec>=0.7.0` (torchaudio 2.11+ needs it for `save`/`load`) and
+  `numba>=0.62`. numba is version-coupled to numpy and its cap moves forward per release;
+  without a floor a resolver satisfies a newer numpy by backtracking numba to an ancient
+  release, which then breaks `import whisper`.
+- Emptied `override-dependencies` of everything except the `opencv-python` exclusion.
+  `torch`/`torchaudio`/`torchvision`/`diffusers` overrode torchvision's own `torch==2.8.0`;
+  `numpy>=2.0.0` overrode numba's `numpy<2.5`. Overrides replace a requirement everywhere
+  it appears, including constraints that exist for good reason.
+- Relock moves off the 2.8 line: torch 2.13.0 / torchvision 0.28.0 / torchaudio 2.11.0 /
+  torchcodec 0.15.0, numpy 2.4.6.
+
 ## 0.54.0
 
 Replace the restricted-license media-generation defaults with permissively-licensed
