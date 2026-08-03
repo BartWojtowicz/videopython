@@ -311,9 +311,8 @@ class ColorGrading(Effect):
         if self.brightness != 0 or self.contrast != 1.0:
             out = cv2.LUT(out, self._lut_tone)
         if self.saturation != 1.0:
-            # Saturation as a blend toward the luma-weighted greyscale of the
-            # frame. Replaces an RGB->HSV->RGB float32 round trip that cost more
-            # than every other stage of the grade combined (~42 of 56 ms/frame).
+            # Blend toward luma-weighted greyscale. Not an HSV round trip: that
+            # costs more than every other stage of the grade combined.
             grey = cv2.cvtColor(out, cv2.COLOR_RGB2GRAY)
             out = cv2.addWeighted(
                 out, self.saturation, cv2.cvtColor(grey, cv2.COLOR_GRAY2RGB), 1.0 - self.saturation, 0
@@ -364,17 +363,13 @@ class Vignette(Effect):
     def streaming_init(self, total_frames: int, fps: float, width: int, height: int, **_context: Any) -> None:
         """Bake the gain mask into a 3-channel uint8 lookup, once per stream.
 
-        The mask is static, so the only per-frame work should be one multiply.
-        Storing it as uint8 replicated across channels lets ``cv2.multiply`` run
-        the whole frame in a single SIMD pass with no float conversion --
-        ~10x faster than promoting every frame to float32, and the mask itself
-        is *smaller* than the float32 original (6.2 MB vs 8.3 MB at 1080p).
+        The mask is static, so per-frame work is one ``cv2.multiply`` SIMD pass
+        with no float conversion.
 
-        The clip to [0, 1] also fixes a real defect: ``_create_mask`` goes
-        NEGATIVE once ``strength`` is high enough (down to -1.0 at
-        ``strength=1.0``), and ``(frame * -1.0).astype(np.uint8)`` wraps around,
-        so the darkest corners rendered as mid-grey (200 -> 56) and the vignette
-        got *brighter* past the zero crossing instead of saturating to black.
+        Clipping to [0, 1] is load-bearing, not tidying: ``_create_mask`` goes
+        negative once ``strength`` is high enough (-1.0 at ``strength=1.0``), and
+        ``(frame * -1.0).astype(np.uint8)`` wraps, which renders the darkest
+        corners mid-grey and makes the vignette brighten past the zero crossing.
         """
         if self._mask is None or self._mask.shape != (height, width):
             self._mask = self._create_mask(height, width)
@@ -1429,18 +1424,14 @@ class FilmGrain(Effect):
     _geometry: tuple[int, int] = PrivateAttr(default=(0, 0))
 
     def streaming_init(self, total_frames: int, fps: float, width: int, height: int, **_context: Any) -> None:
-        """Draw one oversized noise plane up front; each frame reads a random window of it.
+        """Draw one oversized noise plane up front; each frame reads a random window.
 
-        Generating fresh Gaussian noise per frame meant ~2M ``standard_normal``
-        samples every frame, which dominated the effect (~31 ms/frame, more than
-        twice the encoder's whole per-frame budget). Sampling a
-        ``GRAIN_POOL_PAD``-padded plane once and taking a randomly offset window
-        per frame gives grain that still changes every frame -- offsets jump
-        rather than drift, so it scintillates like film rather than sliding --
-        for one saturating integer add.
+        Sampling Gaussian noise per frame costs ~2M draws a frame and dominates
+        the effect; one padded plane plus a per-frame offset reduces that to a
+        saturating integer add.
 
-        Reproducibility is unchanged in contract (same ``seed`` -> same grain),
-        though the pattern itself differs from the per-frame-RNG version.
+        Offsets jump rather than advance, so the grain scintillates like film
+        instead of sliding. Same ``seed`` still gives the same grain.
         """
         amp = self.intensity * 255.0
         pad = GRAIN_POOL_PAD
