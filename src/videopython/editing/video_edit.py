@@ -2078,13 +2078,14 @@ class VideoEdit(BaseModel):
                         abandon()
                         return None
                     if op.compiles_to_filter:
-                        # Filter-class effect (add_subtitles): consumes its
-                        # context at compile time and joins the filter chain at
-                        # this op's plan position -- the decode chain when no
-                        # frame effect precedes it, else the encode chain
-                        # (FrameEncoder -vf), which runs after every
-                        # process_frame. Either way plan order is preserved. A
-                        # None compile falls through to the frame-effect path.
+                        # Filter-class effect (add_subtitles, vignette, ...):
+                        # consumes its context at compile time and joins the
+                        # filter chain at this op's plan position -- the decode
+                        # chain when no frame effect precedes it, else the
+                        # encode chain (FrameEncoder -vf), which runs after
+                        # every process_frame. Either way plan order is
+                        # preserved. A None compile falls through to the
+                        # frame-effect path UNLESS the op is video_passthrough.
                         encode_stage_effect = bool(effect_schedule or post_vf_filters)
                         ctx = make_ctx(decode_filters=None if encode_stage_effect else tuple(vf_filters))
                         filter_expr = op.to_ffmpeg_filter(ctx)
@@ -2097,6 +2098,17 @@ class VideoEdit(BaseModel):
                                 vf_filters.append(filter_expr)
                             # Audio twin at the same stage (add_subtitles has
                             # none today; kept coupled for extensibility).
+                            compile_audio_twin(op, ctx, encode_stage_effect)
+                            continue
+                        if op.video_passthrough:
+                            # Audio-only filter effect (volume_adjust): there is
+                            # no video filter to place by design, but the audio
+                            # twin still lands -- at the stage a video filter
+                            # WOULD have landed, so audio/video stage placement
+                            # stays coupled. Deliberately does not touch
+                            # vf_filters/post_vf_filters/pipe_meta: the op is
+                            # invisible to the video chain, so it neither opens
+                            # the encode stage nor blocks a later frame effect.
                             compile_audio_twin(op, ctx, encode_stage_effect)
                             continue
                     if post_vf_filters:

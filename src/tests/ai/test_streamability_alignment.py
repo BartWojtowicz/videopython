@@ -16,9 +16,14 @@ def test_every_registered_op_streams_structurally_including_ai_ops():
     """Every registered op (incl. ai) is streamable by structure.
 
     The ``streamable`` ClassVar is gone; an op streams iff it overrides
-    ``to_ffmpeg_filter`` (a filter op) or ``process_frame`` (a frame effect).
-    ``face_crop`` streams via ``to_ffmpeg_filter``; ``object_detection_overlay``
-    via ``process_frame``.
+    ``to_ffmpeg_filter`` (a filter op), ``process_frame`` (a frame effect), or --
+    for a ``video_passthrough`` effect -- ``to_ffmpeg_audio_filter`` (an
+    audio-only filter effect such as ``volume_adjust``, which by design places
+    nothing on the video chain). ``face_crop`` streams via ``to_ffmpeg_filter``;
+    ``object_detection_overlay`` via ``process_frame``.
+
+    Kept in lockstep with the editing-layer original in
+    ``editing/test_streamability.py``.
     """
     assert "face_crop" in Operation._registry
     assert "object_detection_overlay" in Operation._registry
@@ -27,4 +32,9 @@ def test_every_registered_op_streams_structurally_including_ai_ops():
             continue  # skip test-defined stub ops that pollute the global registry
         overrides_filter = cls.to_ffmpeg_filter is not Operation.to_ffmpeg_filter
         overrides_pf = issubclass(cls, Effect) and cls.process_frame is not Effect.process_frame
-        assert overrides_filter or overrides_pf, f"op '{op_id}' streams via neither path"
+        audio_only = (
+            issubclass(cls, Effect)
+            and cls.video_passthrough
+            and cls.to_ffmpeg_audio_filter is not Operation.to_ffmpeg_audio_filter
+        )
+        assert overrides_filter or overrides_pf or audio_only, f"op '{op_id}' streams via neither path"

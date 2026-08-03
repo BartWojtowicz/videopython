@@ -25,11 +25,25 @@ def _seg(text: str, start: float = 0.0, end: float = 1.0, avg_logprob: float | N
 class _FakeOllama:
     """Returns scripted JSON contents on successive chat() calls (last repeats)."""
 
-    def __init__(self, contents: list[str]) -> None:
+    def __init__(self, contents: list[str], capabilities: list[str] | None = None) -> None:
         self.contents = list(contents)
+        self.capabilities = ["completion", "thinking"] if capabilities is None else capabilities
         self.calls = 0
+        self.chat_kwargs: list[dict[str, Any]] = []
 
-    def chat(self, *, model: str, messages: list[Any], format: Any, options: dict[str, Any]) -> SimpleNamespace:
+    def show(self, model: str) -> SimpleNamespace:
+        return SimpleNamespace(capabilities=self.capabilities)
+
+    def chat(
+        self,
+        *,
+        model: str,
+        messages: list[Any],
+        format: Any,
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> SimpleNamespace:
+        self.chat_kwargs.append(kwargs)
         content = self.contents[min(self.calls, len(self.contents) - 1)]
         self.calls += 1
         return SimpleNamespace(message=SimpleNamespace(content=content))
@@ -128,7 +142,18 @@ class _EchoOllama:
     def __init__(self) -> None:
         self.calls = 0
 
-    def chat(self, *, model: str, messages: list[Any], format: Any, options: dict[str, Any]) -> SimpleNamespace:
+    def show(self, model: str) -> SimpleNamespace:
+        return SimpleNamespace(capabilities=["completion", "thinking"])
+
+    def chat(
+        self,
+        *,
+        model: str,
+        messages: list[Any],
+        format: Any,
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> SimpleNamespace:
         self.calls += 1
         indices: list[int] = []
         for line in messages[1]["content"].splitlines():
@@ -169,3 +194,21 @@ def test_translate_segments_progress_milestones() -> None:
     translator.translate_segments([_seg("hello")], target_lang="es", progress_callback=ticks.append)
     assert any(abs(t - 0.5) < 1e-9 for t in ticks)  # first pass reaches 0.5
     assert ticks[-1] == 1.0
+
+
+def test_translation_disables_reasoning_on_thinking_model() -> None:
+    """Translation calls must run with think=False on a reasoning model.
+
+    Regression (0.55.0 GPU verification): the default qwen3.6:27b is a reasoning
+    model. Its chain-of-thought is emitted before the schema-constrained answer and
+    counts against num_predict, so every call hit done_reason="length" with empty
+    content and all 17 segments of a real dub landed in translation_failures.
+    """
+    content = json.dumps({"translations": [{"i": 0, "translated": "hola"}]})
+    translator, fake = _translator_with([content])
+
+    out = translator.translate_segments([_seg("hello")], target_lang="es")
+
+    assert out[0].translated_text == "hola"
+    assert translator.translation_failures == []
+    assert fake.chat_kwargs[0]["think"] is False

@@ -16,6 +16,26 @@ def resize(
     fy: float = 0,
     interpolation: int = INTER_LINEAR,
 ) -> npt.NDArray[_TImg]: ...
+
+# Point-operation lookup: `lut` is a (1, 256, C) uint8 table, applied per channel.
+def LUT(src: npt.NDArray[np.uint8], lut: npt.NDArray[np.uint8]) -> npt.NDArray[np.uint8]: ...
+
+# Saturating arithmetic. `src2` may differ in dtype from `src1` (e.g. int16 noise
+# added to a uint8 frame); `dtype` selects the output depth.
+def add(
+    src1: npt.NDArray[np.generic],
+    src2: npt.NDArray[np.generic],
+    dst: npt.NDArray[np.generic] = ...,
+    mask: npt.NDArray[np.uint8] = ...,
+    dtype: int = -1,
+) -> npt.NDArray[np.uint8]: ...
+def multiply(
+    src1: npt.NDArray[np.generic],
+    src2: npt.NDArray[np.generic],
+    dst: npt.NDArray[np.generic] = ...,
+    scale: float = 1.0,
+    dtype: int = -1,
+) -> npt.NDArray[np.uint8]: ...
 def GaussianBlur(
     src: npt.NDArray[_TImg],
     ksize: _TSize,

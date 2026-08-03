@@ -474,12 +474,23 @@ class Effect(Operation):
     :attr:`compiles_to_filter` and implement :meth:`to_ffmpeg_filter` (and, for
     audio-coupled effects like ``Fade``/``VolumeAdjust``,
     :meth:`to_ffmpeg_audio_filter`) so the window stays coherent across the
-    decode/encode graph.
+    decode/encode graph. An effect may implement BOTH contracts: the filter is
+    the fast path and ``process_frame`` stays as the reference implementation,
+    with ``src/tests/editing/test_filter_parity.py`` pinning them together.
     """
 
     category: ClassVar[OpCategory] = OpCategory.EFFECT
-    audio_coupled: ClassVar[bool] = False
-    """Whether the effect mutates audio alongside pixels (``afade``/``volume``)."""
+    video_passthrough: ClassVar[bool] = False
+    """Whether a filter-class effect leaves pixels untouched (audio-only, e.g. ``volume_adjust``).
+
+    Only consulted when :attr:`compiles_to_filter` is True. It distinguishes the
+    two reasons :meth:`to_ffmpeg_filter` returns ``None``: "this op has no video
+    filter *by design*" (passthrough -- place the audio twin and move on) from
+    "this op failed to compile at this position" (fall through to the per-frame
+    path). Without it an audio-only effect is indistinguishable from a failed
+    compile and is forced onto the framewise pipeline, paying a full rawvideo
+    round-trip to run a no-op over every pixel.
+    """
 
     window: TimeRange | None = Field(
         None,
