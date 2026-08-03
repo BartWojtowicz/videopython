@@ -124,6 +124,30 @@ def test_dependency_group_ai_matches_optional_ai(pyproject: Pyproject) -> None:
     )
 
 
+def test_no_conflicting_opencv_distribution() -> None:
+    """Nothing may pull ``opencv-python`` alongside our ``opencv-python-headless``.
+
+    Both distributions install a top-level ``cv2`` package, so having both in the
+    graph means whichever pip unpacks last wins -- and the headless variant is the
+    one that matters for server deploys (the GUI build drags in libGL and friends).
+
+    This used to be enforced by a ``[tool.uv].override-dependencies`` entry added
+    for ultralytics. That was false protection: overrides are a uv workspace
+    feature and do not ship in the wheel, so it shielded our own CI and nobody
+    else. ultralytics was dropped in 0.51.0 and nothing has required
+    opencv-python since, so the override is gone and this guard replaces it --
+    reading the resolved lock, where a *transitive* reintroduction would show up.
+    """
+    lock = (_REPO_ROOT / "uv.lock").read_text(encoding="utf-8")
+    assert 'name = "opencv-python-headless"' in lock, "headless opencv vanished from the resolved graph"
+    assert 'name = "opencv-python"\n' not in lock, (
+        "opencv-python re-entered the dependency graph; it conflicts with "
+        "opencv-python-headless (both provide `cv2`). Find the dep that pulls it and "
+        "constrain that dep -- do NOT add a [tool.uv] override, which would hide the "
+        "problem from every consumer installing with pip."
+    )
+
+
 # Deps that are declared as resolver co-pins/floors but have NO direct import
 # under ai/ — they're pulled transitively by a sibling dep that we DO import:
 #   torchaudio   -> co-pin for the torch stack (whisper/chatterbox/demucs)

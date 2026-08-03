@@ -57,21 +57,15 @@ dev = [
 # `[ai]` extra so dev installs every AI capability (single source of truth).
 ai = ["videopython[ai]"]
 
-# pip install "videopython[ai]" - pip uses optional-dependencies, not dependency-groups.
-#
-# A single [ai] extra installs every AI capability. The heavy ML deps still load
-# lazily at first use (no top-level imports under ai/), so importing videopython
-# stays light even with [ai] installed.
+# One [ai] extra for every AI capability. Heavy ML deps load lazily at first use
+# (no top-level imports under ai/), so importing videopython stays light.
 [project.optional-dependencies]
 ai = [
     # Speech recognition / diarization (understanding/audio.py)
     "openai-whisper>=20240930",
-    # whisper imports numba (timing.py), and numba is version-coupled to numpy:
-    # each release declares a `numpy<X` cap that moves forward (0.62 -> <2.4,
-    # 0.66 -> <2.5). Without a floor a resolver can satisfy a newer numpy by
-    # backtracking numba to an ancient release instead, which then fails at
-    # `import whisper`. Floor it so numba's own cap does the work; 0.62 is the
-    # oldest release covering our full Python range (3.11-3.13).
+    # Floored, not capped: numba declares the numpy cap, and without a floor a
+    # resolver satisfies a newer numpy by backtracking numba instead, breaking
+    # `import whisper`. 0.62 is the oldest release covering Python 3.11-3.13.
     "numba>=0.62",
     "pyannote-audio>=4.0.0",
     "silero-vad>=5.1",
@@ -82,20 +76,14 @@ ai = [
     "imagehash>=4.3",
     # Audio source separation (understanding/separation.py)
     "demucs>=4.0.0",
-    # Voice cloning TTS (generation/audio.py — Chatterbox). Upstream chatterbox-tts
-    # 0.1.7 pins diffusers==0.29.0 / torch==2.6.0 / transformers==5.2.0 with `==`,
-    # which is unsatisfiable against pyannote-audio (torch>=2.8) and our
-    # diffusers>=0.35 — it made `pip install "videopython[ai]"` impossible for
-    # consumers. videopython-chatterbox is upstream's source with corrected
-    # metadata (identical apart from its self-version lookup); the import name is
-    # still `chatterbox`. See https://github.com/BartWojtowicz/videopython-chatterbox
+    # Voice cloning TTS (generation/audio.py). Our fork of chatterbox-tts with
+    # corrected metadata; import name is still `chatterbox`. Not upstream — its
+    # `==` pins make [ai] unsatisfiable. See DEVELOPMENT.md "Dependencies".
     "videopython-chatterbox>=0.1.7.post1",
-    # Local media generation: Qwen-Image/Wan2.2 + MusicGen (generation/*).
-    # >=0.35 is the floor that ships QwenImagePipeline + Wan2.2 support (tested on 0.37.1).
+    # Local media generation (generation/*). >=0.35 ships QwenImagePipeline + Wan2.2.
     "diffusers>=0.35.0",
-    # Wan2.2 i2v pipeline cleans prompts with ftfy via a hard import (diffusers'
-    # pipeline_wan_i2v); the t2v pipeline guards it with is_ftfy_available(), i2v
-    # does not, so it is a required dep for ImageToVideo.
+    # Required, despite looking like diffusers' problem: the Wan2.2 i2v pipeline
+    # imports ftfy unguarded (the t2v one guards it with is_ftfy_available()).
     "ftfy>=6.1",
     "accelerate>=0.29.2",
     # Dubbing loudness matching (dubbing/loudness.py)
@@ -106,16 +94,13 @@ ai = [
     # processor used by the D-FINE object detector (understanding/objects.py).
     "torch>=2.8.0",
     "torchaudio>=2.8.0",
-    # No upper bound: each torchvision release declares an exact `torch==X.Y.Z`
-    # pin, so resolvers co-select a valid pair unaided. Capping torchvision alone
-    # is actively harmful — it transitively pinned torch to 2.8 (cu12) while
-    # torchaudio floated to 2.11 (cu13), resolving cleanly and then dying at
-    # import with `OSError: libcudart.so.13`. Cap every member or none.
+    # Do NOT add an upper bound. torchvision pins an exact torch, so capping it
+    # alone pinned torch to 2.8 (cu12) while torchaudio floated to 2.11 (cu13) —
+    # resolved cleanly, then died at import with `OSError: libcudart.so.13`.
+    # Cap every member of the torch stack or none.
     "torchvision>=0.23.0",
-    # torchaudio 2.11 routes save()/load() through torchcodec, and torchcodec is a
-    # native extension linked against libtorch that declares no torch requirement
-    # of its own. It arrives transitively via pyannote-audio; declare it so it is
-    # visible rather than incidental.
+    # Transitive via pyannote-audio, declared because torchaudio 2.11+ routes
+    # save()/load() through it and it is ABI-coupled to torch.
     "torchcodec>=0.7.0",
 ]
 # MCP server (videopython/mcp/). Pin <2 — v2 is pre-release/breaking.
@@ -156,30 +141,10 @@ module = [
 ignore_missing_imports = true
 
 [tool.uv]
-# NOTE: overrides are a uv workspace feature — they do NOT ship in the built
-# wheel. Anything reconciled only here is invisible to `pip install videopython`,
-# so [ai] must be resolvable without this block. Keep it minimal.
-#
-# The torch/torchaudio/torchvision/diffusers overrides that used to live here
-# existed solely to paper over chatterbox-tts's `==` pins. They masked the
-# breakage from CI while every downstream consumer hit it, and an override
-# replaces a requirement *everywhere* — including torchvision's own exact
-# `torch==2.8.0` pin, which would have produced an ABI-invalid pair on the next
-# `uv lock --upgrade`. [ai] now depends on videopython-chatterbox, whose metadata
-# is correct, so none of them are needed.
-# The numpy>=2.0.0 override is gone for the same reason: it existed to counter
-# chatterbox-tts's `numpy<2.0.0` pin, and it also replaced numba's `numpy<2.5`
-# cap, resolving numpy 2.5 into an environment where `import whisper` dies with
-# "Numba needs NumPy 2.4 or less". numba IS version-coupled to numpy.
-override-dependencies = [
-    # Some transitive deps pull opencv-python, which conflicts with our
-    # opencv-python-headless (both provide cv2). Exclude opencv-python so
-    # only the headless variant is installed.
-    "opencv-python ; sys_platform == '_'",
-]
-# Pin minimum versions for transitive deps with known vulnerabilities.
-# Pygments 2.20.0 has a security fix but breaks mkdocs (passes None to html.escape).
-# Keep pygments<2.20.0 until a compatible release is available.
+# No overrides, deliberately: they are a uv workspace feature and do not ship in
+# the wheel, so anything patched here is invisible to `pip install`. Fix the
+# dependency's metadata instead — see DEVELOPMENT.md "Dependencies".
+# requests: CVE floor. pygments <2.20.0: 2.20.0 breaks mkdocs (passes None to html.escape).
 constraint-dependencies = ["requests>=2.33.0", "pygments>=2.19.2,<2.20.0"]
 
 [build-system]

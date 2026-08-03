@@ -63,6 +63,12 @@ jobs:
       - name: Run pre-commit hooks
         run: uv run pre-commit run --all-files --show-diff-on-failure
 
+  pip_resolve:
+    # The consumer-install guard. Lives in its own workflow so it can also run on
+    # a schedule without dragging the whole matrix along; see pip-resolve.yml.
+    name: Wheel resolves with pip
+    uses: ./.github/workflows/pip-resolve.yml
+
   docs:
     name: Documentation build
     runs-on: ubuntu-latest

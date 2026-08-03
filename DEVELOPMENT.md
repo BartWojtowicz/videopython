@@ -70,6 +70,42 @@ uv run mkdocs serve   # live preview at http://127.0.0.1:8000
 uv run mkdocs build   # render the static site to ./site
 ```
 
+## Dependencies
+
+### The consumer-install invariant
+
+`[ai]` must resolve for someone running plain `pip install "videopython[ai]"`.
+
+`[tool.uv]` tables (`override-dependencies`, `constraint-dependencies`) are a uv
+*workspace* feature — they do not ship in the built wheel. Anything reconciled only
+there is invisible to consumers, so it makes CI green while every downstream install
+fails. That is exactly what happened in 0.54.0.
+
+There are deliberately no overrides today. If a dependency ships metadata that cannot
+be satisfied, fix the metadata rather than patching it locally:
+
+* upstream a fix, or
+* fork the package and publish corrected metadata (what 0.54.1 did), or
+* drop the dependency.
+
+The `pip_resolve` CI job (`.github/workflows/pip-resolve.yml`) builds the wheel and
+resolves `[ai]` and `[ai,mcp]` with pip in a clean venv, on every push and weekly on
+a schedule. The schedule matters because these breakages arrive from upstream
+releases tightening their pins, not from our own commits.
+
+### `videopython-chatterbox`
+
+`[ai]` depends on
+[`videopython-chatterbox`](https://github.com/BartWojtowicz/videopython-chatterbox),
+our fork of `chatterbox-tts`, published to PyPI. It is upstream's source with
+corrected dependency metadata — upstream pins `torch==2.6.0`, `diffusers==0.29.0`
+and `transformers==5.2.0` with `==`, which cannot be satisfied alongside the rest of
+`[ai]` (`pyannote-audio` alone needs `torch>=2.8`). The import name is still
+`chatterbox`, so no application code changes.
+
+Resync when upstream ships a release we want. Both distributions install a top-level
+`chatterbox` package, so they must never be installed together.
+
 ## Releasing
 
 To release a new version:
