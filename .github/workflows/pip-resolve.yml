@@ -1,0 +1,44 @@
+name: Wheel resolves with pip
+
+# Guards the bug class that shipped in 0.54.0: `[ai]` was unsatisfiable for every
+# consumer while CI stayed green, because `[tool.uv].override-dependencies`
+# reconciled the conflict in-repo and overrides do NOT ship in the built wheel.
+# Nothing else in CI installs the wheel the way a consumer does, so nothing else
+# can see that class of breakage.
+#
+# Scheduled as well as called from ci.yml on push: these failures arrive from
+# UPSTREAM releases tightening their pins, not from our commits, so a push-only
+# check would not notice until someone happened to push.
+on:
+  workflow_call:
+  schedule:
+    - cron: "0 5 * * 1" # Mondays 05:00 UTC
+
+jobs:
+  pip_resolve:
+    name: Resolve built wheel with pip (no uv overrides)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        extras: ["ai", "ai,mcp"]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Set up Python
+        run: uv python install 312
+      - name: Build the wheel
+        run: uv build --wheel
+      - name: Resolve [${{ matrix.extras }}] in a clean environment
+        run: |
+          set -euo pipefail
+          wheel=$(ls dist/*.whl)
+          python -m venv /tmp/resolve
+          /tmp/resolve/bin/pip install --upgrade pip
+          # --dry-run resolves the whole graph without installing ~10 GB of CUDA
+          # wheels. pip exits non-zero on ResolutionImpossible, which is the
+          # signal we want; verified against 0.54.0, which fails here with
+          # "chatterbox-tts 0.1.7 depends on torch==2.6.0".
+          /tmp/resolve/bin/pip install --dry-run "${wheel}[${{ matrix.extras }}]"

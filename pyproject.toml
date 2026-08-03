@@ -171,12 +171,18 @@ ignore_missing_imports = true
 # chatterbox-tts's `numpy<2.0.0` pin, and it also replaced numba's `numpy<2.5`
 # cap, resolving numpy 2.5 into an environment where `import whisper` dies with
 # "Numba needs NumPy 2.4 or less". numba IS version-coupled to numpy.
-override-dependencies = [
-    # Some transitive deps pull opencv-python, which conflicts with our
-    # opencv-python-headless (both provide cv2). Exclude opencv-python so
-    # only the headless variant is installed.
-    "opencv-python ; sys_platform == '_'",
-]
+#
+# The opencv-python exclusion is gone too. It was added for ultralytics, whose
+# opencv-python requirement clashed with our opencv-python-headless (both
+# provide `cv2`, so whichever installs last wins). ultralytics was dropped in
+# 0.51.0 and nothing in the graph has required opencv-python since -- verified
+# by re-resolving without it. It was also false protection: being uv-only it
+# never reached the pip users it claimed to shield. The invariant is now guarded
+# somewhere that ships, by test_no_conflicting_opencv_distribution.
+#
+# There are deliberately no overrides. If you are about to add one, the
+# requirement it patches is invisible to consumers -- fix the dependency
+# metadata instead, as 0.54.1 did by forking chatterbox-tts.
 # Pin minimum versions for transitive deps with known vulnerabilities.
 # Pygments 2.20.0 has a security fix but breaks mkdocs (passes None to html.escape).
 # Keep pygments<2.20.0 until a compatible release is available.
