@@ -148,7 +148,11 @@ def _classify_op_list(ops: Sequence[Operation], location_prefix: str) -> list[Op
                 # order either way and does not block later transforms the way
                 # a scheduled frame effect does. The builder mirrors this.
                 entries.append(OpStreamability(location, op.op, StreamingClass.FILTER))
-                if seen_effect:
+                if seen_effect and not op.video_passthrough:
+                    # A video_passthrough effect (volume_adjust) places nothing
+                    # on the video chain, so it cannot open the encode stage --
+                    # a frame effect after it is still perfectly orderable.
+                    # The builder mirrors this by skipping post_vf_filters.
                     seen_encode_stage = True
                 continue
             if not op.streams():

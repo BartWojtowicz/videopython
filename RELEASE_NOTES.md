@@ -1,5 +1,118 @@
 # Release Notes
 
+## 0.55.0
+
+Three pixel effects were costing more per frame than the encoder they feed.
+`color_adjust`, `film_grain` and `vignette` are now 10–12x faster, which puts
+every effect in the library under the encoder's per-frame budget. Also fixes a
+wraparound defect that made a strong `vignette` render its darkest corners as
+mid-grey. Effects stay on the per-frame numpy path — the 0.47.0 decision is
+unchanged — so this is an implementation change, not an engine change.
+
+Separately, fixes every schema-constrained Ollama call returning empty content on
+the shipped default model, which broke dubbing translation, the auto-edit planner
+and the scene captioner.
+
+### Pixel effects: 10–12x faster where it mattered
+
+Profiling every effect at 1080×1920 against the encoder's ~13.2 ms/frame budget
+found exactly three over the line; the other fifteen were already hidden behind
+the pipeline, where compute is free in wall-clock terms.
+
+| effect | before | after | speedup |
+|---|---|---|---|
+| `color_adjust` | 55.9 ms/frame | 4.6 ms | **12.1x** |
+| `film_grain` | 30.9 ms/frame | 2.9 ms | **10.6x** |
+| `vignette` | 15.8 ms/frame | 1.5 ms | **10.5x** |
+
+End-to-end through `run_to_file` (13 s clip, 390 frames): `color_adjust`
+20.6 s → 7.9 s, `film_grain` 31.7 s → 23.1 s, `vignette` 10.4 s → 6.7 s.
+
+- **`color_adjust`** did a full float32 RGB→HSV→RGB round trip per frame just to
+  scale saturation, which alone cost more than every other stage combined.
+  Brightness, contrast and temperature are per-channel point operations, so they
+  collapse into 256-entry `cv2.LUT` tables built once per stream. Saturation
+  became a blend toward luma-weighted greyscale. Two tables rather than one,
+  because saturation sits between them in the documented order and the
+  operations do not commute.
+- **`film_grain`** drew ~2M fresh Gaussian samples every frame. It now samples
+  one padded noise plane per stream and reads a randomly offset window of it per
+  frame — offsets jump rather than drift, so the grain still scintillates.
+  `cv2.add` saturates, removing the float promotion and the explicit clip. As a
+  side effect `film_grain` is now *faster* than ffmpeg's `noise` filter (23.1 s
+  vs 28.4 s), which it previously lost to.
+- **`vignette`** promoted every frame to float32 to multiply by a static mask.
+  The mask is now baked to 3-channel uint8 once and applied with `cv2.multiply`
+  — and is *smaller* than the float32 original (6.2 MB vs 8.3 MB at 1080p).
+
+### Fixed: `vignette` wraparound at high strength
+
+`Vignette._create_mask` goes negative once `strength` is high enough (to -1.0 at
+`strength=1.0`). The old path evaluated `(frame * -1.0).astype(np.uint8)`, whose
+out-of-range cast wraps: a 200-level corner came back as 56. The result was a
+vignette that darkened to black and then got *brighter* again toward the corners,
+non-monotonically. The mask is now clipped to [0, 1], so corners saturate to
+black as intended.
+
+### Output re-baseline (`color_adjust`, `vignette`, `film_grain`)
+
+Rendered pixels change for these three effects, so 0.47.0's "bit-identical to the
+pre-0.46.0 numpy path" no longer holds for them. Nothing else in the library
+changes output.
+
+- `color_adjust` — saturation now blends toward greyscale instead of scaling the
+  HSV S channel. Both are standard formulations and agree at `saturation=0`
+  (grey) and `1.0` (identity); intermediate values differ slightly. Clipping also
+  happens at each LUT rather than only at the end.
+- `vignette` — corners saturate instead of wrapping (the fix above), and the
+  uint8 mask quantises gain to 256 levels: max deviation ~2 levels vs the old
+  float mask, away from the corners.
+- `film_grain` — same `seed` still gives the same grain, but the pattern itself
+  differs from the per-frame-RNG version.
+
+Callers pinning golden-frame hashes for these three effects need to re-baseline.
+
+### `volume_adjust` leaves the per-frame path
+
+`volume_adjust` is pixel-passthrough — its `process_frame` was literally
+`return frame` — but overriding it classified the op as a frame effect, so a plan
+whose only op was a volume change paid a full rawvideo decode → Python loop →
+re-encode round trip to run an identity function over every pixel. It is now
+filter-class, placing its `volume` filter on the audio graph while the segment
+renders in a single ffmpeg invocation.
+
+The new `Effect.video_passthrough` flag makes this expressible: it distinguishes
+"no video filter by design" from "failed to compile at this position", which
+`to_ffmpeg_filter` returning `None` previously conflated. A passthrough op
+touches neither the video chain nor the pipe metadata, so it cannot open the
+encode stage — a frame effect after it stays schedulable.
+
+### Removed the `audio_coupled` ClassVar (internal)
+
+Declared on `Operation`, set on `Fade` and `VolumeAdjust`, and read by nothing in
+the library. `video_passthrough` covers the case that actually needed a flag.
+
+### Fixed: Ollama structured output returned nothing on a reasoning model
+
+Every schema-constrained Ollama call failed against the shipped default model.
+`qwen3.6:27b` — the default for both the auto-edit planner
+(`auto_edit/local.py`) and dubbing translation (`dubbing/translation.py`) — is a
+reasoning model: it emits its chain-of-thought *before* the schema-constrained
+answer, and that thinking counts against `num_predict`. The call spent its whole
+token budget thinking, stopped on `done_reason="length"`, and returned empty
+content, surfacing as `OllamaError: Ollama returned non-JSON output: ''`.
+
+This affected everything sharing `OllamaStructuredClient`: `VideoDubber`
+translation, the auto-edit planner, and the scene captioner. A real PL→ES dub
+failed all 17 segments and dubbed them with empty text.
+
+`OllamaStructuredClient` now passes `think=False` on models advertising Ollama's
+`thinking` capability. The capability is probed via `show()` and cached rather
+than assumed, because passing `think` to a model *without* it is an error.
+
+Found by running real models on a CUDA box; the mocked tests could not see it,
+since a fake client returns whatever content the test hands it.
+
 ## 0.54.1
 
 Packaging fix: `pip install "videopython[ai]"` was unsatisfiable for consumers. The uv

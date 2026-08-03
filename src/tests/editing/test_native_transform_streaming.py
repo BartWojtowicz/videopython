@@ -453,3 +453,64 @@ class TestMultiSegmentPostOps:
         assert plan.streamability().streamable
         video = _stream(plan, tmp_path)
         assert video.frames[-1].mean() < 5
+
+
+class TestVolumeAdjustIsAudioOnly:
+    """``volume_adjust`` is filter-class and ``video_passthrough``.
+
+    Its whole effect lives on the audio graph, so it must place a ``volume``
+    filter and schedule NO per-frame Python. Before this, an identity
+    ``process_frame`` made it a frame effect, so a plan whose only op was a
+    volume change paid a full rawvideo decode -> Python loop -> re-encode round
+    trip to run an identity function over every pixel.
+    """
+
+    def test_schedules_no_frame_effect(self):
+        plan = _plan([{"op": "volume_adjust", "volume": 0.5}])
+        built = plan._build_streaming_plan(plan.segments[0], None, None, None)
+        assert built is not None
+        # The whole point: nothing scheduled, so stream_segment dispatches to the
+        # single-invocation filtergraph runner instead of the framewise pipeline.
+        assert built.effect_schedule == []
+        assert built.vf_filters == []
+        assert built.post_vf_filters == []
+        # ...and the audio filter did land.
+        assert any("volume=" in f for f in built.af_filters)
+
+    def test_classified_as_filter_not_frame_effect(self):
+        plan = _plan([{"op": "volume_adjust", "volume": 0.5}])
+        (entry,) = plan.streamability().entries
+        assert entry.streaming_class is StreamingClass.FILTER
+
+    def test_does_not_open_the_encode_stage(self):
+        # A video_passthrough op places nothing on the video chain, so a frame
+        # effect after it is still perfectly orderable and must stay schedulable.
+        # If passthrough wrongly marked the encode stage, the glitch would be
+        # rejected as UNSTREAMABLE.
+        plan = _plan([{"op": "volume_adjust", "volume": 0.5}, {"op": "glitch"}])
+        report = plan.streamability()
+        assert [e.streaming_class for e in report.entries] == [
+            StreamingClass.FILTER,
+            StreamingClass.FRAME_EFFECT,
+        ]
+        assert report.streamable
+        built = plan._build_streaming_plan(plan.segments[0], None, None, None)
+        assert built is not None
+        assert [e.effect.op for e in built.effect_schedule] == ["glitch"]
+
+    def test_renders_and_attenuates_audio_without_touching_pixels(self, tmp_path, audio_source):
+        # End-to-end through run_to_file: pixels byte-identical to a no-op plan,
+        # audio actually quieter. Verifies the filtergraph path produces the same
+        # frames the framewise path did, not merely that it runs.
+        muted = VideoEdit.model_validate(
+            {"segments": [{"source": audio_source, **SEGMENT, "operations": [{"op": "volume_adjust", "volume": 0.25}]}]}
+        )
+        plain = VideoEdit.model_validate({"segments": [{"source": audio_source, **SEGMENT, "operations": []}]})
+
+        quiet = _stream(muted, tmp_path, "quiet.mp4")
+        loud = _stream(plain, tmp_path, "loud.mp4")
+
+        assert np.array_equal(quiet.frames, loud.frames), "volume_adjust must not alter pixels"
+        quiet_peak = np.abs(quiet.audio.data.astype(np.float32)).max()
+        loud_peak = np.abs(loud.audio.data.astype(np.float32)).max()
+        assert quiet_peak < loud_peak * 0.5

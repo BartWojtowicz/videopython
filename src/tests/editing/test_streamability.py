@@ -211,17 +211,38 @@ class TestTransitionStreamability:
 class TestRegistryAlignment:
     def test_every_registered_op_streams_structurally(self):
         """Every registered op is streamable by structure (the ``streamable``
-        ClassVar is gone): it overrides ``to_ffmpeg_filter`` (a filter op) or
-        ``process_frame`` (a frame effect). Covers the editing layer; a twin test
-        under ``src/tests/ai`` covers the ai layer, which this suite must not
-        import.
+        ClassVar is gone): it overrides ``to_ffmpeg_filter`` (a filter op),
+        ``process_frame`` (a frame effect), or -- for a ``video_passthrough``
+        effect -- ``to_ffmpeg_audio_filter`` (an audio-only filter effect such as
+        ``volume_adjust``, which by design places nothing on the video chain).
+        Covers the editing layer; a twin test under ``src/tests/ai`` covers the ai
+        layer, which this suite must not import.
         """
         for op_id, cls in Operation._registry.items():
             if not cls.__module__.startswith("videopython"):
                 continue  # skip test-defined stub ops that pollute the global registry
             overrides_filter = cls.to_ffmpeg_filter is not Operation.to_ffmpeg_filter
             overrides_pf = issubclass(cls, Effect) and cls.process_frame is not Effect.process_frame
-            assert overrides_filter or overrides_pf, f"op '{op_id}' streams via neither path"
+            audio_only = (
+                issubclass(cls, Effect)
+                and cls.video_passthrough
+                and cls.to_ffmpeg_audio_filter is not Operation.to_ffmpeg_audio_filter
+            )
+            assert overrides_filter or overrides_pf or audio_only, f"op '{op_id}' streams via neither path"
+
+    def test_video_passthrough_ops_have_an_audio_filter(self):
+        """``video_passthrough`` is only coherent for an op whose whole effect is
+        the audio twin. An op that sets it without a ``to_ffmpeg_audio_filter``
+        override would compile to nothing at all and silently vanish from the plan.
+        """
+        for op_id, cls in Operation._registry.items():
+            if not cls.__module__.startswith("videopython") or not issubclass(cls, Effect):
+                continue
+            if not cls.video_passthrough:
+                continue
+            assert cls.to_ffmpeg_audio_filter is not Operation.to_ffmpeg_audio_filter, (
+                f"op '{op_id}' is video_passthrough but compiles no audio filter -- it would be a silent no-op"
+            )
 
     def test_add_subtitles_streams_via_filter_only(self):
         # The one op that streams purely via compiles_to_filter (no process_frame

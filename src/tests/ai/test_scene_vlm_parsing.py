@@ -14,12 +14,24 @@ from videopython.base.description import SceneDescription
 
 
 class _FakeClient:
-    def __init__(self, content: str) -> None:
+    def __init__(self, content: str, capabilities: list[str] | None = None) -> None:
         self.content = content
+        self.capabilities = ["completion", "vision", "thinking"] if capabilities is None else capabilities
         self.calls: list[dict[str, Any]] = []
 
-    def chat(self, *, model: str, messages: list[Any], format: Any, options: dict[str, Any]) -> SimpleNamespace:
-        self.calls.append({"model": model, "messages": messages, "format": format, "options": options})
+    def show(self, model: str) -> SimpleNamespace:
+        return SimpleNamespace(capabilities=self.capabilities)
+
+    def chat(
+        self,
+        *,
+        model: str,
+        messages: list[Any],
+        format: Any,
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> SimpleNamespace:
+        self.calls.append({"model": model, "messages": messages, "format": format, "options": options, **kwargs})
         return SimpleNamespace(message=SimpleNamespace(content=self.content))
 
 

@@ -20,6 +20,14 @@ COLOR_RGB2HSV: Final[int]
 COLOR_HSV2RGB: Final[int]
 COLOR_BGR2GRAY: Final[int]
 COLOR_RGB2GRAY: Final[int]
+COLOR_GRAY2RGB: Final[int]
+COLOR_GRAY2BGR: Final[int]
+
+# Array depths (the `dtype=` argument of the arithmetic functions)
+CV_8U: Final[int]
+CV_16U: Final[int]
+CV_16S: Final[int]
+CV_32F: Final[int]
 
 # Morphological operations
 MORPH_ELLIPSE: Final[int]

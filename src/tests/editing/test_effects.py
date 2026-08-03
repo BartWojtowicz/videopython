@@ -189,6 +189,24 @@ class TestColorGrading:
         out = _stream(ColorGrading(brightness=0.1, contrast=1.2, saturation=0.8), small_video)
         assert out.shape == small_video.video_shape
 
+    def test_temperature_warms_red_over_blue(self, small_video):
+        # Temperature is the second LUT: +ve lifts R and cuts B.
+        warm = _stream(ColorGrading(temperature=1.0), small_video)
+        cool = _stream(ColorGrading(temperature=-1.0), small_video)
+        assert warm[..., 0].mean() > cool[..., 0].mean()
+        assert warm[..., 2].mean() < cool[..., 2].mean()
+
+    def test_temperature_applied_after_saturation(self, small_video):
+        # Saturation is not a point operation, so it cannot be folded into the
+        # tone LUT; temperature must stay in a SECOND table applied after it.
+        # Folding them into one table would reorder temperature ahead of
+        # saturation, and desaturating a warmed frame is not the same as warming
+        # a desaturated one -- with saturation=0 the second ordering leaves a
+        # colour cast that the first removes.
+        out = _stream(ColorGrading(saturation=0.0, temperature=1.0), small_video)
+        r, b = out[..., 0].astype(int), out[..., 2].astype(int)
+        assert (r - b).mean() > 2, "temperature must survive a preceding desaturation"
+
     def test_invalid_params_raise(self):
         with pytest.raises(ValidationError):
             ColorGrading(brightness=2.0)
@@ -217,6 +235,30 @@ class TestVignette:
         original_mean = small_video.frames.mean()
         out = _stream(Vignette(strength=0.0), small_video)
         assert abs(out.mean() - original_mean) < 1
+
+    def test_high_strength_saturates_to_black_without_wraparound(self):
+        # Regression: _create_mask goes negative past a certain strength/radius
+        # (down to -1.0 at strength=1.0). The old float path did
+        # `(frame * -1.0).astype(np.uint8)`, whose out-of-range cast WRAPPED, so
+        # the darkest corners came back mid-grey (200 -> 56) and the vignette got
+        # brighter again past the zero crossing. The mask is now clipped to
+        # [0, 1], so corners saturate to black.
+        frames = np.full((2, 200, 200, 3), 200, dtype=np.uint8)
+        video = Video.from_frames(frames, fps=2)
+        out = _stream(Vignette(strength=1.0, radius=0.5), video)
+        corner = out[0][:20, :20]
+        centre = out[0][90:110, 90:110]
+        assert corner.max() <= 5, f"corner should saturate to black, got max {corner.max()}"
+        assert centre.mean() > 150, "centre must stay bright"
+
+    def test_darkening_is_monotonic_from_centre(self):
+        # The wraparound bug also broke monotonicity: brightness fell to zero and
+        # then rose again. Sampling outward from the centre must never brighten.
+        frames = np.full((1, 200, 200, 3), 200, dtype=np.uint8)
+        video = Video.from_frames(frames, fps=1)
+        out = _stream(Vignette(strength=1.0, radius=0.5), video)
+        row = out[0][100, 100:, 0].astype(int)  # centre -> right edge
+        assert (np.diff(row) <= 0).all(), "brightness must decrease monotonically toward the edge"
 
     def test_invalid_params_raise(self):
         with pytest.raises(ValidationError):
@@ -399,10 +441,22 @@ class TestVolumeAdjust:
         assert ":eval=frame" in frag
         assert "sqrt((t-0.000000)/0.100000)" in frag
 
-    def test_frames_unchanged(self, video_1s):
-        # VolumeAdjust is pixel-passthrough: process_frame returns frames verbatim.
-        out = _stream(VolumeAdjust(volume=0.5), video_1s)
-        assert np.array_equal(out, video_1s.frames)
+    def test_is_video_passthrough_filter_class(self):
+        # VolumeAdjust lives entirely on the audio graph. It is filter-class with
+        # video_passthrough set, so the plan builder places its `volume` filter and
+        # never schedules per-frame Python -- previously a `return frame` no-op
+        # forced the whole segment through a rawvideo decode/encode round-trip.
+        op = VolumeAdjust(volume=0.5)
+        assert op.compiles_to_filter
+        assert op.video_passthrough
+        assert op.streams()
+
+    def test_process_frame_is_not_implemented(self):
+        # There is deliberately no pixel path to keep in sync: the op must never
+        # reach the framewise runner, so reaching process_frame is a bug, not a
+        # passthrough. Fail loud rather than silently copying frames.
+        with pytest.raises(NotImplementedError):
+            VolumeAdjust(volume=0.5).process_frame(np.zeros((4, 4, 3), dtype=np.uint8), 0)
 
     def test_isinstance_effect(self):
         assert isinstance(VolumeAdjust(), Effect)
@@ -760,6 +814,16 @@ class TestFilmGrain:
         color_diff = np.abs(b[..., 0].astype(int) - b[..., 1].astype(int)).max()
         assert mono_diff == 0
         assert color_diff > 0
+
+    def test_grain_differs_between_frames(self):
+        # The noise plane is drawn once and each frame reads a randomly offset
+        # window of it. If the offsets were constant (or the pool were reused
+        # verbatim) the grain would freeze into a static overlay -- visually
+        # quite wrong for film grain, and invisible to a variance-only check.
+        frames = np.full((6, 64, 64, 3), 128, dtype=np.uint8)
+        out = _stream(FilmGrain(intensity=0.1, seed=0), Video.from_frames(frames, fps=6))
+        for i in range(1, len(out)):
+            assert not np.array_equal(out[0], out[i]), f"frame {i} has identical grain to frame 0"
 
     def test_seed_reproducible(self):
         frames = np.full((4, 32, 32, 3), 128, dtype=np.uint8)

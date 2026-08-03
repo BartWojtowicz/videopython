@@ -18,12 +18,24 @@ from videopython.ai.keyframe import KEYFRAME_MAX_DIM, downscale_keyframe, encode
 class _FakeClient:
     """Records chat() kwargs and returns a fixed ChatResponse-shaped object."""
 
-    def __init__(self, content: str) -> None:
+    def __init__(self, content: str, capabilities: list[str] | None = None) -> None:
         self.content = content
+        self.capabilities = ["completion"] if capabilities is None else capabilities
         self.calls: list[dict[str, Any]] = []
 
-    def chat(self, *, model: str, messages: list[Any], format: Any, options: dict[str, Any]) -> SimpleNamespace:
-        self.calls.append({"model": model, "messages": messages, "format": format, "options": options})
+    def show(self, model: str) -> SimpleNamespace:
+        return SimpleNamespace(capabilities=self.capabilities)
+
+    def chat(
+        self,
+        *,
+        model: str,
+        messages: list[Any],
+        format: Any,
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> SimpleNamespace:
+        self.calls.append({"model": model, "messages": messages, "format": format, "options": options, **kwargs})
         return SimpleNamespace(message=SimpleNamespace(content=self.content))
 
 
@@ -58,6 +70,34 @@ def test_no_images_omits_images_key() -> None:
     _inject(backend, fake)
     backend.generate_json(system="s", text="only text", images=None, schema={})
     assert "images" not in fake.calls[0]["messages"][1]
+
+
+def test_reasoning_model_gets_thinking_disabled() -> None:
+    """A reasoning model must be called with think=False.
+
+    Regression: the default qwen3.6:27b emits its chain-of-thought before the
+    schema-constrained answer, and that thinking counts against num_predict. Left
+    on, it burned the whole token budget, stopped on done_reason="length", and
+    returned empty content -- every dub segment failed to translate.
+    """
+    backend = OllamaVisionLLM(model="qwen3.6:27b")
+    fake = _FakeClient("{}", capabilities=["completion", "vision", "tools", "thinking"])
+    _inject(backend, fake)
+
+    backend.generate_json(system="s", text="t", images=None, schema={})
+
+    assert fake.calls[0]["think"] is False
+
+
+def test_non_reasoning_model_omits_think_kwarg() -> None:
+    """Passing think to a model with no thinking capability is an error, so don't."""
+    backend = OllamaVisionLLM(model="plain")
+    fake = _FakeClient("{}", capabilities=["completion"])
+    _inject(backend, fake)
+
+    backend.generate_json(system="s", text="t", images=None, schema={})
+
+    assert "think" not in fake.calls[0]
 
 
 def test_non_json_raises_planner_error() -> None:
