@@ -11,8 +11,8 @@ hide:
 Minimal, LLM-friendly Python library for programmatic video editing, processing, and AI workflows.
 
 <div class="hero-buttons">
-  <a href="getting-started/quickstart/" class="btn-primary">Get Started</a>
-  <a href="api/" class="btn-secondary">API Reference</a>
+  <a href="install/" class="btn-primary">Install</a>
+  <a href="tutorials/first-edit/" class="btn-secondary">First edit in 10 minutes</a>
 </div>
 
 </div>
@@ -35,86 +35,69 @@ edit = VideoEdit.from_dict({
 edit.run_to_file("output.mp4")
 ```
 
-`run_to_file()` streams ffmpeg decode → per-frame effects → encode, so memory stays bounded (~O(1)) even for hour-long sources — no frames are held in RAM.
+An edit is a plain data structure — a dict, or the JSON an LLM emits — validated before
+any frame is touched and rendered by a streaming engine whose memory stays flat
+regardless of source length.
+
+## Where to go next
+
+The documentation is split by what you are trying to do.
 
 <div class="feature-grid" markdown>
 
 <div class="feature-card" markdown>
 
-### Core Editing
+### [Tutorials](tutorials/index.md)
 
-Cut, resize, crop, change speed, freeze frames, silence removal. Multi-segment editing plans with automatic fps/resolution matching for concatenation.
-
-</div>
-
-<div class="feature-card" markdown>
-
-### Effects & Audio
-
-Blur, zoom, color grading, vignette, Ken Burns, text and image overlay. Load, normalize, time-stretch, and mix audio tracks.
+Learn by doing. Start here if you are new: two short, guaranteed-to-work lessons that
+take you from an installed package to a rendered video.
 
 </div>
 
 <div class="feature-card" markdown>
 
-### LLM Plan Schema
+### [How-to guides](how-to/index.md)
 
-Drive videopython from your own LLM: JSON Schema generation, dry-run validation, and a structured repair / normalize refine loop. [Learn more →](guides/llm-integration.md)
-
-</div>
-
-<div class="feature-card" markdown>
-
-### Automatic Editing
-
-Hand `AutoEditor` your clips and a one-line brief — a local vision LLM selects and orders the shots, then renders the cut. [Learn more →](guides/auto-editing.md)
+Recipes for a specific goal — a vertical social clip, an hour-long source, a dubbed
+track, an LLM or agent driving the edit.
 
 </div>
 
 <div class="feature-card" markdown>
 
-### MCP Server
+### [Reference](reference/index.md)
 
-Expose the auto-edit pipeline as [Model Context Protocol](https://modelcontextprotocol.io) tools, so an agent like Claude drives editing with its own model — analyze, browse scenes by keyframe, author a plan, validate, render. [Learn more →](guides/mcp.md)
-
-</div>
-
-<div class="feature-card" markdown>
-
-### AI Generation
-
-Generate images, video, speech, and music from text prompts. Qwen-Image, Wan2.2, Chatterbox Multilingual TTS, MusicGen — all local, no API keys. [Learn more →](api/ai/generation.md)
+The API surface: classes, operations, parameters, and the JSON wire format. Look things
+up here, don't read it front to back.
 
 </div>
 
 <div class="feature-card" markdown>
 
-### AI Video Analysis
+### [Explanation](explanation/index.md)
 
-Transcribe with speaker diarization, classify ambient audio, detect scene boundaries, and describe scenes with a vision-language model. One `VideoAnalyzer` runs the full pipeline and returns a serializable `VideoAnalysis`. [Learn more →](api/ai/video_analysis.md)
-
-</div>
-
-<div class="feature-card" markdown>
-
-### AI Dubbing
-
-Translate speech, clone the original voice, and re-time the dub onto the source — all in one pipeline. Whisper + a local Ollama model + Chatterbox + Demucs. Source-prosody-conditioned expressiveness and a transcript-quality gate that rejects garbage input before paying for translation and TTS. [Learn more →](api/ai/dubbing.md)
+Why the library is shaped the way it is — the streaming engine, the plan lifecycle, the
+LLM-first design, and the local-only AI stack.
 
 </div>
 
 </div>
 
-## Installation
+## What is in the box
+
+- **Editing** — multi-segment plans with cuts, resize, crop, speed, freeze, silence
+  removal, and ~25 effects (blur, color grading, Ken Burns, fades, overlays, subtitles).
+- **Local AI** — generate images, video, speech and music; transcribe with diarization;
+  detect scenes, faces and objects; caption shots with a vision model. No cloud API keys.
+- **LLM control** — every operation is a Pydantic model, so the JSON Schema *is* the
+  tool schema. Plans validate, self-repair, and normalize before they render.
+- **Agent control** — `videopython-mcp` exposes the whole auto-edit pipeline as
+  [Model Context Protocol](https://modelcontextprotocol.io) tools.
 
 ```bash
 pip install videopython              # core editing
-pip install "videopython[ai]"        # + ALL local AI features (GPU recommended)
-pip install "videopython[ai,mcp]"    # + MCP server (videopython-mcp)
+pip install "videopython[ai]"        # + all local AI features (GPU recommended)
+pip install "videopython[ai,mcp]"    # + the MCP server
 ```
 
-`[ai]` is the single AI extra and installs every AI capability; heavy ML deps still load lazily at first use. `[mcp]` adds the MCP server.
-
-Python `>=3.11, <3.14`. AI features run locally -- no cloud API keys required.
-
-See the [Installation Guide](getting-started/installation.md) for FFmpeg setup and details.
+Python `>=3.11, <3.14`. See [Install](install.md) for FFmpeg, Ollama, and hardware notes.
