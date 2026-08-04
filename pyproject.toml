@@ -52,6 +52,10 @@ dev = [
     "mkdocs-material>=9.7.1",
     "mkdocstrings>=1.0.0",
     "mkdocstrings-python>=2.0.1",
+    # Keeps the pre-Diátaxis docs URLs alive (see mkdocs.yml redirect_maps).
+    # Capped <1.2.3: that release added a hard dependency on `properdocs` (an
+    # unrelated MkDocs fork) purely to print an ad during every docs build.
+    "mkdocs-redirects>=1.2,<1.2.3",
 ]
 # Thin dev-workflow group so `uv sync` / uv.lock keep working. References the
 # `[ai]` extra so dev installs every AI capability (single source of truth).

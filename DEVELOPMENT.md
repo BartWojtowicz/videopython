@@ -19,6 +19,10 @@ The `videopython` library is split into four subpackages, layered by dependency:
 
 The "no AI imports in `base`/`audio`/`editing`" invariant is enforced by `src/tests/test_import_isolation.py`.
 
+Why the layering (and the lazy AI re-exports) look like this is written up for users in
+[Architecture](https://videopython.com/explanation/architecture/) — update that page when
+the structure changes.
+
 ## Running locally
 
 We use [uv](https://docs.astral.sh/uv/) as project and package manager. Once you clone the repo and install uv:
@@ -66,9 +70,38 @@ mypy stubs for untyped third-party packages live in `src/stubs/`.
 The docs site (published at [videopython.com](https://videopython.com)) is built with [MkDocs Material](https://squidfunk.github.io/mkdocs-material/) from the `docs/` directory:
 
 ```bash
-uv run mkdocs serve   # live preview at http://127.0.0.1:8000
-uv run mkdocs build   # render the static site to ./site
+uv run mkdocs serve          # live preview at http://127.0.0.1:8000
+uv run mkdocs build --strict # render to ./site; fails on broken internal links
 ```
+
+Run the `--strict` build before opening a docs PR — it is what catches a link to a page
+or anchor that no longer exists.
+
+#### Structure
+
+`docs/` follows [Diátaxis](https://diataxis.fr). Every page belongs to exactly one of four
+modes, and mixing them is the thing to avoid:
+
+| Directory | Mode | Answers | Rule of thumb |
+|---|---|---|---|
+| `tutorials/` | Learning | "Teach me to use this" | Must work start to finish, no choices, no digressions |
+| `how-to/` | Task | "How do I achieve X?" | Titled with a verb; assumes competence; links out instead of explaining |
+| `reference/` | Information | "What are the parameters?" | Factual and dry; mkdocstrings blocks plus tables |
+| `explanation/` | Understanding | "Why is it like this?" | Design rationale and trade-offs; no step-by-step |
+
+Practical consequences when you add something:
+
+* A new operation → a row in `reference/operations.md` plus its `:::` block on the
+  matching reference page. Rationale, if any, goes in `explanation/`, not the table.
+* A new capability → usually one `how-to/` page. Add a tutorial only if it is part of the
+  first hour of using the library.
+* Design decisions belong in `explanation/`, so reference pages stay skimmable. If you
+  find yourself writing "because" on a reference page, move it.
+* Renaming or moving a page → add an entry to `redirect_maps` in `mkdocs.yml`. The site is
+  published and linked from PyPI, so URLs are part of the contract.
+
+Docstrings are the source for reference content: mkdocstrings pulls them in Google style,
+so a well-documented `Operation` needs almost nothing hand-written on the page.
 
 ## Dependencies
 

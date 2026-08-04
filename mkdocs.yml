@@ -27,18 +27,47 @@ theme:
   features:
     - navigation.tabs
     - navigation.sections
-    - navigation.expand
+    - navigation.indexes
     - navigation.top
+    - toc.follow
     - search.suggest
     - search.highlight
     - content.code.copy
     - content.code.annotate
+    - content.tabs.link
 
 extra_css:
   - stylesheets/extra.css
 
 plugins:
   - search
+  # Keep the pre-Diátaxis URLs alive; the site is published and linked from PyPI.
+  - redirects:
+      redirect_maps:
+        getting-started/installation.md: install.md
+        getting-started/quickstart.md: tutorials/first-edit.md
+        guides/llm-integration.md: how-to/llm-plans.md
+        guides/auto-editing.md: how-to/auto-editing.md
+        guides/mcp.md: how-to/mcp-server.md
+        examples/social-clip.md: how-to/social-clip.md
+        examples/ai-video.md: how-to/ai-generated-video.md
+        examples/auto-subtitles.md: tutorials/subtitles.md
+        examples/large-videos.md: how-to/long-videos.md
+        api/index.md: reference/index.md
+        api/core/video.md: reference/video.md
+        api/core/audio.md: reference/audio.md
+        api/editing.md: reference/video-edit.md
+        api/operations.md: reference/operations.md
+        api/transforms.md: reference/transforms.md
+        api/effects.md: reference/effects.md
+        api/text.md: reference/transcription.md
+        api/ai/generation.md: reference/ai/generation.md
+        api/ai/understanding.md: reference/ai/understanding.md
+        api/ai/video_analysis.md: reference/ai/video-analysis.md
+        api/ai/auto_edit.md: reference/ai/auto-edit.md
+        api/ai/dubbing.md: reference/ai/dubbing.md
+        api/ai/transforms.md: reference/ai/operations.md
+        api/ai/effects.md: reference/ai/operations.md
   - mkdocstrings:
       default_handler: python
       handlers:
@@ -61,40 +90,57 @@ markdown_extensions:
   - pymdownx.superfences
   - pymdownx.inlinehilite
   - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
   - admonition
   - pymdownx.details
   - attr_list
+  - def_list
   - md_in_html
   - tables
+  - toc:
+      permalink: true
 
+# Diátaxis: tutorials teach, how-to guides solve a task, reference describes,
+# explanation gives background. Keep new pages inside one of those four modes.
 nav:
   - Home: index.md
-  - Getting Started:
-      - Installation: getting-started/installation.md
-      - Quick Start: getting-started/quickstart.md
-  - Guides:
-      - LLM & AI Agent Integration: guides/llm-integration.md
-      - Automatic Editing: guides/auto-editing.md
-      - MCP Server: guides/mcp.md
-  - Examples:
-      - Social Media Clip: examples/social-clip.md
-      - AI-Generated Video: examples/ai-video.md
-      - Auto-Subtitles: examples/auto-subtitles.md
-      - Processing Large Videos: examples/large-videos.md
-  - API Reference:
-      - Overview: api/index.md
-      - Core:
-          - Video: api/core/video.md
-          - Audio: api/core/audio.md
-      - Editing Plans: api/editing.md
-      - Operations: api/operations.md
-      - Transforms: api/transforms.md
-      - Effects: api/effects.md
-      - Text & Transcription: api/text.md
-      - AI Generation: api/ai/generation.md
-      - AI Understanding: api/ai/understanding.md
-      - AI Video Analysis: api/ai/video_analysis.md
-      - AI Auto-Editing: api/ai/auto_edit.md
-      - AI Dubbing: api/ai/dubbing.md
-      - AI Transforms: api/ai/transforms.md
-      - AI Effects: api/ai/effects.md
+  - Install: install.md
+  - Tutorials:
+      - tutorials/index.md
+      - 1. Your first edit: tutorials/first-edit.md
+      - 2. Subtitle a video with AI: tutorials/subtitles.md
+  - How-to guides:
+      - how-to/index.md
+      - Build a vertical social clip: how-to/social-clip.md
+      - Process hour-long videos: how-to/long-videos.md
+      - Assemble a video from AI-generated media: how-to/ai-generated-video.md
+      - Dub a video into another language: how-to/dubbing.md
+      - Author edit plans with your own LLM: how-to/llm-plans.md
+      - Let a local LLM edit for you: how-to/auto-editing.md
+      - Drive editing from an MCP agent: how-to/mcp-server.md
+  - Reference:
+      - reference/index.md
+      - Video: reference/video.md
+      - Audio: reference/audio.md
+      - Transcription & subtitles: reference/transcription.md
+      - Edit plans: reference/video-edit.md
+      - Operations: reference/operations.md
+      - Transforms: reference/transforms.md
+      - Effects: reference/effects.md
+      - AI:
+          - Generation: reference/ai/generation.md
+          - Understanding: reference/ai/understanding.md
+          - Video analysis: reference/ai/video-analysis.md
+          - Auto-editing: reference/ai/auto-edit.md
+          - Dubbing: reference/ai/dubbing.md
+          - AI operations: reference/ai/operations.md
+      - MCP server: reference/mcp.md
+  - Explanation:
+      - explanation/index.md
+      - Architecture: explanation/architecture.md
+      - The streaming engine: explanation/streaming-engine.md
+      - The plan lifecycle: explanation/plan-lifecycle.md
+      - LLM-first design: explanation/llm-first-design.md
+      - Local-only AI: explanation/local-ai.md
+  - Glossary: glossary.md
