@@ -2,14 +2,11 @@
 
 Test structure:
 - tests/base/ - No AI dependencies, runs in CI
-- tests/ai/ - Requires AI extras, mostly runs in CI
+- tests/ai/ - Requires AI extras, runs in CI
 
-AI test markers:
-- @pytest.mark.requires_model_download - Tests that download models 100MB+
-  (e.g., D-FINE, YuNet, Whisper). These are skipped in CI.
-
-CI runs: uv run pytest src/tests/ai -m "not requires_model_download"
-Local runs: uv run pytest src/tests/ai -v (all tests including model downloads)
+Every test here runs on a GitHub runner: no GPU, no model downloads. Anything
+needing real weights belongs in the real-model harness (see CLAUDE.md), not in a
+test that CI cannot execute.
 """
 
 import ast
@@ -62,14 +59,6 @@ def _flatten_extra(extras: dict[str, list[str]], extra: str, _seen: set[str] | N
         else:
             deps.add(req.strip())
     return deps
-
-
-def pytest_configure(config):
-    """Register custom pytest markers."""
-    config.addinivalue_line(
-        "markers",
-        "requires_model_download: marks tests that download heavy AI models (D-FINE, YuNet, Whisper) - skipped in CI",
-    )
 
 
 def pytest_collection_modifyitems(config, items):

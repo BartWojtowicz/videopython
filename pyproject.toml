@@ -176,9 +176,6 @@ pythonpath = ["src/"]
 testpaths = ["src/tests"]
 python_files = ["test_*.py"]
 addopts = ["-v", "--tb=short"]
-markers = [
-    "requires_model_download: marks tests that require downloading ML models (skipped in CI)",
-]
 
 [tool.ruff]
 line-length = 120

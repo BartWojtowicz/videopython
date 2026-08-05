@@ -34,17 +34,28 @@ uv sync --all-extras
 ### Running tests
 
 ```bash
-# Non-AI tests (runs in CI)
+# Everything (this is what CI runs)
+uv run pytest
+
+# Just one area
 uv run pytest --ignore=src/tests/ai
-
-# AI tests, lightweight only (runs in CI)
-uv run pytest src/tests/ai -m "not requires_model_download"
-
-# AI tests, full suite (downloads model weights, run locally)
 uv run pytest src/tests/ai
 ```
 
-Heavy tests are marked `@pytest.mark.requires_model_download` and skipped in CI. The rest of the AI suite stays fast by monkey-patching the model classes with lightweight fakes.
+There are no markers and no skipped tiers: **every test in the suite runs on a
+GitHub runner** — no GPU, no model downloads. The AI suite stays fast by
+monkey-patching the model classes with lightweight fakes.
+
+That means the suite cannot tell you whether a *model* works, only whether the code
+around it does. A fake returns whatever the test handed it. Real-model behaviour is
+verified separately, by hand, on a rented GPU box; ask a maintainer for the
+verification harness.
+
+To check a test really is runner-feasible, run it against an empty model cache:
+
+```bash
+HF_HOME=$(mktemp -d) HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 uv run pytest src/tests/ai
+```
 
 ### Linting & type checking
 
