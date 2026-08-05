@@ -27,7 +27,7 @@ jobs:
         run: uv run pytest --ignore=src/tests/ai --cov=src/videopython/base --cov=src/videopython/audio --cov=src/videopython/editing --cov-report=term --cov-report=term-missing
 
   ai_tests:
-    name: AI tests (lightweight) - Python ${{ matrix.python-version }}
+    name: AI tests - Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -45,8 +45,8 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
       - name: Install all dependencies
         run: uv sync --python ${{ matrix.python-version }} --all-extras --group ai
-      - name: Run AI tests (skip heavy model downloads)
-        run: uv run pytest src/tests/ai -m "not requires_model_download" -v
+      - name: Run AI tests
+        run: uv run pytest src/tests/ai -v
 
   static_checks:
     name: Static checks (pre-commit)

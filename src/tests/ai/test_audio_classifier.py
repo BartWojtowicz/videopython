@@ -1,24 +1,13 @@
 """Tests for AudioClassifier with AST (Audio Spectrogram Transformer) backend.
 
-Tests marked with @pytest.mark.requires_model_download are skipped in CI
-due to model downloads. Run locally with:
-    uv run pytest src/tests/ai/test_audio_classifier.py -v
+Covers only what runs on a GitHub runner: construction and the pure event-merging
+logic. Anything needing the AST weights is verified by the real-model harness
+instead (see CLAUDE.md), not by a test that downloads a model.
 """
 
-import os
-
-import numpy as np
 import pytest
 
 from videopython.base.description import AudioClassification, AudioEvent
-
-# Mark for tests that require AST model download
-requires_model_download = pytest.mark.requires_model_download
-
-# Path to test data (one level up from ai/ directory)
-TEST_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "test_data")
-TEST_AUDIO_PATH = os.path.join(TEST_DATA_DIR, "test_audio.mp3")
-SMALL_VIDEO_PATH = os.path.join(TEST_DATA_DIR, "small_video.mp4")
 
 
 class TestAudioClassifierInit:
@@ -31,138 +20,14 @@ class TestAudioClassifierInit:
         assert AudioClassifier(model_name="some/other-ast-model").model_name == "some/other-ast-model"
 
 
-@requires_model_download
-class TestAudioClassifier:
-    """Tests for AudioClassifier with AST backend."""
-
-    @pytest.fixture
-    def classifier(self):
-        """Create AudioClassifier with local backend."""
-        from videopython.ai.understanding.classification import AudioClassifier
-
-        return AudioClassifier(confidence_threshold=0.3, device="cpu")
-
-    @pytest.fixture
-    def low_threshold_classifier(self):
-        """Create AudioClassifier with low threshold for more detections."""
-        from videopython.ai.understanding.classification import AudioClassifier
-
-        return AudioClassifier(confidence_threshold=0.1, device="cpu")
-
-    @pytest.fixture
-    def test_audio(self):
-        """Load test audio file."""
-        from videopython.audio import Audio
-
-        return Audio.from_path(TEST_AUDIO_PATH)
-
-    @pytest.fixture
-    def test_video(self):
-        """Load test video file."""
-        from videopython.base.video import Video
-
-        return Video.from_path(SMALL_VIDEO_PATH)
-
-    @pytest.fixture
-    def silent_audio(self):
-        """Create silent audio."""
-        from videopython.audio import Audio, AudioMetadata
-
-        # 1 second of silence at 16kHz (AST sample rate)
-        silent_data = np.zeros(16000, dtype=np.float32)
-        metadata = AudioMetadata(
-            sample_rate=16000,
-            channels=1,
-            sample_width=4,  # float32
-            duration_seconds=1.0,
-            frame_count=16000,
-        )
-        return Audio(data=silent_data, metadata=metadata)
-
-    def test_classifier_initialization(self, classifier):
-        """Test classifier initializes correctly."""
-        assert classifier.confidence_threshold == 0.3
-        assert classifier.model_name == "MIT/ast-finetuned-audioset-10-10-0.4593"
-        assert classifier.device == "cpu"
-
-    def test_classify_returns_audio_classification(self, classifier, test_audio):
-        """Test classification returns AudioClassification object."""
-        result = classifier.classify(test_audio)
-        assert isinstance(result, AudioClassification)
-        assert isinstance(result.events, list)
-        assert isinstance(result.clip_predictions, dict)
-
-    def test_classify_events_have_correct_structure(self, low_threshold_classifier, test_audio):
-        """Test that detected events have correct structure."""
-        result = low_threshold_classifier.classify(test_audio)
-
-        for event in result.events:
-            assert isinstance(event, AudioEvent)
-            assert isinstance(event.start, float)
-            assert isinstance(event.end, float)
-            assert isinstance(event.label, str)
-            assert isinstance(event.confidence, float)
-            assert event.start >= 0
-            assert event.end > event.start
-            assert 0 <= event.confidence <= 1
-            assert len(event.label) > 0
-
-    def test_classify_video(self, classifier, test_video):
-        """Test classification works with Video input."""
-        result = classifier.classify(test_video)
-        assert isinstance(result, AudioClassification)
-        assert isinstance(result.events, list)
-
-    def test_classify_silent_audio_returns_empty(self, classifier, silent_audio):
-        """Test that silent audio returns empty classification."""
-        result = classifier.classify(silent_audio)
-        assert isinstance(result, AudioClassification)
-        # Silent audio may still have some predictions but should be mostly empty
-        assert isinstance(result.events, list)
-
-    def test_clip_predictions_have_correct_structure(self, low_threshold_classifier, test_audio):
-        """Test that clip predictions have correct structure."""
-        result = low_threshold_classifier.classify(test_audio)
-
-        for label, confidence in result.clip_predictions.items():
-            assert isinstance(label, str)
-            assert isinstance(confidence, float)
-            assert 0 <= confidence <= 1
-            assert len(label) > 0
-
-    def test_events_are_sorted_by_start_time(self, low_threshold_classifier, test_audio):
-        """Test that events are sorted by start time."""
-        result = low_threshold_classifier.classify(test_audio)
-
-        if len(result.events) > 1:
-            for i in range(len(result.events) - 1):
-                assert result.events[i].start <= result.events[i + 1].start
-
-    def test_confidence_threshold_filtering(self, test_audio):
-        """Test that confidence threshold correctly filters events."""
-        from videopython.ai.understanding.classification import AudioClassifier
-
-        # Create classifiers with different thresholds
-        low_classifier = AudioClassifier(confidence_threshold=0.1, device="cpu")
-        high_classifier = AudioClassifier(confidence_threshold=0.8, device="cpu")
-
-        low_result = low_classifier.classify(test_audio)
-        high_result = high_classifier.classify(test_audio)
-
-        # Higher threshold should result in fewer or equal events
-        assert len(high_result.events) <= len(low_result.events)
-
-        # All events should meet their respective thresholds
-        for event in low_result.events:
-            assert event.confidence >= 0.1
-
-        for event in high_result.events:
-            assert event.confidence >= 0.8
-
-
-@requires_model_download
 class TestAudioEventMerging:
-    """Tests for the event merging logic."""
+    """Pure logic over hand-built AudioEvents -- no model, no download.
+
+    Previously carried ``requires_model_download`` and so never ran in CI, purely
+    because the fixture constructs an ``AudioClassifier``. That construction is
+    lazy (``_model = None`` until first use), so these always could have run: 4
+    tests in 0.01s.
+    """
 
     @pytest.fixture
     def classifier(self):
