@@ -95,10 +95,10 @@ Why it is built this way: [LLM-first design](https://videopython.com/explanation
 - **`videopython.base`** — `Video`, `VideoMetadata`, `FrameIterator`, `Transcription`, and shared result types (`BoundingBox`, `FaceTrack`, `SceneBoundary`, ...). No AI dependencies.
 - **`videopython.audio`** — `Audio` with overlay, concat, normalize, time-stretch, silence detection, segment classification.
 - **`videopython.editing`** — `Operation`/`Effect` foundation, `VideoEdit` plan runner with JSON Schema + streaming execution. Transforms (resize, crop, fps, speed, freeze, silence removal; cutting is the segment's own start/end) and effects (blur, zoom, color grading, vignette, Ken Burns, fade, overlays, animated subtitles).
-- **`videopython.ai`** *(install with `[ai]`)* — generation (`TextToVideo`, `ImageToVideo`, `TextToImage`, `TextToSpeech`, `TextToMusic`), understanding (`AudioToText`, `AudioClassifier`, `SceneVLM`, `FaceTracker`, `ObjectDetector`, `SemanticSceneDetector`), the `FaceTrackingCrop` transform, the `ObjectDetectionOverlay` effect, and the full-pipeline `VideoAnalyzer`. Scene captioning and dub translation run on a local [Ollama](https://ollama.com) model.
+- **`videopython.ai`** *(install with `[ai]`)* — generation (`TextToVideo`, `ImageToVideo`, `TextToImage`, `TextToSpeech`, `TextToMusic`), understanding (`AudioToText`, `AudioClassifier`, `SceneVLM`, `FaceTracker`, `ObjectDetector`, `SemanticSceneDetector`), the `FaceTrackingCrop` transform, the `ObjectDetectionOverlay` effect, and the full-pipeline `VideoAnalyzer`. Scene captioning and dubbing translation run on a local [Ollama](https://ollama.com) model.
 - **`videopython.ai.auto_edit`** — `AutoEditor` + `OllamaVisionLLM`: plan and render an edit from sources + a one-line brief.
 - **`videopython.ai.dubbing`** — `VideoDubber` for voice-cloned revoicing with timing sync.
-- **`videopython.mcp`** *(install with `[mcp]`)* — `videopython-mcp`, an MCP stdio server exposing the auto-edit pipeline so an agent drives editing.
+- **`videopython.mcp`** *(install with `[ai,mcp]`)* — `videopython-mcp`, an MCP stdio server exposing the auto-edit pipeline so an agent drives editing.
 
 ## Documentation
 
