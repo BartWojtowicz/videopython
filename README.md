@@ -1,5 +1,3 @@
-
-
 # videopython
 
 [![PyPI](https://img.shields.io/pypi/v/videopython)](https://pypi.org/project/videopython/)
