@@ -1,7 +1,21 @@
 name: CI Pipeline
 on:
+  # Restricted to main: any other branch that has an open PR is already covered by
+  # the `pull_request` trigger below, and an unrestricted `push` would run the whole
+  # matrix twice for every same-repo PR.
   push:
+    branches: [main]
+  # Required for PRs from forks. Fork branches live in the contributor's repo, so a
+  # push there fires no event here and the PR gets no checks at all.
+  pull_request:
   workflow_call:
+
+# One in-flight run per branch. Without this, force-pushing to a PR leaves the
+# previous full matrix running to completion. `main` is keyed by run_id so pushes
+# there never cancel each other.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   base_tests:
