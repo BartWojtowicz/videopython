@@ -4509,7 +4509,7 @@ wheels = [
 
 [[package]]
 name = "videopython"
-version = "0.55.0"
+version = "0.55.1"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },
@@ -4517,6 +4517,7 @@ dependencies = [
     { name = "pillow" },
     { name = "pydantic" },
     { name = "resvg-py" },
+    { name = "soxr" },
     { name = "tqdm" },
 ]
 
@@ -4583,6 +4584,7 @@ requires-dist = [
     { name = "pyloudnorm", marker = "extra == 'ai'", specifier = ">=0.1.1" },
     { name = "resvg-py", specifier = ">=0.3.2" },
     { name = "silero-vad", marker = "extra == 'ai'", specifier = ">=5.1" },
+    { name = "soxr", specifier = ">=0.5" },
     { name = "torch", marker = "extra == 'ai'", specifier = ">=2.8.0" },
     { name = "torchaudio", marker = "extra == 'ai'", specifier = ">=2.8.0" },
     { name = "torchcodec", marker = "extra == 'ai'", specifier = ">=0.7.0" },

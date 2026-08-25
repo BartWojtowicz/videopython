@@ -3,6 +3,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import soxr
 
 from videopython.audio import Audio, AudioMetadata
 
@@ -851,6 +852,59 @@ def test_resample_stereo():
     assert resampled.metadata.channels == 2
     assert resampled.metadata.sample_width == audio.metadata.sample_width
     assert abs(resampled.metadata.duration_seconds - audio.metadata.duration_seconds) < 0.1
+
+
+def test_resample_antialiasing_matches_a_polyphase_reference():
+    """Full-band noise, since only energy above the target Nyquist exposes the filter.
+
+    Band-limited input scores 1.000000 either way; an rfft-truncating resampler
+    scores 0.982 here.
+    """
+    source_rate, seconds = 48000, 3
+    signal = np.random.default_rng(0).standard_normal(source_rate * seconds).astype(np.float32)
+    audio = Audio(
+        signal,
+        AudioMetadata(
+            sample_rate=source_rate,
+            channels=1,
+            sample_width=2,
+            duration_seconds=seconds,
+            frame_count=len(signal),
+        ),
+    )
+
+    resampled = audio.resample(NEW_SAMPLE_RATE)
+    reference = soxr.resample(signal, source_rate, NEW_SAMPLE_RATE, quality="HQ")
+
+    length = min(len(reference), resampled.data.shape[0])
+    edge = NEW_SAMPLE_RATE // 10  # every resampler has an edge transient
+    got = resampled.data[edge : length - edge].astype(np.float64)
+    want = reference[edge : length - edge].astype(np.float64)
+
+    assert np.corrcoef(got, want)[0, 1] > 0.999
+
+
+def test_resample_handles_lengths_that_are_not_fft_friendly():
+    """A prime frame count: the case where an FFT resampler falls onto Bluestein."""
+    prime_length = 1_000_003
+    signal = np.random.default_rng(0).standard_normal(prime_length).astype(np.float32)
+    audio = Audio(
+        signal,
+        AudioMetadata(
+            sample_rate=48000,
+            channels=1,
+            sample_width=2,
+            duration_seconds=prime_length / 48000,
+            frame_count=prime_length,
+        ),
+    )
+
+    resampled = audio.resample(NEW_SAMPLE_RATE)
+
+    expected = round(prime_length * NEW_SAMPLE_RATE / 48000)
+    assert abs(resampled.data.shape[0] - expected) <= 1
+    assert resampled.metadata.frame_count == resampled.data.shape[0]
+    assert resampled.metadata.sample_rate == NEW_SAMPLE_RATE
 
 
 # =============================================================================
