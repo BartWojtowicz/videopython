@@ -1,5 +1,29 @@
 # Release Notes
 
+## 0.55.1
+
+`Audio.resample` now uses `soxr` — band-limited polyphase, the engine librosa
+resamples with — instead of a whole-signal FFT. The old approach was both slow and
+lossy on real-length audio, and the existing tests could not see either: they
+assert shapes, rates and durations, all of which it satisfied.
+
+| 28.7-minute 48kHz file → 16kHz | before | after |
+|---|---|---|
+| resample time | 88 s | 0.19 s |
+| correlation vs librosa | 0.994 | 1.000000 |
+
+`np.fft` is O(n log n) only for smooth lengths, so an arbitrary frame count with a
+large prime factor fell onto Bluestein's algorithm — and the cost grew
+superlinearly, 29x the audio for 126x the time. Truncating a spectrum is also a
+brick wall, so the output rang, and the transform assumed periodicity, so the ends
+were wrong. Speaker embeddings taken from audio resampled this way scored 0.055
+lower against their own centroid.
+
+Adds `soxr` (a few hundred KB of C library) to the base dependencies. The
+resampler handles mono and interleaved stereo itself, so the per-channel loop is
+gone, and output length now comes from it rather than a predicted
+`round(n * ratio)`.
+
 ## 0.55.0
 
 Three pixel effects were costing more per frame than the encoder they feed.
