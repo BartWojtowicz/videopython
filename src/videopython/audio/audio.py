@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import soxr
 
 from videopython.base import _ffmpeg
 from videopython.base.exceptions import AudioLoadError, FFmpegProbeError
@@ -384,6 +385,8 @@ class Audio:
         """
         Resample the audio to a new sample rate
 
+        Uses `soxr` (band-limited polyphase), the same engine librosa resamples with.
+
         Args:
             target_sample_rate: New sample rate in Hz
 
@@ -393,19 +396,16 @@ class Audio:
         if target_sample_rate == self.metadata.sample_rate:
             return self
 
-        # Calculate resampling ratio
-        ratio = target_sample_rate / self.metadata.sample_rate
+        # soxr takes mono (1-D) and interleaved stereo directly. "HQ" is librosa's default.
+        resampled_data = soxr.resample(
+            self.data,
+            self.metadata.sample_rate,
+            target_sample_rate,
+            quality="HQ",
+        ).astype(np.float32)
 
-        target_length = round(self.data.shape[0] * ratio)
-
-        audio_array = self.data
-        if self.metadata.channels == 1:
-            audio_array = audio_array.reshape(-1, 1)
-
-        resampled_data = np.zeros((target_length, self.metadata.channels), dtype=np.float32)
-
-        for channel in range(self.metadata.channels):
-            resampled_data[:, channel] = self._resample_channel(audio_array[:, channel], target_length)
+        # From the resampler, not a predicted round(n * ratio): metadata must match the array.
+        target_length = resampled_data.shape[0]
 
         new_metadata = AudioMetadata(
             sample_rate=target_sample_rate,
@@ -414,40 +414,8 @@ class Audio:
             duration_seconds=target_length / target_sample_rate,
             frame_count=target_length,
         )
-        if self.metadata.channels == 1:
-            resampled_data = resampled_data.flatten()
 
         return Audio(resampled_data, new_metadata)
-
-    @staticmethod
-    def _resample_channel(data: np.ndarray, new_length: int) -> np.ndarray:
-        """Resample a single channel of audio data to a new length"""
-
-        data_fourier = np.fft.rfft(data)
-        original_length = data.shape[0]
-
-        newshape = [new_length // 2 + 1]
-
-        data_fourier_placeholder = np.zeros(newshape, data_fourier.dtype)
-
-        min_length = min(new_length, original_length)
-        nyquist = min_length // 2 + 1
-        sl = [slice(0, nyquist)]
-        data_fourier_placeholder[tuple(sl)] = data_fourier[tuple(sl)]
-
-        if min_length % 2 == 0:
-            if new_length < original_length:
-                sl = [slice(min_length // 2, min_length // 2 + 1)]
-                data_fourier_placeholder[tuple(sl)] *= 2.0
-
-                sl = [slice(min_length // 2, min_length // 2 + 1)]
-                data_fourier_placeholder[tuple(sl)] *= 0.5
-
-        resampled_data = np.fft.irfft(data_fourier_placeholder, new_length)
-
-        resampled_data *= float(new_length) / float(original_length)
-
-        return resampled_data
 
     def concat(self, other: Audio, crossfade: float = 0.0) -> Audio:
         """

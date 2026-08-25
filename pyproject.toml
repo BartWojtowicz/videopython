@@ -32,6 +32,7 @@ classifiers = [
 
 dependencies = [
     "numpy>=1.25.2",
+    "soxr>=0.5",  # polyphase resampling for Audio.resample; the engine librosa uses
     "opencv-python-headless>=4.9.0.80",
     "pillow>=12.1.1",
     "resvg-py>=0.3.2",
@@ -139,6 +140,7 @@ module = [
     "silero_vad", "silero_vad.*",
     "cv2", "cv2.*",
     "pyloudnorm", "pyloudnorm.*",
+    "soxr", "soxr.*",
     "imagehash", "imagehash.*",
     "mcp", "mcp.*",
 ]
