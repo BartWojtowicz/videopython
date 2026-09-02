@@ -9,6 +9,7 @@ ML dependencies.
 from videopython.audio import Audio
 
 audio = Audio.from_path("music.mp3")
+speech = Audio.from_path("talk.mp3", sample_rate=16000, channels=1)  # converts while decoding
 silent = Audio.create_silent(duration_seconds=5.0, stereo=True)
 
 mono = audio.to_mono()

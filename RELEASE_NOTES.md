@@ -1,5 +1,23 @@
 # Release Notes
 
+## 0.55.2
+
+`Audio.from_path` no longer holds several copies of the file while decoding, and takes
+`sample_rate` and `channels` to convert during the decode rather than after it.
+
+```python
+# 21.6 GB peak on a 4.67-hour 48kHz stereo recording
+audio = Audio.from_path(path).to_mono().resample(16000)
+
+# 1.55 GB peak, same audio to within one 16-bit LSB
+audio = Audio.from_path(path, sample_rate=16000, channels=1)
+```
+
+Decoding now asks ffmpeg for raw `s16le` instead of round-tripping WAV through
+`BytesIO` and `readframes`, streams stdout into a `bytearray` instead of
+`communicate()`, and normalizes in place. Passing neither argument is byte-identical
+to before, and drops peak memory on that recording from 21.6 GB to 9.07 GB.
+
 ## 0.55.1
 
 `Audio.resample` now uses `soxr` — band-limited polyphase, the engine librosa

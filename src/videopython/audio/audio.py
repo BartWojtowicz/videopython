@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import subprocess
+import tempfile
 import wave
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +16,17 @@ from videopython.base.exceptions import AudioLoadError, FFmpegProbeError
 
 if TYPE_CHECKING:
     from videopython.audio.analysis import AudioLevels, AudioSegment, AudioSegmentType, SilentSegment
+
+# What `Audio.from_path` asks ffmpeg for. Piped WAV comes back as pcm_s16le whatever
+# the source's bit depth, so requesting raw s16le loses no fidelity that the WAV path
+# was preserving, and there is no header to parse back.
+_PCM_FORMAT = "s16le"
+_PCM_DTYPE = np.int16
+_PCM_SAMPLE_WIDTH = 2
+
+# Read size when draining ffmpeg's stdout: big enough that a multi-GB decode is not
+# millions of round trips, small enough to be irrelevant for a short clip.
+_DECODE_CHUNK_BYTES = 8 << 20
 
 
 def atempo_chain(speed: float) -> list[str]:
@@ -163,100 +175,131 @@ class Audio:
         return cls(data, metadata)
 
     @classmethod
-    def from_path(cls, file_path: str | Path) -> Audio:
+    def from_path(
+        cls,
+        file_path: str | Path,
+        *,
+        sample_rate: int | None = None,
+        channels: int | None = None,
+    ) -> Audio:
         """
-        Load audio from a file using ffmpeg
+        Load audio from a file using ffmpeg.
+
+        ``sample_rate`` and ``channels`` ask ffmpeg to convert *while decoding*
+        rather than loading the source in full and converting afterwards. For a
+        caller that only wants 16kHz mono -- speech recognition, diarization,
+        speaker embeddings -- that is the difference between holding the whole
+        source in memory and holding a twelfth of it: a 12-hour 48kHz stereo
+        recording is 16.5GB of float32 at source rate and 1.4GB at 16kHz mono.
+        Resampling uses soxr, the engine :meth:`resample` uses, so the result
+        tracks ``Audio.from_path(p).to_mono().resample(r)`` sample for sample at
+        an error RMS around one 16-bit LSB -- the two quantize at different points
+        in the chain, and neither is the more faithful for it.
 
         Args:
             file_path: Path to the audio file
+            sample_rate: Decode at this rate instead of the source's.
+            channels: Decode to this many channels instead of the source's.
+                ``1`` downmixes to mono.
 
         Returns:
             Audio: New Audio instance
 
         Raises:
             FileNotFoundError: If the file doesn't exist
+            ValueError: If ``sample_rate`` or ``channels`` is not positive
             AudioLoadError: If there's an error loading the audio
         """
         file_path = Path(file_path)
         if not file_path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
+        if sample_rate is not None and sample_rate <= 0:
+            raise ValueError("Sample rate must be positive")
+        if channels is not None and channels <= 0:
+            raise ValueError("Channel count must be positive")
 
-        # Get audio info
         info = cls._get_ffmpeg_info(file_path)
+        target_rate = info["sample_rate"] if sample_rate is None else sample_rate
+        target_channels = info["channels"] if channels is None else channels
 
-        # Convert to WAV using ffmpeg
+        # Raw PCM rather than a WAV round-trip. Piped WAV comes back as pcm_s16le
+        # whatever the source's bit depth -- `-bits_per_raw_sample` is a hint the
+        # WAV muxer does not act on -- and its header carries a placeholder length
+        # because a pipe is not seekable. So parsing it back told us only what we
+        # had already asked for, and cost two more full copies of the audio on the
+        # way: one for `BytesIO`, one for `readframes`.
         cmd = [
             "ffmpeg",
+            "-v",
+            "error",
             "-i",
             str(file_path),
             "-f",
-            "wav",
+            _PCM_FORMAT,
             "-ar",
-            str(info["sample_rate"]),  # sample rate
+            str(target_rate),
             "-ac",
-            str(info["channels"]),  # channels
-            "-bits_per_raw_sample",
-            str(info["bit_depth"]),
+            str(target_channels),
+            # soxr rather than ffmpeg's default resampler, so that decoding at a
+            # rate and resampling to it afterwards agree.
+            "-af",
+            "aresample=resampler=soxr",
             "-",  # Output to stdout
         ]
 
         try:
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            wav_data, stderr = process.communicate()
-
-            if process.returncode != 0:
-                raise AudioLoadError(f"FFmpeg error: {stderr.decode()}")
-
-            # Read WAV data
-            with io.BytesIO(wav_data) as wav_io:
-                with wave.open(wav_io, "rb") as wav_file:
-                    # Get WAV metadata
-                    sample_width = wav_file.getsampwidth()
-                    channels = wav_file.getnchannels()
-                    sample_rate = wav_file.getframerate()
-                    n_frames = wav_file.getnframes()
-
-                    # Read raw audio data
-                    raw_data = wav_file.readframes(n_frames)
-
-                    # Convert bytes to numpy array based on sample width
-                    dtype_map = {1: np.int8, 2: np.int16, 4: np.int32}
-                    dtype = dtype_map.get(sample_width)
-                    if dtype is None:
-                        raise AudioLoadError(f"Unsupported sample width: {sample_width}")
-
-                    # Explicitly annotated: numpy>=2.5 shape-types ndarray, so the
-                    # 1-D frombuffer result cannot be rebound to a 2-D view below.
-                    data: np.ndarray[Any, np.dtype[np.float32]]
-                    data = np.frombuffer(raw_data, dtype=dtype).astype(np.float32)
-
-                    # Reshape to (frames, channels) if stereo
-                    if channels == 2:
-                        data = data.reshape(-1, 2)
-
-                    # Normalize to float between -1 and 1
-                    max_value = float(np.iinfo(dtype).max)  # type: ignore
-                    data = data / max_value
-
-                    # Ensure normalization is within bounds due to floating point precision
-                    data = np.clip(data, -1.0, 1.0)
-
-                    # Calculate frame count from actual data length
-                    # For stereo, len(data) is already correct after reshape
-                    frame_count = len(data)
-
-                    metadata = AudioMetadata(
-                        sample_rate=sample_rate,
-                        channels=channels,
-                        sample_width=sample_width,
-                        duration_seconds=info["duration"],
-                        frame_count=frame_count,
-                    )
-
-                    return cls(data, metadata)
-
+            # stderr to a file, not a pipe: stdout is drained to completion before
+            # stderr is read, and a full stderr pipe would deadlock ffmpeg partway
+            # through the audio.
+            with tempfile.TemporaryFile() as errors:
+                process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errors)
+                assert process.stdout is not None
+                # A bytearray rather than `communicate()`, which accumulates chunks
+                # in a list and joins them at the end -- holding the whole of a long
+                # decode twice at the moment it completes.
+                raw = bytearray()
+                try:
+                    while chunk := process.stdout.read(_DECODE_CHUNK_BYTES):
+                        raw += chunk
+                finally:
+                    process.stdout.close()
+                if process.wait() != 0:
+                    errors.seek(0)
+                    raise AudioLoadError(f"FFmpeg error: {errors.read().decode(errors='replace')}")
         except subprocess.CalledProcessError as e:
             raise AudioLoadError(f"Error running ffmpeg: {e}")
+
+        # A truncated final frame would otherwise make `frombuffer` raise on a file
+        # that is entirely usable up to that point.
+        frame_bytes = _PCM_SAMPLE_WIDTH * target_channels
+        usable = len(raw) - (len(raw) % frame_bytes)
+
+        # Explicitly annotated: numpy>=2.5 shape-types ndarray, so the
+        # 1-D frombuffer result cannot be rebound to a 2-D view below.
+        data: np.ndarray[Any, np.dtype[np.float32]]
+        data = np.frombuffer(memoryview(raw)[:usable], dtype=_PCM_DTYPE).astype(np.float32)
+
+        # Reshape to (frames, channels) if stereo
+        if target_channels == 2:
+            data = data.reshape(-1, 2)
+
+        # Normalize to float between -1 and 1, and clamp for floating-point
+        # precision. Both in place: at these sizes a copy per step is most of what
+        # makes decoding a long file expensive.
+        data /= float(np.iinfo(_PCM_DTYPE).max)
+        np.clip(data, -1.0, 1.0, out=data)
+
+        # Calculate frame count from actual data length
+        # For stereo, len(data) is already correct after reshape
+        metadata = AudioMetadata(
+            sample_rate=target_rate,
+            channels=target_channels,
+            sample_width=_PCM_SAMPLE_WIDTH,
+            duration_seconds=info["duration"],
+            frame_count=len(data),
+        )
+
+        return cls(data, metadata)
 
     @classmethod
     def from_file(cls, file_path: str | Path) -> Audio:
@@ -653,8 +696,6 @@ class Audio:
         filter_str = ",".join(filters) if filters else "anull"
 
         # Save current audio to temp WAV, process with ffmpeg, read back
-        import tempfile
-
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as input_file:
             input_path = input_file.name
 
