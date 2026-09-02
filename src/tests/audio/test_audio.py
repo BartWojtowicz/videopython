@@ -6,6 +6,7 @@ import pytest
 import soxr
 
 from videopython.audio import Audio, AudioMetadata
+from videopython.base.exceptions import AudioLoadError, FFmpegProbeError
 
 # Test constants
 MONO_SAMPLE_RATE = 44100
@@ -1332,3 +1333,63 @@ def test_time_stretch_invalid_speed():
 
     with pytest.raises(ValueError, match="positive"):
         audio.time_stretch(-1.0)
+
+
+def test_from_path_decodes_at_requested_rate_and_channels():
+    """Decoding straight to 16kHz mono gives the same shape as converting after."""
+    direct = Audio.from_path(TEST_DATA_DIR / "test_stereo.mp3", sample_rate=NEW_SAMPLE_RATE, channels=1)
+
+    assert direct.metadata.sample_rate == NEW_SAMPLE_RATE
+    assert direct.metadata.channels == 1
+    assert direct.data.ndim == 1, "Mono audio should be 1-dimensional"
+    assert direct.data.dtype == np.float32
+    assert len(direct.data) == direct.metadata.frame_count
+    assert np.all(np.abs(direct.data) <= 1.0), "Data should stay normalized"
+
+
+def test_from_path_conversion_matches_converting_afterwards():
+    """The whole point of the arguments: same audio, a twelfth of the memory.
+
+    They agree to about one 16-bit LSB rather than exactly -- the two paths
+    quantize at different points in the chain -- so this asserts on error energy,
+    not equality. A wrong sample rate, a bad downmix or an off-by-one alignment
+    all fail it by orders of magnitude.
+    """
+    source = TEST_DATA_DIR / "test_stereo.mp3"
+    converted = Audio.from_path(source).to_mono().resample(NEW_SAMPLE_RATE)
+    direct = Audio.from_path(source, sample_rate=NEW_SAMPLE_RATE, channels=1)
+
+    assert len(direct.data) == len(converted.data)
+    error_rms = float(np.sqrt(((direct.data - converted.data) ** 2).mean()))
+    signal_rms = float(np.sqrt((converted.data**2).mean()))
+    assert error_rms < 1e-3, f"error RMS {error_rms} is far above 16-bit quantization noise"
+    assert error_rms < signal_rms / 100
+
+
+def test_from_path_defaults_to_source_format():
+    """Passing neither argument must leave the source untouched."""
+    audio = Audio.from_path(TEST_DATA_DIR / "test_stereo.mp3")
+
+    assert audio.metadata.sample_rate == STEREO_SAMPLE_RATE
+    assert audio.metadata.channels == 2
+    assert audio.data.ndim == 2
+
+
+def test_from_path_rejects_invalid_conversion_targets():
+    source = TEST_DATA_DIR / "test_mono.mp3"
+
+    with pytest.raises(ValueError, match="positive"):
+        Audio.from_path(source, sample_rate=0)
+
+    with pytest.raises(ValueError, match="positive"):
+        Audio.from_path(source, channels=-1)
+
+
+def test_from_path_reports_ffmpeg_failure():
+    """A file ffmpeg cannot decode must raise AudioLoadError, not return silence."""
+    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as broken:
+        broken.write(b"this is not audio")
+        broken_path = broken.name
+
+    with pytest.raises((AudioLoadError, FFmpegProbeError)):
+        Audio.from_path(broken_path)

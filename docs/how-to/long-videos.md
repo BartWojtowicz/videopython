@@ -121,6 +121,31 @@ for scene in (analysis.scenes.samples if analysis.scenes else []):
         print("  ", scene.scene_description.caption)
 ```
 
+## Decode long audio at the rate you actually need
+
+`Audio.from_path()` loads at the source's own sample rate and channel count, which for a
+long recording is most of the memory and almost none of the value: speech recognition,
+diarization and speaker embeddings all want 16kHz mono, a twelfth the size of 48kHz
+stereo.
+
+Ask for it during the decode rather than after it:
+
+```python
+from videopython.audio import Audio
+
+# Loads the whole source, then throws most of it away
+audio = Audio.from_path("sitting.mp3").to_mono().resample(16000)
+
+# Never materializes it: ffmpeg converts as it decodes
+audio = Audio.from_path("sitting.mp3", sample_rate=16000, channels=1)
+```
+
+On a 4.7-hour 48kHz stereo recording that is 21.6 GB against 1.55 GB, for the same
+audio. Resampling uses soxr either way, so the two agree to within a 16-bit LSB.
+
+The saving scales with how far you are converting: a 12-hour recording is ~55 GB the
+first way and ~4 GB the second.
+
 ## Dub without loading frames
 
 `dub_and_replace()` goes through `Video.from_path()` and is impractical on long sources.
