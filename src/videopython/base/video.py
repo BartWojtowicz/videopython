@@ -653,18 +653,14 @@ class Video:
         if not isinstance(val, slice):
             raise ValueError("Only slices are supported for video indexing!")
 
-        # Sub-slice video frames
-        sliced = self.from_frames(self.frames[val], fps=self.fps)
+        start, stop, step = val.indices(len(self.frames))
+        if step != 1:
+            raise ValueError("Video slices must use a step of 1")
+        if start >= stop:
+            raise ValueError("Video slices cannot be empty")
 
-        # Handle slicing bounds for audio
-        start = val.start if val.start else 0
-        stop = val.stop if val.stop else len(self.frames)
-        if start < 0:
-            start = len(self.frames) + start
-        if stop < 0:
-            stop = len(self.frames) + stop
+        sliced = self.from_frames(self.frames[start:stop], fps=self.fps)
 
-        # Slice audio to match video duration
         audio_start = start / self.fps
         audio_end = stop / self.fps
         sliced.audio = self.audio.slice(start_seconds=audio_start, end_seconds=audio_end)

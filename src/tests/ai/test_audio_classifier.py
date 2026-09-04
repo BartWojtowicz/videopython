@@ -1,10 +1,3 @@
-"""Tests for AudioClassifier with AST (Audio Spectrogram Transformer) backend.
-
-Covers only what runs on a GitHub runner: construction and the pure event-merging
-logic. Anything needing the AST weights is verified by the real-model harness
-instead (see CLAUDE.md), not by a test that downloads a model.
-"""
-
 import pytest
 
 from videopython.base.description import AudioClassification, AudioEvent

@@ -142,7 +142,7 @@ def _classify_op_list(ops: Sequence[Operation], location_prefix: str) -> list[Op
                 )
                 continue
             if op.compiles_to_filter:
-                # Filter-class effect (add_subtitles, vignette, ...): joins the
+                # Filter-class effects such as add_subtitles join the
                 # decode filter chain at this plan position -- or the encode
                 # chain when frame effects precede it -- so it streams in plan
                 # order either way and does not block later transforms the way

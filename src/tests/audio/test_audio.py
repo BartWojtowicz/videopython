@@ -1,4 +1,5 @@
 import tempfile
+import wave
 from pathlib import Path
 
 import numpy as np
@@ -369,6 +370,13 @@ def test_slice_precision_tolerance():
     assert len(sliced) == len(data)
 
 
+def test_slice_rejects_start_after_duration():
+    audio = Audio.create_silent(duration_seconds=1.0)
+
+    with pytest.raises(ValueError, match="start_seconds cannot exceed"):
+        audio.slice(start_seconds=2.0)
+
+
 def test_slice_stereo():
     """Test slicing stereo audio"""
     audio = Audio.from_path(TEST_DATA_DIR / "test_stereo.mp3")
@@ -459,6 +467,30 @@ def test_create_silent_invalid_params():
     # Test invalid sample width
     with pytest.raises(ValueError, match="Sample width must be 1, 2, or 4 bytes"):
         Audio.create_silent(1.0, sample_width=3)
+
+
+@pytest.mark.parametrize("sample_width", [1, 2, 4])
+def test_save_preserves_duration_and_levels_for_each_sample_width(tmp_path, sample_width):
+    output_path = tmp_path / f"audio-{sample_width}.wav"
+    sample_rate = 8000
+    data = np.tile(np.array([-1.0, 0.0, 1.0, 0.0], dtype=np.float32), sample_rate // 4)
+    audio = Audio(
+        data,
+        AudioMetadata(
+            sample_rate=sample_rate,
+            channels=1,
+            sample_width=sample_width,
+            duration_seconds=1.0,
+            frame_count=sample_rate,
+        ),
+    )
+
+    audio.save(output_path)
+
+    loaded = Audio.from_path(output_path)
+    assert loaded.metadata.duration_seconds == pytest.approx(1.0, abs=1 / sample_rate)
+    assert loaded.data.min() < -0.9
+    assert loaded.data.max() > 0.9
 
 
 def test_concat_with_crossfade_mono():
@@ -982,6 +1014,17 @@ def test_get_levels_over_time():
         assert hasattr(levels, "db_rms")
 
 
+@pytest.mark.parametrize(
+    ("window_seconds", "hop_seconds", "message"),
+    [(0.0, None, "window_seconds"), (-0.1, None, "window_seconds"), (0.1, 0.0, "hop_seconds")],
+)
+def test_get_levels_over_time_rejects_non_advancing_windows(window_seconds, hop_seconds, message):
+    audio = Audio.create_silent(duration_seconds=1.0)
+
+    with pytest.raises(ValueError, match=message):
+        audio.get_levels_over_time(window_seconds=window_seconds, hop_seconds=hop_seconds)
+
+
 def test_detect_silence_on_silent_audio():
     """Test silence detection on fully silent audio"""
     audio = Audio.create_silent(duration_seconds=2.0)
@@ -1099,6 +1142,17 @@ def test_classify_segments_returns_valid_structure():
             assert seg.duration == seg.end - seg.start
             assert 0.0 <= seg.confidence <= 1.0
             assert seg.levels is not None
+
+
+@pytest.mark.parametrize(
+    ("segment_length", "overlap", "message"),
+    [(0.0, 0.5, "segment_length"), (2.0, -0.1, "overlap"), (2.0, 1.0, "overlap")],
+)
+def test_classify_segments_rejects_non_advancing_windows(segment_length, overlap, message):
+    audio = Audio.create_silent(duration_seconds=1.0)
+
+    with pytest.raises(ValueError, match=message):
+        audio.classify_segments(segment_length=segment_length, overlap=overlap)
 
 
 def test_normalize_peak():
@@ -1375,14 +1429,38 @@ def test_from_path_defaults_to_source_format():
     assert audio.data.ndim == 2
 
 
+def test_from_path_downmixes_multichannel_source_to_stereo(tmp_path):
+    source = tmp_path / "surround.wav"
+    sample_rate = 8000
+    frame_count = 800
+    samples = np.zeros((frame_count, 6), dtype="<i2")
+    with wave.open(str(source), "wb") as wav_file:
+        wav_file.setnchannels(6)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(sample_rate)
+        wav_file.writeframes(samples.tobytes())
+
+    audio = Audio.from_path(source)
+    sliced = audio.slice(0.0, 0.05)
+
+    assert audio.metadata.channels == 2
+    assert audio.metadata.frame_count == frame_count
+    assert audio.data.shape == (frame_count, 2)
+    assert sliced.data.shape == (400, 2)
+    assert sliced.metadata.duration_seconds == pytest.approx(0.05)
+
+
 def test_from_path_rejects_invalid_conversion_targets():
     source = TEST_DATA_DIR / "test_mono.mp3"
 
     with pytest.raises(ValueError, match="positive"):
         Audio.from_path(source, sample_rate=0)
 
-    with pytest.raises(ValueError, match="positive"):
+    with pytest.raises(ValueError, match="1 or 2"):
         Audio.from_path(source, channels=-1)
+
+    with pytest.raises(ValueError, match="1 or 2"):
+        Audio.from_path(source, channels=3)
 
 
 def test_from_path_reports_ffmpeg_failure():

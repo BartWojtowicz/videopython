@@ -1,5 +1,19 @@
 # Release Notes
 
+## 0.55.4
+
+- Audio decoded from sources with more than two channels now downmixes to stereo
+  and keeps the correct frame count and array shape. Explicit `channels` values are
+  limited to `1` or `2`, which matches the operations supported by `Audio`.
+- Saving audio now writes the PCM width declared by its metadata. Files with 8-bit,
+  16-bit, and 32-bit samples keep their duration and signal level.
+- Audio slicing rejects starts beyond the track, and sliding analysis rejects
+  window and overlap values that cannot advance.
+- Video slices now normalize negative bounds and keep audio aligned. Slice steps
+  other than `1` raise `ValueError`; use a speed operation to change playback rate.
+- Changes to AI integrations, dependencies, or default models now require manual
+  model verification before release.
+
 ## 0.55.3
 
 - Scene captioning now sizes the Ollama context window for the number of images in

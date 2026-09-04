@@ -199,15 +199,16 @@ class Audio:
         Args:
             file_path: Path to the audio file
             sample_rate: Decode at this rate instead of the source's.
-            channels: Decode to this many channels instead of the source's.
-                ``1`` downmixes to mono.
+            channels: Decode to mono (``1``) or stereo (``2``). Sources with
+                more than two channels decode to stereo by default.
 
         Returns:
             Audio: New Audio instance
 
         Raises:
             FileNotFoundError: If the file doesn't exist
-            ValueError: If ``sample_rate`` or ``channels`` is not positive
+            ValueError: If ``sample_rate`` is not positive or ``channels`` is
+                not ``1`` or ``2``.
             AudioLoadError: If there's an error loading the audio
         """
         file_path = Path(file_path)
@@ -215,12 +216,12 @@ class Audio:
             raise FileNotFoundError(f"File not found: {file_path}")
         if sample_rate is not None and sample_rate <= 0:
             raise ValueError("Sample rate must be positive")
-        if channels is not None and channels <= 0:
-            raise ValueError("Channel count must be positive")
+        if channels is not None and channels not in {1, 2}:
+            raise ValueError("Channel count must be 1 or 2")
 
         info = cls._get_ffmpeg_info(file_path)
         target_rate = info["sample_rate"] if sample_rate is None else sample_rate
-        target_channels = info["channels"] if channels is None else channels
+        target_channels = min(info["channels"], 2) if channels is None else channels
 
         # Raw PCM rather than a WAV round-trip. Piped WAV comes back as pcm_s16le
         # whatever the source's bit depth -- `-bits_per_raw_sample` is a hint the
@@ -334,8 +335,16 @@ class Audio:
             >>> silence = Audio.silence(duration=5.0)  # 5 seconds of silence
             >>> silence = Audio.silence(duration=2.0, sample_rate=22050, channels=1)
         """
+        if duration <= 0:
+            raise ValueError("Duration must be positive")
+        if sample_rate <= 0:
+            raise ValueError("Sample rate must be positive")
+        if channels not in {1, 2}:
+            raise ValueError("Channel count must be 1 or 2")
+
         frame_count = int(duration * sample_rate)
-        data = np.zeros((frame_count, channels), dtype=np.float32)
+        shape = (frame_count,) if channels == 1 else (frame_count, channels)
+        data = np.zeros(shape, dtype=np.float32)
 
         metadata = AudioMetadata(
             sample_rate=sample_rate,
@@ -579,9 +588,13 @@ class Audio:
         # clamped (line below), not rejected.
         duration_tolerance = 0.1
 
+        if end_seconds is not None and end_seconds < start_seconds:
+            raise ValueError("end_seconds must be greater than start_seconds")
+        if start_seconds > duration_seconds + duration_tolerance:
+            raise ValueError("start_seconds cannot exceed audio duration")
+        start_seconds = min(start_seconds, duration_seconds)
+
         if end_seconds is not None:
-            if end_seconds < start_seconds:
-                raise ValueError("end_seconds must be greater than start_seconds")
             if end_seconds > duration_seconds + duration_tolerance:
                 raise ValueError("end_seconds cannot exceed audio duration")
             end_seconds = min(end_seconds, duration_seconds)
@@ -819,8 +832,15 @@ class Audio:
         """
         file_path = Path(file_path)
 
-        # Convert data back to int16
-        int_data = (self.data * np.iinfo(np.int16).max).astype(np.int16)
+        clipped = np.clip(self.data, -1.0, 1.0)
+        if self.metadata.sample_width == 1:
+            pcm_data = np.rint((clipped + 1.0) * 127.5).astype(np.uint8)
+        elif self.metadata.sample_width == 2:
+            pcm_data = np.rint(clipped * np.iinfo(np.int16).max).astype("<i2")
+        elif self.metadata.sample_width == 4:
+            pcm_data = np.rint(clipped.astype(np.float64) * np.iinfo(np.int32).max).astype("<i4")
+        else:
+            raise ValueError("Sample width must be 1, 2, or 4 bytes")
 
         # Create WAV in memory
         wav_io = io.BytesIO()
@@ -828,7 +848,7 @@ class Audio:
             wav_file.setnchannels(self.metadata.channels)
             wav_file.setsampwidth(self.metadata.sample_width)
             wav_file.setframerate(self.metadata.sample_rate)
-            wav_file.writeframes(int_data.tobytes())
+            wav_file.writeframes(pcm_data.tobytes())
 
         wav_io.seek(0)
 
@@ -935,8 +955,12 @@ class Audio:
             >>> for timestamp, levels in levels_over_time:
             ...     print(f"{timestamp:.2f}s: {levels.db_rms:.1f} dB")
         """
+        if window_seconds <= 0:
+            raise ValueError("window_seconds must be positive")
         if hop_seconds is None:
             hop_seconds = window_seconds / 2
+        if hop_seconds <= 0:
+            raise ValueError("hop_seconds must be positive")
 
         results = []
         current_time = 0.0
@@ -1050,6 +1074,11 @@ class Audio:
             ...     print(f"{seg.start:.1f}-{seg.end:.1f}s: {seg.segment_type.value}")
         """
         from videopython.audio.analysis import AudioSegment
+
+        if segment_length <= 0:
+            raise ValueError("segment_length must be positive")
+        if not 0 <= overlap < 1:
+            raise ValueError("overlap must be at least 0 and less than 1")
 
         hop_length = segment_length * (1 - overlap)
         segments = []

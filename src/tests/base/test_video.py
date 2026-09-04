@@ -314,3 +314,22 @@ def test_add_audio_attach_to_silent_keeps_incoming_rate():
 
     assert result.audio.metadata.sample_rate == 48000
     assert result.audio.metadata.duration_seconds == pytest.approx(video.total_seconds, abs=0.01)
+
+
+def test_slice_keeps_audio_aligned():
+    frames = np.zeros((10, 16, 16, 3), dtype=np.uint8)
+    video = Video.from_frames(frames, fps=10)
+
+    sliced = video[2:7]
+
+    assert len(sliced.frames) == 5
+    assert sliced.total_seconds == 0.5
+    assert sliced.audio.metadata.duration_seconds == pytest.approx(0.5)
+
+
+def test_slice_rejects_step():
+    frames = np.zeros((10, 16, 16, 3), dtype=np.uint8)
+    video = Video.from_frames(frames, fps=10)
+
+    with pytest.raises(ValueError, match="step of 1"):
+        video[::2]

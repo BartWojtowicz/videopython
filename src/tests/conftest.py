@@ -1,14 +1,3 @@
-"""Pytest configuration.
-
-Test structure:
-- tests/base/ - No AI dependencies, runs in CI
-- tests/ai/ - Requires AI extras, runs in CI
-
-Every test here runs on a GitHub runner: no GPU, no model downloads. Anything
-needing real weights belongs in the real-model harness (see CLAUDE.md), not in a
-test that CI cannot execute.
-"""
-
 import ast
 from pathlib import Path
 
