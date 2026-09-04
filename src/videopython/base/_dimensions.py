@@ -1,11 +1,3 @@
-"""Pure helpers for video dimension math.
-
-Centralises the libx264+yuv420p even-dimension constraint and the
-two "round to even" calculations that previously lived (with subtly
-different semantics) in ``base/video.py``, ``ai/transforms.py``, and
-``editing/transforms.py``.
-"""
-
 from __future__ import annotations
 
 

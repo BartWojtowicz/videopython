@@ -412,7 +412,7 @@ class TestTrackVideo:
 
 
 class TestFaceCropSubtitleValidateGap:
-    """Step 0 + Step 2 together, for the exact scenario in TODO.md.
+    """Validate a face-crop and subtitle plan with AI operation registration.
 
     Importing ``videopython.ai.transforms`` (top of this file) registers the
     ``face_crop`` op, so a plan combining it with ``add_subtitles`` can be

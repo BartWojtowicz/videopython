@@ -220,10 +220,11 @@ class TestSingleInvocation:
 
 class TestNoFullSourceMaterialization:
     def test_run_to_file_never_decodes_full_source_audio(self, tmp_path, audio_source, monkeypatch):
-        """The streaming file path must not decode the whole source audio into a
-        numpy array (the old ``_load_segment_audio`` did). Spy on
-        ``Audio.from_path`` and assert it is never called during ``run_to_file``
-        -- segment audio now rides the ffmpeg filter graph instead."""
+        """The streaming path keeps source audio in the ffmpeg filter graph.
+
+        Spy on ``Audio.from_path`` and assert that ``run_to_file`` does not
+        decode the complete source audio into a numpy array.
+        """
         import videopython.audio.audio as audio_mod
 
         calls: list[str] = []

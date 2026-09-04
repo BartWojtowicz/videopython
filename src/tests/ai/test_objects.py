@@ -118,9 +118,8 @@ class TestObjectDetector:
 class TestClassFilterSpellings:
     """D-FINE emits VOC-style names for six COCO classes.
 
-    Passing the standard COCO spelling used to match nothing and draw nothing,
-    with no error to explain the silence -- and the class docstring claimed the
-    spellings were normalized when no normalization existed.
+    Standard COCO spellings must match the corresponding VOC labels so a class
+    filter cannot silently discard the requested objects.
     """
 
     def test_standard_coco_spelling_matches_voc_label(self):

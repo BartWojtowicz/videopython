@@ -1,9 +1,3 @@
-"""Temporal understanding for video analysis.
-
-Provides ML-based scene detection (TransNetV2). Action recognition was
-removed in 0.29.0 -- it was never wired into ``VideoAnalyzer``.
-"""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -101,7 +95,6 @@ class SemanticSceneDetector(ManagedPredictor):
         if len(video.frames) == 1:
             return [SceneBoundary(start=0.0, end=video.total_seconds, start_frame=0, end_frame=1)]
 
-        # Save video to temp file for TransNetV2 processing
         with tempfile.NamedTemporaryFile(suffix=".mp4", delete=True) as tmp:
             video.save(tmp.name)
             return self.detect_streaming(tmp.name)
@@ -120,7 +113,6 @@ class SemanticSceneDetector(ManagedPredictor):
         """
         self._init_local()
 
-        # Use TransNetV2's detect_scenes which handles everything internally
         raw_scenes = self._model.detect_scenes(str(path), threshold=self.threshold)
 
         # Convert to SceneBoundary objects

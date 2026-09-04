@@ -83,7 +83,7 @@ def _attach_confidence_by_overlap(
     """Stamp Whisper confidence (avg_logprob, no_speech_prob, compression_ratio)
     onto ``target_segments`` from the ``source_segments`` they overlap most with.
 
-    Used to re-attach per-segment confidence after diarization rebuilds segments
+    Re-attaches per-segment confidence after diarization rebuilds segments
     from words and drops the original Whisper-segment metadata. Whisper's
     confidence is window-level, not phoneme-level, so overlap-by-time is the
     right granularity — re-deriving per-word and re-aggregating wouldn't be
@@ -114,7 +114,8 @@ class AudioToText(ManagedPredictor):
     runs before Whisper to gate language detection on a 30s window built from
     voiced regions only — fixes Whisper's tendency to lock onto the wrong
     language when the file opens with silence, music, or non-vocal credits.
-    Disable with ``enable_vad=False`` to reproduce pre-0.27 behaviour.
+    Set ``enable_vad=False`` to detect language from the leading audio without
+    voice-activity gating.
 
     Three Whisper decoder kwargs are surfaced for anti-hallucination tuning:
 

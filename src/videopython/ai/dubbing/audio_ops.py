@@ -30,7 +30,7 @@ def rms(data: np.ndarray) -> float:
 # --- Source-prosody-driven expressiveness (Chatterbox TTS knobs) -----------
 # Source-segment RMS / whole-vocals RMS below CALM lands in the calm bucket;
 # above DRAMATIC in the dramatic bucket; in between gets Chatterbox's defaults.
-# Knob values picked by-ear on cam1_1min.mp4 -- see RELEASE_NOTES 0.29.0.
+# These thresholds were tuned against a representative speech clip.
 CALM_RATIO_THRESHOLD = 0.7
 DRAMATIC_RATIO_THRESHOLD = 1.3
 _CALM = Expressiveness(exaggeration=0.3, cfg_weight=0.7)

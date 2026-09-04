@@ -67,8 +67,7 @@ class TestConstruction:
 
     def test_segment_range_parses_permissively(self):
         # Permissive parse: a segment's numeric bounds (end > start, start >= 0)
-        # are owned by validate/check, not by SegmentConfig parsing. Both of
-        # these now construct; the bound is reported at validate time.
+        # are owned by validate/check, not by SegmentConfig parsing.
         assert SegmentConfig(source=Path("a.mp4"), start=2.0, end=1.0).end == 1.0
         assert SegmentConfig(source=Path("a.mp4"), start=-1.0, end=2.0).start == -1.0
 
@@ -387,8 +386,7 @@ class TestExecution:
         assert result.frames[-1].mean() < 5
 
     def test_transform_post_op_resizes_program(self, render):
-        # A transform post-op applies to the whole assembled program (Point 3):
-        # it runs as a pass over the assembled file rather than being rejected.
+        # A transform post-op runs as a pass over the assembled file.
         plan = {
             "segments": [_segment(start=0.0, end=2.0)],
             "post_operations": [{"op": "resize", "width": 200, "height": 100}],
@@ -571,7 +569,7 @@ class TestClampWindows:
         # The repaired op carries the clamped stop; self is untouched.
         assert repaired.segments[0].operations[1].window.stop == pytest.approx(post_dur)
         assert edit.segments[0].operations[1].window.stop == 10.0
-        # Clamped validate now passes for the repaired plan with no clamping.
+        # The repaired plan validates without another clamp.
         repaired.validate_with_metadata(SMALL_VIDEO_METADATA)
 
     def test_clamp_matches_run_resolved_window(self):
@@ -1458,8 +1456,7 @@ class TestPlanValidationErrors:
         with pytest.raises(ValidationError, match="Unknown op_id"):
             VideoEdit.from_dict({"segments": [_segment(operations=[{"op": "nope"}])]})
 
-    # Bound checks moved off the (now permissive) Pydantic models into the
-    # validate walk; these pin their prose byte-for-byte at the new raise site.
+    # These pin validation error prose byte-for-byte.
 
     def test_segment_negative_start_prose(self):
         plan = {"segments": [_segment(start=-1.0, end=5.0)]}
@@ -1507,8 +1504,6 @@ class TestPlanValidationErrors:
             VideoEdit.from_dict(plan).validate_with_metadata(SMALL_VIDEO_METADATA)
         assert str(exc.value) == "Effect 'blur_effect' window.stop (1.0) must be >= start (2.0)"
         assert exc.value.errors[0].code is PlanErrorCode.WINDOW_ORDER
-
-    # Codes/raise sites added by this feature that previously had no coverage.
 
     def test_degenerate_duration_speed_change_is_structured(self):
         # Speed high enough to collapse the cut segment to 0 frames.

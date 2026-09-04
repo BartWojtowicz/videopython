@@ -131,12 +131,9 @@ def test_no_conflicting_opencv_distribution() -> None:
     graph means whichever pip unpacks last wins -- and the headless variant is the
     one that matters for server deploys (the GUI build drags in libGL and friends).
 
-    This used to be enforced by a ``[tool.uv].override-dependencies`` entry added
-    for ultralytics. That was false protection: overrides are a uv workspace
-    feature and do not ship in the wheel, so it shielded our own CI and nobody
-    else. ultralytics was dropped in 0.51.0 and nothing has required
-    opencv-python since, so the override is gone and this guard replaces it --
-    reading the resolved lock, where a *transitive* reintroduction would show up.
+    A ``[tool.uv].override-dependencies`` entry would be false protection because
+    overrides are a workspace feature and do not ship in the wheel. This guard
+    reads the resolved lock, where a transitive reintroduction would appear.
     """
     lock = (_REPO_ROOT / "uv.lock").read_text(encoding="utf-8")
     assert 'name = "opencv-python-headless"' in lock, "headless opencv vanished from the resolved graph"

@@ -265,7 +265,7 @@ class TranscriptionOverlay(Effect):
         font_px = self.font_size if self.font_size is not None else max(1, round(self.font_scale * height))
         # libass interprets Fontsize as the GDI cell height (ascender +
         # descender) while PIL sizes the em square; scale by the font's
-        # cell/em ratio so font_scale keeps its historical apparent size
+        # cell/em ratio so font_scale has the same apparent size in both paths
         # (1.5x divergence for a tall display font like Anton without this).
         metrics_font = load_font(self.font_filename or self.font, 100)
         if isinstance(metrics_font, ImageFont.FreeTypeFont):

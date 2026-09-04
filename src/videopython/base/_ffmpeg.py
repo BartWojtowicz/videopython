@@ -50,8 +50,7 @@ def probe(path: str | Path, *, extra_args: Sequence[str] | None = None) -> dict[
     Args:
         path: Path to the media file.
         extra_args: Optional extra ffprobe flags inserted before ``-print_format``.
-            Defaults to ``("-show_streams", "-show_format")`` when omitted,
-            which mirrors the historical "everything" probe used by Audio.
+            Defaults to ``("-show_streams", "-show_format")`` when omitted.
 
     Returns:
         The decoded ffprobe JSON payload.

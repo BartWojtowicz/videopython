@@ -1,12 +1,3 @@
-"""Tests for natively compiled duration-changing transforms (P0.3).
-
-``speed_change`` and ``freeze_frame`` compile to ffmpeg filter chains
-(``setpts``/``fps``/``framerate``, ``loop``/``select``) instead of forcing
-the whole-plan eager fallback; the plan builder folds real metadata through
-the chain so frame counts, effect ranges, and the in-memory audio stay in
-sync with the filtered output.
-"""
-
 from __future__ import annotations
 
 from typing import Any
@@ -29,7 +20,7 @@ def _plan(operations: list[dict[str, Any]], source: str = SMALL_VIDEO_PATH) -> V
 
 
 def _stream(plan: VideoEdit, tmp_path, name: str = "out.mp4") -> Video:
-    """run_to_file (streaming is the only engine since 0.42.0)."""
+    """Render a plan and load its output."""
     out = plan.run_to_file(tmp_path / name)
     return Video.from_path(str(out))
 
@@ -361,7 +352,7 @@ class TestEncodeStageTransforms:
 
 
 class TestMultiSegmentPostOps:
-    """Post-op effects fold into per-segment schedules with global offsets."""
+    """Post-operations apply to the assembled multi-segment timeline."""
 
     @staticmethod
     def _plan(post: list[dict[str, Any]]) -> VideoEdit:
@@ -376,10 +367,8 @@ class TestMultiSegmentPostOps:
         )
 
     def test_pixel_post_op_streams_across_segments(self, tmp_path):
-        # A per-frame (frame-effect) post-op folds into BOTH segments' schedules.
-        # blur stays a frame effect (it has no faithful ffmpeg filter), so it
-        # exercises the fold; a filter-class effect (e.g. vignette) is a separate
-        # assembled-timeline path (see TODO Point 3).
+        # blur has no faithful ffmpeg filter, so this exercises the framewise
+        # post-operation pass over the assembled program.
         plan = self._plan([{"op": "blur_effect", "mode": "constant", "iterations": 25}])
         assert plan.streamability().streamable
 
@@ -396,9 +385,8 @@ class TestMultiSegmentPostOps:
             assert gradient(blurred.frames[idx]) < gradient(plain.frames[idx])
 
     def test_filter_class_post_op_streams_across_segments(self, tmp_path):
-        # A FILTER-class effect (vignette) as a post-op applies over the whole
-        # assembled program via the post-op pass (Point 3) -- the regression that
-        # motivated it. It darkens corners in BOTH segments (frames 36 and 108).
+        # A filter-class vignette applies over the assembled program and darkens
+        # corners in both segments (frames 36 and 108).
         plan = self._plan([{"op": "vignette", "strength": 0.5}])
         assert plan.streamability().streamable
         video = _stream(plan, tmp_path)
@@ -432,9 +420,8 @@ class TestMultiSegmentPostOps:
         assert unzoomed_mae > 10, "zoom envelope restarted at the concat boundary"
 
     def test_audio_coupled_post_op_streams_over_program(self, tmp_path):
-        # An audio-coupled fade post-op applies as ONE pass over the assembled
-        # multi-segment program (Point 3): it streams, renders, and fades the
-        # whole program to black at the end rather than restarting per segment.
+        # An audio-coupled fade post-op applies as one pass over the assembled
+        # program and does not restart per segment.
         plan = self._plan([{"op": "fade", "mode": "out", "duration": 1.0}])
         report = plan.streamability()
         assert report.entries[-1].streaming_class is StreamingClass.FRAME_EFFECT
@@ -443,7 +430,7 @@ class TestMultiSegmentPostOps:
         assert abs(len(video.frames) - 144) <= 2
         assert video.frames[-1].mean() < 30
 
-    def test_single_segment_fade_post_op_still_folds(self, tmp_path):
+    def test_single_segment_fade_post_op_applies_after_assembly(self, tmp_path):
         plan = VideoEdit.model_validate(
             {
                 "segments": [{"source": SMALL_VIDEO_PATH, "start": 2.0, "end": 8.0, "operations": []}],

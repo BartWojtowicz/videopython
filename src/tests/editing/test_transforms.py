@@ -1,22 +1,3 @@
-"""Tests for the editing transforms (streaming-only, post eager-removal).
-
-Since 0.44.0 there is no eager/in-memory ``apply`` path: a transform exists
-only as a streaming compilation. So these tests assert the two decode-free
-surfaces a transform exposes:
-
-* ``predict_metadata(meta)`` -- exact output shape / fps / frame count, the
-  fail-fast gate run during plan validation.
-* ``to_ffmpeg_filter(FilterCtx(...))`` / ``to_ffmpeg_audio_filter(...)`` -- the
-  exact ffmpeg filter expression the streaming engine appends to the graph.
-
-End-to-end frame *content* (the time-warp curve, frozen-frame holds, the
-silence cut, audio sync) is covered against real decoded output in
-``test_native_transform_streaming.py``; it is not duplicated here. Anything
-that used to assert cv2-exact pixels or cut-frame identity cannot survive the
-move to ffmpeg (libswscale != cv2; a cut is a decode boundary), so those
-asserts are replaced by filter-string + ``predict_metadata`` checks.
-"""
-
 import pytest
 from pydantic import ValidationError
 

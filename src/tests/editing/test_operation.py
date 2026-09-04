@@ -147,12 +147,6 @@ class TestJsonSchema:
 
 
 # --- Operation / Effect default contract hooks ------------------------------
-#
-# The eager ``Operation.apply`` / ``Effect.apply`` engine was removed (0.44.0):
-# streaming-to-file is the only execution path. What remains here are the
-# pure default-contract hooks the streaming engine relies on. The windowed
-# brighten splice these tests used to exercise via ``apply`` is re-homed as a
-# render-based test in ``test_effects.py``.
 
 
 class TestOperationDefaults:
@@ -175,8 +169,7 @@ class TestOperationDefaults:
 class _Brighten(Effect):
     """A toy effect that declares no streaming behaviour of its own.
 
-    Used to probe the ``Effect`` *default* contract hooks: it deliberately does
-    NOT override ``process_frame`` (so the default raise is observable) and
+    It deliberately does not override ``process_frame`` so the default raise is observable, and
     keeps ``predict_metadata`` at the identity default.
     """
 

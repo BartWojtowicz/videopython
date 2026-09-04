@@ -42,7 +42,10 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "imagehash>=4.3",
+    "mcp>=1.27,<2",
     "pre-commit>=3.8.0",
+    "pyloudnorm>=0.1.1",
     "ruff>=0.1.14",
     "mypy>=1.8.0",
     "pytest>=7.4.0",
