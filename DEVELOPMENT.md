@@ -47,15 +47,21 @@ GitHub runner** — no GPU, no model downloads. The AI suite stays fast by
 monkey-patching the model classes with lightweight fakes.
 
 That means the suite cannot tell you whether a *model* works, only whether the code
-around it does. A fake returns whatever the test handed it. Real-model behaviour is
-verified separately, by hand, on a rented GPU box; ask a maintainer for the
-verification harness.
+around it does. A fake returns whatever the test handed it. A maintainer verifies
+real-model behaviour with the private manual harness.
 
 To check a test really is runner-feasible, run it against an empty model cache:
 
 ```bash
 HF_HOME=$(mktemp -d) HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 uv run pytest src/tests/ai
 ```
+
+### Verifying AI models
+
+Before a release that changes an AI integration, dependency, or default model, ask a
+maintainer to run the private verification harness on a GPU machine with a representative
+video. Record its result table in the release notes. Do not release an applicable change
+until all selected checks pass.
 
 ### Linting & type checking
 

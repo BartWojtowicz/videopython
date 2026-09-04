@@ -123,10 +123,10 @@ for scene in (analysis.scenes.samples if analysis.scenes else []):
 
 ## Decode long audio at the rate you actually need
 
-`Audio.from_path()` loads at the source's own sample rate and channel count, which for a
-long recording is most of the memory and almost none of the value: speech recognition,
-diarization and speaker embeddings all want 16kHz mono, a twelfth the size of 48kHz
-stereo.
+`Audio.from_path()` loads at the source's own sample rate and keeps mono or stereo audio.
+It downmixes sources with more channels to stereo. For a long recording, this can use
+much more memory than needed: speech recognition, diarization, and speaker embeddings
+all want 16kHz mono, a twelfth the size of 48kHz stereo.
 
 Ask for it during the decode rather than after it:
 

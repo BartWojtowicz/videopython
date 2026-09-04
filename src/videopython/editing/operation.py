@@ -474,9 +474,8 @@ class Effect(Operation):
     :attr:`compiles_to_filter` and implement :meth:`to_ffmpeg_filter` (and, for
     audio-coupled effects like ``Fade``/``VolumeAdjust``,
     :meth:`to_ffmpeg_audio_filter`) so the window stays coherent across the
-    decode/encode graph. An effect may implement BOTH contracts: the filter is
-    the fast path and ``process_frame`` stays as the reference implementation,
-    with ``src/tests/editing/test_filter_parity.py`` pinning them together.
+    decode/encode graph. Each effect has one video execution path: a native
+    filter or per-frame Python.
     """
 
     category: ClassVar[OpCategory] = OpCategory.EFFECT
@@ -541,8 +540,8 @@ class Effect(Operation):
     def streams(self) -> bool:
         """An effect streams via per-frame Python (``process_frame``) or a filter.
 
-        Frame effects override :meth:`process_frame`; filter effects
-        (``add_subtitles``, ``vignette``, ...) instead set
+        Frame effects override :meth:`process_frame`; filter effects such as
+        ``add_subtitles`` instead set
         :attr:`compiles_to_filter` and implement :meth:`to_ffmpeg_filter`.
         ``add_subtitles`` streams *only* via the filter path (it does not override
         ``process_frame``), so ``compiles_to_filter`` is consulted per-instance.
