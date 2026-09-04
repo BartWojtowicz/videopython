@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import numpy as np
@@ -14,6 +15,45 @@ from videopython.ai.keyframe import encode_png_b64
 
 class OllamaError(AiError, RuntimeError):
     """Ollama returned unusable output (non-JSON or an unexpected shape)."""
+
+
+# Ollama's own default context window is 4096 tokens, and an oversized request
+# *fails* (``exceed_context_size_error``) instead of being truncated -- so a call
+# carrying images has to size the window before sending. A vision model spends
+# roughly this many tokens per image. Deliberately generous: underestimating
+# fails the request outright, overestimating only costs KV-cache memory.
+_TOKENS_PER_IMAGE = 1024
+# Headroom for the system prompt, the user text, and the generated answer.
+_TEXT_TOKEN_ALLOWANCE = 2048
+# Never ask for less than Ollama's own default.
+_MIN_NUM_CTX = 4096
+_CONTEXT_OVERFLOW_RE = re.compile(r"request \((\d+) tokens\) exceeds the available context size")
+
+
+def _round_num_ctx(token_count: int) -> int:
+    return max(_MIN_NUM_CTX, 1 << (token_count - 1).bit_length())
+
+
+def _num_ctx_for_images(image_count: int) -> int:
+    """Estimate the initial context window for ``image_count`` images.
+
+    Rounded up to a power of two so a run over scenes with differing frame counts
+    reuses a handful of window sizes instead of a new one per call -- ``num_ctx``
+    is a runner-level setting, so varying it every call risks reloading the model
+    between scenes.
+    """
+    needed = image_count * _TOKENS_PER_IMAGE + _TEXT_TOKEN_ALLOWANCE
+    return _round_num_ctx(needed)
+
+
+def _num_ctx_after_overflow(error: str, current: int) -> int | None:
+    """Return a larger context after Ollama reports a context overflow."""
+    match = _CONTEXT_OVERFLOW_RE.search(error)
+    if match:
+        return _round_num_ctx(int(match.group(1)) + _TEXT_TOKEN_ALLOWANCE)
+    if "exceed_context_size_error" in error:
+        return current * 2
+    return None
 
 
 class OllamaStructuredClient:
@@ -30,6 +70,10 @@ class OllamaStructuredClient:
     budget thinking, stops on ``length``, and returns empty content. None of these
     callers want the chain-of-thought, so thinking is disabled on models that
     support it.
+
+    Image requests start with a context estimate based on the image count. If a
+    model uses more visual tokens, the request retries once with the token count
+    reported by Ollama. An explicit ``num_ctx`` in ``options`` always wins.
     """
 
     def __init__(self, model: str, *, host: str | None = None, options: dict[str, Any] | None = None) -> None:
@@ -69,12 +113,23 @@ class OllamaStructuredClient:
         if images:
             user["images"] = [encode_png_b64(image) for image in images]
         messages = [{"role": "system", "content": system}, user]
+        options = self.options
+        image_count = len(images) if images else 0
+        auto_num_ctx = image_count > 0 and "num_ctx" not in options
+        if auto_num_ctx:
+            options = {**options, "num_ctx": _num_ctx_for_images(image_count)}
         kwargs: dict[str, Any] = {}
         if self._supports_thinking():
             kwargs["think"] = False
-        response = self._get_client().chat(
-            model=self.model, messages=messages, format=schema, options=self.options, **kwargs
-        )
+        client = self._get_client()
+        try:
+            response = client.chat(model=self.model, messages=messages, format=schema, options=options, **kwargs)
+        except Exception as exc:
+            retry_num_ctx = _num_ctx_after_overflow(str(exc), options["num_ctx"]) if auto_num_ctx else None
+            if retry_num_ctx is None:
+                raise
+            options = {**options, "num_ctx": retry_num_ctx}
+            response = client.chat(model=self.model, messages=messages, format=schema, options=options, **kwargs)
         content = response.message.content
         try:
             data = json.loads(content)

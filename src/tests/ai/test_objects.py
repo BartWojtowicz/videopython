@@ -113,3 +113,57 @@ class TestObjectDetector:
         det.detect(np.zeros((100, 200, 3), dtype=np.uint8))
         _, kwargs = det._processor.post_process_object_detection.call_args
         assert kwargs["threshold"] == 0.7
+
+
+class TestClassFilterSpellings:
+    """D-FINE emits VOC-style names for six COCO classes.
+
+    Passing the standard COCO spelling used to match nothing and draw nothing,
+    with no error to explain the silence -- and the class docstring claimed the
+    spellings were normalized when no normalization existed.
+    """
+
+    def test_standard_coco_spelling_matches_voc_label(self):
+        results = [_result(scores=[0.9], labels=[3], boxes=[[0.0, 0.0, 10.0, 10.0]])]
+        det = _detector_with(results, class_names={3: "motorbike"}, class_filter=("motorcycle",))
+        assert [o.label for o in det.detect(np.zeros((100, 200, 3), dtype=np.uint8))] == ["motorbike"]
+
+    def test_detector_own_spelling_still_matches(self):
+        results = [_result(scores=[0.9], labels=[3], boxes=[[0.0, 0.0, 10.0, 10.0]])]
+        det = _detector_with(results, class_names={3: "motorbike"}, class_filter=("motorbike",))
+        assert [o.label for o in det.detect(np.zeros((100, 200, 3), dtype=np.uint8))] == ["motorbike"]
+
+    @pytest.mark.parametrize(
+        ("given", "expected"),
+        [
+            ("motorcycle", "motorbike"),
+            ("airplane", "aeroplane"),
+            ("couch", "sofa"),
+            ("potted plant", "pottedplant"),
+            ("dining table", "diningtable"),
+            ("tv", "tvmonitor"),
+        ],
+    )
+    def test_every_diverging_class_is_aliased(self, given, expected):
+        assert ObjectDetector(class_filter=(given,)).class_filter == (expected,)
+
+    def test_case_and_spacing_are_normalized(self):
+        det = ObjectDetector(class_filter=("Potted  Plant", " TV "))
+        assert det.class_filter == ("pottedplant", "tvmonitor")
+
+    def test_unaliased_name_passes_through(self):
+        assert ObjectDetector(class_filter=("person",)).class_filter == ("person",)
+
+    def test_unknown_class_is_reported_once_the_model_is_known(self):
+        det = _detector_with([], class_names={0: "person"}, class_filter=("person", "sasquatch"))
+        assert det.unknown_filter_classes() == ("sasquatch",)
+
+    def test_no_unknown_classes_before_the_model_loads(self):
+        det = ObjectDetector(class_filter=("sasquatch",))
+        assert det.unknown_filter_classes() == ()
+
+    def test_unknown_class_warns_on_load(self, caplog):
+        det = _detector_with([], class_names={0: "person"}, class_filter=("sasquatch",))
+        with caplog.at_level("WARNING"):
+            det._warn_unknown_filter_classes()
+        assert "sasquatch" in caplog.text

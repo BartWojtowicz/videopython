@@ -41,6 +41,11 @@ class SceneVLM(ManagedPredictor):
     The model must be vision-capable and support Ollama's structured-output
     ``format``; ``ollama pull <model>`` first. ``options`` are extra Ollama
     generation options merged over ``temperature=0``.
+
+    A scene's frames are sent as one multi-image request, so the context window
+    is sized to the frame count automatically -- Ollama's 4096-token default
+    fits only one or two frames and *fails* anything larger. Pass an explicit
+    ``num_ctx`` in ``options`` to override that sizing.
     """
 
     def __init__(
