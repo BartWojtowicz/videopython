@@ -333,7 +333,16 @@ class AudioToText(ManagedPredictor):
         )
 
         all_words = self._assign_speakers_to_words(all_words, diarization_result)
-        return Transcription(words=all_words, language=transcription.language)
+
+        # Rebuilding from words regroups by speaker and drops the per-segment
+        # confidence the supplied transcription carried, exactly as it does on the
+        # combined path -- so re-attach it the same way. Without this, splitting
+        # transcription and diarization into two calls silently loses confidence
+        # that running them as one keeps.
+        source_segments = transcription.segments
+        rebuilt = Transcription(words=all_words, language=transcription.language)
+        _attach_confidence_by_overlap(rebuilt.segments, source_segments)
+        return rebuilt
 
     def _run_vad(self, audio_mono: Audio) -> list[tuple[float, float]]:
         """Return voiced spans in seconds using Silero VAD.

@@ -1360,6 +1360,43 @@ class TestDiarizeTranscription:
         assert result.speakers == {"S0", "S1"}
         assert result.language == "en"
 
+    def test_keeps_per_segment_confidence(self, sample_audio, monkeypatch):
+        """Diarizing separately must not lose the confidence the combined path keeps.
+
+        Rebuilding from words regroups by speaker and drops the supplied
+        transcription's per-segment metadata, so it is re-attached by overlap --
+        the same treatment ``_transcribe_with_diarization`` already gives it.
+        """
+        from videopython.ai.understanding.audio import AudioToText
+        from videopython.base.transcription import TranscriptionWord
+
+        transcription = self._make_transcription_with_words()
+        for i, segment in enumerate(transcription.segments):
+            segment.avg_logprob = -0.1 * (i + 1)
+            segment.no_speech_prob = 0.01 * (i + 1)
+            segment.compression_ratio = 1.0 + i
+
+        def fake_init_diarization(self):
+            self._diarization_pipeline = lambda payload: "fake-diarization-result"
+
+        @staticmethod
+        def fake_assign_speakers(words, diarization_result):
+            # One speaker per original segment, so the rebuild lines up one-to-one
+            # with the sources and the expected values are unambiguous.
+            return [
+                TranscriptionWord(start=w.start, end=w.end, word=w.word, speaker="S0" if w.start < 1.5 else "S1")
+                for w in words
+            ]
+
+        monkeypatch.setattr(AudioToText, "_init_diarization", fake_init_diarization)
+        monkeypatch.setattr(AudioToText, "_assign_speakers_to_words", fake_assign_speakers)
+
+        result = AudioToText().diarize_transcription(sample_audio, transcription)
+
+        assert [s.avg_logprob for s in result.segments] == [-0.1, -0.2]
+        assert [s.no_speech_prob for s in result.segments] == [0.01, 0.02]
+        assert [s.compression_ratio for s in result.segments] == [1.0, 2.0]
+
 
 class TestPipelineSuppliedTranscriptionDiarization:
     """Tests for diarization-on-supplied-transcription plumbing in LocalDubbingPipeline."""

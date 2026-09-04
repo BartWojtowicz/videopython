@@ -1,5 +1,18 @@
 # Release Notes
 
+## 0.55.3
+
+- Scene captioning now sizes the Ollama context window for the number of images in
+  each request. If a model needs more visual tokens, the request retries with the
+  requirement reported by Ollama. Text-only requests keep the default, and an
+  explicit `num_ctx` still takes precedence.
+- Object detection filters now accept standard COCO names as well as D-FINE's
+  alternate spellings for `motorcycle`, `airplane`, `couch`, `potted plant`,
+  `dining table`, and `tv`. Matching ignores case and extra spaces, and unknown
+  names produce a warning after the model loads.
+- `AudioToText.diarize_transcription()` now preserves Whisper's per-segment
+  confidence metadata when it adds speakers to an existing transcription.
+
 ## 0.55.2
 
 `Audio.from_path` no longer holds several copies of the file while decoding, and takes

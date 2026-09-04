@@ -18,9 +18,15 @@ from videopython.ai.keyframe import KEYFRAME_MAX_DIM, downscale_keyframe, encode
 class _FakeClient:
     """Records chat() kwargs and returns a fixed ChatResponse-shaped object."""
 
-    def __init__(self, content: str, capabilities: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        content: str,
+        capabilities: list[str] | None = None,
+        errors: list[Exception] | None = None,
+    ) -> None:
         self.content = content
         self.capabilities = ["completion"] if capabilities is None else capabilities
+        self.errors = list(errors or [])
         self.calls: list[dict[str, Any]] = []
 
     def show(self, model: str) -> SimpleNamespace:
@@ -36,6 +42,8 @@ class _FakeClient:
         **kwargs: Any,
     ) -> SimpleNamespace:
         self.calls.append({"model": model, "messages": messages, "format": format, "options": options, **kwargs})
+        if self.errors:
+            raise self.errors.pop(0)
         return SimpleNamespace(message=SimpleNamespace(content=self.content))
 
 
@@ -128,3 +136,38 @@ def test_downscale_bounds_longest_side() -> None:
     assert shrunk.shape == (320, 768, 3)  # aspect preserved: 500 * 768 / 1200 == 320
     small = np.zeros((4, 6, 3), dtype=np.uint8)
     assert downscale_keyframe(small) is small  # never upscales
+
+
+def test_text_only_call_leaves_the_context_window_alone() -> None:
+    """Only image-bearing calls widen num_ctx.
+
+    Sizing every call up would preallocate a KV cache the text-only callers
+    (planner brief, translator) never need, so the widening is scoped to
+    requests that actually carry images.
+    """
+    backend = OllamaVisionLLM(model="m")
+    fake = _FakeClient('{"segments": []}')
+    _inject(backend, fake)
+
+    backend.generate_json(system="sys", text="brief", images=[], schema={"type": "object", "properties": {}})
+
+    assert "num_ctx" not in fake.calls[0]["options"]
+
+
+def test_image_call_retries_with_reported_context_requirement() -> None:
+    backend = OllamaVisionLLM(model="m")
+    fake = _FakeClient(
+        '{"segments": []}',
+        errors=[RuntimeError("request (9000 tokens) exceeds the available context size (4096 tokens)")],
+    )
+    _inject(backend, fake)
+
+    backend.generate_json(
+        system="sys",
+        text="brief",
+        images=[np.zeros((4, 4, 3), dtype=np.uint8)],
+        schema={"type": "object", "properties": {}},
+    )
+
+    assert len(fake.calls) == 2
+    assert fake.calls[1]["options"]["num_ctx"] == 16384

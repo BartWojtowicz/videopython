@@ -43,7 +43,11 @@ class ObjectDetectionOverlay(Effect):
     confidence_threshold: float = Field(0.5, ge=0, le=1, description="Minimum detection confidence to draw a box, 0-1.")
     class_filter: list[str] | None = Field(
         None,
-        description='Only draw these COCO class names, e.g. ["person", "car", "dog"]. Null draws all classes.',
+        description=(
+            'Only draw these COCO class names, e.g. ["person", "car", "motorcycle"]. '
+            "Null draws all classes. Standard COCO names and D-FINE's alternate spellings "
+            "(motorbike, aeroplane, sofa, pottedplant, diningtable, tvmonitor) are accepted."
+        ),
     )
     show_confidence: bool = Field(True, description="Append the detection confidence as a percentage to each label.")
     box_color: tuple[int, int, int] | None = Field(

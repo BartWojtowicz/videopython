@@ -75,3 +75,35 @@ def test_empty_images_raises() -> None:
     vlm, _ = _vlm_with("{}")
     with pytest.raises(ValueError, match="frame"):
         vlm.analyze_scene([])
+
+
+def test_context_window_is_sized_to_the_frame_count() -> None:
+    """Ollama fails an oversized request instead of truncating it.
+
+    A scene's frames go out as one multi-image call at roughly 1k tokens each, so
+    Ollama's own 4096 default only ever fits one or two frames. Regression guard:
+    before this was sized, a multi-cut clip died with exceed_context_size_error
+    while a single static shot passed, so the default looked fine in testing.
+    """
+    vlm, fake = _vlm_with(json.dumps({"caption": "c", "subjects": [], "shot_type": "wide"}))
+    vlm.analyze_scene([_frame() for _ in range(8)])
+
+    assert fake.calls[0]["options"]["num_ctx"] >= 8 * 1024
+
+
+def test_context_window_grows_with_more_frames() -> None:
+    vlm, fake = _vlm_with(json.dumps({"caption": "c", "subjects": [], "shot_type": "wide"}))
+    vlm.analyze_scene([_frame()])
+    vlm.analyze_scene([_frame() for _ in range(16)])
+
+    assert fake.calls[1]["options"]["num_ctx"] > fake.calls[0]["options"]["num_ctx"]
+
+
+def test_explicit_num_ctx_is_not_overridden() -> None:
+    """A caller batching an unusual frame count must be able to pin the window."""
+    vlm = SceneVLM(model="m", options={"num_ctx": 65536})
+    fake = _FakeClient(json.dumps({"caption": "c", "subjects": [], "shot_type": "wide"}))
+    vlm._client._client = fake
+    vlm.analyze_scene([_frame() for _ in range(4)])
+
+    assert fake.calls[0]["options"]["num_ctx"] == 65536
