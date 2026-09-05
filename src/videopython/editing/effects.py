@@ -646,8 +646,7 @@ class _AnchoredOverlay(Effect):
     """Shared base for anchored RGBA overlays (:class:`TextOverlay`, :class:`ImageOverlay`).
 
     Owns anchored placement, off-frame clipping, and alpha blending in one
-    ``_blend_params`` source of truth (consolidated when the eager/streaming
-    parity-hole class of bug was fixed in 0.34.1). Subclasses declare their own
+    ``_blend_params`` source of truth. Subclasses declare their own
     ``position``/``anchor`` field defaults and implement
     :meth:`_overlay_for_frame` to produce the RGBA bitmap; everything
     downstream is shared. It declares no ``op`` ``Literal``, so it is an
@@ -712,9 +711,7 @@ class _AnchoredOverlay(Effect):
     ) -> tuple[np.ndarray, np.ndarray, tuple[int, int, int, int]] | None:
         """Placement + blend inputs for the streaming path.
 
-        Single source of truth for placement and blending (consolidated when the
-        eager/stream parity-hole class of bug was fixed in 0.34.1). Returns
-        ``None`` when the overlay lands fully off-frame (the effect is a no-op).
+        Returns ``None`` when the overlay lands fully off-frame.
         """
         overlay = self._overlay_for_frame(frame_w, frame_h)
         oh, ow = overlay.shape[:2]

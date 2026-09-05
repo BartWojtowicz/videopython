@@ -1,5 +1,3 @@
-"""Tests for the per-op streamability report and ``strict_streaming`` (P0.2)."""
-
 from __future__ import annotations
 
 from typing import Any
@@ -61,8 +59,7 @@ class TestStreamabilityReport:
         assert all(e.reason is None for e in report.entries)
 
     def test_transform_after_effect_streams_via_encode_stage(self):
-        # 0.42.0: transforms following frame effects join the encode-stage
-        # filter chain instead of forcing the whole-plan eager fallback.
+        # Transforms following frame effects join the encode-stage filter chain.
         report = _plan([FADE, RESIZE]).streamability()
 
         fade, resize = report.entries
@@ -79,7 +76,7 @@ class TestStreamabilityReport:
         assert not report.streamable
 
     def test_context_requiring_transform_streams_as_filter(self):
-        # silence_removal consumes its transcription at plan compile (0.42.0).
+        # silence_removal consumes its transcription at plan compile.
         report = _plan([SILENCE]).streamability()
 
         (entry,) = report.entries
@@ -133,8 +130,8 @@ class TestStreamabilityReport:
         assert report.streamable
 
     def test_audio_coupled_post_op_on_multi_segment_plan_streams(self):
-        # Post-ops run as ONE pass over the assembled program, so an
-        # audio-coupled fade applies over the whole concatenated audio (Point 3).
+        # Post-ops run as one pass over the assembled program, so an
+        # audio-coupled fade applies over the whole concatenated audio.
         report = _plan([], post_operations=[FADE], n_segments=2).streamability()
 
         (entry,) = report.entries

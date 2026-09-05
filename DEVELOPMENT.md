@@ -28,7 +28,9 @@ the structure changes.
 We use [uv](https://docs.astral.sh/uv/) as project and package manager. Once you clone the repo and install uv:
 
 ```bash
-uv sync --all-extras
+uv sync
+# Add the model runtimes only when you work on real AI integrations.
+uv sync --all-extras --group ai
 ```
 
 ### Running tests
@@ -38,22 +40,25 @@ uv sync --all-extras
 uv run pytest
 
 # Just one area
-uv run pytest --ignore=src/tests/ai
+uv run pytest src/tests/editing
 uv run pytest src/tests/ai
 ```
 
 There are no markers and no skipped tiers: **every test in the suite runs on a
-GitHub runner** — no GPU, no model downloads. The AI suite stays fast by
-monkey-patching the model classes with lightweight fakes.
+GitHub runner** with the base and development dependencies — no GPU, AI extra,
+or model downloads. The AI tests use lightweight fakes for the model runtimes;
+small dependencies needed to test algorithms directly belong to the development
+dependency group.
 
 That means the suite cannot tell you whether a *model* works, only whether the code
 around it does. A fake returns whatever the test handed it. A maintainer verifies
 real-model behaviour with the private manual harness.
 
-To check a test really is runner-feasible, run it against an empty model cache:
+To check a test really is runner-feasible, run it without the AI dependency group
+and against an empty model cache:
 
 ```bash
-HF_HOME=$(mktemp -d) HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 uv run pytest src/tests/ai
+HF_HOME=$(mktemp -d) HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 uv run --isolated --no-group ai pytest src/tests/ai
 ```
 
 ### Verifying AI models

@@ -18,8 +18,8 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  base_tests:
-    name: Non-AI tests (base + audio + editing) - Python ${{ matrix.python-version }}
+  tests:
+    name: Tests - Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -37,30 +37,8 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
       - name: Install dependencies
         run: uv sync --python ${{ matrix.python-version }} --dev
-      - name: Run non-AI tests
-        run: uv run pytest --ignore=src/tests/ai --cov=src/videopython/base --cov=src/videopython/audio --cov=src/videopython/editing --cov-report=term --cov-report=term-missing
-
-  ai_tests:
-    name: AI tests - Python ${{ matrix.python-version }}
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["312", "313"]
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-      - name: Install FFmpeg
-        run: |
-          sudo apt-get update
-          sudo apt-get install ffmpeg -y
-      - name: Set up Python
-        run: uv python install ${{ matrix.python-version }}
-      - name: Install all dependencies
-        run: uv sync --python ${{ matrix.python-version }} --all-extras --group ai
-      - name: Run AI tests
-        run: uv run pytest src/tests/ai -v
+      - name: Run tests
+        run: uv run pytest --cov=src/videopython/base --cov=src/videopython/audio --cov=src/videopython/editing --cov-report=term --cov-report=term-missing
 
   static_checks:
     name: Static checks (pre-commit)
@@ -73,7 +51,7 @@ jobs:
       - name: Set up Python
         run: uv python install 312
       - name: Install dependencies for hooks
-        run: uv sync --dev --all-extras --group ai
+        run: uv sync --dev
       - name: Run pre-commit hooks
         run: uv run pre-commit run --all-files --show-diff-on-failure
 

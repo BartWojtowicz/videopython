@@ -199,10 +199,8 @@ def test_translate_segments_progress_milestones() -> None:
 def test_translation_disables_reasoning_on_thinking_model() -> None:
     """Translation calls must run with think=False on a reasoning model.
 
-    Regression (0.55.0 GPU verification): the default qwen3.6:27b is a reasoning
-    model. Its chain-of-thought is emitted before the schema-constrained answer and
-    counts against num_predict, so every call hit done_reason="length" with empty
-    content and all 17 segments of a real dub landed in translation_failures.
+    The default qwen3.6:27b emits its reasoning before the schema-constrained
+    answer. That reasoning counts against num_predict and can leave empty content.
     """
     content = json.dumps({"translations": [{"i": 0, "translated": "hola"}]})
     translator, fake = _translator_with([content])

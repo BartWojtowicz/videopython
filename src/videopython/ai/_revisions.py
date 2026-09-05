@@ -12,7 +12,7 @@ model API (``https://huggingface.co/api/models/<repo_id>``), i.e. the latest
 commit on the repo's ``main`` branch at the time it was captured.
 
 Refreshing SHAs:
-    For each ``model_id`` in ``MODEL_REVISIONS`` (and the TODO list, if any),
+    For each ``model_id`` in ``MODEL_REVISIONS`` and the unpinned list below,
     fetch ``https://huggingface.co/api/models/<model_id>`` and copy the JSON
     ``sha`` field into the dict. Bump deliberately -- the whole point of a pin
     is that it does not move on its own. After editing, re-run the AI suite

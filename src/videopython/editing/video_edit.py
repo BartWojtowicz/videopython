@@ -153,7 +153,7 @@ def _resolve_source_context(context: dict[str, Any] | None, source: str) -> dict
     ``source`` is absent the key is dropped so the consuming op raises its own
     clear "requires ..." error (or surfaces as ``CONTEXT_SOURCE_MISSING`` in
     :meth:`VideoEdit.check`). Any non-dict value is a broadcast value shared by
-    every segment and passes through unchanged (the pre-0.43 behavior).
+    every segment and passes through unchanged.
     """
     if not context:
         return context
@@ -184,7 +184,7 @@ def _segment_context(
     1. **Per-source resolution** (:func:`_resolve_source_context`): a context
        value may be a per-source ``dict`` keyed by ``str(segment.source)``;
        it collapses to this segment's source. A bare value broadcasts to all
-       segments (the pre-0.43 behavior). This lets a multi-clip plan carry
+       segments. This lets a multi-clip plan carry
        ``{"transcription": {"a.mp4": tx_a, "b.mp4": tx_b}}`` and feed each
        segment its OWN transcription.
     2. **Re-basing**: a cut segment is decoded 0-based -- its first frame is
@@ -293,9 +293,8 @@ def _segment_end_exceeds_source(index: int, seg: SegmentConfig, meta: VideoMetad
 def _segment_bounds_errors(index: int, seg: SegmentConfig, meta: VideoMetadata) -> list[_LocatedError]:
     """Every numeric-bound failure of a segment's ``start``/``end``, in order.
 
-    These checks moved off the (now permissive) ``SegmentConfig`` model so a
-    bad range becomes a collectable, repairable :class:`PlanError` instead of a
-    hard ``from_dict`` failure. Order is the raise order for ``validate``:
+    A bad range becomes a collectable, repairable :class:`PlanError`. Order is
+    the raise order for ``validate``:
     negative ``start``, negative ``end``, ``end <= start``, then ``end`` past
     the source. A segment with any of these cannot be cut, so the caller skips
     its op chain.
@@ -331,11 +330,10 @@ def _segment_bounds_errors(index: int, seg: SegmentConfig, meta: VideoMetadata) 
 def _window_errors(op: Operation, duration: float, location: str) -> list[_LocatedError]:
     """Every bound failure of an :attr:`Effect.window`, in raise order.
 
-    Subsumes the old window-vs-duration check and the negative/order checks that
-    moved off the (now permissive) ``TimeRange`` model: negative ``start``,
-    negative ``stop``, ``stop < start``, ``start`` past duration, ``stop`` past
-    duration. A ``stop`` clamped to ``duration`` by ``clamp_windows`` no longer
-    overruns, so the final check stays silent for it (matching ``run_to_file()``).
+    Checks negative ``start``, negative ``stop``, ``stop < start``, ``start``
+    past duration, and ``stop`` past duration. A ``stop`` clamped to ``duration``
+    by ``clamp_windows`` no longer overruns, so the final check stays silent for
+    it (matching ``run_to_file()``).
     """
     if not isinstance(op, Effect) or op.window is None:
         return []

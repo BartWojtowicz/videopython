@@ -9,9 +9,8 @@ from videopython.base.video import Video
 from videopython.editing import VideoEdit
 from videopython.editing.transcription_overlay import TranscriptionOverlay
 
-# Eager VideoEdit/TranscriptionOverlay.apply() is gone (0.44.0); subtitles only
-# exist on the streaming-to-file engine. These overlay tests therefore render a
-# real `add_subtitles` plan via `VideoEdit.run_to_file` and read the mp4 back.
+# Subtitles exist on the streaming-to-file engine. These overlay tests render a
+# real `add_subtitles` plan via `VideoEdit.run_to_file` and read the MP4 back.
 # This file lives in tests/base/, which has no editing `render` fixture, so the
 # helpers below build the run_to_file + Video.from_path round-trip inline. The
 # x264/AAC round-trip is lossy, so anything checked on decoded frames uses
@@ -26,8 +25,8 @@ _ACTIVE_PIXEL_FRACTION = 0.005
 def black_source(tmp_path_factory):
     """Path to an 8s black source video on disk (read-only, shared).
 
-    `SegmentConfig.source` is a file path, so the in-memory black clip the old
-    eager tests used must be materialized once to disk for plans to cut from.
+    `SegmentConfig.source` is a file path, so the black clip must be materialized
+    once to disk for plans to cut from.
     A pure-black source keeps subtitle pixels a clean, isolated signal against
     near-zero re-encode noise.
     """

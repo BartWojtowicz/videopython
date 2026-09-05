@@ -120,9 +120,7 @@ class TranslatedSegment(BaseModel):
 
     @model_validator(mode="after")
     def _default_timing_from_segment(self) -> TranslatedSegment:
-        # ``start == end == 0.0`` is the dataclass-era sentinel for "use the
-        # original segment's timing." Preserved so legacy callers (and the
-        # dub cache wire format) keep working.
+        # Cached records use zero start and end to request the source segment timing.
         if self.start == 0.0 and self.end == 0.0:
             self.start = self.original_segment.start
             self.end = self.original_segment.end

@@ -52,13 +52,11 @@ class FaceTrackingCrop(Operation):
     )
     face_index: int = Field(0, ge=0, description='Index of face to track when using ``face_selection="index"``.')
     padding: float = Field(0.3, ge=0, description="Extra space around face (0.3 = 30% padding on each side).")
-    vertical_offset: float = Field(
-        -0.1, description='Legacy vertical position offset used by ``framing_rule="offset"``.'
-    )
+    vertical_offset: float = Field(-0.1, description='Vertical position offset used by ``framing_rule="offset"``.')
     framing_rule: Literal["offset", "center", "headroom", "thirds", "dynamic"] = Field(
         "offset",
         description=(
-            'Subject framing strategy. "offset": legacy ``vertical_offset`` behavior; '
+            'Subject framing strategy. "offset": apply ``vertical_offset``; '
             '"center": keep face centered; "headroom": extra room above the face; '
             '"thirds": face near the upper-third line; "dynamic": currently same as "headroom".'
         ),
@@ -70,7 +68,7 @@ class FaceTrackingCrop(Operation):
         "last_position",
         description=(
             'Behavior when no face detected. "center" and "full_frame" both center the crop '
-            '("full_frame" kept for plan compatibility); "last_position" holds the last tracked crop.'
+            'while "last_position" holds the last tracked crop.'
         ),
     )
     detection_interval: int = Field(3, ge=1, description="Frames between face detections.")
@@ -156,7 +154,7 @@ class FaceTrackingCrop(Operation):
                 positions.append((x, y))
             elif self.fallback == "last_position":
                 positions.append(last)
-            else:  # "center" / "full_frame" (the latter kept for plan compat)
+            else:  # "center" / "full_frame"
                 positions.append(default)
         return positions
 

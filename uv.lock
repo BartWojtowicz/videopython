@@ -4551,6 +4551,8 @@ ai = [
     { name = "videopython", extra = ["ai"] },
 ]
 dev = [
+    { name = "imagehash" },
+    { name = "mcp" },
     { name = "mkdocs" },
     { name = "mkdocs-material" },
     { name = "mkdocs-redirects" },
@@ -4558,6 +4560,7 @@ dev = [
     { name = "mkdocstrings-python" },
     { name = "mypy" },
     { name = "pre-commit" },
+    { name = "pyloudnorm" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
@@ -4599,6 +4602,8 @@ provides-extras = ["ai", "mcp"]
 [package.metadata.requires-dev]
 ai = [{ name = "videopython", extras = ["ai"] }]
 dev = [
+    { name = "imagehash", specifier = ">=4.3" },
+    { name = "mcp", specifier = ">=1.27,<2" },
     { name = "mkdocs", specifier = ">=1.6.1" },
     { name = "mkdocs-material", specifier = ">=9.7.1" },
     { name = "mkdocs-redirects", specifier = ">=1.2,<1.2.3" },
@@ -4606,6 +4611,7 @@ dev = [
     { name = "mkdocstrings-python", specifier = ">=2.0.1" },
     { name = "mypy", specifier = ">=1.8.0" },
     { name = "pre-commit", specifier = ">=3.8.0" },
+    { name = "pyloudnorm", specifier = ">=0.1.1" },
     { name = "pytest", specifier = ">=7.4.0" },
     { name = "pytest-cov", specifier = ">=6.1.1" },
     { name = "ruff", specifier = ">=0.1.14" },

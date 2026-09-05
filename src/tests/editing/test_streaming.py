@@ -296,7 +296,7 @@ class TestStreamableTransforms:
         assert abs(meta.fps - 12) < 1
 
     def test_speed_change_streams_natively(self):
-        """speed_change compiles to setpts+fps (0.42.0) and streams natively."""
+        """speed_change compiles to setpts+fps and streams natively."""
         meta = self._run_plan(
             {
                 "segments": [
@@ -309,7 +309,7 @@ class TestStreamableTransforms:
                 ]
             }
         )
-        # 4s at 2x speed = ~2s output, compiled to setpts+fps (0.42.0)
+        # 4s at 2x speed = ~2s output.
         assert meta.total_seconds < 3.0
 
     def test_transforms_plus_effects(self):
@@ -609,9 +609,8 @@ class TestContextStreaming:
 class TestPerSourceContextStreaming:
     """A per-source transcription map feeds each segment its OWN transcription.
 
-    The two segments cut from different sources; the pre-0.43 global context
-    would apply one transcription to both. These tests pin per-source keying
-    end-to-end through the streaming engine.
+    The two segments cut from different sources. These tests pin per-source
+    keying end-to-end through the streaming engine.
     """
 
     @staticmethod

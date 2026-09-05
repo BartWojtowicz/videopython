@@ -40,8 +40,7 @@ class LocalDubbingPipeline:
         tts_backend: SpeechBackend | None = None,
         **kwargs: Any,
     ):
-        # ``DubbingConfig`` consolidates the knobs that used to be constructor
-        # kwargs. Either ``config=`` or the flat kwargs are accepted (not both).
+        # Either ``config=`` or flat configuration fields are accepted, not both.
         self.config = DubbingConfig.from_args(config, **kwargs)
         # Injected speech backend (a SpeechBackend, e.g. a remote/out-of-process
         # synthesizer). When None, _init_tts lazily constructs the local

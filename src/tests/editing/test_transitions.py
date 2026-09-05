@@ -538,8 +538,7 @@ class TestStreamability:
         assert report.streamable is True
 
     def test_post_op_with_transition_streams(self, clips):
-        # Post-ops run over the assembled program after the transition is baked,
-        # so the combination streams (Point 3).
+        # Post-ops run over the assembled program after the transition is baked.
         plan = VideoEdit.from_dict(
             {
                 "segments": [

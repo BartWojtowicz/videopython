@@ -72,7 +72,8 @@ class TestTextToVideo:
         assert pipe_kw["torch_dtype"] == torch.bfloat16
 
     @patch("videopython.ai.generation.video.select_device", return_value="cpu")
-    def test_non_cuda_raises(self, _sd):
+    @patch("videopython.ai._optional.require", return_value=MagicMock())
+    def test_non_cuda_raises(self, _require, _sd):
         # Wan2.2 is CUDA-only; a non-CUDA device fails loudly (no CPU/MPS fallback).
         with pytest.raises(RuntimeError, match="CUDA"):
             TextToVideo(device="cpu")._init_local()
