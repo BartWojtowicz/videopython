@@ -67,8 +67,9 @@ Before a release that changes an AI integration, dependency, or default model, r
 `scripts/verify_ai_models.py` on a GPU machine with a representative video. Follow the
 cache-warming and timing protocol in the [verification
 records](docs/reference/verification.md). Do not release an applicable change until all
-selected checks pass. The dub check fails if its timing summary is missing or if one
-segment loses more than 3.0 seconds during synchronization.
+selected checks pass. Published performance baselines must use the public API defaults;
+label reduced settings as compatibility checks. The dub check fails if its timing
+summary is missing or if one segment loses more than 3.0 seconds during synchronization.
 
 ### Linting & type checking
 
