@@ -9,39 +9,102 @@ For the interfaces covered by the AI checks, see [AI generation](ai/generation.m
 decision supported by the effects profile, see [The streaming
 engine](../explanation/streaming-engine.md#why-pixel-effects-are-not-ffmpeg-filters).
 
-## AI model compatibility
+## AI model verification
 
-The maintainer-only model harness passed on 2026-09-05 with a representative
-60.08-second Polish video. The input was 1280×720 H.264 video with AAC audio. The test
-command was:
+The real-model harness in `scripts/verify_ai_models.py` passed on 2026-09-05. It used
+library commit `c65639080d7369322b4bd5383af0a8db35f7e689` and a representative
+60.08-second Polish clip. The input was 1280×720 H.264 video with AAC audio. Its SHA-256
+was `4a258bf9eb50a120485399a60768479bec8b72fae2e98de21361c751eff350f0`.
+
+The environment used Python 3.11.16, an NVIDIA RTX PRO 6000 Blackwell Workstation
+Edition with 97,887 MiB VRAM and compute capability 12.0, driver 595.71.05, PyTorch
+2.13.0+cu130, Diffusers 0.39.0, Transformers 5.14.1, Safetensors 0.8.0, Ollama server
+0.33.3, and Ollama Python client 0.6.2.
+
+### Timing protocol and reproduction
+
+The download caches were populated before the measured run. The harness then ran from a
+fresh Python process and wrote to a new output directory. Ollama used
+`OLLAMA_KEEP_ALIVE=0`, and `ollama stop` confirmed that the model was not loaded before
+the run. Each check time includes cached model loading, inference, output writing,
+semantic validation, and weight cleanup. It excludes dependency installation and model
+downloads.
+
+Start the Ollama server separately with
+`OLLAMA_HOST=127.0.0.1:11434 OLLAMA_KEEP_ALIVE=0 ollama serve` before these commands.
+
+Use the same input and run the first command once to populate all caches. Discard its
+times. Stop Ollama, then run the same checks in a new process and record the second
+report.
 
 ```bash
-python scripts/verify_ai_models.py --all --video <clip>
+uv sync --all-extras --group ai --frozen
+ollama pull qwen3.6:27b
+
+HF_HOME=/workspace/.hf_home TOKENIZERS_PARALLELISM=false \
+  uv run python scripts/verify_ai_models.py \
+  --all \
+  --video verification-input/cam1_1min.mp4 \
+  --workdir verify-results/warm
+
+OLLAMA_HOST=127.0.0.1:11434 ollama stop qwen3.6:27b
+
+HF_HOME=/workspace/.hf_home TOKENIZERS_PARALLELISM=false \
+  uv run python scripts/verify_ai_models.py \
+  --all \
+  --video verification-input/cam1_1min.mp4 \
+  --workdir verify-results/measured
 ```
 
-The environment used Python 3.11.16, an NVIDIA A100-SXM4-80GB with compute capability
-8.0, PyTorch 2.13.0+cu130, Diffusers 0.39.0, Transformers 5.14.1, Safetensors 0.8.0,
-Ollama server 0.33.3, and Ollama Python client 0.6.2.
+### Results and timings
 
-| # | Check | Result | Detail |
-|---|---|---|---|
-| 1 | `env` — Environment and package versions | **PASS** | PyTorch 2.13.0, NVIDIA A100-SXM4-80GB |
-| 2 | `imports` — Public AI entrypoints resolve | **PASS** | 38/38 entrypoints |
-| 3 | `ollama` — Schema-constrained output | **PASS** | `qwen3.6:27b` returned a valid Spanish translation |
-| 4 | `t2i` — Prompt conditions image output | **PASS** | Same-seed cross-prompt correlation 0.093 |
-| 5 | `t2v` — Video renders and moves | **PASS** | 49 frames, 75.3% of pixels moved |
-| 6 | `i2v` — Input conditions frame 0 | **PASS** | Input correlation 0.993, 91.5% of pixels moved |
-| 7 | `tts` — Speech is intelligible | **PASS** | Round-trip word overlap 82% |
-| 8 | `separation` — Voice reaches vocals stem | **PASS** | Vocals correlation 0.983 with voice, -0.454 with music |
-| 9 | `music` — Output is audible and conditioned | **PASS** | Peak 0.274, cross-prompt envelope correlation -0.049 |
-| 10 | `detect` — Known objects are detected | **PASS** | Five objects: cat, remote, sofa |
-| 11 | `dub` — Full Polish-to-Spanish dub | **PASS** | 17/17 translated, audible, worst truncation 2.400 seconds |
+| # | Check | Elapsed | Result | Semantic evidence |
+|---|---|---:|---|---|
+| 1 | `env` — Environment and package versions | 1.042 s | **PASS** | PyTorch 2.13.0, RTX PRO 6000 Blackwell |
+| 2 | `imports` — Public AI entrypoints resolve | 0.179 s | **PASS** | 38/38 entrypoints |
+| 3 | `ollama` — Schema-constrained output | 4.111 s | **PASS** | `qwen3.6:27b` returned a valid Spanish translation |
+| 4 | `t2i` — Prompt conditions image output | 84.273 s | **PASS** | Same-seed cross-prompt correlation 0.017 |
+| 5 | `t2v` — Video renders and moves | 524.665 s | **PASS** | 49 frames, 71.1% of pixels moved |
+| 6 | `i2v` — Input conditions frame 0 | 245.381 s | **PASS** | Input correlation 0.993, 88.7% of pixels moved |
+| 7 | `tts` — Speech is intelligible | 15.176 s | **PASS** | Round-trip word overlap 82%; cloned sample also written |
+| 8 | `separation` — Voice reaches vocals stem | 6.481 s | **PASS** | Vocals correlation 0.989 with voice, -0.225 with music |
+| 9 | `music` — Output is audible and conditioned | 5.318 s | **PASS** | Peak 0.260, cross-prompt envelope correlation 0.074 |
+| 10 | `detect` — Known objects are detected | 0.897 s | **PASS** | Five objects: cat, remote, sofa |
+| 11 | `dub` — Full Polish-to-Spanish dub | 40.493 s | **PASS** | 17/17 translated; cloned voice; worst truncation 1.440 seconds |
 
-### Dubbing timing baseline
+The complete run took 928.017 seconds. The default dub uses voice cloning without
+speaker diarization. It groups segments under one `speaker_0` clone.
 
-Speech synthesis is nondeterministic, so the same one-minute input was dubbed four
-times. The first three runs established the failure limit; the complete model run then
-verified it.
+The optional diarization path was timed separately so that it does not replace the
+default baseline. Run it once to populate the pyannote cache, unload Ollama, then repeat
+it from a fresh process:
+
+```bash
+HF_HOME=/workspace/.hf_home TOKENIZERS_PARALLELISM=false \
+  uv run python scripts/verify_ai_models.py \
+  --only dub --enable-diarization \
+  --video verification-input/cam1_1min.mp4 \
+  --workdir verify-results/diarized-warm
+
+OLLAMA_HOST=127.0.0.1:11434 ollama stop qwen3.6:27b
+
+HF_HOME=/workspace/.hf_home TOKENIZERS_PARALLELISM=false \
+  uv run python scripts/verify_ai_models.py \
+  --only dub --enable-diarization \
+  --video verification-input/cam1_1min.mp4 \
+  --workdir verify-results/diarized-measured
+```
+
+The measured diarized dub passed in 37.017 seconds. Pyannote found two speakers, and
+voice cloning produced one sample for each speaker. All three speaker-aligned segments
+were translated and audible, with no truncation. The segment count differs from the
+default dub because diarization changes transcription segmentation, so the two dub
+times are separate baselines.
+
+### Dubbing synchronization threshold
+
+Speech synthesis is nondeterministic. Four earlier A100 runs with the same one-minute
+input established the failure limit.
 
 | Run | Truncated segments | Mean speed factor | Worst truncation |
 |---|---:|---:|---:|
