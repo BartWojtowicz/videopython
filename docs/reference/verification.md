@@ -21,7 +21,23 @@ Edition with 97,887 MiB VRAM and compute capability 12.0, driver 595.71.05, PyTo
 2.13.0+cu130, Diffusers 0.39.0, Transformers 5.14.1, Safetensors 0.8.0, Ollama server
 0.33.3, and Ollama Python client 0.6.2.
 
+This run used reduced generation settings to limit rented-GPU time. It verifies model
+compatibility, but its generation times do not represent the public API defaults.
+
+| Interface | Recorded run | Public default |
+|---|---|---|
+| Text-to-image | 30 steps, 1024×1024 | 50 steps, 1328×1328 |
+| Text-to-video | 20 steps, 49 frames | 40 steps, 81 frames |
+| Image-to-video | 20 steps, 49 frames | 40 steps, 81 frames |
+
+Future published performance baselines must use the public defaults. A run with reduced
+settings can be retained as a separately labelled compatibility check, but it must not
+replace the default-settings baseline.
+
 ### Timing protocol and reproduction
+
+The commands below reproduce the reduced configuration currently encoded in the
+harness. Do not use that configuration for the next default-settings baseline.
 
 The download caches were populated before the measured run. The harness then ran from a
 fresh Python process and wrote to a new output directory. Ollama used
@@ -56,7 +72,7 @@ HF_HOME=/workspace/.hf_home TOKENIZERS_PARALLELISM=false \
   --workdir verify-results/measured
 ```
 
-### Results and timings
+### Reduced-setting results and timings
 
 | # | Check | Elapsed | Result | Semantic evidence |
 |---|---|---:|---|---|
