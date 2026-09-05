@@ -1,7 +1,7 @@
 # Reference
 
-Factual description of the API. For learning, start with the
-[tutorials](../tutorials/index.md); for a specific task, see the [how-to
+Factual description of the API and measured verification records. For learning, start
+with the [tutorials](../tutorials/index.md); for a specific task, see the [how-to
 guides](../how-to/index.md); for design rationale, see
 [explanation](../explanation/index.md).
 
@@ -52,6 +52,12 @@ Requires the `[ai]` extra ([Install](../install.md)).
 | Page | Contents |
 |---|---|
 | [MCP server](mcp.md) | The `videopython-mcp` tools and resource |
+
+## Project verification
+
+| Page | Contents |
+|---|---|
+| [Verification records](verification.md) | AI model compatibility and measured effects performance |
 
 ## Import patterns
 

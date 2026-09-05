@@ -48,57 +48,14 @@ faster math.
 So the engine reserves FFmpeg for geometry, timing and text rendering, and keeps the
 per-frame path for its simplicity and its exact, testable output.
 
-### 4K profile
+### 4K trade-off
 
-A 3840×2160 follow-up on an Apple M1 shows that the same design has a real cost at 4K.
-The table gives the median processing time for one warmed frame. Each result is the
-median of seven samples, repeated in three independent runs. Effects use their defaults
-except for an active animation frame and representative non-default strength or geometry
-where a default would not exercise the effect.
-
-The non-default inputs were a 0.6-alpha full overlay, five blur iterations, 1.5× zoom,
-`color_adjust` at 0.1 brightness/temperature and 1.1 contrast/1.2 saturation, a full-to-80%
-Ken Burns crop, a 0.15-scale/0.8-opacity image overlay, 12-pixel shake, 1.4× punch-in,
-6-pixel chromatic shift, and 16-pixel blocks. `flash` used its active peak and `fade` its
-midpoint.
-
-| Effect | ms/frame |
-|---|---:|
-| `full_image_overlay` | 41.11 |
-| `blur_effect` | 4.98 |
-| `zoom_effect` | 3.98 |
-| `color_adjust` | 16.17 |
-| `vignette` | 6.35 |
-| `ken_burns` | 4.25 |
-| `fade` | 29.14 |
-| `image_overlay` | 2.30 |
-| `shake` | 5.41 |
-| `punch_in` | 3.63 |
-| `flash` | 106.20 |
-| `chromatic_aberration` | 19.62 |
-| `glitch` | 18.00 |
-| `film_grain` | 11.62 |
-| `sharpen` | 8.78 |
-| `pixelate` | 3.28 |
-| `mirror_flip` | 3.26 |
-| `kaleidoscope` | 5.86 |
-
-The reference `libx264` encode took 34.3 ms/frame on the same machine. The active
-`flash` peak, full-frame overlay, and some effect combinations can therefore become the
-bottleneck at 4K. Per-frame costs remain additive: `color_adjust` + `vignette` +
-`film_grain` took 34.22 ms/frame, compared with 34.13 ms/frame for the sum of their
-individual measurements.
-
-An end-to-end one-second `run_to_file` cross-check, including decode and `libx264`
-medium/CRF 23 encode, measured 44.3 ms/frame with no operations and 324.8 ms/frame for
-that three-effect plan. Its incremental cost was 1.03× the sum of the three individual
-plan increments, so the scheduler does not materially compound framewise overhead. These
-wall-clock results also include content-dependent encode work; grain makes frames harder
-to compress, which is why its end-to-end cost is much larger than its isolated pixel cost.
-
-`FilmGrain` keeps a padded noise pool. At 4K its pool is 51.95 MiB, its offset table for
-60 frames is 960 bytes, and initialization peaks at 69.27 MiB of traced Python memory.
-These measurements used macOS 14.0, Python 3.13.5, NumPy 2.4.6, and OpenCV 5.0.0.
+At 3840×2160, the active `flash` peak, a full-frame overlay, and some effect
+combinations can cost more per frame than `libx264` encoding. Per-frame costs remain
+additive, and an end-to-end cross-check found no material scheduler overhead beyond the
+individual effect costs. See the measured [4K effects performance
+record](../reference/verification.md#4k-effects-performance) for the environment,
+method, and results.
 
 ## What that means for a segment
 

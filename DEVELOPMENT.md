@@ -52,7 +52,7 @@ dependency group.
 
 That means the suite cannot tell you whether a *model* works, only whether the code
 around it does. A fake returns whatever the test handed it. A maintainer verifies
-real-model behaviour with the private manual harness.
+real-model behaviour with `scripts/verify_ai_models.py`.
 
 To check a test really is runner-feasible, run it without the AI dependency group
 and against an empty model cache:
@@ -63,10 +63,12 @@ HF_HOME=$(mktemp -d) HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 uv run --isolated -
 
 ### Verifying AI models
 
-Before a release that changes an AI integration, dependency, or default model, ask a
-maintainer to run the private verification harness on a GPU machine with a representative
-video. Record its result table in the release notes. Do not release an applicable change
-until all selected checks pass.
+Before a release that changes an AI integration, dependency, or default model, run
+`scripts/verify_ai_models.py` on a GPU machine with a representative video. Follow the
+cache-warming and timing protocol in the [verification
+records](docs/reference/verification.md). Do not release an applicable change until all
+selected checks pass. The dub check fails if its timing summary is missing or if one
+segment loses more than 3.0 seconds during synchronization.
 
 ### Linting & type checking
 
