@@ -405,7 +405,7 @@ def extract_frames_at_indices(
         str(path),
         "-vf",
         f"select='{select_expr}'",
-        "-vsync",
+        "-fps_mode",
         "vfr",  # Variable frame rate output
         "-f",
         "rawvideo",

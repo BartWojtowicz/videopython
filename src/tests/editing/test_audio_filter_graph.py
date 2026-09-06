@@ -201,6 +201,8 @@ class TestSingleInvocation:
         assert cmd.count("ffmpeg") == 1
         assert "-c:a" in cmd and "aac" in cmd
         assert cmd.count("-map") == 2
+        assert cmd[cmd.index("-fps_mode") + 1] == "cfr"
+        assert "-vsync" not in cmd
         # The compiled op filter rides the single graph.
         graph = cmd[cmd.index("-filter_complex") + 1]
         assert "atempo=2.0" in graph

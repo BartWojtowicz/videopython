@@ -100,4 +100,4 @@ pip install "videopython[ai]"        # + all local AI features (GPU recommended)
 pip install "videopython[mcp]"       # + the focused MCP agent-editing stack
 ```
 
-Python `>=3.11, <3.14`. See [Install](install.md) for FFmpeg, Ollama, and hardware notes.
+Python `>=3.11, <3.15`. See [Install](install.md) for FFmpeg, Ollama, and hardware notes.
