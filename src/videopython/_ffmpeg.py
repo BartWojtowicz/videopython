@@ -21,9 +21,7 @@ from videopython._exceptions import FFmpegProbeError, FFmpegRunError
 
 def _strict_decode_command(cmd: Sequence[str]) -> list[str]:
     argv = list(cmd)
-    if "-xerror" not in argv:
-        argv.insert(1, "-xerror")
-    return argv
+    return [argv[0], "-hide_banner", "-loglevel", "error", "-xerror", *argv[1:]]
 
 
 def run(cmd: Sequence[str], *, stdin: bytes | None = None) -> bytes:

@@ -5,8 +5,7 @@ from typing import Any
 import pytest
 
 from tests.test_config import SMALL_VIDEO_METADATA, SMALL_VIDEO_PATH
-from videopython.base import PlanErrorCode, PlanValidationError
-from videopython.editing import StreamingClass
+from videopython.editing import PlanErrorCode, PlanValidationError, StreamingClass
 from videopython.editing.effects import Effect, Fade
 from videopython.editing.operation import Operation
 from videopython.editing.transforms import Resize

@@ -13,9 +13,9 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import Field, model_validator
 
-from videopython._exceptions import PlanError, PlanErrorCode, PlanValidationError
 from videopython.audio.audio import atempo_chain
 from videopython.base._dimensions import floor_to_even, round_to_even
+from videopython.editing.errors import PlanError, PlanErrorCode, PlanValidationError
 from videopython.editing.operation import BoundedTimeField, FilterCtx, OpCategory, Operation
 
 if TYPE_CHECKING:

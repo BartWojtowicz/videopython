@@ -26,7 +26,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field
 
 from videopython import _ffmpeg
-from videopython._exceptions import PlanError, PlanErrorCode, PlanValidationError
+from videopython.editing.errors import PlanError, PlanErrorCode, PlanValidationError
 
 __all__ = [
     "MusicBed",

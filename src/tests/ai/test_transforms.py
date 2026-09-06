@@ -529,8 +529,7 @@ class TestFaceCropStreaming:
 
         import pytest as _pytest
 
-        from videopython.base import PlanValidationError
-        from videopython.editing import VideoEdit
+        from videopython.editing import PlanValidationError, VideoEdit
 
         plan = VideoEdit.model_validate(
             {

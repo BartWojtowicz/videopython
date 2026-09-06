@@ -28,11 +28,11 @@ from typing import Annotated, Any, Literal, Protocol, get_args, overload, runtim
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SerializeAsAny
 
 from videopython import _ffmpeg
-from videopython._exceptions import PlanError, PlanErrorCode, PlanRepair, PlanValidationError
 from videopython.base.video import ALLOWED_VIDEO_FORMATS, ALLOWED_VIDEO_PRESETS, Video, VideoMetadata
 from videopython.editing._schema import array_field_schema, field_schema, optional_model_field_schema
 from videopython.editing.audio_ops import MusicBed, build_music_bed_filter_complex
 from videopython.editing.effects import Effect
+from videopython.editing.errors import PlanError, PlanErrorCode, PlanRepair, PlanValidationError
 from videopython.editing.operation import FilterCtx, Operation, _to_strict_schema
 from videopython.editing.streaming import (
     TRANSITION_TYPES,
@@ -604,8 +604,8 @@ def _resolve_effect_window(op: Operation, duration: float) -> tuple[Operation, b
     if not isinstance(op, Effect) or op.window is None:
         return op, True
     start, stop = op.window.start, op.window.stop
-    new_start = min(start, duration) if start is not None else None
-    new_stop = min(stop, duration) if stop is not None else None
+    new_start = duration if start is not None and start > duration + DURATION_EPS else start
+    new_stop = duration if stop is not None and stop > duration + DURATION_EPS else stop
     if (new_start, new_stop) != (start, stop):
         window = op.window.model_copy(update={"start": new_start, "stop": new_stop})
         op = op.model_copy(update={"window": window})
@@ -1489,10 +1489,13 @@ class VideoEdit(BaseModel):
             failed = False
             for op_index, op in enumerate(seg.operations):
                 location = f"segments[{i}].operations[{op_index}]"
+                active = True
                 if clamp_windows:
-                    op, _ = _resolve_effect_window(op, seg_meta.total_seconds)
+                    op, active = _resolve_effect_window(op, seg_meta.total_seconds)
                 for message, err in _window_errors(op, seg_meta.total_seconds, location):
                     emit(message, err)
+                if not active:
+                    continue
                 try:
                     seg_meta = _predict_with_context(op, seg_meta, seg_context)
                 except PlanValidationError as e:
@@ -1523,10 +1526,13 @@ class VideoEdit(BaseModel):
         assembled = _assemble_timeline(outputs, transitions)
         for j, op in enumerate(self.post_operations):
             location = f"post_operations[{j}]"
+            active = True
             if clamp_windows:
-                op, _ = _resolve_effect_window(op, assembled.total_seconds)
+                op, active = _resolve_effect_window(op, assembled.total_seconds)
             for message, err in _window_errors(op, assembled.total_seconds, location):
                 emit(message, err)
+            if not active:
+                continue
             try:
                 assembled = _predict_with_context(op, assembled, context)
             except PlanValidationError as e:

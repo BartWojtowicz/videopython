@@ -299,7 +299,7 @@ class FrameIterator:
 
     def _build_ffmpeg_command(self) -> list[str]:
         """Build ffmpeg command for frame streaming."""
-        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
+        cmd = ["ffmpeg"]
 
         if self.start_second > 0:
             cmd.extend(["-ss", str(self.start_second)])
@@ -344,7 +344,6 @@ class FrameIterator:
         cmd = self._build_ffmpeg_command()
         with _ffmpeg.popen_decode(cmd, bufsize=self._frame_size * 2) as proc:
             frame_idx = int(self.start_second * self.output_fps)
-            decoded_frames = 0
             while True:
                 raw_frame = proc.stdout.read(self._frame_size)
                 if len(raw_frame) != self._frame_size:
@@ -354,18 +353,10 @@ class FrameIterator:
                 )
                 yield frame_idx, frame
                 frame_idx += 1
-                decoded_frames += 1
             try:
                 proc.check()
             except FFmpegRunError as e:
                 raise VideoLoadError(f"FFmpeg failed: {e}") from e
-            if (
-                self.start_second == 0
-                and self.end_second is None
-                and not self._vf_filters
-                and decoded_frames < self.metadata.frame_count
-            ):
-                raise VideoLoadError(f"FFmpeg decoded {decoded_frames} of {self.metadata.frame_count} source frames")
 
     def __enter__(self) -> "FrameIterator":
         return self

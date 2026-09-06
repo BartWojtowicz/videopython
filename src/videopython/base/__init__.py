@@ -1,10 +1,6 @@
 from videopython._exceptions import (
     AudioError,
     AudioLoadError,
-    PlanError,
-    PlanErrorCode,
-    PlanRepair,
-    PlanValidationError,
     TransformError,
     VideoError,
     VideoLoadError,
@@ -41,11 +37,6 @@ __all__ = [
     "AudioError",
     "AudioLoadError",
     "TransformError",
-    # Structured plan validation / repair
-    "PlanError",
-    "PlanErrorCode",
-    "PlanValidationError",
-    "PlanRepair",
     # Detection overlay renderer (AI-free)
     "draw_detections",
     "DetectionStyle",

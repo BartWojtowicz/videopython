@@ -13,10 +13,11 @@ from PIL import Image
 from pydantic import ValidationError
 
 from tests.test_config import BIG_VIDEO_PATH, SMALL_VIDEO_METADATA, SMALL_VIDEO_PATH
-from videopython.base import PlanErrorCode, PlanValidationError
 from videopython.base.transcription import Transcription, TranscriptionWord
 from videopython.base.video import Video, VideoMetadata
-from videopython.editing.transforms import Resize, SpeedChange
+from videopython.editing import PlanErrorCode, PlanValidationError
+from videopython.editing import video_edit as video_edit_module
+from videopython.editing.transforms import DURATION_EPS, Resize, SpeedChange
 from videopython.editing.video_edit import (
     SegmentConfig,
     TransitionSpec,
@@ -638,11 +639,41 @@ class TestClampWindows:
             ]
         }
         edit = VideoEdit.from_dict(plan)
-        meta = edit.validate_with_metadata(SMALL_VIDEO_METADATA, clamp_windows=True)
+        with patch.object(
+            video_edit_module,
+            "_predict_with_context",
+            wraps=video_edit_module._predict_with_context,
+        ) as predict:
+            meta = edit.validate_with_metadata(SMALL_VIDEO_METADATA, clamp_windows=True)
         assert meta.total_seconds == pytest.approx(8.0, abs=0.05)
         resolved, active = _resolve_effect_window(edit.segments[0].operations[1], meta.total_seconds)
         assert resolved.window.start == pytest.approx(meta.total_seconds)
         assert not active
+        assert [call.args[0].op for call in predict.call_args_list] == ["speed_change"]
+
+    def test_resolver_uses_validation_epsilon(self):
+        stop = 8.0 + DURATION_EPS / 2
+        edit = VideoEdit.from_dict(
+            {
+                "segments": [
+                    _segment(
+                        operations=[
+                            {
+                                "op": "blur_effect",
+                                "mode": "constant",
+                                "iterations": 1,
+                                "window": {"start": 0.0, "stop": stop},
+                            },
+                        ]
+                    )
+                ]
+            }
+        )
+
+        resolved, active = _resolve_effect_window(edit.segments[0].operations[0], 8.0)
+
+        assert resolved.window.stop == stop
+        assert active
 
     def test_run_to_file_treats_start_overrun_as_noop(self, tmp_path):
         plan = {

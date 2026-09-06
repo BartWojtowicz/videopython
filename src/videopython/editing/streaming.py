@@ -22,10 +22,10 @@ import numpy as np
 from tqdm import tqdm
 
 from videopython import _ffmpeg
-from videopython._exceptions import PlanError, PlanErrorCode
 from videopython.base._dimensions import require_even
 from videopython.base.video import ALLOWED_VIDEO_FORMATS, ALLOWED_VIDEO_PRESETS, FrameIterator
 from videopython.editing.effects import Effect
+from videopython.editing.errors import PlanError, PlanErrorCode
 from videopython.editing.operation import Operation
 
 logger = logging.getLogger(__name__)

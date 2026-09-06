@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from videopython.base import PlanError, PlanErrorCode, PlanValidationError
+from videopython.editing import PlanError, PlanErrorCode, PlanValidationError
 
 
 @pytest.mark.parametrize("code", list(PlanErrorCode))

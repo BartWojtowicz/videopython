@@ -167,8 +167,6 @@ def decode_video(
                 frames_read += complete_frames
             process.check()
 
-        if start_second is None and end_second is None and fps is None and frames_read < metadata.frame_count:
-            raise VideoLoadError(f"FFmpeg decoded {frames_read} of {metadata.frame_count} source frames")
         if frames_read == 0:
             raise ValueError("No frames were read from the video")
 

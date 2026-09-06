@@ -8,8 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from videopython.base import PlanError, PlanErrorCode, PlanRepair
-from videopython.editing import VideoEdit
+from videopython.editing import PlanError, PlanErrorCode, PlanRepair, VideoEdit
 
 _FIXTURES = Path(__file__).with_name("fixtures")
 
