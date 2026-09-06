@@ -5,7 +5,8 @@ server exposing the auto-editing pipeline. Install with the `[mcp]` extra; setup
 the intended flow are in [Drive editing from an MCP agent](../how-to/mcp-server.md).
 
 The server caches analyses and the catalog, so tool payloads stay small — the agent passes
-scene ids, never analysis blobs.
+scene ids, never analysis blobs. The server's filesystem, process, and network access is
+defined in [MCP security boundary](../explanation/mcp-security.md).
 
 ## Tools
 

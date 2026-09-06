@@ -1,7 +1,7 @@
 # AI dubbing
 
 `videopython.ai.dubbing` — translate speech, clone the voice, and re-time the dub onto the
-source. Whisper for transcription, a local Ollama model for translation, Chatterbox for
+source. Whisper for transcription, an Ollama model for translation, Chatterbox for
 TTS, Demucs for source separation. Task recipes are in
 [Dub a video into another language](../../how-to/dubbing.md).
 

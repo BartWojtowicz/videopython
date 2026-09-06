@@ -77,7 +77,7 @@ up here, don't read it front to back.
 ### [Explanation](explanation/index.md)
 
 Why the library is shaped the way it is — the streaming engine, the plan lifecycle, the
-LLM-first design, and the local-only AI stack.
+LLM-first design, and the local AI stack.
 
 </div>
 

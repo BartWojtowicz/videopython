@@ -14,7 +14,9 @@ videopython-mcp           # stdio server
 ```
 
 Register `videopython-mcp` with your MCP client (Claude Desktop, Claude Code, or any
-other) as a **stdio** server. It takes no arguments.
+other) as a **stdio** server. It takes no arguments. The server can read and write with
+the permissions of that client process. Review the [MCP security
+boundary](../explanation/mcp-security.md) before connecting an agent.
 
 ## The flow the agent follows
 
