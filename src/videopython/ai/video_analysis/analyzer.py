@@ -16,12 +16,14 @@ from videopython.base.video import Video, VideoMetadata
 
 from . import detectors, source_metadata
 from .models import (
+    ALL_ANALYZER_IDS,
     AUDIO_CLASSIFIER,
     AUDIO_TO_TEXT,
     FACE_TRACKER,
     SCENE_VLM,
     SEMANTIC_SCENE_DETECTOR,
     AnalysisRunInfo,
+    AnalyzerOutcome,
     AudioAnalysisSection,
     SceneAnalysisSample,
     SceneAnalysisSection,
@@ -103,11 +105,20 @@ class VideoAnalyzer:
             raise ValueError("Either `source_path` or `video` must be provided")
 
         enabled = self.config.enabled_analyzers
+        analyzer_outcomes: dict[str, AnalyzerOutcome] = {
+            analyzer: AnalyzerOutcome(
+                analyzer=analyzer,
+                status="completed" if analyzer in enabled else "skipped",
+                reason=None if analyzer in enabled else "disabled",
+            )
+            for analyzer in ALL_ANALYZER_IDS
+        }
 
         run_info = AnalysisRunInfo(
             created_at=detectors.utc_now_iso(),
             mode=mode,
             library_version=detectors.library_version(),
+            analyzer_outcomes=list(analyzer_outcomes.values()),
         )
 
         t_analysis_start = time.perf_counter()
@@ -136,6 +147,19 @@ class VideoAnalyzer:
                 with detectors.record_stage(run_info, "scene_detection"):
                     detected = detectors.run_scene_detection(config=self.config, source_path=source_path, video=video)
 
+        if run_whisper and transcription is None:
+            analyzer_outcomes[AUDIO_TO_TEXT] = AnalyzerOutcome(
+                analyzer=AUDIO_TO_TEXT,
+                status="failed",
+                reason="execution_failed",
+            )
+        if run_scene_det and detected is None:
+            analyzer_outcomes[SEMANTIC_SCENE_DETECTOR] = AnalyzerOutcome(
+                analyzer=SEMANTIC_SCENE_DETECTOR,
+                status="failed",
+                reason="execution_failed",
+            )
+
         if run_scene_det:
             detectors.reset_transnetv2_torch_state()
 
@@ -160,11 +184,13 @@ class VideoAnalyzer:
                 metadata=metadata,
                 scenes=scenes,
                 run_info=run_info,
+                analyzer_outcomes=analyzer_outcomes,
             )
 
         audio_section = AudioAnalysisSection(transcription=transcription) if transcription is not None else None
 
         run_info.total_duration_seconds = time.perf_counter() - t_analysis_start
+        run_info.analyzer_outcomes = list(analyzer_outcomes.values())
         logger.info("Total analysis completed in %.2fs", run_info.total_duration_seconds)
         return VideoAnalysis(
             source=source,
@@ -182,11 +208,11 @@ class VideoAnalyzer:
         metadata: VideoMetadata,
         scenes: list[SceneBoundary],
         run_info: AnalysisRunInfo,
+        analyzer_outcomes: dict[str, AnalyzerOutcome],
     ) -> SceneAnalysisSection:
         enabled = self.config.enabled_analyzers
 
-        # Best-effort init: a missing extra / model-load failure degrades that
-        # analyzer to "skipped" rather than aborting the whole run.
+        # A missing extra or model-load failure does not abort the other analyzers.
         scene_vlm = (
             source_metadata.try_init(lambda: SceneVLM(**self.config.get_params(SCENE_VLM)), "SceneVLM")
             if SCENE_VLM in enabled
@@ -204,6 +230,18 @@ class VideoAnalyzer:
             if FACE_TRACKER in enabled
             else None
         )
+
+        for analyzer, component in (
+            (SCENE_VLM, scene_vlm),
+            (AUDIO_CLASSIFIER, audio_classifier),
+            (FACE_TRACKER, face_tracker),
+        ):
+            if analyzer in enabled and component is None:
+                analyzer_outcomes[analyzer] = AnalyzerOutcome(
+                    analyzer=analyzer,
+                    status="failed",
+                    reason="initialization_failed",
+                )
 
         path_audio: Audio | None = None
         if audio_classifier is not None and source_path is not None:
@@ -231,8 +269,16 @@ class VideoAnalyzer:
                     )
                 except (IndexError, OSError, RuntimeError, ValueError):
                     logger.warning("Batched SceneVLM failed, skipping visual understanding", exc_info=True)
+            if any(description is None for description in descriptions):
+                analyzer_outcomes[SCENE_VLM] = AnalyzerOutcome(
+                    analyzer=SCENE_VLM,
+                    status="failed",
+                    reason="execution_failed",
+                )
 
         samples: list[SceneAnalysisSample] = []
+        audio_classifier_failed = False
+        face_tracker_failed = False
         audio_ctx = (
             detectors.record_stage(run_info, "audio_classification") if audio_classifier is not None else nullcontext()
         )
@@ -269,6 +315,7 @@ class VideoAnalyzer:
                             scene_end=scene.end,
                         )
                     except (OSError, RuntimeError, ValueError):
+                        audio_classifier_failed = True
                         logger.warning(
                             "AudioClassifier failed for scene %d (%.1f-%.1fs)",
                             index,
@@ -287,6 +334,7 @@ class VideoAnalyzer:
                             scene=scene,
                         )
                     except (IndexError, OSError, RuntimeError, ValueError):
+                        face_tracker_failed = True
                         logger.warning(
                             "FaceShotTracker failed for scene %d (%.1f-%.1fs)",
                             index,
@@ -296,6 +344,19 @@ class VideoAnalyzer:
                         )
 
                 samples.append(sample)
+
+        if audio_classifier_failed:
+            analyzer_outcomes[AUDIO_CLASSIFIER] = AnalyzerOutcome(
+                analyzer=AUDIO_CLASSIFIER,
+                status="failed",
+                reason="execution_failed",
+            )
+        if face_tracker_failed:
+            analyzer_outcomes[FACE_TRACKER] = AnalyzerOutcome(
+                analyzer=FACE_TRACKER,
+                status="failed",
+                reason="execution_failed",
+            )
 
         return SceneAnalysisSection(samples=samples)
 

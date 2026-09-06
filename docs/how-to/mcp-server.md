@@ -19,7 +19,8 @@ other) as a **stdio** server. It takes no arguments.
 ## The flow the agent follows
 
 1. `analyze_video(path)` for each source — scenes, transcript, captions, cached
-   server-side.
+   server-side. Inspect `analyzers` and retry or change the plan if a required analyzer
+   failed. See the [status values](../reference/mcp.md#analyze_videopath-profileediting).
 2. `build_catalog()` — returns every candidate scene as JSON text, plus up to 12
    downscaled keyframes. Any omitted ids are named in a trailing note.
 3. `scene_keyframes(scene_ids)` — pull the frames that were capped out, for a shortlist

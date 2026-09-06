@@ -1,5 +1,13 @@
 # Release Notes
 
+## 0.59.0
+
+- Video analysis now records a structured outcome for every analyzer. MCP
+  `analyze_video` returns the same outcomes, so clients can distinguish disabled stages
+  from model initialization and execution failures without parsing logs. Saved analysis
+  JSON from earlier versions does not contain the required outcome records; regenerate
+  it before loading it with this version.
+
 ## 0.58.0
 
 - Python 3.14 is now supported. CI tests Python 3.11 through 3.14 and verifies

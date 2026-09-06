@@ -10,6 +10,8 @@ from videopython.ai import VideoAnalyzer
 analysis = VideoAnalyzer().analyze_path("video.mp4")
 
 print(analysis.source.title)
+for outcome in analysis.run_info.analyzer_outcomes:
+    print(outcome.analyzer, outcome.status, outcome.reason)
 if analysis.scenes:
     sample = analysis.scenes.samples[0]
     if sample.scene_description:
@@ -73,6 +75,9 @@ the captioning model.
 - `analysis.run_info.stage_durations_seconds` — wall-clock per stage (`whisper`,
   `scene_detection`, `scene_vlm`, `face_tracker`, `audio_classification`, plus
   `whisper_and_scene_detection_parallel` when those two run together).
+- `analysis.run_info.analyzer_outcomes` — one record for every analyzer. `status` is
+  `completed`, `skipped`, or `failed`. A skipped analyzer has reason `disabled`; a failed
+  analyzer has reason `initialization_failed` or `execution_failed`.
 
 ## Classes
 

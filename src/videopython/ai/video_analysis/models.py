@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, PlainSerializer, model_validator
 
@@ -14,6 +14,7 @@ __all__ = [
     "ALL_ANALYZER_IDS",
     "AUDIO_CLASSIFIER",
     "AUDIO_TO_TEXT",
+    "AnalyzerOutcome",
     "AnalysisRunInfo",
     "AudioAnalysisSection",
     "FACE_TRACKER",
@@ -27,13 +28,21 @@ __all__ = [
     "VideoAnalysisSource",
 ]
 
-AUDIO_TO_TEXT = "audio_to_text"
-AUDIO_CLASSIFIER = "audio_classifier"
-SEMANTIC_SCENE_DETECTOR = "semantic_scene_detector"
-SCENE_VLM = "scene_vlm"
-FACE_TRACKER = "face_tracker"
+_AnalyzerId = Literal[
+    "audio_to_text",
+    "audio_classifier",
+    "semantic_scene_detector",
+    "scene_vlm",
+    "face_tracker",
+]
 
-ALL_ANALYZER_IDS: tuple[str, ...] = (
+AUDIO_TO_TEXT: _AnalyzerId = "audio_to_text"
+AUDIO_CLASSIFIER: _AnalyzerId = "audio_classifier"
+SEMANTIC_SCENE_DETECTOR: _AnalyzerId = "semantic_scene_detector"
+SCENE_VLM: _AnalyzerId = "scene_vlm"
+FACE_TRACKER: _AnalyzerId = "face_tracker"
+
+ALL_ANALYZER_IDS: tuple[_AnalyzerId, ...] = (
     AUDIO_TO_TEXT,
     AUDIO_CLASSIFIER,
     SEMANTIC_SCENE_DETECTOR,
@@ -120,9 +129,21 @@ class VideoAnalysisSource(BaseModel):
     raw_tags: dict[str, str] | None = None
 
 
+class AnalyzerOutcome(BaseModel):
+    """Completion state for one configured analyzer."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    analyzer: _AnalyzerId
+    status: Literal["completed", "skipped", "failed"]
+    reason: Literal["disabled", "initialization_failed", "execution_failed"] | None
+
+
 class AnalysisRunInfo(BaseModel):
     """Runtime/provenance metadata for a full analysis run.
 
+    ``analyzer_outcomes`` records whether each configured analyzer completed,
+    was disabled, or failed during initialization or execution.
     ``stage_durations_seconds`` is populated by the analyzer with per-stage
     wall-clock times (whisper, scene_detection, scene_analysis, scene_vlm,
     audio_classification, and -- when both run together --
@@ -133,6 +154,7 @@ class AnalysisRunInfo(BaseModel):
     created_at: str
     mode: str
     library_version: str | None = None
+    analyzer_outcomes: list[AnalyzerOutcome]
     stage_durations_seconds: dict[str, float] = Field(default_factory=dict)
     total_duration_seconds: float | None = None
 
@@ -151,7 +173,7 @@ class VideoAnalysisConfig(BaseModel):
         )
     """
 
-    enabled_analyzers: set[str] = Field(default_factory=lambda: set(ALL_ANALYZER_IDS))
+    enabled_analyzers: set[str] = Field(default_factory=lambda: {str(analyzer) for analyzer in ALL_ANALYZER_IDS})
     analyzer_params: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
     @model_validator(mode="after")
