@@ -7,6 +7,8 @@
   from model initialization and execution failures without parsing logs. Saved analysis
   JSON from earlier versions does not contain the required outcome records; regenerate
   it before loading it with this version.
+- A real stdio MCP verification harness now exercises analysis, catalog construction,
+  plan validation, and rendering with a selectable scene-caption model.
 
 ## 0.58.0
 
