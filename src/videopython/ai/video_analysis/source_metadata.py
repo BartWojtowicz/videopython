@@ -13,9 +13,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, TypeVar
 
+from videopython import _ffmpeg
+from videopython._exceptions import FFmpegProbeError
 from videopython.ai.video_analysis.models import GeoMetadata
-from videopython.base import _ffmpeg
-from videopython.base.exceptions import FFmpegProbeError
 
 logger = logging.getLogger(__name__)
 

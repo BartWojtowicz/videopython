@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import soxr
 
-from videopython.base import _ffmpeg
-from videopython.base.exceptions import AudioLoadError, FFmpegProbeError
+from videopython import _ffmpeg
+from videopython._exceptions import AudioLoadError, FFmpegProbeError
 
 if TYPE_CHECKING:
     from videopython.audio.analysis import AudioLevels, AudioSegment, AudioSegmentType, SilentSegment
@@ -231,6 +231,7 @@ class Audio:
         # way: one for `BytesIO`, one for `readframes`.
         cmd = [
             "ffmpeg",
+            "-xerror",
             "-v",
             "error",
             "-i",

@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from videopython.base.exceptions import PlanErrorCode, PlanValidationError
+from videopython.base import PlanErrorCode, PlanValidationError
 from videopython.base.transcription import Transcription, TranscriptionSegment, TranscriptionWord
 from videopython.base.video import VideoMetadata
 from videopython.editing.operation import FilterCtx

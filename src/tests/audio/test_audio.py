@@ -6,8 +6,8 @@ import numpy as np
 import pytest
 import soxr
 
-from videopython.audio import Audio, AudioMetadata
-from videopython.base.exceptions import AudioLoadError, FFmpegProbeError
+from videopython._exceptions import FFmpegProbeError
+from videopython.audio import Audio, AudioLoadError, AudioMetadata
 
 # Test constants
 MONO_SAMPLE_RATE = 44100

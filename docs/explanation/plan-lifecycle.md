@@ -82,12 +82,13 @@ predict yet is left untouched and deferred.
 ## The one thing the runner tolerates
 
 A duration-shrinking operation (`speed_change`, `freeze_frame`) ordered *before* a
-windowed effect leaves that window's `stop` past the now-shorter clip. This is common,
-harmless, and unambiguous, so `run_to_file()` clamps it rather than failing.
+windowed effect can leave its endpoints past the now-shorter clip. This is common,
+harmless, and unambiguous, so `run_to_file()` clamps them rather than failing. A window
+that starts at or after the new duration becomes an empty no-op.
 
 To keep the reports consistent with that, `validate(clamp_windows=True)` and
-`check(..., clamp_windows=True)` do not report it either, and `repair()` clamps it in the
-returned plan.
+`check(..., clamp_windows=True)` do not report these overruns either, and `repair()`
+clamps them in the returned plan.
 
 ## The whole loop
 

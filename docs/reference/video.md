@@ -80,6 +80,10 @@ with FrameIterator("video.mp4", start_second=10.0, end_second=60.0) as frames:
         ...
 ```
 
+A complete source decode raises `VideoLoadError` if FFmpeg reports corrupt input or
+returns fewer frames than the probed source count. Leaving a `FrameIterator` loop early
+closes the decoder without treating the intentional stop as an error.
+
 ::: videopython.base.FrameIterator
 
 ## Exceptions

@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
+from pydantic import ValidationError
 
 from videopython.ai.transforms import (
     FaceSmoothingTracker,
@@ -209,7 +210,6 @@ class TestFaceTrackingCrop:
         crop = FaceTrackingCrop()
         assert crop.target_aspect == (9, 16)
         assert crop.face_selection == "largest"
-        assert crop.padding == 0.3
         assert crop.vertical_offset == -0.1
         assert crop.framing_rule == "offset"
         assert crop.headroom == 0.15
@@ -222,7 +222,6 @@ class TestFaceTrackingCrop:
         crop = FaceTrackingCrop(
             target_aspect=(1, 1),
             face_selection="centered",
-            padding=0.5,
             vertical_offset=0.0,
             framing_rule="headroom",
             headroom=0.2,
@@ -232,13 +231,24 @@ class TestFaceTrackingCrop:
         )
         assert crop.target_aspect == (1, 1)
         assert crop.face_selection == "centered"
-        assert crop.padding == 0.5
         assert crop.vertical_offset == 0.0
         assert crop.framing_rule == "headroom"
         assert crop.headroom == 0.2
         assert crop.smoothing == 0.5
         assert crop.max_speed == 0.1
         assert crop.fallback == "center"
+
+    @pytest.mark.parametrize("target_aspect", [(0, 16), (9, 0), (-9, 16), (9, -16)])
+    def test_rejects_non_positive_target_aspect(self, target_aspect):
+        with pytest.raises(ValidationError):
+            FaceTrackingCrop(target_aspect=target_aspect)
+
+    def test_target_aspect_schema_requires_positive_components(self):
+        schema = FaceTrackingCrop.llm_json_schema()["properties"]["target_aspect"]
+        assert schema["prefixItems"] == [
+            {"exclusiveMinimum": 0, "type": "integer"},
+            {"exclusiveMinimum": 0, "type": "integer"},
+        ]
 
     def test_track_positions_fixed_crop_size_and_centering(self):
         """The crop window is the fixed aspect-fit box, centered on the face."""
@@ -519,7 +529,7 @@ class TestFaceCropStreaming:
 
         import pytest as _pytest
 
-        from videopython.base.exceptions import PlanValidationError
+        from videopython.base import PlanValidationError
         from videopython.editing import VideoEdit
 
         plan = VideoEdit.model_validate(

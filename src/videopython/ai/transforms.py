@@ -10,12 +10,12 @@ from pathlib import Path
 from typing import ClassVar, Literal
 
 import numpy as np
-from pydantic import Field
+from pydantic import Field, PositiveInt
 from tqdm import tqdm
 
+from videopython._ffmpeg import escape_filter_value
 from videopython.ai.understanding.faces import FaceSmoothingTracker
 from videopython.base._dimensions import floor_to_even
-from videopython.base._ffmpeg import escape_filter_value
 from videopython.base.video import FrameIterator, VideoMetadata
 from videopython.editing.operation import FilterCtx, OpCategory, Operation
 
@@ -46,30 +46,28 @@ class FaceTrackingCrop(Operation):
     category: ClassVar[OpCategory] = OpCategory.TRANSFORM
     compiles_from_source: ClassVar[bool] = True
 
-    target_aspect: tuple[int, int] = Field((9, 16), description="Output aspect ratio as (width, height).")
+    target_aspect: tuple[PositiveInt, PositiveInt] = Field(
+        (9, 16), description="Output aspect ratio as (width, height)."
+    )
     face_selection: Literal["largest", "centered", "index"] = Field(
         "largest", description="Strategy for selecting which face to track."
     )
     face_index: int = Field(0, ge=0, description='Index of face to track when using ``face_selection="index"``.')
-    padding: float = Field(0.3, ge=0, description="Extra space around face (0.3 = 30% padding on each side).")
     vertical_offset: float = Field(-0.1, description='Vertical position offset used by ``framing_rule="offset"``.')
-    framing_rule: Literal["offset", "center", "headroom", "thirds", "dynamic"] = Field(
+    framing_rule: Literal["offset", "center", "headroom", "thirds"] = Field(
         "offset",
         description=(
             'Subject framing strategy. "offset": apply ``vertical_offset``; '
             '"center": keep face centered; "headroom": extra room above the face; '
-            '"thirds": face near the upper-third line; "dynamic": currently same as "headroom".'
+            '"thirds": face near the upper-third line.'
         ),
     )
     headroom: float = Field(0.15, description="Headroom amount for framing rules that use it.")
     smoothing: float = Field(0.8, ge=0, le=1, description="Position smoothing factor (0-1, higher = smoother).")
     max_speed: float | None = Field(None, gt=0, description="Optional max camera movement per frame (normalized).")
-    fallback: Literal["center", "last_position", "full_frame"] = Field(
+    fallback: Literal["center", "last_position"] = Field(
         "last_position",
-        description=(
-            'Behavior when no face detected. "center" and "full_frame" both center the crop '
-            'while "last_position" holds the last tracked crop.'
-        ),
+        description='Behavior when no face is detected. "center" centers the crop; "last_position" holds it.',
     )
     detection_interval: int = Field(3, ge=1, description="Frames between face detections.")
 
@@ -80,10 +78,7 @@ class FaceTrackingCrop(Operation):
             return (face_cx, face_cy)
         if self.framing_rule == "headroom":
             return (face_cx, face_cy - self.headroom)
-        if self.framing_rule == "thirds":
-            return (face_cx, face_cy - (1 / 3 - 0.5))
-        # "dynamic" — placeholder until motion/look-direction framing is implemented.
-        return (face_cx, face_cy - self.headroom)
+        return (face_cx, face_cy - (1 / 3 - 0.5))
 
     def _resolved_output_dims(self, w: int, h: int) -> tuple[int, int]:
         """Output ``(width, height)`` -- the fixed crop-window size.
@@ -154,7 +149,7 @@ class FaceTrackingCrop(Operation):
                 positions.append((x, y))
             elif self.fallback == "last_position":
                 positions.append(last)
-            else:  # "center" / "full_frame"
+            else:
                 positions.append(default)
         return positions
 

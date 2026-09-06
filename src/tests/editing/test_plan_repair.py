@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 
 from tests.test_config import SMALL_VIDEO_METADATA
-from videopython.base.exceptions import PlanErrorCode, PlanValidationError
+from videopython.base import PlanErrorCode, PlanValidationError
 from videopython.base.video import VideoMetadata
 from videopython.editing import Operation, VideoEdit
 

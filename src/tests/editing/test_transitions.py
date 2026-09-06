@@ -17,7 +17,7 @@ import pytest
 
 from videopython.audio import Audio
 from videopython.audio.audio import AudioMetadata
-from videopython.base.exceptions import PlanErrorCode, PlanValidationError
+from videopython.base import PlanErrorCode, PlanValidationError
 from videopython.base.video import Video, VideoMetadata
 from videopython.editing import StreamingClass
 from videopython.editing.streaming import TRANSITION_TYPES, xfade_filter

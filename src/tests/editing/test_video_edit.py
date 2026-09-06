@@ -13,7 +13,7 @@ from PIL import Image
 from pydantic import ValidationError
 
 from tests.test_config import BIG_VIDEO_PATH, SMALL_VIDEO_METADATA, SMALL_VIDEO_PATH
-from videopython.base.exceptions import PlanErrorCode, PlanValidationError
+from videopython.base import PlanErrorCode, PlanValidationError
 from videopython.base.transcription import Transcription, TranscriptionWord
 from videopython.base.video import Video, VideoMetadata
 from videopython.editing.transforms import Resize, SpeedChange
@@ -22,7 +22,7 @@ from videopython.editing.video_edit import (
     TransitionSpec,
     VideoEdit,
     _assemble_timeline,
-    _clamp_effect_window,
+    _resolve_effect_window,
     _segment_context,
 )
 
@@ -575,11 +575,12 @@ class TestClampWindows:
     def test_clamp_matches_run_resolved_window(self):
         # The validation clamp (repair) lands on exactly the stop the streaming
         # engine applies at run time: min(stop, total_seconds) against the
-        # post-op running duration, mirrored by `_clamp_effect_window`.
+        # post-op running duration, mirrored by `_resolve_effect_window`.
         post_dur = SpeedChange(speed=1.5).predict_metadata(SMALL_VIDEO_METADATA).total_seconds
         edit = VideoEdit.from_dict(self._speed_then_blur_plan())
         repaired, _ = edit.repair(SMALL_VIDEO_METADATA)
-        run_clamped = _clamp_effect_window(edit.segments[0].operations[1], post_dur)
+        run_clamped, active = _resolve_effect_window(edit.segments[0].operations[1], post_dur)
+        assert active
         assert repaired.segments[0].operations[1].window.stop == pytest.approx(run_clamped.window.stop)
 
     def test_run_to_file_produces_clamped_output(self, tmp_path):
@@ -618,8 +619,7 @@ class TestClampWindows:
         assert clamps[0].new == pytest.approx(6.0, abs=0.05)
         edit.validate_with_metadata(SMALL_VIDEO_METADATA, clamp_windows=True)
 
-    def test_start_overrun_still_raises_with_clamp(self):
-        # Clamping stop only -- a window.start past the duration must still raise.
+    def test_start_overrun_becomes_noop_with_clamp(self):
         plan = {
             "segments": [
                 _segment(
@@ -637,8 +637,52 @@ class TestClampWindows:
                 )
             ]
         }
-        with pytest.raises(PlanValidationError, match="window.start"):
-            VideoEdit.from_dict(plan).validate_with_metadata(SMALL_VIDEO_METADATA, clamp_windows=True)
+        edit = VideoEdit.from_dict(plan)
+        meta = edit.validate_with_metadata(SMALL_VIDEO_METADATA, clamp_windows=True)
+        assert meta.total_seconds == pytest.approx(8.0, abs=0.05)
+        resolved, active = _resolve_effect_window(edit.segments[0].operations[1], meta.total_seconds)
+        assert resolved.window.start == pytest.approx(meta.total_seconds)
+        assert not active
+
+    def test_run_to_file_treats_start_overrun_as_noop(self, tmp_path):
+        plan = {
+            "segments": [
+                _segment(
+                    start=0.0,
+                    end=12.0,
+                    operations=[
+                        {"op": "speed_change", "speed": 1.5, "adjust_audio": False},
+                        {
+                            "op": "blur_effect",
+                            "mode": "ascending",
+                            "iterations": 2,
+                            "window": {"start": 10.0},
+                        },
+                    ],
+                )
+            ]
+        }
+        out = VideoEdit.from_dict(plan).run_to_file(tmp_path / "noop-window")
+        result = VideoMetadata.from_path(out)
+        assert result.total_seconds == pytest.approx(8.0, abs=0.25)
+
+    def test_post_operation_window_uses_same_clamp(self):
+        plan = {
+            "segments": [_segment(start=0.0, end=5.0)],
+            "post_operations": [
+                {
+                    "op": "blur_effect",
+                    "mode": "constant",
+                    "iterations": 1,
+                    "window": {"stop": 9.0},
+                }
+            ],
+        }
+        edit = VideoEdit.from_dict(plan)
+        with pytest.raises(PlanValidationError, match="window.stop"):
+            edit.validate_with_metadata(SMALL_VIDEO_METADATA)
+        meta = edit.validate_with_metadata(SMALL_VIDEO_METADATA, clamp_windows=True)
+        assert meta.total_seconds == pytest.approx(5.0)
 
     def test_repair_segment_end_overrun_reports_source_code(self):
         # repair() shares the cut step with validate(): a segment end past the

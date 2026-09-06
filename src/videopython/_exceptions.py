@@ -1,4 +1,4 @@
-"""Exception hierarchy for videopython.base module."""
+"""Exception hierarchy shared by the package layers."""
 
 from __future__ import annotations
 

@@ -12,12 +12,13 @@
 
 The `videopython` library is split into four subpackages, layered by dependency:
 
-* `videopython.base` — `Video`, I/O primitives, shared result types. No AI imports.
-* `videopython.audio` — `Audio` container and analysis. Depends on `base`.
+* `videopython.audio` — `Audio` container and analysis. Uses shared package internals.
+* `videopython.base` — `Video`, I/O primitives, shared result types. Depends on `audio`.
 * `videopython.editing` — `Operation`/`Effect` foundation and the `VideoEdit` plan runner. Depends on `base` and `audio`.
 * `videopython.ai` — generation, understanding, dubbing, and AI-only transforms. Depends on `base`, `audio`, and optionally `editing`. Only this subpackage requires the `[ai]` extra.
 
-The "no AI imports in `base`/`audio`/`editing`" invariant is enforced by `src/tests/test_import_isolation.py`.
+The package direction and the "no AI imports in `base`/`audio`/`editing`" invariant
+are enforced by `src/tests/test_import_isolation.py`.
 
 Why the layering (and the lazy AI re-exports) look like this is written up for users in
 [Architecture](https://videopython.com/explanation/architecture/) — update that page when

@@ -1834,7 +1834,7 @@ class TestReplaceAudioStreamFromAudio:
     def test_ffmpeg_failure_raises_remux_error(self, tmp_path, sample_audio, monkeypatch):
         """Non-zero ffmpeg exit code is wrapped in RemuxError with stderr."""
         import videopython.ai.dubbing.remux as remux_mod
-        from videopython.base.exceptions import FFmpegRunError
+        from videopython._exceptions import FFmpegRunError
 
         video = tmp_path / "v.mp4"
         video.write_bytes(b"fake")

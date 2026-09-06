@@ -1,5 +1,7 @@
+from videopython._exceptions import AudioLoadError
+
 from .analysis import AudioLevels, AudioSegment, AudioSegmentType, SilentSegment
-from .audio import Audio, AudioLoadError, AudioMetadata
+from .audio import Audio, AudioMetadata
 
 __all__ = [
     "Audio",
