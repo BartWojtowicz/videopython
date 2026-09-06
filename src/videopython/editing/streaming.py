@@ -525,7 +525,7 @@ class FrameEncoder:
                 "yuv420p",
                 "-movflags",
                 "+faststart",
-                "-vsync",
+                "-fps_mode",
                 "cfr",
             ]
         )
@@ -684,7 +684,7 @@ def stream_segment_filtergraph(
         "yuv420p",
         "-movflags",
         "+faststart",
-        "-vsync",
+        "-fps_mode",
         "cfr",
         "-r",
         f"{final_fps:.10g}",
@@ -960,7 +960,7 @@ def stream_transition_pair(
         "yuv420p",
         "-movflags",
         "+faststart",
-        "-vsync",
+        "-fps_mode",
         "cfr",
         "-r",
         str(fps),

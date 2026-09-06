@@ -8,6 +8,7 @@
   and the MCP stdio handshake on Ubuntu, macOS, and Windows.
 - The installation guide now defines the supported operating systems and required
   FFmpeg encoders and filters.
+- Rendering now uses `-fps_mode` instead of the removed FFmpeg `-vsync` option.
 
 ## 0.57.0
 

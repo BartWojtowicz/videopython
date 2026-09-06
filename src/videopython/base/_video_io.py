@@ -268,7 +268,7 @@ def encode_video(
             "+faststart",
             "-t",
             str(duration),
-            "-vsync",
+            "-fps_mode",
             "cfr",
             str(filename),
         ]
