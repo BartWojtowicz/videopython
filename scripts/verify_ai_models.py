@@ -344,20 +344,8 @@ def check_text_to_image(ctx: Context) -> Outcome:
     from videopython.ai import TextToImage
 
     model = TextToImage()
-    a = model.generate_image(
-        prompt="a red vintage bicycle leaning against a white wall, sunny day",
-        num_inference_steps=30,
-        width=1024,
-        height=1024,
-        seed=42,
-    )
-    b = model.generate_image(
-        prompt="a bowl of green apples on a rustic wooden table, soft light",
-        num_inference_steps=30,
-        width=1024,
-        height=1024,
-        seed=42,
-    )
+    a = model.generate_image(prompt="a red vintage bicycle leaning against a white wall, sunny day")
+    b = model.generate_image(prompt="a bowl of green apples on a rustic wooden table, soft light")
     a.save(ctx.workdir / "t2i_bicycle.png")
     b.save(ctx.workdir / "t2i_apples.png")
 
@@ -388,11 +376,7 @@ def check_text_to_video(ctx: Context) -> Outcome:
     from videopython.ai import TextToVideo
 
     model = TextToVideo()
-    video = model.generate_video(
-        prompt="a misty mountain lake at dawn, mist drifting slowly over the water",
-        num_steps=20,
-        num_frames=49,
-    )
+    video = model.generate_video(prompt="a misty mountain lake at dawn, mist drifting slowly over the water")
     written = _save_frames(video, ctx.workdir, "t2v")
     video.save(ctx.workdir / "t2v.mp4")
 
@@ -446,9 +430,7 @@ def check_image_to_video(ctx: Context) -> Outcome:
         origin = "i2v_input.png (synthetic)"
 
     model = ImageToVideo()
-    video = model.generate_video(
-        image=image, prompt="gentle camera push in, subtle motion", num_steps=20, num_frames=49
-    )
+    video = model.generate_video(image=image, prompt="gentle camera push in, subtle motion")
     written = _save_frames(video, ctx.workdir, "i2v")
     video.save(ctx.workdir / "i2v.mp4")
 

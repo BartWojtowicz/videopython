@@ -11,33 +11,47 @@ engine](../explanation/streaming-engine.md#why-pixel-effects-are-not-ffmpeg-filt
 
 ## AI model verification
 
-The real-model harness in `scripts/verify_ai_models.py` passed on 2026-09-05. It used
-library commit `c65639080d7369322b4bd5383af0a8db35f7e689` and a representative
-60.08-second Polish clip. The input was 1280×720 H.264 video with AAC audio. Its SHA-256
-was `4a258bf9eb50a120485399a60768479bec8b72fae2e98de21361c751eff350f0`.
+The real-model harness in `scripts/verify_ai_models.py` passed with public defaults on
+2026-09-06. It used library commit
+`3023da1ffc20254abd91c4f8b3005925f0ca4e19` and a representative 60.08-second Polish
+clip. The input was 1280×720 H.264 video with AAC audio. Its SHA-256 was
+`4a258bf9eb50a120485399a60768479bec8b72fae2e98de21361c751eff350f0`.
 
-The environment used Python 3.11.16, an NVIDIA RTX PRO 6000 Blackwell Workstation
+The environment used Python 3.12.3, an NVIDIA RTX PRO 6000 Blackwell Workstation
 Edition with 97,887 MiB VRAM and compute capability 12.0, driver 595.71.05, PyTorch
 2.13.0+cu130, Diffusers 0.39.0, Transformers 5.14.1, Safetensors 0.8.0, Ollama server
 0.33.3, and Ollama Python client 0.6.2.
 
-This run used reduced generation settings to limit rented-GPU time. It verifies model
-compatibility, but its generation times do not represent the public API defaults.
+### Default-setting results and timings
 
-| Interface | Recorded run | Public default |
-|---|---|---|
-| Text-to-image | 30 steps, 1024×1024 | 50 steps, 1328×1328 |
-| Text-to-video | 20 steps, 49 frames | 40 steps, 81 frames |
-| Image-to-video | 20 steps, 49 frames | 40 steps, 81 frames |
+| # | Check | Elapsed | Result | Semantic evidence |
+|---|---|---:|---|---|
+| 1 | `env` — Environment and package versions | 1.109 s | **PASS** | PyTorch 2.13.0, RTX PRO 6000 Blackwell |
+| 2 | `imports` — Public AI entrypoints resolve | 0.328 s | **PASS** | 38/38 entrypoints |
+| 3 | `ollama` — Schema-constrained output | 75.632 s | **PASS** | `qwen3.6:27b` returned a valid Spanish translation |
+| 4 | `t2i` — Prompt conditions image output | 200.657 s | **PASS** | Same-seed cross-prompt correlation 0.067 |
+| 5 | `t2v` — Video renders and moves | 2,112.681 s | **PASS** | 81 frames, 97.1% of pixels moved |
+| 6 | `i2v` — Input conditions frame 0 | 691.838 s | **PASS** | Input correlation 0.992, 91.2% of pixels moved |
+| 7 | `tts` — Speech is intelligible | 40.995 s | **PASS** | Round-trip word overlap 91%; cloned sample also written |
+| 8 | `separation` — Voice reaches vocals stem | 10.795 s | **PASS** | Vocals correlation 0.990 with voice, -0.146 with music |
+| 9 | `music` — Output is audible and conditioned | 9.863 s | **PASS** | Peak 0.334, cross-prompt envelope correlation -0.214 |
+| 10 | `detect` — Known objects are detected | 2.815 s | **PASS** | Five objects: cat, remote, sofa |
+| 11 | `dub` — Full Polish-to-Spanish dub | 73.272 s | **PASS** | 17/17 translated; cloned voice; worst truncation 1.760 seconds |
 
-Future published performance baselines must use the public defaults. A run with reduced
-settings can be retained as a separately labelled compatibility check, but it must not
-replace the default-settings baseline.
+The complete run took 3,219.985 seconds. Text-to-image generated two 50-step
+1328×1328 images. Text-to-video generated 81 frames at 1280×720 and 16 fps with 40
+steps. Image-to-video generated 81 frames at 832×480 and 16 fps with 40 steps. The
+default dub used voice cloning without speaker diarization and grouped segments under
+one `speaker_0` clone.
+
+Manual review confirmed that both images matched their prompts. The text-to-video clip
+kept a coherent mountain-lake scene while mist and water moved. The image-to-video clip
+kept the bicycle from its source image while a camera push moved it partly out of frame.
 
 ### Timing protocol and reproduction
 
-The commands below reproduce the reduced configuration currently encoded in the
-harness. Do not use that configuration for the next default-settings baseline.
+The harness calls the generation interfaces with their public defaults. The commands
+below produce the default-settings baseline.
 
 The download caches were populated before the measured run. The harness then ran from a
 fresh Python process and wrote to a new output directory. Ollama used
@@ -49,30 +63,45 @@ downloads.
 Start the Ollama server separately with
 `OLLAMA_HOST=127.0.0.1:11434 OLLAMA_KEEP_ALIVE=0 ollama serve` before these commands.
 
-Use the same input and run the first command once to populate all caches. Discard its
-times. Stop Ollama, then run the same checks in a new process and record the second
-report.
+Populate caches through the same pinned model loaders without running generation. Each
+initializer runs in its own process so that its weights are released before the next
+one. Then stop Ollama and run the harness in a new process. Do not interrupt an active
+CUDA generation.
 
 ```bash
 uv sync --all-extras --group ai --frozen
 ollama pull qwen3.6:27b
 
 HF_HOME=/workspace/.hf_home TOKENIZERS_PARALLELISM=false \
-  uv run python scripts/verify_ai_models.py \
-  --all \
-  --video verification-input/cam1_1min.mp4 \
-  --workdir verify-results/warm
+  uv run python -c 'from videopython.ai import TextToImage; TextToImage()._init_local()'
+HF_HOME=/workspace/.hf_home TOKENIZERS_PARALLELISM=false \
+  uv run python -c 'from videopython.ai import TextToVideo; TextToVideo()._init_local()'
+HF_HOME=/workspace/.hf_home TOKENIZERS_PARALLELISM=false \
+  uv run python -c 'from videopython.ai import ImageToVideo; ImageToVideo()._init_local()'
+HF_HOME=/workspace/.hf_home TOKENIZERS_PARALLELISM=false \
+  uv run python -c 'from videopython.ai import TextToSpeech; TextToSpeech()._init_local()'
+HF_HOME=/workspace/.hf_home TOKENIZERS_PARALLELISM=false \
+  uv run python -c 'from videopython.ai import AudioToText; m = AudioToText(); m._init_local(); m._init_vad()'
+HF_HOME=/workspace/.hf_home TOKENIZERS_PARALLELISM=false \
+  uv run python -c 'from videopython.ai.dubbing.separation import AudioSeparator; AudioSeparator()._init_local()'
+HF_HOME=/workspace/.hf_home TOKENIZERS_PARALLELISM=false \
+  uv run python -c 'from videopython.ai import TextToMusic; TextToMusic()._init_local()'
+HF_HOME=/workspace/.hf_home TOKENIZERS_PARALLELISM=false \
+  uv run python -c 'from videopython.ai import ObjectDetector; ObjectDetector()._load_model()'
 
 OLLAMA_HOST=127.0.0.1:11434 ollama stop qwen3.6:27b
 
-HF_HOME=/workspace/.hf_home TOKENIZERS_PARALLELISM=false \
+HF_HOME=/workspace/.hf_home TOKENIZERS_PARALLELISM=false OLLAMA_HOST=127.0.0.1:11434 \
   uv run python scripts/verify_ai_models.py \
   --all \
   --video verification-input/cam1_1min.mp4 \
   --workdir verify-results/measured
 ```
 
-### Reduced-setting results and timings
+### Earlier reduced-setting compatibility run
+
+The 2026-09-05 run used reduced generation settings to limit rented-GPU time. It
+verified model compatibility but does not represent the public API defaults.
 
 | # | Check | Elapsed | Result | Semantic evidence |
 |---|---|---:|---|---|
