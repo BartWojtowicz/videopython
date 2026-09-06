@@ -1,5 +1,14 @@
 # Release Notes
 
+## 0.58.0
+
+- Python 3.14 is now supported. CI tests Python 3.11 through 3.14 and verifies
+  the core, `[ai]`, and `[mcp]` dependency graphs on each version.
+- Clean-wheel checks now validate public imports, FFmpeg capabilities, rendering,
+  and the MCP stdio handshake on Ubuntu, macOS, and Windows.
+- The installation guide now defines the supported operating systems and required
+  FFmpeg encoders and filters.
+
 ## 0.57.0
 
 - The compatibility policy now defines the Python, JSON plan, structured error,
