@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 from importlib import metadata as importlib_metadata
 from pathlib import Path
@@ -104,6 +106,16 @@ def _stem() -> str:
     return Path(SMALL_VIDEO_PATH).stem
 
 
+def _without_schema_annotations(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _without_schema_annotations(item) for key, item in value.items() if key not in {"description", "title"}
+        }
+    if isinstance(value, list):
+        return [_without_schema_annotations(item) for item in value]
+    return value
+
+
 def test_server_reports_videopython_version() -> None:
     assert server.mcp._mcp_server.version == importlib_metadata.version("videopython")
 
@@ -143,8 +155,8 @@ def test_validate_edit_clean_plan() -> None:
     server.build_catalog()
     stem = _stem()
     result = server.validate_edit({"segments": [{"scene_id": f"{stem}#0"}, {"scene_id": f"{stem}#1"}]})
-    assert result["valid"] is True
-    assert result["errors"] == []
+    assert result.valid is True
+    assert result.errors == []
 
 
 def test_validate_edit_without_catalog_errors() -> None:
@@ -161,8 +173,8 @@ def test_analyze_video_caches_and_summarizes() -> None:
 
     server._analyzers["editing"] = _FakeAnalyzer()  # type: ignore[assignment]
     out = server.analyze_video(str(SMALL_VIDEO_PATH))
-    assert out["scenes"] == 2
-    assert out["source"] == str(SMALL_VIDEO_PATH)
+    assert out.scenes == 2
+    assert out.source == str(SMALL_VIDEO_PATH)
     assert str(SMALL_VIDEO_PATH) in server._analyses
 
 
@@ -186,8 +198,8 @@ def test_run_edit_renders(tmp_path: Path) -> None:
     server.build_catalog()
     out_path = tmp_path / "out.mp4"
     result = server.run_edit({"segments": [{"scene_id": f"{_stem()}#0"}]}, str(out_path))
-    assert result["errors"] == []
-    assert result["output_path"]
+    assert result.errors == []
+    assert result.output_path
     assert out_path.exists()
 
 
@@ -195,33 +207,33 @@ def test_validate_edit_unknown_scene_id_returns_structured_error() -> None:
     server._analyses = {str(SMALL_VIDEO_PATH): _real_analysis()}
     server.build_catalog()
     result = server.validate_edit({"segments": [{"scene_id": "does-not-exist#0"}]})
-    assert result["valid"] is False
-    assert result["errors"][0]["code"] == "unknown_scene_ids"
+    assert result.valid is False
+    assert result.errors[0].code == "unknown_scene_ids"
 
 
 def test_validate_edit_schema_invalid_returns_structured_error() -> None:
     server._analyses = {str(SMALL_VIDEO_PATH): _real_analysis()}
     server.build_catalog()
     result = server.validate_edit({"segments": [{}]})  # scene_id is required
-    assert result["valid"] is False
-    assert result["errors"][0]["code"] == "schema_invalid"
+    assert result.valid is False
+    assert result.errors[0].code == "schema_invalid"
 
 
 def test_run_edit_resolve_failure_returns_errors(tmp_path: Path) -> None:
     server._analyses = {str(SMALL_VIDEO_PATH): _real_analysis()}
     server.build_catalog()
     result = server.run_edit({"segments": [{"scene_id": "missing#0"}]}, str(tmp_path / "out.mp4"))
-    assert result["output_path"] is None
-    assert result["errors"][0]["code"] == "unknown_scene_ids"
+    assert result.output_path is None
+    assert result.errors[0].code == "unknown_scene_ids"
 
 
 def test_repair_edit_returns_edit_and_changelog() -> None:
     server._analyses = {str(SMALL_VIDEO_PATH): _real_analysis()}
     server.build_catalog()
     result = server.repair_edit({"segments": [{"scene_id": f"{_stem()}#0"}]})
-    assert result["errors"] == []
-    assert "segments" in result["edit"]
-    assert isinstance(result["repairs"], list)
+    assert result.errors == []
+    assert result.edit is not None and "segments" in result.edit
+    assert isinstance(result.repairs, list)
 
 
 def test_error_dict_includes_op() -> None:
@@ -234,9 +246,9 @@ def test_error_dict_includes_op() -> None:
         limit=2.0,
     )
     out = server._error_dict(err)
-    assert out["op"] == "cut"
-    assert out["code"] == "cut_exceeds_duration"
-    assert "end" in out["message"]
+    assert out.op == "cut"
+    assert out.code == "cut_exceeds_duration"
+    assert "end" in out.message
 
 
 def test_repair_dict_shape() -> None:
@@ -247,13 +259,53 @@ def test_repair_dict_shape() -> None:
         new=2.0,
         code=PlanErrorCode.EFFECT_WINDOW_EXCEEDS_DURATION,
     )
-    assert server._repair_dict(rep) == {
+    assert server._repair_dict(rep).model_dump() == {
         "location": "segments[0].operations[0]",
         "field": "window.stop",
         "old": 5.0,
         "new": 2.0,
         "code": "effect_window_exceeds_duration",
     }
+
+
+def test_mcp_tool_contracts_are_structured() -> None:
+    contract = json.loads((Path(__file__).with_name("fixtures") / "mcp_contract.json").read_text(encoding="utf-8"))
+
+    async def load_contract() -> tuple[list[Any], list[Any]]:
+        return await server.mcp.list_tools(), await server.mcp.list_resources()
+
+    tool_list, resources = asyncio.run(load_contract())
+    tools = {tool.name: tool for tool in tool_list}
+    wire_contract = {
+        "tools": [
+            {
+                "name": tool.name,
+                "input": _without_schema_annotations(tool.inputSchema),
+                "output": _without_schema_annotations(tool.outputSchema),
+            }
+            for tool in sorted(tool_list, key=lambda item: item.name)
+        ],
+        "resources": [
+            {"uri": str(resource.uri), "mime_type": resource.mimeType}
+            for resource in sorted(resources, key=lambda item: str(item.uri))
+        ],
+    }
+    canonical = json.dumps(wire_contract, sort_keys=True, separators=(",", ":")).encode()
+
+    assert hashlib.sha256(canonical).hexdigest() == contract["sha256"]
+    assert sorted(tools) == contract["tool_names"]
+    assert sorted(str(resource.uri) for resource in resources) == contract["resource_uris"]
+    assert set(tools["analyze_video"].outputSchema["properties"]) == {
+        "duration",
+        "fps",
+        "height",
+        "scenes",
+        "source",
+        "width",
+    }
+    assert set(tools["validate_edit"].outputSchema["properties"]) == {"errors", "valid"}
+    assert set(tools["repair_edit"].outputSchema["properties"]) == {"edit", "errors", "repairs"}
+    assert set(tools["run_edit"].outputSchema["properties"]) == {"errors", "output_path"}
 
 
 def test_build_catalog_caps_inlined_keyframes_and_notes_omitted() -> None:

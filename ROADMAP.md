@@ -28,25 +28,12 @@ implemented.
 
 ### Define the stable surface
 
-Before the first release candidate, document the compatibility policy and identify the
-supported public surface. The intended stable contracts are:
+The [compatibility policy](docs/reference/compatibility.md) defines the supported public
+surface and versioning rules. Before the first release candidate, audit each documented
+contract against the implementation and ensure that the reference contains only APIs
+that are ready to stabilize.
 
-- documented exports from `videopython.base`, `videopython.audio`,
-  `videopython.editing`, `videopython.ai`, and its documented public subpackages;
-- the `VideoEdit` JSON format, core operation identifiers and fields, and generated JSON
-  Schema;
-- structured plan error codes and repair records;
-- the documented custom-operation extension points;
-- MCP tool names, input schemas, output shapes, and the edit-plan resource.
-
-Private modules and underscore-prefixed names are not part of this contract. Model
-weights, default model selection, performance, and generated media are not
-byte-for-byte compatibility guarantees. Their public configuration and result shapes
-remain subject to the ordinary compatibility policy.
-
-The final pre-1.0 cleanup must remove the remaining deprecated `Audio.from_file()`
-alias, resolve known validation and rendering differences, and add compatibility
-fixtures for representative saved plans and schemas.
+The remaining pre-1.0 cleanup must resolve known validation and rendering differences.
 
 ### Align the supported environment
 

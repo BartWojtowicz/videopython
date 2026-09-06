@@ -25,6 +25,16 @@ from videopython.ai.auto_edit import build_catalog as _build_scene_catalog
 from videopython.ai.keyframe import keyframe_to_png_b64
 from videopython.editing import VideoEdit
 
+from ._models import (
+    AnalyzeVideoResult,
+    McpError,
+    McpRepair,
+    RepairEditResult,
+    RunEditResult,
+    SchemaIssue,
+    ValidateEditResult,
+)
+
 if TYPE_CHECKING:
     from videopython.ai.auto_edit import CatalogBundle
     from videopython.ai.video_analysis import VideoAnalysis, VideoAnalyzer
@@ -42,7 +52,7 @@ _MAX_INLINE_KEYFRAMES = 12  # cap inlined keyframes in build_catalog; pull the r
 
 
 @mcp.tool()
-def analyze_video(path: str, profile: Literal["full", "editing"] = "editing") -> dict[str, Any]:
+def analyze_video(path: str, profile: Literal["full", "editing"] = "editing") -> AnalyzeVideoResult:
     """Analyze a source video (scenes, transcript, captions) and cache it for build_catalog.
 
     The default ``profile="editing"`` skips audio classification; the catalog
@@ -56,14 +66,14 @@ def analyze_video(path: str, profile: Literal["full", "editing"] = "editing") ->
         analysis = _get_analyzer(profile).analyze_path(path)
     _analyses[str(Path(path))] = analysis
     src = analysis.source
-    return {
-        "source": str(Path(path)),
-        "duration": src.duration,
-        "fps": src.fps,
-        "width": src.width,
-        "height": src.height,
-        "scenes": len(analysis.scenes.samples) if analysis.scenes else 0,
-    }
+    return AnalyzeVideoResult(
+        source=str(Path(path)),
+        duration=src.duration,
+        fps=src.fps,
+        width=src.width,
+        height=src.height,
+        scenes=len(analysis.scenes.samples) if analysis.scenes else 0,
+    )
 
 
 @mcp.tool(structured_output=False)
@@ -113,7 +123,7 @@ def scene_keyframes(scene_ids: list[str]) -> list[TextContent | ImageContent]:
 
 
 @mcp.tool()
-def validate_edit(plan: dict[str, Any]) -> dict[str, Any]:
+def validate_edit(plan: dict[str, Any]) -> ValidateEditResult:
     """Validate an edit plan (an EditPlan referencing catalog scene ids).
 
     Returns every problem at once as structured errors; ``valid`` is True when
@@ -122,13 +132,13 @@ def validate_edit(plan: dict[str, Any]) -> dict[str, Any]:
     """
     edit, errors = _resolve(plan)
     if edit is None:
-        return {"valid": False, "errors": errors}
+        return ValidateEditResult(valid=False, errors=errors)
     errors = [_error_dict(e) for e in edit.check(_source_metadata(edit), context=_context())]
-    return {"valid": not errors, "errors": errors}
+    return ValidateEditResult(valid=not errors, errors=errors)
 
 
 @mcp.tool()
-def repair_edit(plan: dict[str, Any]) -> dict[str, Any]:
+def repair_edit(plan: dict[str, Any]) -> RepairEditResult:
     """Repair the mechanical issues in an edit plan and normalize segment dimensions.
 
     Returns the resolved+repaired VideoEdit and a changelog, for inspection;
@@ -139,16 +149,20 @@ def repair_edit(plan: dict[str, Any]) -> dict[str, Any]:
     """
     edit, errors = _resolve(plan)
     if edit is None:
-        return {"edit": None, "repairs": [], "errors": errors}
+        return RepairEditResult(edit=None, repairs=[], errors=errors)
     metadata = _source_metadata(edit)
     context = _context()
     edit, repairs = edit.repair(metadata, context=context, clamp_segment_end=True)
     edit, dim_repairs = edit.normalize_dimensions(metadata, "largest", context=context)
-    return {"edit": edit.to_dict(), "repairs": [_repair_dict(r) for r in (*repairs, *dim_repairs)], "errors": []}
+    return RepairEditResult(
+        edit=edit.to_dict(),
+        repairs=[_repair_dict(r) for r in (*repairs, *dim_repairs)],
+        errors=[],
+    )
 
 
 @mcp.tool()
-def run_edit(plan: dict[str, Any], output_path: str) -> dict[str, Any]:
+def run_edit(plan: dict[str, Any], output_path: str) -> RunEditResult:
     """Render an edit plan to an MP4 file (the path suffix is normalized to .mp4).
 
     Resolves scene ids, repairs + normalizes, validates, then renders. If the
@@ -157,16 +171,16 @@ def run_edit(plan: dict[str, Any], output_path: str) -> dict[str, Any]:
     """
     edit, errors = _resolve(plan)
     if edit is None:
-        return {"output_path": None, "errors": errors}
+        return RunEditResult(output_path=None, errors=errors)
     metadata = _source_metadata(edit)
     context = _context()
     edit, _ = edit.repair(metadata, context=context, clamp_segment_end=True)
     edit, _ = edit.normalize_dimensions(metadata, "largest", context=context)
     errors = [_error_dict(e) for e in edit.check(metadata, context=context)]
     if errors:
-        return {"output_path": None, "errors": errors}
+        return RunEditResult(output_path=None, errors=errors)
     out = edit.run_to_file(output_path, context=context)
-    return {"output_path": str(out), "errors": []}
+    return RunEditResult(output_path=str(out), errors=[])
 
 
 @mcp.resource("schema://videopython/edit-plan", mime_type="application/json")
@@ -202,17 +216,17 @@ def _keyframe_blocks(scene_ids: list[str]) -> list[TextContent | ImageContent]:
     return blocks
 
 
-def _resolve(plan: dict[str, Any]) -> tuple[VideoEdit | None, list[dict[str, Any]]]:
+def _resolve(plan: dict[str, Any]) -> tuple[VideoEdit | None, list[McpError]]:
     """Resolve a by-id plan, or return (None, structured errors) for the agent's plan mistakes."""
     if _bundle is None:
         raise ValueError("No catalog cached; call build_catalog first.")
     try:
         edit = resolve_plan(EditPlan.model_validate(plan), _bundle.catalog)
     except ValidationError as exc:
-        detail = [{"loc": list(e["loc"]), "msg": e["msg"], "type": e["type"]} for e in exc.errors()]
-        return None, [{"code": "schema_invalid", "detail": detail, "message": str(exc)}]
+        detail = [SchemaIssue(loc=list(e["loc"]), msg=e["msg"], type=e["type"]) for e in exc.errors()]
+        return None, [McpError(code="schema_invalid", detail=detail, message=str(exc))]
     except UnknownSceneIdsError as exc:
-        return None, [{"code": "unknown_scene_ids", "value": sorted(set(exc.ids)), "message": str(exc)}]
+        return None, [McpError(code="unknown_scene_ids", value=sorted(set(exc.ids)), message=str(exc))]
     return edit, []
 
 
@@ -231,27 +245,27 @@ def _context() -> dict[str, Any] | None:
     return {"transcription": transcriptions} if transcriptions else None
 
 
-def _error_dict(error: PlanError) -> dict[str, Any]:
-    return {
-        "code": error.code.value,
-        "location": error.location,
-        "op": error.op,
-        "field": error.field,
-        "value": error.value,
-        "limit": error.limit,
-        "detail": error.detail,
-        "message": error.to_prompt_line(),
-    }
+def _error_dict(error: PlanError) -> McpError:
+    return McpError(
+        code=error.code.value,
+        location=error.location,
+        op=error.op,
+        field=error.field,
+        value=error.value,
+        limit=error.limit,
+        detail=error.detail,
+        message=error.to_prompt_line(),
+    )
 
 
-def _repair_dict(repair: PlanRepair) -> dict[str, Any]:
-    return {
-        "location": repair.location,
-        "field": repair.field,
-        "old": repair.old,
-        "new": repair.new,
-        "code": repair.code.value,
-    }
+def _repair_dict(repair: PlanRepair) -> McpRepair:
+    return McpRepair(
+        location=repair.location,
+        field=repair.field,
+        old=repair.old,
+        new=repair.new,
+        code=repair.code.value,
+    )
 
 
 def main() -> None:

@@ -1,0 +1,81 @@
+{
+  "sha256": "4bb8bd7ec0790c390069b9338a37e667a90e88e38e2538436a83bc83f3210e3b",
+  "root_properties": [
+    "match_to_lowest_fps",
+    "match_to_lowest_resolution",
+    "music_bed",
+    "post_operations",
+    "segments"
+  ],
+  "segment_properties": [
+    "end",
+    "operations",
+    "source",
+    "start",
+    "transition_in"
+  ],
+  "operation_ids": [
+    "add_subtitles",
+    "blur_effect",
+    "chromatic_aberration",
+    "color_adjust",
+    "crop",
+    "fade",
+    "film_grain",
+    "flash",
+    "freeze_frame",
+    "glitch",
+    "kaleidoscope",
+    "ken_burns",
+    "mirror_flip",
+    "pixelate",
+    "punch_in",
+    "resample_fps",
+    "resize",
+    "shake",
+    "sharpen",
+    "silence_removal",
+    "speed_change",
+    "text_overlay",
+    "vignette",
+    "volume_adjust",
+    "zoom_effect"
+  ],
+  "plan_error_codes": [
+    "concat_mismatch",
+    "context_source_missing",
+    "crop_exceeds_source",
+    "cut_exceeds_duration",
+    "degenerate_duration",
+    "effect_window_exceeds_duration",
+    "music_bed_duck_multisegment",
+    "op_prediction_failed",
+    "op_timestamp_out_of_range",
+    "post_op_requires_context",
+    "segment_end_exceeds_source",
+    "segment_negative",
+    "segment_range",
+    "source_unreadable",
+    "streaming_unsupported",
+    "transition_too_long",
+    "unknown_op",
+    "window_negative",
+    "window_order"
+  ],
+  "plan_error_fields": [
+    "code",
+    "location",
+    "op",
+    "field",
+    "value",
+    "limit",
+    "detail"
+  ],
+  "plan_repair_fields": [
+    "location",
+    "field",
+    "old",
+    "new",
+    "code"
+  ]
+}

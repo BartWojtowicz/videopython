@@ -15,6 +15,8 @@ Analyze a source: scenes, transcript, captions. Cached server-side for the catal
 Returns a short summary. The default `profile="editing"` skips audio classification,
 which the catalog never reads. `profile="full"` runs all analyzers.
 
+Returns `source`, `duration`, `fps`, `width`, `height`, and `scenes`.
+
 ### `build_catalog(sources=None)`
 
 Returns the candidate scenes as one JSON text block — id, duration, shot_type, caption
@@ -32,16 +34,70 @@ pull frames that were capped out, without re-inlining the whole library.
 Validate an `EditPlan` (which references catalog `scene_id`s). Returns every problem at
 once as structured errors.
 
+```json
+{"valid": false, "errors": [{"code": "unknown_scene_ids", "value": ["clip#9"], "message": "..."}]}
+```
+
 ### `repair_edit(plan)`
 
 Clamp mechanical issues and normalize dimensions. Returns the repaired `VideoEdit` plus a
 changelog, **for inspection** — that edit is a concrete `VideoEdit`, not a re-submittable
 `EditPlan`. Keep refining the by-id plan.
 
+```json
+{
+  "edit": {
+    "segments": [
+      {
+        "source": "clip.mp4",
+        "start": 0.0,
+        "end": 8.0,
+        "operations": [],
+        "transition_in": null
+      }
+    ],
+    "post_operations": [],
+    "match_to_lowest_fps": true,
+    "match_to_lowest_resolution": true,
+    "music_bed": null
+  },
+  "repairs": [
+    {
+      "location": "segments[0]",
+      "field": "end",
+      "old": 9.0,
+      "new": 8.0,
+      "code": "segment_end_exceeds_source"
+    }
+  ],
+  "errors": []
+}
+```
+
+`edit` is `null` when resolution fails. Each repair always has `location`, `field`,
+`old`, `new`, and `code`.
+
 ### `run_edit(plan, output_path)`
 
 Resolve, repair, validate, then render to an MP4 (the suffix is normalized to `.mp4`), or
 return the remaining errors.
+
+```json
+{"output_path": "output.mp4", "errors": []}
+```
+
+`output_path` is `null` when the plan cannot be resolved or validated.
+
+## Error objects
+
+Every error has a stable `code` and a diagnostic `message`. Code-specific fields are:
+
+- plan validation: `location`, `op`, `field`, `value`, `limit`, and `detail`;
+- unknown scene ids: `value`, containing the unknown ids;
+- invalid plan schema: `detail`, containing Pydantic error records.
+
+Fields that do not apply are `null`. Error messages are for diagnostics; branch on
+`code` and structured fields instead.
 
 ## Resource
 
