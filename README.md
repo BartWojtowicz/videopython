@@ -103,7 +103,8 @@ The documentation follows [Diataxis](https://diataxis.fr/):
 
 Videopython is pre-1.0, so public interfaces can still change. See the
 [roadmap](ROADMAP.md) for the stability criteria and [release notes](RELEASE_NOTES.md)
-for changes between versions.
+for changes between versions. Report vulnerabilities through the [security
+policy](SECURITY.md).
 
 For local setup, tests, documentation builds, and releases, see
 [DEVELOPMENT.md](DEVELOPMENT.md).

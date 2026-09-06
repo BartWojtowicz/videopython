@@ -68,6 +68,11 @@ class _FailingSceneVLM:
         raise RuntimeError("scene vlm failure")
 
 
+class _FailingSceneVLMInit:
+    def __init__(self, **_kwargs):
+        raise RuntimeError("scene vlm initialization failure")
+
+
 class _FakeAudioClassifier:
     def __init__(self, **_kwargs):
         pass
@@ -112,6 +117,10 @@ def _video_4s() -> Video:
 def _video_30s() -> Video:
     frames = np.zeros((300, 6, 6, 3), dtype=np.uint8)
     return Video.from_frames(frames, fps=10)
+
+
+def _outcomes(analysis: va.VideoAnalysis) -> dict[str, va.AnalyzerOutcome]:
+    return {outcome.analyzer: outcome for outcome in analysis.run_info.analyzer_outcomes}
 
 
 def test_scene_analysis_sample_roundtrip_dict() -> None:
@@ -192,6 +201,9 @@ def test_scene_first_full_run_outputs_scene_payload(monkeypatch: pytest.MonkeyPa
     payload = analysis.model_dump()
     assert "frames" not in payload
     assert "temporal" not in payload
+    assert {analyzer: outcome.status for analyzer, outcome in _outcomes(analysis).items()} == {
+        analyzer: "completed" for analyzer in va.ALL_ANALYZER_IDS
+    }
 
 
 def test_disabled_analyzers_do_not_run(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -205,6 +217,13 @@ def test_disabled_analyzers_do_not_run(monkeypatch: pytest.MonkeyPatch) -> None:
     assert analysis.scenes.samples[0].scene_description is None
     assert analysis.scenes.samples[0].audio_classification is None
     assert analysis.scenes.samples[0].faces is None
+    outcomes = _outcomes(analysis)
+    assert outcomes[va.SEMANTIC_SCENE_DETECTOR].status == "completed"
+    assert all(
+        outcome.status == "skipped" and outcome.reason == "disabled"
+        for analyzer, outcome in outcomes.items()
+        if analyzer != va.SEMANTIC_SCENE_DETECTOR
+    )
 
 
 def test_scene_payload_survives_vlm_failure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -215,6 +234,25 @@ def test_scene_payload_survives_vlm_failure(monkeypatch: pytest.MonkeyPatch) -> 
     assert analysis.scenes is not None
     assert len(analysis.scenes.samples) == 2
     assert analysis.scenes.samples[0].scene_description is None
+    assert _outcomes(analysis)[va.SCENE_VLM] == va.AnalyzerOutcome(
+        analyzer=va.SCENE_VLM,
+        status="failed",
+        reason="execution_failed",
+    )
+
+
+def test_scene_vlm_initialization_failure_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_scene_first_analyzers(monkeypatch)
+    monkeypatch.setattr(_analyzer, "SceneVLM", _FailingSceneVLMInit)
+    config = va.VideoAnalysisConfig(enabled_analyzers={va.SCENE_VLM})
+
+    analysis = va.VideoAnalyzer(config=config).analyze(_video_4s())
+
+    assert _outcomes(analysis)[va.SCENE_VLM] == va.AnalyzerOutcome(
+        analyzer=va.SCENE_VLM,
+        status="failed",
+        reason="initialization_failed",
+    )
 
 
 def test_scene_vlm_produces_structured_output_with_scaled_frames(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -249,6 +287,9 @@ def test_run_info_roundtrip_includes_stage_timings() -> None:
         created_at="2026-05-03T00:00:00Z",
         mode="path",
         library_version="0.26.10",
+        analyzer_outcomes=[
+            va.AnalyzerOutcome(analyzer=va.AUDIO_TO_TEXT, status="completed", reason=None),
+        ],
         stage_durations_seconds={"whisper": 1.5, "scene_detection": 0.3},
         total_duration_seconds=2.7,
     )

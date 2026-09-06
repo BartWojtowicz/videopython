@@ -40,14 +40,7 @@ The remaining pre-1.0 cleanup must resolve known validation and rendering differ
 Unit tests use local fakes and cannot prove that external models still work. The 1.0
 release gate therefore needs evidence from the real model stack:
 
-- run the complete MCP analyze, catalog, validate, and render flow on representative
-  media;
 - make the required real-model sign-off visible in the release process;
-- expose skipped or failed analysis stages to MCP clients instead of relying only on
-  logs;
-- document model downloads, hardware needs, file access, output writes, and the MCP
-  process trust boundary;
-- publish a security policy with private vulnerability-reporting instructions.
 
 ### Validate the release candidate
 

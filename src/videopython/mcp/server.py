@@ -57,8 +57,8 @@ def analyze_video(path: str, profile: Literal["full", "editing"] = "editing") ->
 
     The default ``profile="editing"`` skips audio classification; the catalog
     (captions + transcript + face flag) is unaffected. ``profile="full"`` adds
-    audio classification. Returns a short summary; call this once per source,
-    then build_catalog.
+    audio classification. The result reports whether each analyzer completed,
+    was disabled, or failed. Call this once per source, then build_catalog.
     """
     # Heavy analyzer deps (e.g. transnetv2-pytorch) bare-print to stdout, which here is
     # the stdio JSON-RPC channel; send that to stderr so the transport stays clean.
@@ -73,6 +73,7 @@ def analyze_video(path: str, profile: Literal["full", "editing"] = "editing") ->
         width=src.width,
         height=src.height,
         scenes=len(analysis.scenes.samples) if analysis.scenes else 0,
+        analyzers=analysis.run_info.analyzer_outcomes,
     )
 
 

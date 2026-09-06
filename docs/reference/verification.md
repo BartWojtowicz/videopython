@@ -9,6 +9,42 @@ For the interfaces covered by the AI checks, see [AI generation](ai/generation.m
 decision supported by the effects profile, see [The streaming
 engine](../explanation/streaming-engine.md#why-pixel-effects-are-not-ffmpeg-filters).
 
+## MCP workflow verification
+
+The real MCP workflow passed over stdio on 2026-09-06. The client called
+`analyze_video`, `build_catalog`, `validate_edit`, and `run_edit` against library commit
+`8af4f71754a0d16859475093dcdfea8d31fe2b72`. It used the same representative Polish
+clip as the AI model verification below.
+
+The run used Python 3.13.5 on a 16 GB Apple M1 Mac mini with macOS 14.8.9 and Ollama
+0.33.3. The verification server used `gemma3:12b` for scene captioning because that
+model was available on the test host. This is a compatibility check, not a change to
+the public `qwen3.6:27b` default.
+
+| MCP call | Elapsed | Result |
+|---|---:|---|
+| `analyze_video` | 140.224 s | One scene; speech, scene detection, captioning, and face tracking completed |
+| `build_catalog` | 2.337 s | One scene with a caption, Polish transcript, speech flag, and face flag |
+| `validate_edit` | 0.039 s | The one-scene plan was valid with no errors |
+| `run_edit` | 10.350 s | 60.08-second 1280×720 H.264/AAC MP4 with 1,502 frames |
+
+The editing profile intentionally skipped audio classification and reported it as
+disabled. Gemma captioned the shot as a man speaking into a microphone during a podcast
+recording. Manual review at four points across the rendered file confirmed that
+description and showed a consistent source shot. FFmpeg decoded the complete video and
+audio streams without an error. The full client session took 154.153 seconds, including
+model loading and output checks.
+
+The model files were present before the measured run. Reproduce it with the real stdio
+client and server harness:
+
+```bash
+OLLAMA_HOST=127.0.0.1:11434 uv run python scripts/verify_mcp_workflow.py \
+  --source verification-input/cam1_1min.mp4 \
+  --workdir verify-results/mcp-gemma3-12b \
+  --vision-model gemma3:12b
+```
+
 ## AI model verification
 
 The real-model harness in `scripts/verify_ai_models.py` passed with public defaults on

@@ -27,7 +27,9 @@ from videopython.ai.auto_edit import (
     resolve_plan,
 )
 from videopython.ai.video_analysis.models import (
+    ALL_ANALYZER_IDS,
     AnalysisRunInfo,
+    AnalyzerOutcome,
     AudioAnalysisSection,
     SceneAnalysisSample,
     SceneAnalysisSection,
@@ -77,7 +79,13 @@ def _analysis(
             path=path, fps=fps, width=width, height=height, frame_count=frame_count, duration=duration
         ),
         config=VideoAnalysisConfig(),
-        run_info=AnalysisRunInfo(created_at="2026-01-01T00:00:00Z", mode="path"),
+        run_info=AnalysisRunInfo(
+            created_at="2026-01-01T00:00:00Z",
+            mode="path",
+            analyzer_outcomes=[
+                AnalyzerOutcome(analyzer=analyzer, status="completed", reason=None) for analyzer in ALL_ANALYZER_IDS
+            ],
+        ),
         scenes=SceneAnalysisSection(samples=scenes),
         audio=AudioAnalysisSection(transcription=transcription) if transcription is not None else None,
     )

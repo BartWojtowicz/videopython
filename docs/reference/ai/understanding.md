@@ -98,7 +98,7 @@ for event in result.events:
 
 ## SceneVLM
 
-Describes scenes with a local Ollama vision model. Needs a running Ollama server and a
+Describes scenes with an Ollama vision model. Needs a running Ollama server and a
 vision model that supports structured output; `model` is any tag you have pulled (default
 `qwen3.6:27b`).
 

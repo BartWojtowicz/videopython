@@ -44,10 +44,19 @@ why the auto-editor makes the model select scenes by id.
 
 <div class="feature-card" markdown>
 
-### [Local-only AI](local-ai.md)
+### [Local AI](local-ai.md)
 
-Why every model runs on your machine, what that costs, and which parts depend on a local
-Ollama server.
+Why inference stays under your control, what that costs, and which parts depend on
+Ollama.
+
+</div>
+
+<div class="feature-card" markdown>
+
+### [MCP security boundary](mcp-security.md)
+
+What the local MCP process can read, write, execute, and send to its client or Ollama
+host.
 
 </div>
 

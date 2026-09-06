@@ -2,8 +2,8 @@
 
 `VideoDubber` transcribes the source, translates it, re-synthesizes the speech in the
 original speaker's voice, and fits the result back onto the source timing. Every stage
-runs locally: Whisper, a local Ollama model for translation, Chatterbox for TTS, and
-Demucs to keep the background music.
+runs with infrastructure you control: Whisper, an Ollama model for translation,
+Chatterbox for TTS, and Demucs to keep the background music.
 
 Needs `pip install "videopython[ai]"` and a running Ollama server
 ([Install](../install.md)).
@@ -168,7 +168,7 @@ The diarize-on-supplied path needs word-level timings, so transcriptions loaded 
 
 ## Pick the translation model
 
-Translation goes through `OllamaTranslator`, a single local Ollama text model. It sends
+Translation goes through `OllamaTranslator`, a single Ollama text model. It sends
 segments under a structured-output schema and reads back length-budgeted translations —
 the prompt carries a per-segment character budget derived from the source duration and a
 `low_confidence` hint sourced from Whisper's `avg_logprob`. Long sources are chunked to

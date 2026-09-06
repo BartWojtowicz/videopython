@@ -92,7 +92,7 @@ They differ in one thing: who owns the model.
 | Mode | Planner | Guide |
 |---|---|---|
 | Bring your own LLM | Yours, in your harness | [Author edit plans with your own LLM](../how-to/llm-plans.md) |
-| `AutoEditor` | A local Ollama vision model, in-process | [Let a local LLM edit for you](../how-to/auto-editing.md) |
+| `AutoEditor` | An Ollama vision model | [Let a local LLM edit for you](../how-to/auto-editing.md) |
 | MCP server | The connecting agent's own model | [Drive editing from an MCP agent](../how-to/mcp-server.md) |
 
 All three sit on the same registry, the same schema, and the same validate/repair loop.

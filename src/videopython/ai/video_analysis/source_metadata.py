@@ -37,9 +37,7 @@ _GEO_TAG_KEYS: tuple[str, ...] = (
 def try_init(factory: Callable[[], T], name: str) -> T | None:
     """Construct a component, or log and return ``None`` on a load/runtime error.
 
-    Best-effort init for the optional per-scene predictors: a missing extra or a
-    model-load failure degrades that analyzer to "skipped" instead of aborting
-    the whole analysis run.
+    A missing extra or model-load failure does not abort the other analyzers.
     """
     try:
         return factory()

@@ -5,7 +5,8 @@ server exposing the auto-editing pipeline. Install with the `[mcp]` extra; setup
 the intended flow are in [Drive editing from an MCP agent](../how-to/mcp-server.md).
 
 The server caches analyses and the catalog, so tool payloads stay small — the agent passes
-scene ids, never analysis blobs.
+scene ids, never analysis blobs. The server's filesystem, process, and network access is
+defined in [MCP security boundary](../explanation/mcp-security.md).
 
 ## Tools
 
@@ -15,7 +16,18 @@ Analyze a source: scenes, transcript, captions. Cached server-side for the catal
 Returns a short summary. The default `profile="editing"` skips audio classification,
 which the catalog never reads. `profile="full"` runs all analyzers.
 
-Returns `source`, `duration`, `fps`, `width`, `height`, and `scenes`.
+Returns `source`, `duration`, `fps`, `width`, `height`, `scenes`, and `analyzers`.
+`analyzers` contains one record for each configured analysis stage:
+
+| `status` | `reason` | Meaning |
+|---|---|---|
+| `completed` | `null` | The analyzer completed. |
+| `skipped` | `disabled` | The selected profile disabled the analyzer. |
+| `failed` | `initialization_failed` | The requested analyzer could not load. |
+| `failed` | `execution_failed` | The requested analyzer loaded but did not complete. |
+
+The remaining analysis is still cached when one analyzer fails. Check these records
+before building a plan that depends on a missing transcript, caption, or face result.
 
 ### `build_catalog(sources=None)`
 

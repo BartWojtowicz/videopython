@@ -4,6 +4,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
+from videopython.ai.video_analysis.models import AnalyzerOutcome
+
 
 class SchemaIssue(BaseModel):
     """One Pydantic schema-validation issue."""
@@ -53,6 +55,7 @@ class AnalyzeVideoResult(BaseModel):
     width: int | None
     height: int | None
     scenes: int
+    analyzers: list[AnalyzerOutcome]
 
 
 class ValidateEditResult(BaseModel):

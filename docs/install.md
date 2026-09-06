@@ -50,12 +50,13 @@ LLM auto-editing planner. The heavy ML dependencies load lazily at first use, so
 transcription, scene detection and captioning, face and object operations, and Ollama.
 It does not install generation, dubbing, diarization, VAD, source separation, or TTS.
 Install `[ai,mcp]` only when the same environment also needs those capabilities. See
-[Drive editing from an MCP agent](how-to/mcp-server.md).
+[Drive editing from an MCP agent](how-to/mcp-server.md). Before connecting an agent,
+review the [MCP security boundary](explanation/mcp-security.md).
 
 ## 3. Ollama (only for LLM-backed features)
 
 Scene captioning (`SceneVLM`, and therefore `VideoAnalyzer`), dubbing translation, and
-the `AutoEditor` / MCP planner all call a local [Ollama](https://ollama.com) server.
+the `AutoEditor` / MCP planner all call a configured [Ollama](https://ollama.com) server.
 There is no in-process fallback.
 
 ```bash
@@ -73,7 +74,7 @@ transcription, detection, and audio classification do **not** need Ollama.
 | Capability | Requirement |
 |---|---|
 | Core editing | CPU only |
-| MCP agent editing | CPU for media analysis; local Ollama host capable of running `qwen3.6:27b` |
+| MCP agent editing | CPU for media analysis; Ollama host capable of running `qwen3.6:27b` |
 | `TextToImage`, `TextToVideo`, `ImageToVideo` | **NVIDIA CUDA GPU** — these ~20–28B models raise on CPU/MPS rather than falling back. A40 or better recommended for video |
 | `TextToMusic` | CUDA, Apple MPS, or CPU |
 | `TextToSpeech`, dubbing | CUDA or CPU |

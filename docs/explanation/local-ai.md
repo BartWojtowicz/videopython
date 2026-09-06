@@ -1,14 +1,15 @@
-# Local-only AI
+# Local AI
 
-`videopython.ai` has no cloud backend, no API-key configuration, and no hosted fallback.
-Every model runs on your machine.
+`videopython.ai` has no hosted inference backend, no API-key configuration, and no
+hosted fallback. Task-specific models run in the videopython process. LLM-backed
+features use an Ollama service that you operate.
 
 ## The trade
 
-What you get: no per-minute billing on a workload that is inherently long-running, no
-media leaving your infrastructure, reproducible output that does not change when a
-provider retires a model, and the ability to run the whole pipeline offline once weights
-are cached.
+What you get: no per-minute inference billing on a workload that is inherently
+long-running, control over where media is processed, reproducible output that does not
+change when a provider retires a model, and the ability to run the whole pipeline
+offline once weights are cached.
 
 What you pay: model weights download on first use and take real disk space; image and
 video generation need a CUDA GPU and *raise* rather than falling back to CPU; and you
@@ -40,11 +41,14 @@ Three features need a general-purpose LLM rather than a task-specific model: sce
 captioning (`SceneVLM`, and therefore `VideoAnalyzer`), dubbing translation, and edit
 planning (`AutoEditor` and the MCP server's captioning step).
 
-Rather than bundle a particular LLM runtime and its weights, videopython talks to a local
-Ollama server. You choose the model and the hardware it runs on; the library only needs
-two guarantees from it: **vision capability** where keyframes are involved, and support
-for Ollama's structured-output `format`, which is what makes the model return schema-valid
-JSON instead of prose.
+Rather than bundle a particular LLM runtime and its weights, videopython talks to the
+configured Ollama server. You choose the model, host, and hardware; the library only
+needs two guarantees from it: **vision capability** where keyframes are involved, and
+support for Ollama's structured-output `format`, which makes the model return
+schema-valid JSON instead of prose.
+
+The normal setup keeps Ollama on the same machine. If `OLLAMA_HOST` points to another
+machine, relevant prompts and images are sent to that host.
 
 That second requirement is the one that bites. Some builds — certain MLX vision models,
 for example — accept images but ignore `format`. They fail with prose where JSON was

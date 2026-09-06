@@ -145,5 +145,6 @@ nav:
       - The streaming engine: explanation/streaming-engine.md
       - The plan lifecycle: explanation/plan-lifecycle.md
       - LLM-first design: explanation/llm-first-design.md
-      - Local-only AI: explanation/local-ai.md
+      - Local AI: explanation/local-ai.md
+      - MCP security boundary: explanation/mcp-security.md
   - Glossary: glossary.md

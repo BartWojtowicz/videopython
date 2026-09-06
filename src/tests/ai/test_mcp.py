@@ -17,8 +17,10 @@ from mcp.types import ImageContent, TextContent  # noqa: E402
 
 from tests.test_config import SMALL_VIDEO_PATH  # noqa: E402
 from videopython.ai.video_analysis.models import (  # noqa: E402
+    ALL_ANALYZER_IDS,
     AUDIO_TO_TEXT,
     AnalysisRunInfo,
+    AnalyzerOutcome,
     SceneAnalysisSample,
     SceneAnalysisSection,
     VideoAnalysis,
@@ -29,6 +31,10 @@ from videopython.base import PlanError, PlanErrorCode, PlanRepair  # noqa: E402
 from videopython.base.description import SceneDescription  # noqa: E402
 from videopython.base.video import VideoMetadata  # noqa: E402
 from videopython.mcp import server  # noqa: E402
+
+
+def _completed_outcomes() -> list[AnalyzerOutcome]:
+    return [AnalyzerOutcome(analyzer=analyzer, status="completed", reason=None) for analyzer in ALL_ANALYZER_IDS]
 
 
 @pytest.fixture(autouse=True)
@@ -69,7 +75,11 @@ def _real_analysis() -> VideoAnalysis:
             duration=dur,
         ),
         config=VideoAnalysisConfig(),
-        run_info=AnalysisRunInfo(created_at="2026-01-01T00:00:00Z", mode="path"),
+        run_info=AnalysisRunInfo(
+            created_at="2026-01-01T00:00:00Z",
+            mode="path",
+            analyzer_outcomes=_completed_outcomes(),
+        ),
         scenes=SceneAnalysisSection(samples=scenes),
     )
 
@@ -97,7 +107,11 @@ def _analysis_with_scenes(n: int) -> VideoAnalysis:
             duration=dur,
         ),
         config=VideoAnalysisConfig(),
-        run_info=AnalysisRunInfo(created_at="2026-01-01T00:00:00Z", mode="path"),
+        run_info=AnalysisRunInfo(
+            created_at="2026-01-01T00:00:00Z",
+            mode="path",
+            analyzer_outcomes=_completed_outcomes(),
+        ),
         scenes=SceneAnalysisSection(samples=samples),
     )
 
@@ -166,6 +180,11 @@ def test_validate_edit_without_catalog_errors() -> None:
 
 def test_analyze_video_caches_and_summarizes() -> None:
     analysis = _real_analysis()
+    analysis.run_info.analyzer_outcomes[0] = AnalyzerOutcome(
+        analyzer=AUDIO_TO_TEXT,
+        status="failed",
+        reason="execution_failed",
+    )
 
     class _FakeAnalyzer:
         def analyze_path(self, path: str) -> VideoAnalysis:
@@ -175,6 +194,7 @@ def test_analyze_video_caches_and_summarizes() -> None:
     out = server.analyze_video(str(SMALL_VIDEO_PATH))
     assert out.scenes == 2
     assert out.source == str(SMALL_VIDEO_PATH)
+    assert out.analyzers == analysis.run_info.analyzer_outcomes
     assert str(SMALL_VIDEO_PATH) in server._analyses
 
 
@@ -296,6 +316,7 @@ def test_mcp_tool_contracts_are_structured() -> None:
     assert sorted(tools) == contract["tool_names"]
     assert sorted(str(resource.uri) for resource in resources) == contract["resource_uris"]
     assert set(tools["analyze_video"].outputSchema["properties"]) == {
+        "analyzers",
         "duration",
         "fps",
         "height",
