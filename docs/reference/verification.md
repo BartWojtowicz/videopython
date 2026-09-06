@@ -36,8 +36,9 @@ replace the default-settings baseline.
 
 ### Timing protocol and reproduction
 
-The commands below reproduce the reduced configuration currently encoded in the
-harness. Do not use that configuration for the next default-settings baseline.
+The harness now calls the generation interfaces with their public defaults. The
+commands below produce the default-settings baseline. The reduced-setting results below
+remain as the compatibility record for the earlier run.
 
 The download caches were populated before the measured run. The harness then ran from a
 fresh Python process and wrote to a new output directory. Ollama used
