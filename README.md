@@ -5,7 +5,9 @@
 [![License](https://img.shields.io/github/license/BartWojtowicz/videopython)](LICENSE)
 [![CI](https://github.com/BartWojtowicz/videopython/actions/workflows/ci.yml/badge.svg)](https://github.com/BartWojtowicz/videopython/actions/workflows/ci.yml)
 
-Minimal, LLM-friendly Python library for programmatic video editing, processing, and AI video workflows.
+Python library for structured, local-first video editing, processing, and AI workflows.
+Build edits as validated Python models or JSON plans, then render them through a
+bounded-memory streaming engine.
 
 Full documentation: [videopython.com](https://videopython.com)
 
@@ -14,11 +16,21 @@ Full documentation: [videopython.com](https://videopython.com)
 ```bash
 # Install FFmpeg first (macOS: brew install ffmpeg | Debian: apt-get install ffmpeg)
 pip install videopython              # core video/audio editing
-pip install "videopython[ai]"        # + ALL local AI features (GPU recommended)
-pip install "videopython[mcp]"       # focused MCP agent-editing stack
+pip install "videopython[ai]"        # + all local AI features
+pip install "videopython[mcp]"       # + MCP and its focused analysis/editing stack
 ```
 
-Python `>=3.11, <3.14`. AI features run locally — no cloud API keys required, but model weights are downloaded on first use. LLM-driven editing and scene captioning use a local [Ollama](https://ollama.com) server (`ollama pull qwen3.6:27b`). See the [install guide](https://videopython.com/install/) for FFmpeg, Ollama, and hardware details.
+`[ai]` and `[mcp]` are independent. Use `[ai,mcp]` when one environment needs every AI
+capability and the MCP server.
+
+Python `>=3.11, <3.14`. AI features run locally without cloud inference APIs, but model
+weights are downloaded on first use. LLM-driven editing and scene captioning use a local
+[Ollama](https://ollama.com) server (`ollama pull qwen3.6:27b`). Image and video
+generation require an NVIDIA CUDA GPU. See the [install guide](https://videopython.com/install/)
+for FFmpeg, Ollama, model downloads, and hardware details.
+
+Videopython is pre-1.0. Public interfaces can still change before the stable release;
+see the [roadmap](ROADMAP.md) for the stability criteria.
 
 ## Quick start
 
@@ -45,6 +57,11 @@ edit.run_to_file("output.mp4")   # streams ffmpeg decode → effects → encode
 
 `run_to_file()` streams, so memory stays bounded even for hour-long sources. Walk through it in [Tutorial 1](https://videopython.com/tutorials/first-edit/).
 
+[![A vertical clip rendered from a videopython JSON plan](https://videopython.com/assets/edit-plan-demo-poster.jpg)](https://videopython.com/how-to/agent-edit-demo/)
+
+*A reproducible eight-second edit rendered from a JSON plan. View the plan, source, and
+replay script in the [demo](https://videopython.com/how-to/agent-edit-demo/).*
+
 ### Automatic editing (local LLM)
 
 Give `AutoEditor` your clips and a brief; a local Ollama vision model selects and orders the shots, and you get back a runnable `VideoEdit`:
@@ -64,6 +81,9 @@ The model picks scenes **by id** from a catalog built from scene detection + cap
 
 ### AI generation
 
+Image and video generation use large CUDA-only models. Speech generation can run on CPU
+or CUDA.
+
 ```python
 from videopython.ai import TextToImage, ImageToVideo, TextToSpeech
 
@@ -73,18 +93,20 @@ audio = TextToSpeech().generate_audio("Welcome to videopython.")
 video.add_audio(audio).save("ai_video.mp4")
 ```
 
-## LLM & AI agent integration
+## Structured plans and automation
 
-Putting an LLM in the loop works three ways, differing in who owns the model:
+The same validation and rendering path works whether a plan is written directly, loaded
+from JSON, produced by a model, or submitted through MCP:
 
-1. **Bring your own LLM** — videopython gives your model the JSON Schema and a structured refine loop; your model authors the plans. [Guide](https://videopython.com/how-to/llm-plans/)
-2. **`AutoEditor`** — a local Ollama vision model is the planner. [Guide](https://videopython.com/how-to/auto-editing/)
-3. **MCP server** — `videopython-mcp` exposes the pipeline as [Model Context Protocol](https://modelcontextprotocol.io) tools, so an agent like Claude drives editing with its own model. [Guide](https://videopython.com/how-to/mcp-server/)
+1. **Python or JSON** — construct `VideoEdit` directly, as in the quick start.
+2. **Your own LLM** — use the generated JSON Schema and structured refine loop. [Guide](https://videopython.com/how-to/llm-plans/)
+3. **`AutoEditor`** — use a local Ollama vision model to select and order scenes. [Guide](https://videopython.com/how-to/auto-editing/)
+4. **MCP** — expose analysis, planning, validation, and rendering tools to any compatible client. [Guide](https://videopython.com/how-to/mcp-server/)
 
-See the [reproducible agent-authored edit demo](https://videopython.com/how-to/agent-edit-demo/)
-for a complete prompt, JSON plan, and rendered result that needs no model or API key.
-
-Mode 1 in brief: every operation is a Pydantic model whose fields *are* the JSON wire format, so `VideoEdit.json_schema()` hands your model a ready-made tool schema — a discriminated union over every LLM-exposed op (pass `strict=True` for provider grammar modes). Plans parse permissively and own their numeric bounds at validation, so a refine loop converges fast:
+For schema-driven integrations, every operation is a Pydantic model whose fields are the
+JSON wire format. `VideoEdit.json_schema()` returns a discriminated union over every
+exposed operation; pass `strict=True` for provider grammar modes. Plans parse
+permissively and report numeric bounds during validation, so a refine loop can use:
 
 - **`edit.check(meta)`** — collect *every* structured error in one pass, not just the first
 - **`edit.repair(meta)`** — auto-clamp mechanical violations (overruns, negatives) with a changelog
@@ -97,10 +119,10 @@ Why it is built this way: [LLM-first design](https://videopython.com/explanation
 - **`videopython.base`** — `Video`, `VideoMetadata`, `FrameIterator`, `Transcription`, and shared result types (`BoundingBox`, `FaceTrack`, `SceneBoundary`, ...). No AI dependencies.
 - **`videopython.audio`** — `Audio` with overlay, concat, normalize, time-stretch, silence detection, segment classification.
 - **`videopython.editing`** — `Operation`/`Effect` foundation, `VideoEdit` plan runner with JSON Schema + streaming execution. Transforms (resize, crop, fps, speed, freeze, silence removal; cutting is the segment's own start/end) and effects (blur, zoom, color grading, vignette, Ken Burns, fade, overlays, animated subtitles).
-- **`videopython.ai`** *(install with `[ai]`)* — generation (`TextToVideo`, `ImageToVideo`, `TextToImage`, `TextToSpeech`, `TextToMusic`), understanding (`AudioToText`, `AudioClassifier`, `SceneVLM`, `FaceTracker`, `ObjectDetector`, `SemanticSceneDetector`), the `FaceTrackingCrop` transform, the `ObjectDetectionOverlay` effect, and the full-pipeline `VideoAnalyzer`. Scene captioning and dubbing translation run on a local [Ollama](https://ollama.com) model.
+- **`videopython.ai`** *(install with `[ai]`)* — generation (`TextToVideo`, `ImageToVideo`, `TextToImage`, `TextToSpeech`, `TextToMusic`), understanding (`AudioToText`, `AudioClassifier`, `SceneVLM`, `FaceShotTracker`, `FaceSmoothingTracker`, `ObjectDetector`, `SemanticSceneDetector`), the `FaceTrackingCrop` transform, the `ObjectDetectionOverlay` effect, and the full-pipeline `VideoAnalyzer`. Scene captioning and dubbing translation run on a local [Ollama](https://ollama.com) model.
 - **`videopython.ai.auto_edit`** — `AutoEditor` + `OllamaVisionLLM`: plan and render an edit from sources + a one-line brief.
 - **`videopython.ai.dubbing`** — `VideoDubber` for voice-cloned revoicing with timing sync.
-- **`videopython.mcp`** *(install with `[mcp]`)* — `videopython-mcp`, an MCP stdio server exposing the auto-edit pipeline so an agent drives editing. The extra includes the analysis and AI editing dependencies, but not generation, dubbing, diarization, source separation, or TTS.
+- **`videopython.mcp`** *(install with `[mcp]`)* — `videopython-mcp`, an MCP stdio server exposing the auto-edit pipeline to compatible clients. The extra includes the analysis and AI editing dependencies, but not generation, dubbing, diarization, source separation, or TTS.
 
 ## Documentation
 
@@ -116,7 +138,4 @@ The docs follow [Diátaxis](https://diataxis.fr): four sections, each answering 
 ## Development
 
 See [`DEVELOPMENT.md`](DEVELOPMENT.md) for local setup, testing, docs, and the release workflow.
-
-## Project provenance
-
-This project started as a hand-written hobby project, but most of the code is now produced by LLM agents. Humans drive direction, approve changes, and own design decisions.
+See [`ROADMAP.md`](ROADMAP.md) for project direction and the criteria for 1.0.
