@@ -147,9 +147,14 @@ be satisfied, fix the metadata rather than patching it locally:
 * drop the dependency.
 
 The `pip_resolve` CI job (`.github/workflows/pip-resolve.yml`) builds the wheel and
-resolves `[ai]` and `[mcp]` with pip in a clean venv, on every push and weekly on
-a schedule. The schedule matters because these breakages arrive from upstream
-releases tightening their pins, not from our own commits.
+resolves the core, `[ai]`, and `[mcp]` dependency graphs with pip on every supported
+Python version, on every push and weekly on a schedule. The schedule matters because
+these breakages arrive from upstream releases tightening their pins, not from our own
+commits.
+
+The `platform_smoke` CI job installs the built wheel on Ubuntu, macOS, and Windows. It
+checks the required FFmpeg capabilities, renders a short clip, imports the public
+package layers, and performs an MCP tool and resource handshake.
 
 ### `videopython-chatterbox`
 

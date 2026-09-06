@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["312", "313"]
+        python-version: ["311", "312", "313", "314"]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -54,6 +54,52 @@ jobs:
         run: uv sync --dev
       - name: Run pre-commit hooks
         run: uv run pre-commit run --all-files --show-diff-on-failure
+
+  platform_smoke:
+    name: Wheel smoke - ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: Ubuntu
+            runner: ubuntu-latest
+            python: .wheel-smoke/bin/python
+          - os: macOS
+            runner: macos-latest
+            python: .wheel-smoke/bin/python
+          - os: Windows
+            runner: windows-latest
+            python: .wheel-smoke/Scripts/python.exe
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Install FFmpeg on Ubuntu
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install ffmpeg -y
+      - name: Install FFmpeg on macOS
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+      - name: Install FFmpeg on Windows
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg --yes --no-progress
+      - name: Set up Python
+        run: uv python install 314
+      - name: Build and install the wheel in a clean environment
+        shell: bash
+        run: |
+          uv build --wheel
+          uv venv --python 3.14 .wheel-smoke
+          wheel=$(find dist -name '*.whl' -print -quit)
+          uv pip install --python "${{ matrix.python }}" "$wheel"
+          uv pip install --python "${{ matrix.python }}" "mcp>=1.27,<2"
+      - name: Smoke-test public imports, rendering, and MCP
+        shell: bash
+        run: "${{ matrix.python }} .github/smoke_wheel.py"
 
   pip_resolve:
     # The consumer-install guard. Lives in its own workflow so it can also run on

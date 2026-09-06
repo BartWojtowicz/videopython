@@ -35,17 +35,6 @@ that are ready to stabilize.
 
 The remaining pre-1.0 cleanup must resolve known validation and rendering differences.
 
-### Align the supported environment
-
-The declared and tested environments must agree. Before 1.0, the project will:
-
-- test every supported Python version or narrow the declared range;
-- decide and document Python 3.14 support;
-- define the supported operating systems and FFmpeg requirements;
-- verify the built wheel in clean environments for the core, `[ai]`, and `[mcp]`
-  installation paths;
-- smoke-test public imports and the MCP handshake from the built wheel.
-
 ### Strengthen AI and agent verification
 
 Unit tests use local fakes and cannot prove that external models still work. The 1.0

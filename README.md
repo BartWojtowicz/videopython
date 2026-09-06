@@ -23,7 +23,7 @@ pip install "videopython[mcp]"       # + MCP and its focused analysis/editing st
 `[ai]` and `[mcp]` are independent. Use `[ai,mcp]` when one environment needs every AI
 capability and the MCP server.
 
-Python `>=3.11, <3.14`. AI features run locally without cloud inference APIs, but model
+Python `>=3.11, <3.15`. AI features run locally without cloud inference APIs, but model
 weights are downloaded on first use. LLM-driven editing and scene captioning use a local
 [Ollama](https://ollama.com) server (`ollama pull qwen3.6:27b`). Image and video
 generation require an NVIDIA CUDA GPU. See the [install guide](https://videopython.com/install/)

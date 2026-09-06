@@ -25,7 +25,15 @@ uv add videopython --extra ai
 uv add videopython --extra mcp
 ```
 
-Python `>=3.11, <3.14`.
+## Supported environments
+
+Videopython supports CPython 3.11, 3.12, 3.13, and 3.14 on Ubuntu, macOS, and Windows.
+The full test suite runs on Ubuntu for every supported Python version. Clean-wheel
+rendering and MCP handshake checks run on all three operating systems.
+
+`ffmpeg` and `ffprobe` must be available on `PATH`. FFmpeg must provide the `libx264`
+and AAC encoders plus the `xfade` and `acrossfade` filters. Burned-in subtitles also
+need the `subtitles` filter from a build with libass.
 
 `[ai]` is the single AI extra: transcription, diarization, detection, scene and VLM
 understanding, source separation, translation, TTS, media generation, dubbing, and the
