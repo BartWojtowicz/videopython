@@ -18,10 +18,11 @@ above all include it.
 ```bash
 pip install videopython             # core editing, no ML dependencies
 pip install "videopython[ai]"       # + every AI capability
-pip install "videopython[ai,mcp]"   # + the videopython-mcp server
+pip install "videopython[mcp]"      # + the focused videopython-mcp stack
 
 uv add videopython                  # or with uv
 uv add videopython --extra ai
+uv add videopython --extra mcp
 ```
 
 Python `>=3.11, <3.14`.
@@ -31,9 +32,11 @@ understanding, source separation, translation, TTS, media generation, dubbing, a
 LLM auto-editing planner. The heavy ML dependencies load lazily at first use, so
 `import videopython` stays fast even with `[ai]` installed.
 
-`[mcp]` adds the `videopython-mcp` console script, a stdio
-[Model Context Protocol](https://modelcontextprotocol.io) server. It needs `[ai]` too —
-see [Drive editing from an MCP agent](how-to/mcp-server.md).
+`[mcp]` installs the `videopython-mcp` stdio server and the focused local stack it uses:
+transcription, scene detection and captioning, face and object operations, and Ollama.
+It does not install generation, dubbing, diarization, VAD, source separation, or TTS.
+Install `[ai,mcp]` only when the same environment also needs those capabilities. See
+[Drive editing from an MCP agent](how-to/mcp-server.md).
 
 ## 3. Ollama (only for LLM-backed features)
 
@@ -47,14 +50,16 @@ ollama pull qwen3.6:27b     # the default vision / translation model
 ```
 
 The model must be vision-capable and must support Ollama's structured-output `format`.
-The default `qwen3.6:27b` is Apache-2.0. Generation, transcription, detection, and audio
-classification do **not** need Ollama.
+The default `qwen3.6:27b` is Apache-2.0. It is a large model: the MCP workflow is not a
+lightweight install, and the Ollama host must have enough memory to run it. Generation,
+transcription, detection, and audio classification do **not** need Ollama.
 
 ## Hardware
 
 | Capability | Requirement |
 |---|---|
 | Core editing | CPU only |
+| MCP agent editing | CPU for media analysis; local Ollama host capable of running `qwen3.6:27b` |
 | `TextToImage`, `TextToVideo`, `ImageToVideo` | **NVIDIA CUDA GPU** — these ~20–28B models raise on CPU/MPS rather than falling back. A40 or better recommended for video |
 | `TextToMusic` | CUDA, Apple MPS, or CPU |
 | `TextToSpeech`, dubbing | CUDA or CPU |

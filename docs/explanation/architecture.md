@@ -17,8 +17,9 @@ videopython.ai         Generation, understanding,      Depends on base, audio,
                                                        Needs the [ai] extra.
 ```
 
-`videopython.mcp` sits alongside as a thin server over `ai` + `editing`, behind the
-`[mcp]` extra.
+`videopython.mcp` sits alongside as a thin server over `ai` + `editing`. Its `[mcp]`
+extra contains only the analysis and AI editing stack. Generation, dubbing, diarization,
+source separation, and TTS remain exclusive to the full `[ai]` extra.
 
 ## Why the layering is enforced, not just intended
 

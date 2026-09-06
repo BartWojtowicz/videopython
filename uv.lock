@@ -4509,7 +4509,7 @@ wheels = [
 
 [[package]]
 name = "videopython"
-version = "0.55.4"
+version = "0.56.0"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },
@@ -4543,7 +4543,15 @@ ai = [
     { name = "videopython-chatterbox" },
 ]
 mcp = [
+    { name = "imagehash" },
     { name = "mcp" },
+    { name = "numba" },
+    { name = "ollama" },
+    { name = "openai-whisper" },
+    { name = "torch" },
+    { name = "torchvision" },
+    { name = "transformers" },
+    { name = "transnetv2-pytorch" },
 ]
 
 [package.dev-dependencies]
@@ -4575,11 +4583,15 @@ requires-dist = [
     { name = "diffusers", marker = "extra == 'ai'", specifier = ">=0.35.0" },
     { name = "ftfy", marker = "extra == 'ai'", specifier = ">=6.1" },
     { name = "imagehash", marker = "extra == 'ai'", specifier = ">=4.3" },
+    { name = "imagehash", marker = "extra == 'mcp'", specifier = ">=4.3" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.27,<2" },
     { name = "numba", marker = "extra == 'ai'", specifier = ">=0.62" },
+    { name = "numba", marker = "extra == 'mcp'", specifier = ">=0.62" },
     { name = "numpy", specifier = ">=1.25.2" },
     { name = "ollama", marker = "extra == 'ai'", specifier = ">=0.5.0" },
+    { name = "ollama", marker = "extra == 'mcp'", specifier = ">=0.5.0" },
     { name = "openai-whisper", marker = "extra == 'ai'", specifier = ">=20240930" },
+    { name = "openai-whisper", marker = "extra == 'mcp'", specifier = ">=20240930" },
     { name = "opencv-python-headless", specifier = ">=4.9.0.80" },
     { name = "pillow", specifier = ">=12.1.1" },
     { name = "pyannote-audio", marker = "extra == 'ai'", specifier = ">=4.0.0" },
@@ -4589,12 +4601,16 @@ requires-dist = [
     { name = "silero-vad", marker = "extra == 'ai'", specifier = ">=5.1" },
     { name = "soxr", specifier = ">=0.5" },
     { name = "torch", marker = "extra == 'ai'", specifier = ">=2.8.0" },
+    { name = "torch", marker = "extra == 'mcp'", specifier = ">=2.8.0" },
     { name = "torchaudio", marker = "extra == 'ai'", specifier = ">=2.8.0" },
     { name = "torchcodec", marker = "extra == 'ai'", specifier = ">=0.7.0" },
     { name = "torchvision", marker = "extra == 'ai'", specifier = ">=0.23.0" },
+    { name = "torchvision", marker = "extra == 'mcp'", specifier = ">=0.23.0" },
     { name = "tqdm", specifier = ">=4.66.3" },
     { name = "transformers", marker = "extra == 'ai'", specifier = ">=5.2.0" },
+    { name = "transformers", marker = "extra == 'mcp'", specifier = ">=5.2.0" },
     { name = "transnetv2-pytorch", marker = "extra == 'ai'", specifier = ">=1.0.5" },
+    { name = "transnetv2-pytorch", marker = "extra == 'mcp'", specifier = ">=1.0.5" },
     { name = "videopython-chatterbox", marker = "extra == 'ai'", specifier = ">=0.1.7.post1" },
 ]
 provides-extras = ["ai", "mcp"]

@@ -147,7 +147,7 @@ be satisfied, fix the metadata rather than patching it locally:
 * drop the dependency.
 
 The `pip_resolve` CI job (`.github/workflows/pip-resolve.yml`) builds the wheel and
-resolves `[ai]` and `[ai,mcp]` with pip in a clean venv, on every push and weekly on
+resolves `[ai]` and `[mcp]` with pip in a clean venv, on every push and weekly on
 a schedule. The schedule matters because these breakages arrive from upstream
 releases tightening their pins, not from our own commits.
 

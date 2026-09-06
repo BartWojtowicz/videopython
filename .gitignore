@@ -151,7 +151,7 @@ data/exported/*.mp4
 # Sample / working videos (keep them out of the repo root)
 *.mp4
 !data/exported/example.mp4
+!docs/assets/agent-edit-demo.mp4
 
 # Local scratch / sign-off artifacts
 libass_signoff/
-

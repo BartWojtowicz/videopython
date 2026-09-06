@@ -7,7 +7,7 @@ edits with **its own model** as the planner. No in-process LLM.
 ## Set it up
 
 ```bash
-pip install "videopython[ai,mcp]"
+pip install "videopython[mcp]"
 ollama serve              # scene captioning still uses a local vision model
 ollama pull qwen3.6:27b
 videopython-mcp           # stdio server
@@ -49,14 +49,23 @@ Keyframes are the payload that grows with the footage, so the MCP path bounds it
 A ~100-scene library therefore stays workable. Downscaling is scoped to MCP —
 `SceneVLM` captioning and the local planner still see full-resolution frames.
 
-## Speed up analysis when captions are all you need
+## Run the full analysis profile
 
 ```
-analyze_video(path, profile="editing")
+analyze_video(path, profile="full")
 ```
 
-`profile="editing"` skips audio classification, which the catalog never reads. On long
-sources that is a meaningful saving. `profile="full"` (the default) runs everything.
+The default `profile="editing"` skips audio classification, which the catalog never
+reads. Use `profile="full"` only when another consumer needs that result.
+
+## Account for the local model
+
+The MCP extra omits unrelated generation, dubbing, diarization, source separation, and
+TTS dependencies. It also disables VAD to keep `torchaudio` out of the agent stack;
+Whisper performs its standard language detection instead. Agent editing is still a
+substantial local-AI workflow: it runs Whisper, TransNetV2, face analysis, and
+`qwen3.6:27b` scene captioning. Confirm that the Ollama host can run the model before
+analyzing long footage.
 
 ## Notes
 

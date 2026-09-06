@@ -1,5 +1,18 @@
 # Release Notes
 
+## 0.56.0
+
+- The `[mcp]` extra now installs the MCP server and its focused agent-editing
+  stack. It excludes generation, dubbing, diarization, VAD, source separation,
+  and TTS. Install `[ai,mcp]` when one environment needs all AI capabilities.
+- The MCP server now reports the installed videopython version. Video analysis
+  uses the editing profile by default and disables VAD to avoid the `torchaudio`
+  dependency.
+- A reproducible agent-authored editing demo includes its prompt, JSON plan,
+  replay script, and rendered result.
+- Package keywords, descriptions, installation guidance, hardware notes, and CI
+  dependency checks now describe agent-driven editing directly.
+
 ## 0.55.4
 
 - Audio decoded from sources with more than two channels now downmixes to stereo

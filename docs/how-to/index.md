@@ -30,5 +30,8 @@ There are three ways, and they differ in *who owns the model*:
 | your own agent/harness to drive the tools | [Drive editing from an MCP agent](mcp-server.md) |
 | to author and validate plans from your own LLM integration | [Author edit plans with your own LLM](llm-plans.md) |
 
+To inspect and replay a complete JSON-plan example without a model, see
+[Reproduce the agent-authored edit demo](agent-edit-demo.md).
+
 The design behind all three is described in
 [LLM-first design](../explanation/llm-first-design.md).
