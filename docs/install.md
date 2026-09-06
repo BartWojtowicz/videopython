@@ -5,13 +5,19 @@
 videopython shells out to FFmpeg for every decode and encode, so install it first:
 
 ```bash
-brew install ffmpeg                 # macOS
+brew install ffmpeg-full            # macOS
 sudo apt-get install ffmpeg         # Ubuntu / Debian
 choco install ffmpeg                # Windows (Chocolatey)
 ```
 
-Burned-in subtitles (`add_subtitles`) need an FFmpeg built with libass — the packages
-above all include it.
+Homebrew installs `ffmpeg-full` as keg-only. Add its binaries to `PATH`:
+
+```bash
+export PATH="$(brew --prefix ffmpeg-full)/bin:$PATH"
+```
+
+Burned-in subtitles (`add_subtitles`) need an FFmpeg built with libass. The regular
+Homebrew `ffmpeg` formula does not include libass; `ffmpeg-full` does.
 
 ## 2. The package
 

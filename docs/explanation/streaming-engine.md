@@ -116,4 +116,4 @@ validation.
 `add_subtitles` does not draw text per frame. At plan-compile time the transcription is
 compiled to an ASS document, and FFmpeg's `subtitles=` filter burns it in with libass —
 native speed, and long cues wrap inside the box rather than overflowing the frame. This
-requires an FFmpeg built with libass, which every mainstream package provides.
+requires an FFmpeg built with libass.

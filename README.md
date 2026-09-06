@@ -14,7 +14,7 @@ Full documentation: [videopython.com](https://videopython.com)
 ## Installation
 
 ```bash
-# Install FFmpeg first (macOS: brew install ffmpeg | Debian: apt-get install ffmpeg)
+# Install FFmpeg first (macOS: brew install ffmpeg-full | Debian: apt-get install ffmpeg)
 pip install videopython              # core video/audio editing
 pip install "videopython[ai]"        # + all local AI features
 pip install "videopython[mcp]"       # + MCP and its focused analysis/editing stack
