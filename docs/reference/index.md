@@ -57,6 +57,7 @@ Requires the `[ai]` extra ([Install](../install.md)).
 
 | Page | Contents |
 |---|---|
+| [Compatibility](compatibility.md) | Public contracts and versioning rules |
 | [Verification records](verification.md) | AI model compatibility and measured effects performance |
 
 ## Import patterns

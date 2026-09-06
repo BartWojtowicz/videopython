@@ -303,18 +303,6 @@ class Audio:
         return cls(data, metadata)
 
     @classmethod
-    def from_file(cls, file_path: str | Path) -> Audio:
-        """Deprecated: Use from_path() instead."""
-        import warnings
-
-        warnings.warn(
-            "Audio.from_file() is deprecated, use Audio.from_path() instead",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return cls.from_path(file_path)
-
-    @classmethod
     def silence(
         cls,
         duration: float,

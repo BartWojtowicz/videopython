@@ -1,0 +1,41 @@
+{
+  "segments": [
+    {
+      "source": "input.mp4",
+      "start": 1.0,
+      "end": 5.0,
+      "operations": [
+        {
+          "op": "resize",
+          "width": 1280,
+          "height": 720,
+          "round_to_even": true
+        },
+        {
+          "op": "fade",
+          "window": {
+            "start": 0.0,
+            "stop": 4.0
+          },
+          "mode": "in_out",
+          "duration": 0.5,
+          "curve": "sqrt"
+        }
+      ],
+      "transition_in": null
+    }
+  ],
+  "post_operations": [
+    {
+      "op": "color_adjust",
+      "window": null,
+      "brightness": 0.05,
+      "contrast": 1.0,
+      "saturation": 1.0,
+      "temperature": 0.0
+    }
+  ],
+  "match_to_lowest_fps": true,
+  "match_to_lowest_resolution": true,
+  "music_bed": null
+}

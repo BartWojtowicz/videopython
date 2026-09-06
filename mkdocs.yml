@@ -129,6 +129,7 @@ nav:
       - Operations: reference/operations.md
       - Transforms: reference/transforms.md
       - Effects: reference/effects.md
+      - Compatibility: reference/compatibility.md
       - Verification records: reference/verification.md
       - AI:
           - Generation: reference/ai/generation.md

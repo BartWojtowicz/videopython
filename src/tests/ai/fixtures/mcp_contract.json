@@ -1,0 +1,14 @@
+{
+  "sha256": "77bc60d81f3397ce0189202b8328480e2001440400bd2bc37b8c4c36b8bb8113",
+  "tool_names": [
+    "analyze_video",
+    "build_catalog",
+    "repair_edit",
+    "run_edit",
+    "scene_keyframes",
+    "validate_edit"
+  ],
+  "resource_uris": [
+    "schema://videopython/edit-plan"
+  ]
+}
