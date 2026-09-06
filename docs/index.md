@@ -97,7 +97,7 @@ LLM-first design, and the local-only AI stack.
 ```bash
 pip install videopython              # core editing
 pip install "videopython[ai]"        # + all local AI features (GPU recommended)
-pip install "videopython[ai,mcp]"    # + the MCP server
+pip install "videopython[mcp]"       # + the focused MCP agent-editing stack
 ```
 
 Python `>=3.11, <3.14`. See [Install](install.md) for FFmpeg, Ollama, and hardware notes.

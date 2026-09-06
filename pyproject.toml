@@ -1,7 +1,7 @@
 [project]
 name = "videopython"
-version = "0.55.4"
-description = "Minimal video generation and processing library."
+version = "0.56.0"
+description = "LLM-friendly Python video editing with JSON plans, local AI, and MCP tools."
 authors = [
     { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
     { name = "Bartosz Rudnikowicz", email = "bartoszrudnikowicz840@gmail.com" },
@@ -19,7 +19,13 @@ keywords = [
     "generation",
     "editing",
     "ai",
+    "ai-agents",
+    "ffmpeg",
+    "llm",
+    "mcp",
+    "ollama",
     "shorts",
+    "video-editing",
 ]
 classifiers = [
     "License :: OSI Approved :: Apache Software License",
@@ -111,8 +117,19 @@ ai = [
     # save()/load() through it and it is ABI-coupled to torch.
     "torchcodec>=0.7.0",
 ]
-# MCP server (videopython/mcp/). Pin <2 — v2 is pre-release/breaking.
-mcp = ["mcp>=1.27,<2"]
+# Agent-editing pipeline: analysis + AI editing operations, without generation,
+# dubbing, diarization, source separation, or TTS. Pin MCP <2 — v2 is breaking.
+mcp = [
+    "mcp>=1.27,<2",
+    "openai-whisper>=20240930",
+    "numba>=0.62",
+    "transnetv2-pytorch>=1.0.5",
+    "transformers>=5.2.0",
+    "imagehash>=4.3",
+    "ollama>=0.5.0",
+    "torch>=2.8.0",
+    "torchvision>=0.23.0",
+]
 
 [project.scripts]
 videopython-mcp = "videopython.mcp.server:main"

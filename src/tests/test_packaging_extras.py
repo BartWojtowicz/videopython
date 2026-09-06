@@ -124,6 +124,25 @@ def test_dependency_group_ai_matches_optional_ai(pyproject: Pyproject) -> None:
     )
 
 
+def test_mcp_extra_contains_only_the_agent_editing_stack(pyproject: Pyproject) -> None:
+    extras = _optional_deps(pyproject)
+    mcp = {_req_name(req) for req in _flatten_extra(extras, "mcp")}
+    assert mcp == {
+        "imagehash",
+        "mcp",
+        "numba",
+        "ollama",
+        "openai-whisper",
+        "torch",
+        "torchvision",
+        "transformers",
+        "transnetv2-pytorch",
+    }
+
+    ai = {_req_name(req) for req in _flatten_extra(extras, "ai")}
+    assert mcp - {"mcp"} <= ai
+
+
 def test_no_conflicting_opencv_distribution() -> None:
     """Nothing may pull ``opencv-python`` alongside our ``opencv-python-headless``.
 

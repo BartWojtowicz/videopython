@@ -3,12 +3,11 @@
 [![PyPI](https://img.shields.io/pypi/v/videopython)](https://pypi.org/project/videopython/)
 [![Python](https://img.shields.io/pypi/pyversions/videopython)](https://pypi.org/project/videopython/)
 [![License](https://img.shields.io/github/license/BartWojtowicz/videopython)](LICENSE)
+[![CI](https://github.com/BartWojtowicz/videopython/actions/workflows/ci.yml/badge.svg)](https://github.com/BartWojtowicz/videopython/actions/workflows/ci.yml)
 
 Minimal, LLM-friendly Python library for programmatic video editing, processing, and AI video workflows.
 
 Full documentation: [videopython.com](https://videopython.com)
-
-> **Disclaimer:** This project started as a hand-written hobby project, but most of the code is now produced by LLM agents. Humans still drive direction, approve changes, and own design decisions.
 
 ## Installation
 
@@ -16,7 +15,7 @@ Full documentation: [videopython.com](https://videopython.com)
 # Install FFmpeg first (macOS: brew install ffmpeg | Debian: apt-get install ffmpeg)
 pip install videopython              # core video/audio editing
 pip install "videopython[ai]"        # + ALL local AI features (GPU recommended)
-pip install "videopython[ai,mcp]"    # + MCP server for agent-driven editing
+pip install "videopython[mcp]"       # focused MCP agent-editing stack
 ```
 
 Python `>=3.11, <3.14`. AI features run locally — no cloud API keys required, but model weights are downloaded on first use. LLM-driven editing and scene captioning use a local [Ollama](https://ollama.com) server (`ollama pull qwen3.6:27b`). See the [install guide](https://videopython.com/install/) for FFmpeg, Ollama, and hardware details.
@@ -82,6 +81,9 @@ Putting an LLM in the loop works three ways, differing in who owns the model:
 2. **`AutoEditor`** — a local Ollama vision model is the planner. [Guide](https://videopython.com/how-to/auto-editing/)
 3. **MCP server** — `videopython-mcp` exposes the pipeline as [Model Context Protocol](https://modelcontextprotocol.io) tools, so an agent like Claude drives editing with its own model. [Guide](https://videopython.com/how-to/mcp-server/)
 
+See the [reproducible agent-authored edit demo](https://videopython.com/how-to/agent-edit-demo/)
+for a complete prompt, JSON plan, and rendered result that needs no model or API key.
+
 Mode 1 in brief: every operation is a Pydantic model whose fields *are* the JSON wire format, so `VideoEdit.json_schema()` hands your model a ready-made tool schema — a discriminated union over every LLM-exposed op (pass `strict=True` for provider grammar modes). Plans parse permissively and own their numeric bounds at validation, so a refine loop converges fast:
 
 - **`edit.check(meta)`** — collect *every* structured error in one pass, not just the first
@@ -98,7 +100,7 @@ Why it is built this way: [LLM-first design](https://videopython.com/explanation
 - **`videopython.ai`** *(install with `[ai]`)* — generation (`TextToVideo`, `ImageToVideo`, `TextToImage`, `TextToSpeech`, `TextToMusic`), understanding (`AudioToText`, `AudioClassifier`, `SceneVLM`, `FaceTracker`, `ObjectDetector`, `SemanticSceneDetector`), the `FaceTrackingCrop` transform, the `ObjectDetectionOverlay` effect, and the full-pipeline `VideoAnalyzer`. Scene captioning and dubbing translation run on a local [Ollama](https://ollama.com) model.
 - **`videopython.ai.auto_edit`** — `AutoEditor` + `OllamaVisionLLM`: plan and render an edit from sources + a one-line brief.
 - **`videopython.ai.dubbing`** — `VideoDubber` for voice-cloned revoicing with timing sync.
-- **`videopython.mcp`** *(install with `[ai,mcp]`)* — `videopython-mcp`, an MCP stdio server exposing the auto-edit pipeline so an agent drives editing.
+- **`videopython.mcp`** *(install with `[mcp]`)* — `videopython-mcp`, an MCP stdio server exposing the auto-edit pipeline so an agent drives editing. The extra includes the analysis and AI editing dependencies, but not generation, dubbing, diarization, source separation, or TTS.
 
 ## Documentation
 
@@ -114,3 +116,7 @@ The docs follow [Diátaxis](https://diataxis.fr): four sections, each answering 
 ## Development
 
 See [`DEVELOPMENT.md`](DEVELOPMENT.md) for local setup, testing, docs, and the release workflow.
+
+## Project provenance
+
+This project started as a hand-written hobby project, but most of the code is now produced by LLM agents. Humans drive direction, approve changes, and own design decisions.

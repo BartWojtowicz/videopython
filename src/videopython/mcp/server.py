@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import sys
 from contextlib import redirect_stdout
+from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -30,6 +31,7 @@ if TYPE_CHECKING:
     from videopython.base import PlanError, PlanRepair
 
 mcp = FastMCP("videopython")
+mcp._mcp_server.version = importlib_metadata.version("videopython")
 
 # Session state for one stdio client (one process per client).
 _analyses: dict[str, VideoAnalysis] = {}
@@ -40,12 +42,13 @@ _MAX_INLINE_KEYFRAMES = 12  # cap inlined keyframes in build_catalog; pull the r
 
 
 @mcp.tool()
-def analyze_video(path: str, profile: Literal["full", "editing"] = "full") -> dict[str, Any]:
+def analyze_video(path: str, profile: Literal["full", "editing"] = "editing") -> dict[str, Any]:
     """Analyze a source video (scenes, transcript, captions) and cache it for build_catalog.
 
-    ``profile="editing"`` skips audio classification (faster on long sources); the
-    catalog (captions + transcript + face flag) is unaffected. Returns a short
-    summary; call this once per source, then build_catalog.
+    The default ``profile="editing"`` skips audio classification; the catalog
+    (captions + transcript + face flag) is unaffected. ``profile="full"`` adds
+    audio classification. Returns a short summary; call this once per source,
+    then build_catalog.
     """
     # Heavy analyzer deps (e.g. transnetv2-pytorch) bare-print to stdout, which here is
     # the stdio JSON-RPC channel; send that to stderr so the transport stays clean.
@@ -174,9 +177,11 @@ def edit_plan_schema() -> str:
 
 def _get_analyzer(profile: str = "full") -> VideoAnalyzer:
     if profile not in _analyzers:
-        from videopython.ai.video_analysis import VideoAnalysisConfig, VideoAnalyzer
+        from videopython.ai.video_analysis import AUDIO_TO_TEXT, VideoAnalysisConfig, VideoAnalyzer
 
-        _analyzers[profile] = VideoAnalyzer(config=VideoAnalysisConfig.for_profile(profile))
+        config = VideoAnalysisConfig.for_profile(profile)
+        config.analyzer_params[AUDIO_TO_TEXT] = {"enable_vad": False}
+        _analyzers[profile] = VideoAnalyzer(config=config)
     return _analyzers[profile]
 
 

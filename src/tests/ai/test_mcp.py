@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,7 @@ from mcp.types import ImageContent, TextContent  # noqa: E402
 
 from tests.test_config import SMALL_VIDEO_PATH  # noqa: E402
 from videopython.ai.video_analysis.models import (  # noqa: E402
+    AUDIO_TO_TEXT,
     AnalysisRunInfo,
     SceneAnalysisSample,
     SceneAnalysisSection,
@@ -102,6 +104,15 @@ def _stem() -> str:
     return Path(SMALL_VIDEO_PATH).stem
 
 
+def test_server_reports_videopython_version() -> None:
+    assert server.mcp._mcp_server.version == importlib_metadata.version("videopython")
+
+
+def test_mcp_analyzer_disables_vad() -> None:
+    analyzer = server._get_analyzer("editing")
+    assert analyzer.config.get_params(AUDIO_TO_TEXT) == {"enable_vad": False}
+
+
 def test_edit_plan_schema_resource() -> None:
     schema = json.loads(server.edit_plan_schema())
     assert schema["type"] == "object"
@@ -148,7 +159,7 @@ def test_analyze_video_caches_and_summarizes() -> None:
         def analyze_path(self, path: str) -> VideoAnalysis:
             return analysis
 
-    server._analyzers["full"] = _FakeAnalyzer()  # type: ignore[assignment]
+    server._analyzers["editing"] = _FakeAnalyzer()  # type: ignore[assignment]
     out = server.analyze_video(str(SMALL_VIDEO_PATH))
     assert out["scenes"] == 2
     assert out["source"] == str(SMALL_VIDEO_PATH)
@@ -163,7 +174,7 @@ def test_analyze_video_keeps_stdout_clean(capsys: pytest.CaptureFixture[str]) ->
             print("transnetv2-style stdout noise that would corrupt JSON-RPC")
             return analysis
 
-    server._analyzers["full"] = _NoisyAnalyzer()  # type: ignore[assignment]
+    server._analyzers["editing"] = _NoisyAnalyzer()  # type: ignore[assignment]
     server.analyze_video(str(SMALL_VIDEO_PATH))
     captured = capsys.readouterr()
     assert captured.out == ""  # stdout (the transport channel) stays clean

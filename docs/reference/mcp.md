@@ -1,7 +1,7 @@
 # MCP server
 
 `videopython-mcp` — a stdio [Model Context Protocol](https://modelcontextprotocol.io)
-server exposing the auto-editing pipeline. Install with the `[ai,mcp]` extras; setup and
+server exposing the auto-editing pipeline. Install with the `[mcp]` extra; setup and
 the intended flow are in [Drive editing from an MCP agent](../how-to/mcp-server.md).
 
 The server caches analyses and the catalog, so tool payloads stay small — the agent passes
@@ -9,11 +9,11 @@ scene ids, never analysis blobs.
 
 ## Tools
 
-### `analyze_video(path, profile="full")`
+### `analyze_video(path, profile="editing")`
 
 Analyze a source: scenes, transcript, captions. Cached server-side for the catalog.
-Returns a short summary. `profile="editing"` skips audio classification, which the
-catalog never reads — faster on long sources.
+Returns a short summary. The default `profile="editing"` skips audio classification,
+which the catalog never reads. `profile="full"` runs all analyzers.
 
 ### `build_catalog(sources=None)`
 
