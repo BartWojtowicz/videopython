@@ -1,5 +1,16 @@
 # Release Notes
 
+## 0.57.0
+
+- The compatibility policy now defines the Python, JSON plan, structured error,
+  and MCP contracts that become stable with version 1.0.
+- MCP editing tools now publish closed response schemas. Their error results use
+  one consistent shape, with fields that do not apply set to `null`.
+- Compatibility fixtures now detect changes to saved plans, the core edit-plan
+  schema, structured errors, MCP tools, and the edit-plan resource.
+- The deprecated `Audio.from_file()` alias has been removed. Use
+  `Audio.from_path()`.
+
 ## 0.56.0
 
 - The `[mcp]` extra now installs the MCP server and its focused agent-editing
