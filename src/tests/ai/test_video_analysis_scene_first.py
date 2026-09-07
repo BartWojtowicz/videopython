@@ -156,6 +156,18 @@ def test_scene_analysis_sample_roundtrip_dict() -> None:
     assert restored == sample
 
 
+def test_scene_analysis_rejects_unknown_nested_result_fields() -> None:
+    payload = {
+        "scene_index": 0,
+        "start_second": 0.0,
+        "end_second": 2.0,
+        "scene_description": {"caption": "test", "unexpected": True},
+    }
+
+    with pytest.raises(ValueError, match="Extra inputs are not permitted"):
+        va.SceneAnalysisSample.model_validate(payload)
+
+
 def test_config_defaults_and_rejects_unknown_ids() -> None:
     restored = va.VideoAnalysisConfig.model_validate({})
     assert restored.enabled_analyzers == set(va.ALL_ANALYZER_IDS)

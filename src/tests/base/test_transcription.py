@@ -889,6 +889,18 @@ def test_transcription_initialization_invalid_parameters():
         Transcription()
 
 
+def test_speakers_remains_mutable_and_is_not_serialized():
+    transcription = Transcription(segments=[])
+
+    transcription.speakers.add("SPEAKER_00")
+    assert transcription.speakers == {"SPEAKER_00"}
+
+    transcription.speakers = {"SPEAKER_01"}
+    assert transcription.speakers == {"SPEAKER_01"}
+    assert "speakers" not in transcription.model_dump()
+    assert "speakers" not in Transcription.model_json_schema()["properties"]
+
+
 def test_speaker_stats():
     """Test speaker_stats method calculates speaking time percentages correctly."""
     words = [

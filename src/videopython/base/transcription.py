@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, PrivateAttr
 
 __all__ = ["Transcription", "TranscriptionSegment", "TranscriptionWord"]
 
@@ -70,9 +70,18 @@ class TranscriptionSegment(BaseModel):
 
 
 class Transcription(BaseModel):
-    """A timed transcription grouped into segments."""
+    """A timed transcription grouped into segments.
+
+    Construct it with exactly one of ``segments`` or ``words``. The ``words``
+    form groups adjacent words by speaker.
+
+    Raises:
+        ValueError: If both ``segments`` and ``words`` are set, or neither is set.
+    """
 
     model_config = ConfigDict(extra="forbid")
+
+    _speakers: set[str] = PrivateAttr(default_factory=set)
 
     segments: list[TranscriptionSegment]
     language: str | None = None
@@ -85,11 +94,17 @@ class Transcription(BaseModel):
         language: str | None = None,
         **data: Any,
     ) -> None:
-        if (segments is None) == (words is None):
+        if segments is not None and words is not None:
             raise ValueError("Exactly one of 'segments' or 'words' must be provided")
-        if words is not None:
-            segments = self._words_to_segments(words)
-        super().__init__(segments=segments, language=language, **data)
+        if segments is not None:
+            resolved_segments = segments
+        elif words is not None:
+            resolved_segments = self._words_to_segments(words)
+        else:
+            raise ValueError("Exactly one of 'segments' or 'words' must be provided")
+
+        super().__init__(segments=resolved_segments, language=language, **data)
+        self._speakers = {segment.speaker for segment in self.segments if segment.speaker is not None}
 
     @property
     def words(self) -> list[TranscriptionWord]:
@@ -101,8 +116,12 @@ class Transcription(BaseModel):
 
     @property
     def speakers(self) -> set[str]:
-        """Return the speaker identifiers used by the transcription."""
-        return {segment.speaker for segment in self.segments if segment.speaker is not None}
+        """Return the stored speaker identifiers."""
+        return self._speakers
+
+    @speakers.setter
+    def speakers(self, value: set[str]) -> None:
+        self._speakers = value
 
     @staticmethod
     def _words_to_segments(words: list[TranscriptionWord]) -> list[TranscriptionSegment]:

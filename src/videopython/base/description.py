@@ -16,7 +16,11 @@ __all__ = [
 ]
 
 
-class SceneBoundary(BaseModel):
+class _ResultModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class SceneBoundary(_ResultModel):
     """Timing information for a detected scene.
 
     A lightweight structure representing scene boundaries returned by
@@ -47,7 +51,7 @@ class SceneBoundary(BaseModel):
         return self.end_frame - self.start_frame
 
 
-class BoundingBox(BaseModel):
+class BoundingBox(_ResultModel):
     """A bounding box for detected objects or crop regions in an image.
 
     Coordinates are normalized to ``[0, 1]`` relative to image dimensions.
@@ -74,7 +78,7 @@ class BoundingBox(BaseModel):
         return self.width * self.height
 
 
-class DetectedObject(BaseModel):
+class DetectedObject(_ResultModel):
     """An object detected in a video frame.
 
     Attributes:
@@ -88,7 +92,7 @@ class DetectedObject(BaseModel):
     bounding_box: BoundingBox | None = None
 
 
-class DetectedFace(BaseModel):
+class DetectedFace(_ResultModel):
     """A face detected in a video frame.
 
     Attributes:
@@ -111,7 +115,7 @@ class DetectedFace(BaseModel):
         return self.bounding_box.area if self.bounding_box else None
 
 
-class DetectedText(BaseModel):
+class DetectedText(_ResultModel):
     """Text detected in a video frame.
 
     Attributes:
@@ -125,7 +129,7 @@ class DetectedText(BaseModel):
     bounding_box: BoundingBox | None = None
 
 
-class AudioEvent(BaseModel):
+class AudioEvent(_ResultModel):
     """A detected audio event with timestamp.
 
     Attributes:
@@ -146,7 +150,7 @@ class AudioEvent(BaseModel):
         return self.end - self.start
 
 
-class AudioClassification(BaseModel):
+class AudioClassification(_ResultModel):
     """Complete audio classification results.
 
     Attributes:
@@ -158,7 +162,7 @@ class AudioClassification(BaseModel):
     clip_predictions: dict[str, float] = Field(default_factory=dict)
 
 
-class MotionInfo(BaseModel):
+class MotionInfo(_ResultModel):
     """Motion characteristics between consecutive frames.
 
     Attributes:
@@ -187,7 +191,7 @@ class MotionInfo(BaseModel):
         return self.motion_type != "static"
 
 
-class SceneDescription(BaseModel):
+class SceneDescription(_ResultModel):
     """Structured visual scene description from the SceneVLM.
 
     The v1 schema is intentionally narrow (caption + subjects + shot_type).
@@ -207,7 +211,7 @@ class SceneDescription(BaseModel):
     shot_type: str | None = None
 
 
-class FaceTrack(BaseModel):
+class FaceTrack(_ResultModel):
     """A face tracked across consecutive frames within a single shot.
 
     Tracks are produced by IoU association — no embedding re-id, so a
