@@ -38,7 +38,7 @@ from ._models import (
 if TYPE_CHECKING:
     from videopython.ai.auto_edit import CatalogBundle
     from videopython.ai.video_analysis import VideoAnalysis, VideoAnalyzer
-    from videopython.base import PlanError, PlanRepair
+    from videopython.editing import PlanError, PlanRepair
 
 mcp = FastMCP("videopython")
 mcp._mcp_server.version = importlib_metadata.version("videopython")

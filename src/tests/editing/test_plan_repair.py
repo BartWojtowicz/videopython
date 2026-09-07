@@ -16,9 +16,8 @@ from typing import Any
 import pytest
 
 from tests.test_config import SMALL_VIDEO_METADATA
-from videopython.base.exceptions import PlanErrorCode, PlanValidationError
 from videopython.base.video import VideoMetadata
-from videopython.editing import Operation, VideoEdit
+from videopython.editing import Operation, PlanErrorCode, PlanValidationError, VideoEdit
 
 META = VideoMetadata(height=720, width=1280, fps=24, frame_count=1200, total_seconds=50.0)
 

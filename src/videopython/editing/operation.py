@@ -69,9 +69,8 @@ class TimeRange(BaseModel):
     *shape*; the numeric bounds (``>= 0``, ``stop >= start``, in-duration) are
     owned by :meth:`VideoEdit.validate` / :meth:`VideoEdit.check`, which report
     them as structured, collectable, repairable :class:`PlanError`s instead of
-    aborting at ``from_dict``. The window is still clamped to
-    ``min(stop, total_seconds)`` at run time, so a plan run without validation
-    degrades rather than crashes.
+    aborting at ``from_dict``. The runner validates these bounds before decode
+    and clamps endpoints past the running duration.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)

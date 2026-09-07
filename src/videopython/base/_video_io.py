@@ -20,15 +20,15 @@ from typing import Literal, get_args
 
 import numpy as np
 
-from videopython.audio import Audio
-from videopython.base import _ffmpeg
-from videopython.base._dimensions import require_even
-from videopython.base.exceptions import (
+from videopython import _ffmpeg
+from videopython._exceptions import (
     AudioLoadError,
     FFmpegRunError,
     VideoLoadError,
     VideoMetadataError,
 )
+from videopython.audio import Audio
+from videopython.base._dimensions import require_even
 
 ALLOWED_VIDEO_FORMATS = Literal["mp4", "avi", "mov", "mkv", "webm"]
 ALLOWED_VIDEO_PRESETS = Literal[
@@ -140,11 +140,17 @@ def decode_video(
         frames_read = 0
 
         with _ffmpeg.popen_decode(ffmpeg_cmd, bufsize=10**8) as process:
-            while frames_read < estimated_frames:
+            while True:
                 remaining_frames = estimated_frames - frames_read
-                batch_size = min(read_batch_size, remaining_frames)
+                if remaining_frames < read_batch_size:
+                    new_size = max(estimated_frames * 2, frames_read + read_batch_size)
+                    new_frames = np.empty((new_size, out_height, out_width, 3), dtype=np.uint8)
+                    new_frames[:frames_read] = frames[:frames_read]
+                    frames = new_frames
+                    estimated_frames = new_size
+                batch_size = read_batch_size
 
-                batch_data = process.stdout.read(frame_size * batch_size)  # type: ignore[union-attr]
+                batch_data = process.stdout.read(frame_size * batch_size)
                 if not batch_data:
                     break
 
@@ -156,19 +162,10 @@ def decode_video(
                 complete_data = batch_frames[: complete_frames * out_height * out_width * 3]
                 batch_frames_array = complete_data.reshape(complete_frames, out_height, out_width, 3)
 
-                if frames_read + complete_frames > estimated_frames:
-                    new_size = max(estimated_frames * 2, frames_read + complete_frames + 100)
-                    new_frames = np.empty((new_size, out_height, out_width, 3), dtype=np.uint8)
-                    new_frames[:frames_read] = frames[:frames_read]
-                    frames = new_frames
-                    estimated_frames = new_size
-
                 end_idx = frames_read + complete_frames
                 frames[frames_read:end_idx] = batch_frames_array
                 frames_read += complete_frames
-
-        if process.returncode not in (0, None) and frames_read == 0:
-            raise ValueError(f"FFmpeg failed to process video (return code: {process.returncode})")
+            process.check()
 
         if frames_read == 0:
             raise ValueError("No frames were read from the video")

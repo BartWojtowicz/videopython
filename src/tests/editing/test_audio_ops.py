@@ -24,10 +24,9 @@ from pydantic import ValidationError
 from tests.test_config import SMALL_VIDEO_METADATA, SMALL_VIDEO_PATH
 from videopython.audio import Audio
 from videopython.audio.audio import AudioMetadata
-from videopython.base.exceptions import PlanErrorCode, PlanValidationError
 from videopython.base.transcription import Transcription, TranscriptionWord
 from videopython.base.video import Video
-from videopython.editing import VideoEdit
+from videopython.editing import PlanErrorCode, PlanValidationError, VideoEdit
 from videopython.editing.audio_ops import MusicBed, build_music_bed_filter_complex, duck_volume_expression
 from videopython.editing.transforms import SilenceRemoval, speech_windows
 

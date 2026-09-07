@@ -23,16 +23,16 @@ import dataclasses
 import json
 import tempfile
 from pathlib import Path
-from typing import Annotated, Any, Literal, Protocol, get_args, runtime_checkable
+from typing import Annotated, Any, Literal, Protocol, get_args, overload, runtime_checkable
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SerializeAsAny
 
-from videopython.base import _ffmpeg
-from videopython.base.exceptions import PlanError, PlanErrorCode, PlanRepair, PlanValidationError
+from videopython import _ffmpeg
 from videopython.base.video import ALLOWED_VIDEO_FORMATS, ALLOWED_VIDEO_PRESETS, Video, VideoMetadata
 from videopython.editing._schema import array_field_schema, field_schema, optional_model_field_schema
 from videopython.editing.audio_ops import MusicBed, build_music_bed_filter_complex
 from videopython.editing.effects import Effect
+from videopython.editing.errors import PlanError, PlanErrorCode, PlanRepair, PlanValidationError
 from videopython.editing.operation import FilterCtx, Operation, _to_strict_schema
 from videopython.editing.streaming import (
     TRANSITION_TYPES,
@@ -591,22 +591,27 @@ def _relocate(errors: list[PlanError], location: str) -> None:
         err.location = location if err.location is None else f"{location}.{err.location}"
 
 
-def _clamp_effect_window(op: Operation, duration: float) -> Operation:
-    """Return ``op`` with its ``Effect.window.stop`` clamped to ``duration``.
+@overload
+def _resolve_effect_window(op: Effect, duration: float) -> tuple[Effect, bool]: ...
 
-    Mirrors the run-time ``min(stop, total_seconds)`` window clamp the streaming
-    engine applies, so a stop overrunning a duration-shrunk chain validates
-    instead of raising.
-    This is the narrow ``clamp_windows`` repair: ``window.start`` and negative
-    bounds are deliberately left untouched (still reported by ``_window_errors``).
-    :meth:`VideoEdit.repair` uses the broader :func:`_repair_effect_window`.
-    """
-    if not isinstance(op, Effect) or op.window is None or op.window.stop is None:
-        return op
-    if op.window.stop <= duration:
-        return op
-    clamped_window = op.window.model_copy(update={"stop": duration})
-    return op.model_copy(update={"window": clamped_window})
+
+@overload
+def _resolve_effect_window(op: Operation, duration: float) -> tuple[Operation, bool]: ...
+
+
+def _resolve_effect_window(op: Operation, duration: float) -> tuple[Operation, bool]:
+    """Clamp overrun endpoints and report whether an effect has an active range."""
+    if not isinstance(op, Effect) or op.window is None:
+        return op, True
+    start, stop = op.window.start, op.window.stop
+    new_start = duration if start is not None and start > duration + DURATION_EPS else start
+    new_stop = duration if stop is not None and stop > duration + DURATION_EPS else stop
+    if (new_start, new_stop) != (start, stop):
+        window = op.window.model_copy(update={"start": new_start, "stop": new_stop})
+        op = op.model_copy(update={"window": window})
+    resolved_start = 0.0 if new_start is None else new_start
+    resolved_stop = duration if new_stop is None else new_stop
+    return op, resolved_start < resolved_stop
 
 
 def _repair_effect_window(op: Operation, duration: float, location: str) -> tuple[Operation, list[PlanRepair]]:
@@ -977,13 +982,9 @@ class VideoEdit(BaseModel):
         Shadows Pydantic v1's deprecated ``BaseModel.validate`` classmethod;
         use ``VideoEdit.from_dict``/``model_validate`` for plan parsing.
 
-        When ``clamp_windows`` is True, an :class:`Effect`'s ``window.stop`` that
-        overruns the running predicted duration (e.g. after a duration-shrinking
-        op like ``speed_change``/``cut``) is clamped to that duration -- the same
-        ``min(stop, total_seconds)`` value the streaming engine applies at run
-        time -- instead of raising. Only ``window.stop`` is clamped: a ``window.start`` past the
-        duration still hard-raises (a residual divergence from ``run_to_file()``, which
-        degrades it to a zero-width no-op).
+        When ``clamp_windows`` is True, effect-window endpoints past the running
+        predicted duration are clamped to that duration. A window that starts at
+        or after the duration is an empty no-op, matching ``run_to_file()``.
         """
         source_metas = [VideoMetadata.from_path(str(seg.source)) for seg in self.segments]
         return self._validate(source_metas, context, clamp_windows=clamp_windows)
@@ -1024,7 +1025,7 @@ class VideoEdit(BaseModel):
         :attr:`PlanValidationError.errors` carries -- every failure is structured
         (no bare ``ValueError`` escapes the walk), so a consumer branches on
         ``code`` rather than substring-matching prose. ``clamp_windows`` matches
-        :meth:`validate`: a clampable ``window.stop`` overrun is not reported.
+        :meth:`validate`: clampable window overruns are not reported.
 
         Streaming is the only engine, so ops that cannot stream at their
         plan position are real plan errors: one ``STREAMING_UNSUPPORTED`` per
@@ -1488,10 +1489,13 @@ class VideoEdit(BaseModel):
             failed = False
             for op_index, op in enumerate(seg.operations):
                 location = f"segments[{i}].operations[{op_index}]"
+                active = True
                 if clamp_windows:
-                    op = _clamp_effect_window(op, seg_meta.total_seconds)
+                    op, active = _resolve_effect_window(op, seg_meta.total_seconds)
                 for message, err in _window_errors(op, seg_meta.total_seconds, location):
                     emit(message, err)
+                if not active:
+                    continue
                 try:
                     seg_meta = _predict_with_context(op, seg_meta, seg_context)
                 except PlanValidationError as e:
@@ -1522,8 +1526,13 @@ class VideoEdit(BaseModel):
         assembled = _assemble_timeline(outputs, transitions)
         for j, op in enumerate(self.post_operations):
             location = f"post_operations[{j}]"
+            active = True
+            if clamp_windows:
+                op, active = _resolve_effect_window(op, assembled.total_seconds)
             for message, err in _window_errors(op, assembled.total_seconds, location):
                 emit(message, err)
+            if not active:
+                continue
             try:
                 assembled = _predict_with_context(op, assembled, context)
             except PlanValidationError as e:
@@ -2064,6 +2073,9 @@ class VideoEdit(BaseModel):
         try:
             for op in segment.operations:
                 if isinstance(op, Effect):
+                    op, active = _resolve_effect_window(op, running.total_seconds)
+                    if not active:
+                        continue
                     if not op.streams():
                         abandon()
                         return None
@@ -2270,6 +2282,6 @@ def _effect_frame_range(op: Effect, fps: float, total_frames: int) -> tuple[int,
         return 0, total_frames
     start_s = op.window.start
     stop_s = op.window.stop
-    start_f = round(start_s * fps) if start_s is not None else 0
-    end_f = round(stop_s * fps) if stop_s is not None else total_frames
+    start_f = min(round(start_s * fps), total_frames) if start_s is not None else 0
+    end_f = min(round(stop_s * fps), total_frames) if stop_s is not None else total_frames
     return start_f, end_f

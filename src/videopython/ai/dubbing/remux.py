@@ -10,9 +10,9 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from videopython import _ffmpeg
+from videopython._exceptions import FFmpegRunError
 from videopython.ai.errors import AiError
-from videopython.base import _ffmpeg
-from videopython.base.exceptions import FFmpegRunError
 
 if TYPE_CHECKING:
     from videopython.audio import Audio

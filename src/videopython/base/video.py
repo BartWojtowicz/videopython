@@ -10,10 +10,11 @@ from typing import Any, Generator
 
 import numpy as np
 
+from videopython import _ffmpeg
+from videopython._exceptions import FFmpegProbeError, FFmpegRunError, VideoLoadError, VideoMetadataError
 from videopython.audio import Audio
-from videopython.base import _ffmpeg, _video_io
+from videopython.base import _video_io
 from videopython.base._video_io import ALLOWED_VIDEO_FORMATS, ALLOWED_VIDEO_PRESETS
-from videopython.base.exceptions import FFmpegProbeError, VideoMetadataError
 
 __all__ = [
     "Video",
@@ -298,7 +299,7 @@ class FrameIterator:
 
     def _build_ffmpeg_command(self) -> list[str]:
         """Build ffmpeg command for frame streaming."""
-        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
+        cmd = ["ffmpeg"]
 
         if self.start_second > 0:
             cmd.extend(["-ss", str(self.start_second)])
@@ -344,7 +345,7 @@ class FrameIterator:
         with _ffmpeg.popen_decode(cmd, bufsize=self._frame_size * 2) as proc:
             frame_idx = int(self.start_second * self.output_fps)
             while True:
-                raw_frame = proc.stdout.read(self._frame_size)  # type: ignore[union-attr]
+                raw_frame = proc.stdout.read(self._frame_size)
                 if len(raw_frame) != self._frame_size:
                     break
                 frame = (
@@ -352,6 +353,10 @@ class FrameIterator:
                 )
                 yield frame_idx, frame
                 frame_idx += 1
+            try:
+                proc.check()
+            except FFmpegRunError as e:
+                raise VideoLoadError(f"FFmpeg failed: {e}") from e
 
     def __enter__(self) -> "FrameIterator":
         return self
@@ -419,6 +424,10 @@ def extract_frames_at_indices(
 
     with _ffmpeg.popen_decode(cmd, bufsize=10**8) as process:
         raw_data, _ = process.communicate()
+        try:
+            process.check()
+        except FFmpegRunError as e:
+            raise VideoLoadError(f"FFmpeg failed: {e}") from e
 
     actual_frames = len(raw_data) // frame_size
     if actual_frames == 0:

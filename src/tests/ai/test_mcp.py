@@ -27,9 +27,9 @@ from videopython.ai.video_analysis.models import (  # noqa: E402
     VideoAnalysisConfig,
     VideoAnalysisSource,
 )
-from videopython.base import PlanError, PlanErrorCode, PlanRepair  # noqa: E402
 from videopython.base.description import SceneDescription  # noqa: E402
 from videopython.base.video import VideoMetadata  # noqa: E402
+from videopython.editing import PlanError, PlanErrorCode, PlanRepair  # noqa: E402
 from videopython.mcp import server  # noqa: E402
 
 

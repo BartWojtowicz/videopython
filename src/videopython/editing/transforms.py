@@ -15,7 +15,7 @@ from pydantic import Field, model_validator
 
 from videopython.audio.audio import atempo_chain
 from videopython.base._dimensions import floor_to_even, round_to_even
-from videopython.base.exceptions import PlanError, PlanErrorCode, PlanValidationError
+from videopython.editing.errors import PlanError, PlanErrorCode, PlanValidationError
 from videopython.editing.operation import BoundedTimeField, FilterCtx, OpCategory, Operation
 
 if TYPE_CHECKING:

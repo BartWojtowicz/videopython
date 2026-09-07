@@ -4,12 +4,39 @@ import numpy as np
 import pytest
 
 from tests.test_config import SMALL_VIDEO_PATH
+from videopython import _ffmpeg
+from videopython.base import Video, VideoLoadError
 from videopython.base.video import (
     FrameIterator,
     VideoMetadata,
     extract_frames_at_indices,
     extract_frames_at_times,
 )
+
+
+@pytest.fixture
+def truncated_video(tmp_path):
+    complete = tmp_path / "complete.mp4"
+    _ffmpeg.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-v",
+            "error",
+            "-i",
+            SMALL_VIDEO_PATH,
+            "-c",
+            "copy",
+            "-movflags",
+            "+faststart",
+            str(complete),
+        ]
+    )
+    damaged = tmp_path / "truncated.mp4"
+    data = complete.read_bytes()
+    damaged.write_bytes(data[: int(len(data) * 0.9)])
+    VideoMetadata.from_path(damaged)
+    return damaged
 
 
 class TestFrameIterator:
@@ -35,7 +62,6 @@ class TestFrameIterator:
                 frame_count += 1
                 assert frame.shape == (metadata.height, metadata.width, 3)
 
-        # Should iterate through all frames (allow some tolerance for codec differences)
         assert abs(frame_count - metadata.frame_count) <= 2
 
     def test_frame_indices_sequential(self):
@@ -91,6 +117,46 @@ class TestFrameIterator:
             _, frame = next(iter(frames))
             # Should be able to modify without error
             frame[0, 0, 0] = 255
+
+    def test_corrupt_source_raises_instead_of_returning_partial_frames(self, truncated_video):
+        with pytest.raises(VideoLoadError, match="FFmpeg failed") as exc_info:
+            list(FrameIterator(truncated_video))
+        assert "ffmpeg version" not in str(exc_info.value)
+
+        with pytest.raises(VideoLoadError, match="FFmpeg failed"):
+            Video.from_path(str(truncated_video))
+
+    def test_audio_longer_than_video_does_not_fail_decode(self, tmp_path):
+        source_meta = VideoMetadata.from_path(SMALL_VIDEO_PATH)
+        mixed_duration = source_meta.total_seconds + 2
+        path = tmp_path / "longer-audio.mkv"
+        _ffmpeg.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-v",
+                "error",
+                "-i",
+                SMALL_VIDEO_PATH,
+                "-f",
+                "lavfi",
+                "-i",
+                f"sine=frequency=1000:duration={mixed_duration}",
+                "-map",
+                "0:v:0",
+                "-map",
+                "1:a:0",
+                "-c:v",
+                "copy",
+                "-c:a",
+                "pcm_s16le",
+                str(path),
+            ]
+        )
+
+        assert VideoMetadata.from_path(path).frame_count > source_meta.frame_count
+        assert len(Video.from_path(str(path)).frames) == source_meta.frame_count
+        assert len(list(FrameIterator(path))) == source_meta.frame_count
 
 
 class TestExtractFramesAtIndices:

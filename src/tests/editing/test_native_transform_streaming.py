@@ -6,10 +6,9 @@ import numpy as np
 import pytest
 
 from tests.test_config import SMALL_VIDEO_PATH, TEST_AUDIO_PATH
-from videopython.base.exceptions import PlanValidationError
 from videopython.base.transcription import Transcription, TranscriptionSegment, TranscriptionWord
 from videopython.base.video import Video
-from videopython.editing import StreamingClass, VideoEdit
+from videopython.editing import PlanValidationError, StreamingClass, VideoEdit
 
 FPS = 24
 SEGMENT = {"start": 2.0, "end": 8.0}  # 6 s cut -> 144 frames at 24 fps

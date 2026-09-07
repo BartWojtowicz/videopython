@@ -22,6 +22,7 @@ from .effects import (
     VolumeAdjust,
     Zoom,
 )
+from .errors import PlanError, PlanErrorCode, PlanRepair, PlanValidationError
 from .operation import FilterCtx, OpCategory, Operation, TimeRange
 from .streaming import OpStreamability, StreamabilityReport, StreamingClass
 from .transcription_overlay import SubtitleRegion, SubtitleStyle, TranscriptionOverlay
@@ -89,4 +90,9 @@ __all__ = [
     "StreamabilityReport",
     "OpStreamability",
     "StreamingClass",
+    # Plan validation
+    "PlanError",
+    "PlanErrorCode",
+    "PlanRepair",
+    "PlanValidationError",
 ]

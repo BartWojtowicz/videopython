@@ -1,6 +1,6 @@
 [project]
 name = "videopython"
-version = "0.59.0"
+version = "0.60.0"
 description = "LLM-friendly Python video editing with JSON plans, local AI, and MCP tools."
 authors = [
     { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },

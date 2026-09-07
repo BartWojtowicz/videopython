@@ -11,11 +11,17 @@ from __future__ import annotations
 
 import json
 import subprocess
+import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator, Sequence
+from typing import Any, BinaryIO, Iterator, Sequence, cast
 
-from videopython.base.exceptions import FFmpegProbeError, FFmpegRunError
+from videopython._exceptions import FFmpegProbeError, FFmpegRunError
+
+
+def _strict_decode_command(cmd: Sequence[str]) -> list[str]:
+    argv = list(cmd)
+    return [argv[0], "-hide_banner", "-loglevel", "error", "-xerror", *argv[1:]]
 
 
 def run(cmd: Sequence[str], *, stdin: bytes | None = None) -> bytes:
@@ -86,13 +92,37 @@ def _terminate(proc: subprocess.Popen[bytes], *, timeout: float = 5) -> None:
             proc.wait()
 
 
+class _DecodeProcess:
+    """FFmpeg decode process with diagnostics stored outside the pipe."""
+
+    def __init__(self, process: subprocess.Popen[bytes], errors: BinaryIO):
+        self._process = process
+        self._errors = errors
+
+    @property
+    def stdout(self) -> BinaryIO:
+        return cast(BinaryIO, self._process.stdout)
+
+    def communicate(self) -> tuple[bytes, None]:
+        stdout, _ = self._process.communicate()
+        return stdout, None
+
+    def check(self) -> None:
+        if self._process.wait() == 0:
+            return
+        self._errors.seek(0)
+        detail = self._errors.read().decode(errors="replace")
+        raise FFmpegRunError(f"ffmpeg failed (exit {self._process.returncode}): {detail}")
+
+
 @contextmanager
-def popen_decode(cmd: Sequence[str], *, bufsize: int = -1) -> Iterator[subprocess.Popen[bytes]]:
+def popen_decode(cmd: Sequence[str], *, bufsize: int = -1) -> Iterator[_DecodeProcess]:
     """Context manager wrapping an ffmpeg decode process.
 
-    Yields a Popen with ``stdout=PIPE`` and ``stderr=DEVNULL``. Callers
-    read raw bytes from ``proc.stdout``. On exit, the process is
-    terminated (with kill fallback) and stdout is closed.
+    Yields a :class:`_DecodeProcess` with ``stdout=PIPE`` and diagnostics
+    stored in a temporary file. A caller that drains stdout must call
+    :meth:`_DecodeProcess.check`; a caller that stops early can leave the
+    context and the process is terminated without a decode error.
 
     Args:
         cmd: Full ffmpeg argv. The output target is typically ``pipe:1``.
@@ -100,18 +130,19 @@ def popen_decode(cmd: Sequence[str], *, bufsize: int = -1) -> Iterator[subproces
             (e.g. ``10**8``) for batched reads or a frame-sized value
             for streaming reads.
     """
-    proc = subprocess.Popen(
-        list(cmd),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        bufsize=bufsize,
-    )
-    try:
-        yield proc
-    finally:
-        _terminate(proc)
-        if proc.stdout is not None and not proc.stdout.closed:
-            proc.stdout.close()
+    with tempfile.TemporaryFile() as errors:
+        proc = subprocess.Popen(
+            _strict_decode_command(cmd),
+            stdout=subprocess.PIPE,
+            stderr=errors,
+            bufsize=bufsize,
+        )
+        try:
+            yield _DecodeProcess(proc, errors)
+        finally:
+            _terminate(proc)
+            if proc.stdout is not None and not proc.stdout.closed:
+                proc.stdout.close()
 
 
 @contextmanager

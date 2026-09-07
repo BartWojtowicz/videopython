@@ -1,13 +1,13 @@
 # Architecture
 
-videopython is four subpackages in a strict dependency order. The order is the point: it
-is what lets a video-editing install stay free of PyTorch.
+videopython has four subpackages in a strict dependency order. The order is the point:
+it is what lets a video-editing install stay free of PyTorch.
 
 ```
-videopython.base       Video, VideoMetadata, FrameIterator, Transcription,
-                       shared result types.            No AI imports.
+videopython.audio      Audio container and analysis.   Uses shared package internals.
         ↑
-videopython.audio      Audio container and analysis.   Depends on base.
+videopython.base       Video, VideoMetadata, FrameIterator, Transcription,
+                       shared result types.            Depends on audio.
         ↑
 videopython.editing    Operation/Effect foundation,    Depends on base, audio.
                        the VideoEdit plan runner.
@@ -28,7 +28,8 @@ Only `videopython.ai` may import ML dependencies. If that invariant erodes — a
 multi-gigabyte CUDA stack behind it for users who only wanted to crop a video.
 
 The invariant is not left to code review: `src/tests/test_import_isolation.py` fails the
-build if `base`, `audio` or `editing` gain an AI import.
+build if a lower package imports a higher package or if `base`, `audio`, or `editing`
+gain an AI import.
 
 ## Why `import videopython` is fast even with `[ai]` installed
 

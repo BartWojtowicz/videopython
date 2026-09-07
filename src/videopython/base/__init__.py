@@ -1,3 +1,13 @@
+from videopython._exceptions import (
+    AudioError,
+    AudioLoadError,
+    TransformError,
+    VideoError,
+    VideoLoadError,
+    VideoMetadataError,
+    VideoPythonError,
+)
+
 from .description import (
     AudioClassification,
     AudioEvent,
@@ -11,19 +21,6 @@ from .description import (
     SceneDescription,
 )
 from .draw_detections import DetectionStyle, class_color, draw_detections
-from .exceptions import (
-    AudioError,
-    AudioLoadError,
-    PlanError,
-    PlanErrorCode,
-    PlanRepair,
-    PlanValidationError,
-    TransformError,
-    VideoError,
-    VideoLoadError,
-    VideoMetadataError,
-    VideoPythonError,
-)
 from .transcription import Transcription, TranscriptionSegment, TranscriptionWord
 from .video import FrameIterator, Video, VideoMetadata
 
@@ -40,11 +37,6 @@ __all__ = [
     "AudioError",
     "AudioLoadError",
     "TransformError",
-    # Structured plan validation / repair
-    "PlanError",
-    "PlanErrorCode",
-    "PlanValidationError",
-    "PlanRepair",
     # Detection overlay renderer (AI-free)
     "draw_detections",
     "DetectionStyle",

@@ -1,5 +1,20 @@
 # Release Notes
 
+## 0.60.0
+
+- Plan validation types now belong to `videopython.editing`; import `PlanError`,
+  `PlanErrorCode`, `PlanRepair`, and `PlanValidationError` from there. Media errors
+  remain available from `videopython.base`. The internal `_ffmpeg` and exception
+  modules moved out of `videopython.base`; application code must use the public exports.
+- Rendering now resolves effect windows against the duration at their plan position.
+  Overrun endpoints are clamped consistently for segment and post operations, and an
+  effect that starts after the running duration is a no-op.
+- Complete video and audio decodes now fail when FFmpeg reports corrupt input. Decode
+  errors omit the FFmpeg build banner and retain the useful diagnostic.
+- `FaceTrackingCrop` now requires positive `target_aspect` components. The unused
+  `padding`, `framing_rule="dynamic"`, and `fallback="full_frame"` inputs were removed;
+  saved plans that contain them must be updated.
+
 ## 0.59.0
 
 - Video analysis now records a structured outcome for every analyzer. MCP

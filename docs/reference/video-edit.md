@@ -129,13 +129,13 @@ What each stage owns — and why numeric bounds parse cleanly and fail at valida
 
 `PlanValidationError` subclasses `ValueError` and carries structured `.errors`.
 
-::: videopython.base.PlanError
+::: videopython.editing.PlanError
 
-::: videopython.base.PlanErrorCode
+::: videopython.editing.PlanErrorCode
 
-::: videopython.base.PlanRepair
+::: videopython.editing.PlanRepair
 
-::: videopython.base.PlanValidationError
+::: videopython.editing.PlanValidationError
 
 ## Matching sources
 

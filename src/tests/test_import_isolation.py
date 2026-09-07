@@ -1,4 +1,4 @@
-"""Test that non-AI subpackages don't pull in videopython.ai.
+"""Test package dependency direction and optional AI isolation.
 
 videopython.ai brings in heavy ML dependencies (torch, diffusers, whisper,
 demucs, ...). Anything outside it must stay importable on a vanilla
@@ -14,6 +14,12 @@ import pytest
 from tests.conftest import _toplevel_imports
 
 NON_AI_SUBPACKAGES = ["videopython.base", "videopython.audio", "videopython.editing"]
+
+FORBIDDEN_IMPORTS = {
+    "videopython.audio": ("videopython.base", "videopython.editing", "videopython.ai", "videopython.mcp"),
+    "videopython.base": ("videopython.editing", "videopython.ai", "videopython.mcp"),
+    "videopython.editing": ("videopython.ai", "videopython.mcp"),
+}
 
 
 def _package_files(package: str) -> list[Path]:
@@ -38,6 +44,26 @@ def test_no_toplevel_ai_imports(package: str) -> None:
         for file_path, ai_imports in violations:
             relative_path = file_path.relative_to(file_path.parent.parent.parent.parent)
             msg.append(f"  {relative_path}: {ai_imports}")
+        raise AssertionError("\n".join(msg))
+
+
+@pytest.mark.parametrize("package, forbidden", FORBIDDEN_IMPORTS.items())
+def test_dependency_direction(package: str, forbidden: tuple[str, ...]) -> None:
+    violations: list[tuple[Path, list[str]]] = []
+    for file_path in _package_files(package):
+        imports = [
+            imp
+            for imp in _toplevel_imports(file_path)
+            if any(imp == prefix or imp.startswith(f"{prefix}.") for prefix in forbidden)
+        ]
+        if imports:
+            violations.append((file_path, imports))
+
+    if violations:
+        msg = [f"{package} imports a higher package layer:"]
+        for file_path, imports in violations:
+            relative_path = file_path.relative_to(file_path.parent.parent.parent.parent)
+            msg.append(f"  {relative_path}: {imports}")
         raise AssertionError("\n".join(msg))
 
 

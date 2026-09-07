@@ -25,12 +25,12 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from pydantic import Field, PrivateAttr, model_validator
 
-from videopython.base._ffmpeg import escape_filter_value
+from videopython._ffmpeg import escape_filter_value
 from videopython.base.description import BoundingBox
-from videopython.base.exceptions import PlanError, PlanErrorCode, PlanValidationError
 from videopython.base.fonts import load_font
 from videopython.editing._easing import ease, ease_out
 from videopython.editing.audio_ops import volume_envelope
+from videopython.editing.errors import PlanError, PlanErrorCode, PlanValidationError
 from videopython.editing.operation import Effect, FilterCtx
 
 if TYPE_CHECKING:
