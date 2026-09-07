@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -26,23 +27,58 @@ def test_audio_to_text_disables_mps_auto_selection(monkeypatch: pytest.MonkeyPat
     assert transcriber.device == "cpu"
 
 
+def test_audio_to_text_loads_pinned_faster_whisper_float32(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+    def whisper_model(*args: Any, **kwargs: Any) -> object:
+        calls.append((args, kwargs))
+        return object()
+
+    monkeypatch.setattr(audio_mod, "select_device", lambda _r, mps_allowed=False: "cpu")
+    monkeypatch.setattr(
+        "videopython.ai._optional.require",
+        lambda name, *, feature: SimpleNamespace(WhisperModel=whisper_model),
+    )
+    transcriber = audio_mod.AudioToText(model_name="small", device=None)
+
+    transcriber._init_local()
+
+    assert calls == [
+        (
+            ("Systran/faster-whisper-small",),
+            {
+                "revision": "536b0662742c02347bc0e980a01041f333bce120",
+                "device": "cpu",
+                "compute_type": "float32",
+            },
+        )
+    ]
+
+
+def test_audio_to_text_rejects_unknown_whisper_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(audio_mod, "select_device", lambda _r, mps_allowed=False: "cpu")
+
+    with pytest.raises(ValueError, match="Unsupported Whisper model"):
+        audio_mod.AudioToText(model_name="large-v3", device=None)  # type: ignore[arg-type]
+
+
 class _FakeWhisperModel:
     """Stub Whisper model that records transcribe() calls without loading weights."""
 
-    def __init__(self, n_mels: int = 80) -> None:
-        self.dims = type("Dims", (), {"n_mels": n_mels})()
-        self.device = "cpu"
+    def __init__(self) -> None:
+        self.hf_tokenizer = SimpleNamespace(
+            encode=lambda text, add_special_tokens=True: SimpleNamespace(ids=text.replace(",", " ,").split())
+        )
         self.transcribe_calls: list[dict[str, Any]] = []
         self.detect_language_calls: list[Any] = []
 
-    def transcribe(self, **kwargs: Any) -> dict[str, Any]:
+    def transcribe(self, **kwargs: Any):
         self.transcribe_calls.append(kwargs)
-        return {"segments": [], "language": kwargs.get("language", "en")}
+        return iter([]), SimpleNamespace(language=kwargs.get("language") or "en")
 
-    def detect_language(self, mel: Any) -> tuple[Any, dict[str, float]]:
-        self.detect_language_calls.append(mel)
-        # Highest-prob language wins; tests can override via instance attribute.
-        return (None, {"ja": 0.9, "en": 0.1})
+    def detect_language(self, *, audio: Any):
+        self.detect_language_calls.append(audio)
+        return "ja", 0.9, [("ja", 0.9), ("en", 0.1)]
 
 
 @pytest.fixture
@@ -175,7 +211,7 @@ class TestAntiHallucinationKwargs:
     EXPECTED_DEFAULTS = {
         "condition_on_previous_text": False,
         "no_speech_threshold": 0.6,
-        "logprob_threshold": -1.0,
+        "log_prob_threshold": -1.0,
     }
 
     def test_defaults_forwarded_plain_branch(
@@ -235,7 +271,7 @@ class TestAntiHallucinationKwargs:
         call = fake_whisper.transcribe_calls[0]
         assert call["condition_on_previous_text"] is True
         assert call["no_speech_threshold"] == 0.85
-        assert call["logprob_threshold"] == -0.5
+        assert call["log_prob_threshold"] == -0.5
 
     def test_logprob_threshold_none_is_forwarded(
         self, fake_whisper: _FakeWhisperModel, monkeypatch: pytest.MonkeyPatch
@@ -249,8 +285,8 @@ class TestAntiHallucinationKwargs:
         transcriber.transcribe(_short_audio())
 
         call = fake_whisper.transcribe_calls[0]
-        assert "logprob_threshold" in call
-        assert call["logprob_threshold"] is None
+        assert "log_prob_threshold" in call
+        assert call["log_prob_threshold"] is None
 
     def test_kwargs_forwarded_with_vad_disabled(
         self, fake_whisper: _FakeWhisperModel, monkeypatch: pytest.MonkeyPatch
@@ -315,6 +351,96 @@ class TestProcessTranscriptionConfidenceFields:
         assert seg.compression_ratio is None
 
 
+class TestAssignSpeakersToWords:
+    @staticmethod
+    def _result(tracks: list[tuple[float, float, str]]):
+        class _Annotation:
+            def itertracks(self, yield_label: bool = True):
+                for start, end, speaker in tracks:
+                    turn = type("Turn", (), {"start": start, "end": end})()
+                    yield turn, None, speaker
+
+        return type("DiarizationResult", (), {"exclusive_speaker_diarization": _Annotation()})()
+
+    def test_picks_greatest_overlap_and_earlier_segment_on_tie(self) -> None:
+        from videopython.base.transcription import TranscriptionWord
+
+        words = [
+            TranscriptionWord(word="first", start=1.0, end=4.0),
+            TranscriptionWord(word="tie", start=2.0, end=4.0),
+        ]
+        result = self._result([(0.0, 3.0, "A"), (3.0, 6.0, "B")])
+
+        assigned = audio_mod.AudioToText._assign_speakers_to_words(words, result)
+
+        assert [word.speaker for word in assigned] == ["A", "A"]
+
+    def test_gap_uses_nearest_segment_midpoint_and_earlier_one_on_tie(self) -> None:
+        from videopython.base.transcription import TranscriptionWord
+
+        words = [TranscriptionWord(word="gap", start=2.5, end=3.5)]
+        result = self._result([(0.0, 2.0, "A"), (4.0, 6.0, "B")])
+
+        assigned = audio_mod.AudioToText._assign_speakers_to_words(words, result)
+
+        assert assigned[0].speaker == "A"
+
+
+class TestDiarizationReconstruction:
+    def test_preserves_segmentation_dtype_and_cluster_maximum(self) -> None:
+        class _Feature:
+            def __init__(self, data, sliding_window) -> None:
+                self.data = data
+                self.sliding_window = sliding_window
+
+            def __iter__(self):
+                for data in self.data:
+                    yield None, data
+
+        class _Pipeline:
+            def to_diarization(self, clustered, count):
+                return clustered
+
+        segmentations = _Feature(
+            np.array(
+                [
+                    [[0.1, 0.7], [0.2, 0.6], [0.3, 0.5]],
+                    [[0.9, 0.4], [0.8, 0.5], [0.7, 0.6]],
+                ],
+                dtype=np.float32,
+            ),
+            sliding_window=object(),
+        )
+        hard_clusters = np.array([[0, 1], [1, 1]])
+
+        reconstructed = audio_mod._reconstruct_diarization(_Pipeline(), segmentations, hard_clusters, count=object())
+
+        assert reconstructed.data.dtype == np.float32
+        np.testing.assert_allclose(reconstructed.data[0, :, 0], [0.1, 0.2, 0.3])
+        np.testing.assert_allclose(reconstructed.data[0, :, 1], [0.7, 0.6, 0.5])
+        assert np.isnan(reconstructed.data[1, :, 0]).all()
+        np.testing.assert_allclose(reconstructed.data[1, :, 1], [0.9, 0.8, 0.7])
+
+    def test_init_fails_if_pipeline_has_no_reconstruct_method(
+        self, cpu_transcriber: audio_mod.AudioToText, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class _Pipeline:
+            @classmethod
+            def from_pretrained(cls, *_args: Any, **_kwargs: Any) -> _Pipeline:
+                return cls()
+
+            def to(self, _device: Any) -> None:
+                pass
+
+        monkeypatch.setattr(
+            "videopython.ai._optional.require",
+            lambda name, *, feature: SimpleNamespace(Pipeline=_Pipeline),
+        )
+
+        with pytest.raises(RuntimeError, match="no longer provides reconstruct"):
+            cpu_transcriber._init_diarization()
+
+
 class TestAttachConfidenceByOverlap:
     """_attach_confidence_by_overlap re-attaches Whisper's per-segment
     confidence onto a diarization-rebuilt segment list by max-overlap match."""
@@ -356,6 +482,25 @@ class TestAttachConfidenceByOverlap:
 
         assert targets[0].avg_logprob == -1.5
 
+    def test_equal_overlap_picks_first_source(self) -> None:
+        sources = [
+            self._seg(0.0, 4.0, avg_logprob=-0.3),
+            self._seg(4.0, 8.0, avg_logprob=-1.5),
+        ]
+        targets = [self._seg(2.0, 6.0)]
+
+        audio_mod._attach_confidence_by_overlap(targets, sources)
+
+        assert targets[0].avg_logprob == -0.3
+
+    def test_touching_endpoint_is_not_an_overlap(self) -> None:
+        sources = [self._seg(0.0, 5.0, avg_logprob=-0.5)]
+        targets = [self._seg(5.0, 8.0, avg_logprob=-2.0)]
+
+        audio_mod._attach_confidence_by_overlap(targets, sources)
+
+        assert targets[0].avg_logprob == -2.0
+
     def test_target_with_no_overlap_left_untouched(self) -> None:
         sources = [self._seg(0.0, 5.0, avg_logprob=-0.5)]
         targets = [self._seg(10.0, 15.0)]
@@ -392,25 +537,22 @@ class TestDiarizationCarriesConfidence:
 
         # Whisper produces one 10s segment with healthy confidence and
         # word-level timings.
-        def fake_transcribe(**kwargs: Any) -> dict[str, Any]:
+        def fake_transcribe(**kwargs: Any):
             fake_whisper.transcribe_calls.append(kwargs)
-            return {
-                "language": "ja",
-                "segments": [
-                    {
-                        "start": 0.0,
-                        "end": 10.0,
-                        "text": "alpha beta",
-                        "words": [
-                            {"word": "alpha", "start": 0.0, "end": 4.0},
-                            {"word": "beta", "start": 4.0, "end": 10.0},
-                        ],
-                        "avg_logprob": -0.6,
-                        "no_speech_prob": 0.08,
-                        "compression_ratio": 1.9,
-                    }
-                ],
-            }
+            words = [
+                SimpleNamespace(word="alpha", start=0.0, end=4.0),
+                SimpleNamespace(word="beta", start=4.0, end=10.0),
+            ]
+            segment = SimpleNamespace(
+                start=0.0,
+                end=10.0,
+                text="alpha beta",
+                words=words,
+                avg_logprob=-0.6,
+                no_speech_prob=0.08,
+                compression_ratio=1.9,
+            )
+            return iter([segment]), SimpleNamespace(language="ja")
 
         fake_whisper.transcribe = fake_transcribe  # type: ignore[method-assign]
 
@@ -452,55 +594,25 @@ class TestDiarizationCarriesConfidence:
 
 
 class TestDetectLanguageWindow:
-    """_detect_language must build the mel from at most 30s of voiced audio."""
+    """_detect_language must use at most 30 seconds of voiced audio."""
 
     def test_concatenates_and_caps_at_30s(
         self, cpu_transcriber: audio_mod.AudioToText, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import whisper
-
         # 60s of silence (16 kHz mono). _run_vad returns spans whose total
-        # duration exceeds 30s; _detect_language must cap concatenation at
-        # whisper.audio.N_SAMPLES (= 30s * 16000).
+        # duration exceeds 30s; _detect_language must cap concatenation.
         sample_rate = 16000
         audio = Audio.silence(duration=60.0, sample_rate=sample_rate, channels=1)
 
-        fake_model = _FakeWhisperModel(n_mels=80)
+        fake_model = _FakeWhisperModel()
         cpu_transcriber._model = fake_model
-
-        captured: dict[str, Any] = {}
-
-        def stub_pad_or_trim(array: Any, length: int = whisper.audio.N_SAMPLES) -> Any:
-            captured["pre_pad_samples"] = array.shape[0]
-            captured["pad_target"] = length
-            # Return a zero tensor of target length so the downstream mel stub
-            # sees the post-pad shape.
-            import torch
-
-            return torch.zeros(length, dtype=array.dtype)
-
-        def stub_log_mel(audio_tensor: Any, n_mels: int = 80) -> Any:
-            captured["mel_input_samples"] = audio_tensor.shape[0]
-            captured["n_mels_passed"] = n_mels
-            import torch
-
-            # Whisper's encoder consumes (n_mels, n_frames). Shape is
-            # incidental for this stub; we only verify the call.
-            return torch.zeros((n_mels, 3000), dtype=torch.float32)
-
-        monkeypatch.setattr(whisper.audio, "pad_or_trim", stub_pad_or_trim)
-        monkeypatch.setattr(whisper.audio, "log_mel_spectrogram", stub_log_mel)
 
         # Ten spans of 5s = 50s of "voiced" content; expect cap at 30s.
         spans = [(float(i * 5), float(i * 5 + 5)) for i in range(10)]
         result = cpu_transcriber._detect_language(audio, spans)
 
-        # Concatenation must be capped at N_SAMPLES before pad_or_trim runs.
-        assert captured["pre_pad_samples"] == whisper.audio.N_SAMPLES
-        assert captured["pad_target"] == whisper.audio.N_SAMPLES
-        assert captured["mel_input_samples"] == whisper.audio.N_SAMPLES
-        assert captured["n_mels_passed"] == 80
         assert len(fake_model.detect_language_calls) == 1
+        assert len(fake_model.detect_language_calls[0]) == audio_mod._WHISPER_LANGUAGE_SAMPLES
         assert result == "ja"
 
 
@@ -651,10 +763,8 @@ class TestVocabularyBiasing:
 
         prompt = fake_whisper.transcribe_calls[0]["initial_prompt"]
         # Verify the actually-emitted prompt fits the budget.
-        import whisper.tokenizer
-
-        tok = whisper.tokenizer.get_tokenizer(multilingual=True, task="transcribe")
-        assert len(tok.encode(prompt)) <= audio_mod._INITIAL_PROMPT_TOKEN_BUDGET
+        encoding = fake_whisper.hf_tokenizer.encode(prompt)
+        assert len(encoding.ids) <= audio_mod._INITIAL_PROMPT_TOKEN_BUDGET
 
         # Front of the list is preserved; tail is dropped.
         assert "Brandname0000" in prompt
@@ -662,6 +772,18 @@ class TestVocabularyBiasing:
 
         warning_lines = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert any("vocabulary truncated" in r.message for r in warning_lines)
+
+    def test_token_budget_excludes_special_tokens(self) -> None:
+        calls: list[bool] = []
+
+        def encode(_text: str, add_special_tokens: bool = True) -> SimpleNamespace:
+            calls.append(add_special_tokens)
+            return SimpleNamespace(ids=[1])
+
+        prompt = audio_mod._build_initial_prompt(["Klarna"], SimpleNamespace(encode=encode))
+
+        assert prompt is not None
+        assert calls == [False]
 
     def test_non_list_vocabulary_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(audio_mod, "select_device", lambda _r, mps_allowed=False: "cpu")

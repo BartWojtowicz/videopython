@@ -1,5 +1,15 @@
 # Release Notes
 
+## 0.60.1
+
+- `AudioToText` now runs Whisper models through faster-whisper and CTranslate2 in
+  float32. Automatic language detection produced the same timed words on the fixed
+  Polish and English checks while reducing CPU wall time and peak memory.
+- Long speaker-diarization runs keep pyannote's reconstruction workspace at the
+  segmentation precision instead of expanding it to float64. Speaker-to-word and
+  confidence matching now advance through chronological intervals instead of scanning
+  every possible pair.
+
 ## 0.60.0
 
 - Plan validation types now belong to `videopython.editing`; import `PlanError`,

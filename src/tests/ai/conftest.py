@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib.util
-import re
 import sys
 from collections.abc import Iterator
 from contextlib import nullcontext
@@ -57,45 +56,11 @@ def _fake_torch() -> ModuleType:
     return torch
 
 
-class _Tokenizer:
-    def encode(self, text: str) -> list[str]:
-        return re.findall(r"\w+|[^\w\s]", text)
-
-
-def _fake_whisper() -> tuple[ModuleType, ModuleType, ModuleType]:
-    whisper = ModuleType("whisper")
-    setattr(whisper, "__path__", [])
-
-    audio = ModuleType("whisper.audio")
-    sample_rate = 16_000
-    sample_count = 30 * sample_rate
-    setattr(audio, "SAMPLE_RATE", sample_rate)
-    setattr(audio, "N_SAMPLES", sample_count)
-    setattr(audio, "pad_or_trim", lambda value, length=sample_count: _tensor(np.resize(value, length)))
-    setattr(
-        audio,
-        "log_mel_spectrogram",
-        lambda _value, n_mels=80: _tensor(np.zeros((n_mels, 3000), dtype=np.float32)),
-    )
-
-    tokenizer = ModuleType("whisper.tokenizer")
-    setattr(tokenizer, "get_tokenizer", lambda **_kwargs: _Tokenizer())
-
-    setattr(whisper, "audio", audio)
-    setattr(whisper, "tokenizer", tokenizer)
-    return whisper, audio, tokenizer
-
-
 @pytest.fixture(scope="module", autouse=True)
 def model_runtime_fakes() -> Iterator[None]:
     # These tests exercise our boundary code, not the optional model runtimes.
     monkeypatch = pytest.MonkeyPatch()
     if importlib.util.find_spec("torch") is None:
         monkeypatch.setitem(sys.modules, "torch", _fake_torch())
-    if importlib.util.find_spec("whisper") is None:
-        whisper, audio, tokenizer = _fake_whisper()
-        monkeypatch.setitem(sys.modules, "whisper", whisper)
-        monkeypatch.setitem(sys.modules, "whisper.audio", audio)
-        monkeypatch.setitem(sys.modules, "whisper.tokenizer", tokenizer)
     yield
     monkeypatch.undo()

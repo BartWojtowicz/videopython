@@ -1,6 +1,6 @@
 """Test package dependency direction and optional AI isolation.
 
-videopython.ai brings in heavy ML dependencies (torch, diffusers, whisper,
+videopython.ai brings in heavy ML dependencies (torch, diffusers, faster-whisper,
 demucs, ...). Anything outside it must stay importable on a vanilla
 ``pip install videopython`` (no ``[ai]`` extra).
 """

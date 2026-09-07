@@ -38,12 +38,6 @@ Usage:
 #     argument. The repo id + revision are resolved internally by the
 #     chatterbox package, so there is nothing for us to pass a ``revision`` to.
 #
-#   * openai-whisper CDN models -- ai/understanding/audio.py loads transcription
-#     weights via ``whisper.load_model(name="turbo", ...)`` (tiny/base/small/
-#     medium/large/turbo). openai-whisper downloads these from OpenAI's own CDN
-#     by name, NOT through a HF ``from_pretrained`` repo, so there is no HF
-#     commit SHA to pin. (The faster-whisper backend, if/when used, WOULD map to
-#     a HF repo and could be pinned -- this code path does not use it.)
 # ---------------------------------------------------------------------------
 """
 
@@ -54,6 +48,13 @@ from __future__ import annotations
 # ``pinned(model_id)`` resolves with a plain dict lookup. SHAs captured from
 # the HuggingFace model API (see module docstring for refresh instructions).
 MODEL_REVISIONS: dict[str, str] = {
+    # CTranslate2 Whisper models (ai/understanding/audio.py: AudioToText).
+    "Systran/faster-whisper-tiny": "d90ca5fe260221311c53c58e660288d3deb8d356",
+    "Systran/faster-whisper-base": "ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66",
+    "Systran/faster-whisper-small": "536b0662742c02347bc0e980a01041f333bce120",
+    "Systran/faster-whisper-medium": "08e178d48790749d25932bbc082711ddcfdfbc4f",
+    "Systran/faster-whisper-large-v3": "edaa852ec7e145841d8ffdb056a99866b5f0a478",
+    "mobiuslabsgmbh/faster-whisper-large-v3-turbo": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
     # Speaker diarization (ai/understanding/audio.py: PYANNOTE_DIARIZATION_MODEL).
     # Gated repo (auto-approved); from_pretrained needs an accepted HF token.
     "pyannote/speaker-diarization-community-1": "3533c8cf8e369892e6b79ff1bf80f7b0286a54ee",

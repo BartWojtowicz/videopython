@@ -1397,6 +1397,51 @@ class TestDiarizeTranscription:
         assert [s.no_speech_prob for s in result.segments] == [0.01, 0.02]
         assert [s.compression_ratio for s in result.segments] == [1.0, 2.0]
 
+    def test_sorts_caller_supplied_transcription_before_diarization(self, sample_audio):
+        from types import SimpleNamespace
+
+        from videopython.ai.understanding.audio import AudioToText
+        from videopython.base.transcription import Transcription, TranscriptionSegment, TranscriptionWord
+
+        late = TranscriptionSegment(
+            start=35.0,
+            end=36.0,
+            text="late words",
+            words=[
+                TranscriptionWord(start=35.0, end=35.5, word="late"),
+                TranscriptionWord(start=35.5, end=36.0, word="words"),
+            ],
+            avg_logprob=-0.9,
+        )
+        early = TranscriptionSegment(
+            start=3.0,
+            end=4.0,
+            text="early words",
+            words=[
+                TranscriptionWord(start=3.0, end=3.5, word="early"),
+                TranscriptionWord(start=3.5, end=4.0, word="words"),
+            ],
+            avg_logprob=-0.1,
+        )
+        transcription = Transcription(segments=[late, early], language="en")
+
+        class _Annotation:
+            def itertracks(self, yield_label=True):
+                for start, end, speaker in [(0.0, 2.0, "A"), (2.0, 30.0, "B"), (30.0, 40.0, "C")]:
+                    yield SimpleNamespace(start=start, end=end), None, speaker
+
+        transcriber = AudioToText()
+        transcriber._diarization_pipeline = lambda _payload: SimpleNamespace(
+            exclusive_speaker_diarization=_Annotation()
+        )
+
+        result = transcriber.diarize_transcription(sample_audio, transcription)
+
+        assert [word.word for word in result.words] == ["early", "words", "late", "words"]
+        assert [word.speaker for word in result.words] == ["B", "B", "C", "C"]
+        assert [segment.avg_logprob for segment in result.segments] == [-0.1, -0.9]
+        assert transcription.segments == [late, early]
+
 
 class TestPipelineSuppliedTranscriptionDiarization:
     """Tests for diarization-on-supplied-transcription plumbing in LocalDubbingPipeline."""
