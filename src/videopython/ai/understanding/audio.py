@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+from bisect import bisect_left
+from types import MethodType
 from typing import Any, Literal
 
 from videopython.ai._device import log_device_initialization, select_device
@@ -17,6 +19,38 @@ logger = logging.getLogger(__name__)
 # Whisper's initial_prompt budget; longer prompts are silently truncated by the decoder.
 _INITIAL_PROMPT_TOKEN_BUDGET = 224
 _INITIAL_PROMPT_TEMPLATE = "Transcript may include the following names: {terms}."
+_WHISPER_SAMPLE_RATE = 16_000
+_WHISPER_LANGUAGE_SAMPLES = 30 * _WHISPER_SAMPLE_RATE
+_WHISPER_MODELS = {
+    "tiny": "Systran/faster-whisper-tiny",
+    "base": "Systran/faster-whisper-base",
+    "small": "Systran/faster-whisper-small",
+    "medium": "Systran/faster-whisper-medium",
+    "large": "Systran/faster-whisper-large-v3",
+    "turbo": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+}
+
+
+def _reconstruct_diarization(pipeline: Any, segmentations: Any, hard_clusters: Any, count: Any) -> Any:
+    """Reconstruct global clusters without promoting segmentation data to float64."""
+    import numpy as np
+
+    num_chunks, num_frames, _ = segmentations.data.shape
+    num_clusters = int(np.max(hard_clusters)) + 1
+    clustered_data = np.full(
+        (num_chunks, num_frames, num_clusters),
+        np.nan,
+        dtype=segmentations.data.dtype,
+    )
+
+    for chunk_index, (cluster, (_, segmentation)) in enumerate(zip(hard_clusters, segmentations)):
+        for cluster_index in np.unique(cluster):
+            if cluster_index == -2:
+                continue
+            clustered_data[chunk_index, :, cluster_index] = np.max(segmentation[:, cluster == cluster_index], axis=1)
+
+    clustered_segmentations = type(segmentations)(clustered_data, segmentations.sliding_window)
+    return pipeline.to_diarization(clustered_segmentations, count)
 
 
 def _normalize_vocabulary(vocabulary: list[str] | None) -> list[str]:
@@ -50,19 +84,18 @@ def _render_initial_prompt(terms: list[str]) -> str:
     return _INITIAL_PROMPT_TEMPLATE.format(terms=", ".join(terms))
 
 
-def _build_initial_prompt(vocabulary: list[str]) -> str | None:
+def _build_initial_prompt(vocabulary: list[str], tokenizer: Any) -> str | None:
     """Render the prompt and trim tail terms until it fits Whisper's
     224-token ``initial_prompt`` budget; ``None`` for empty input."""
     if not vocabulary:
         return None
 
-    from videopython.ai._optional import require
-
-    whisper_tokenizer = require("whisper.tokenizer", feature="AudioToText")
-
-    tokenizer = whisper_tokenizer.get_tokenizer(multilingual=True, task="transcribe")
     kept = list(vocabulary)
-    while kept and len(tokenizer.encode(_render_initial_prompt(kept))) > _INITIAL_PROMPT_TOKEN_BUDGET:
+    while (
+        kept
+        and len(tokenizer.encode(_render_initial_prompt(kept), add_special_tokens=False).ids)
+        > _INITIAL_PROMPT_TOKEN_BUDGET
+    ):
         kept.pop()
 
     if not kept:
@@ -80,26 +113,27 @@ def _attach_confidence_by_overlap(
     target_segments: list[TranscriptionSegment],
     source_segments: list[TranscriptionSegment],
 ) -> None:
-    """Stamp Whisper confidence (avg_logprob, no_speech_prob, compression_ratio)
-    onto ``target_segments`` from the ``source_segments`` they overlap most with.
+    """Copy confidence from the greatest-overlap source into chronological targets.
 
-    Re-attaches per-segment confidence after diarization rebuilds segments
-    from words and drops the original Whisper-segment metadata. Whisper's
-    confidence is window-level, not phoneme-level, so overlap-by-time is the
-    right granularity — re-deriving per-word and re-aggregating wouldn't be
-    more accurate.
-
-    Mutates ``target_segments`` in place. Segments with no overlap to any
-    source segment are left untouched (their confidence stays None).
+    Both lists must be chronological and non-overlapping within themselves. Ties use
+    the earlier source. Targets without an overlap stay unchanged.
     """
+    source_index = 0
     for tgt in target_segments:
+        while source_index < len(source_segments) and source_segments[source_index].end <= tgt.start:
+            source_index += 1
+
         best_overlap = 0.0
         best_src: TranscriptionSegment | None = None
-        for src in source_segments:
-            overlap = max(0.0, min(tgt.end, src.end) - max(tgt.start, src.start))
+        candidate_index = source_index
+        while candidate_index < len(source_segments) and source_segments[candidate_index].start < tgt.end:
+            src = source_segments[candidate_index]
+            overlap = min(tgt.end, src.end) - max(tgt.start, src.start)
             if overlap > best_overlap:
                 best_overlap = overlap
                 best_src = src
+            candidate_index += 1
+
         if best_src is not None:
             tgt.avg_logprob = best_src.avg_logprob
             tgt.no_speech_prob = best_src.no_speech_prob
@@ -109,7 +143,7 @@ def _attach_confidence_by_overlap(
 class AudioToText(ManagedPredictor):
     """Transcription service for audio and video using local Whisper models.
 
-    Uses openai-whisper for transcription (with word-level timestamps) and
+    Uses faster-whisper in float32 for transcription (with word-level timestamps) and
     pyannote-audio for optional speaker diarization. By default, Silero VAD
     runs before Whisper to gate language detection on a 30s window built from
     voiced regions only — fixes Whisper's tendency to lock onto the wrong
@@ -152,6 +186,9 @@ class AudioToText(ManagedPredictor):
         vocabulary: list[str] | None = None,
         device: str | None = None,
     ):
+        if model_name not in _WHISPER_MODELS:
+            choices = ", ".join(_WHISPER_MODELS)
+            raise ValueError(f"Unsupported Whisper model {model_name!r}. Choose one of: {choices}.")
         self.model_name = model_name
         self.enable_diarization = enable_diarization
         self.enable_vad = enable_vad
@@ -170,16 +207,22 @@ class AudioToText(ManagedPredictor):
         self._vad_model: Any = None
 
     def _transcribe_kwargs(self, language: str | None, vocabulary: list[str]) -> dict[str, Any]:
-        """Kwargs threaded into ``whisper.Whisper.transcribe`` from both call sites.
+        """Kwargs threaded into faster-whisper from both call sites.
+
         ``initial_prompt`` is omitted entirely on the no-vocab path."""
         kwargs: dict[str, Any] = {
             "word_timestamps": True,
             "language": language,
+            "beam_size": 1,
+            "best_of": 5,
+            "temperature": [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
+            "compression_ratio_threshold": 2.4,
             "condition_on_previous_text": self.condition_on_previous_text,
             "no_speech_threshold": self.no_speech_threshold,
-            "logprob_threshold": self.logprob_threshold,
+            "log_prob_threshold": self.logprob_threshold,
+            "vad_filter": False,
         }
-        prompt = _build_initial_prompt(vocabulary)
+        prompt = _build_initial_prompt(vocabulary, self._model.hf_tokenizer)
         if prompt is not None:
             kwargs["initial_prompt"] = prompt
         return kwargs
@@ -188,12 +231,33 @@ class AudioToText(ManagedPredictor):
         """Initialize local Whisper model."""
         from videopython.ai._optional import require
 
-        whisper = require("whisper", feature="AudioToText")
+        faster_whisper = require("faster_whisper", feature="AudioToText")
+        model_id = _WHISPER_MODELS[self.model_name]
+        self._model = faster_whisper.WhisperModel(
+            model_id,
+            revision=pinned(model_id),
+            device=self.device,
+            compute_type="float32",
+        )
 
-        # No revision pin: openai-whisper downloads weights by name from OpenAI's
-        # own CDN, not via a HF from_pretrained repo, so there is no HF commit
-        # SHA to pin (see videopython.ai._revisions module docstring).
-        self._model = whisper.load_model(name=self.model_name, device=self.device)
+    def _run_whisper(self, audio: Any, language: str | None, vocabulary: list[str]) -> dict[str, Any]:
+        segments_source, info = self._model.transcribe(
+            audio=audio,
+            **self._transcribe_kwargs(language, vocabulary),
+        )
+        segments = [
+            {
+                "start": segment.start,
+                "end": segment.end,
+                "text": segment.text,
+                "words": [{"start": word.start, "end": word.end, "word": word.word} for word in segment.words or []],
+                "avg_logprob": segment.avg_logprob,
+                "no_speech_prob": segment.no_speech_prob,
+                "compression_ratio": segment.compression_ratio,
+            }
+            for segment in segments_source
+        ]
+        return {"segments": segments, "language": info.language}
 
     def _init_diarization(self) -> None:
         """Initialize pyannote speaker diarization pipeline."""
@@ -206,6 +270,10 @@ class AudioToText(ManagedPredictor):
         self._diarization_pipeline = Pipeline.from_pretrained(
             self.PYANNOTE_DIARIZATION_MODEL, revision=pinned(self.PYANNOTE_DIARIZATION_MODEL)
         )
+        if not callable(getattr(self._diarization_pipeline, "reconstruct", None)):
+            raise RuntimeError("The pyannote diarization pipeline no longer provides reconstruct().")
+        # pyannote otherwise promotes its duration-by-speaker workspace to float64.
+        self._diarization_pipeline.reconstruct = MethodType(_reconstruct_diarization, self._diarization_pipeline)
         self._diarization_pipeline.to(torch.device(self.device))
 
     def _init_vad(self) -> None:
@@ -247,42 +315,45 @@ class AudioToText(ManagedPredictor):
         words: list[TranscriptionWord],
         diarization_result: Any,
     ) -> list[TranscriptionWord]:
-        """Assign speaker labels to words based on diarization segment overlap.
-
-        For each word, finds the diarization segment with the greatest time overlap
-        and assigns that speaker. Words with no overlapping diarization segment get
-        the nearest speaker by midpoint distance.
-        """
+        """Assign speakers to chronological words from exclusive diarization tracks."""
         speaker_segments: list[tuple[float, float, str]] = []
-        # pyannote-audio 4.x returns DiarizeOutput; use exclusive_speaker_diarization
-        # (no overlapping turns) for cleaner word assignment.
-        annotation = getattr(diarization_result, "exclusive_speaker_diarization", diarization_result)
+        annotation = diarization_result.exclusive_speaker_diarization
         for turn, _, speaker in annotation.itertracks(yield_label=True):
             speaker_segments.append((turn.start, turn.end, speaker))
 
         if not speaker_segments:
             return words
 
+        speaker_segments.sort(key=lambda segment: (segment[0], segment[1]))
+        speaker_midpoints = [(start + end) / 2.0 for start, end, _ in speaker_segments]
         result = []
+        segment_index = 0
         for word in words:
+            while segment_index < len(speaker_segments) and speaker_segments[segment_index][1] <= word.start:
+                segment_index += 1
+
             best_speaker: str | None = None
             best_overlap = 0.0
-
-            for seg_start, seg_end, speaker in speaker_segments:
-                overlap = max(0.0, min(word.end, seg_end) - max(word.start, seg_start))
+            candidate_index = segment_index
+            while candidate_index < len(speaker_segments) and speaker_segments[candidate_index][0] < word.end:
+                seg_start, seg_end, speaker = speaker_segments[candidate_index]
+                overlap = min(word.end, seg_end) - max(word.start, seg_start)
                 if overlap > best_overlap:
                     best_overlap = overlap
                     best_speaker = speaker
+                candidate_index += 1
 
             if best_speaker is None:
                 word_mid = (word.start + word.end) / 2.0
-                best_dist = float("inf")
-                for seg_start, seg_end, speaker in speaker_segments:
-                    seg_mid = (seg_start + seg_end) / 2.0
-                    dist = abs(word_mid - seg_mid)
-                    if dist < best_dist:
-                        best_dist = dist
-                        best_speaker = speaker
+                nearest_index = bisect_left(speaker_midpoints, word_mid)
+                if nearest_index == len(speaker_segments):
+                    nearest_index -= 1
+                elif nearest_index > 0:
+                    previous_distance = word_mid - speaker_midpoints[nearest_index - 1]
+                    next_distance = speaker_midpoints[nearest_index] - word_mid
+                    if previous_distance <= next_distance:
+                        nearest_index -= 1
+                best_speaker = speaker_segments[nearest_index][2]
 
             result.append(
                 TranscriptionWord(
@@ -309,7 +380,7 @@ class AudioToText(ManagedPredictor):
         import numpy as np
         import torch
 
-        all_words: list[TranscriptionWord] = list(transcription.words)
+        all_words = sorted(transcription.words, key=lambda word: (word.start, word.end))
         if not all_words:
             raise ValueError("Cannot diarize a transcription with no words.")
 
@@ -325,9 +396,7 @@ class AudioToText(ManagedPredictor):
         if self._diarization_pipeline is None:
             self._init_diarization()
 
-        import whisper
-
-        audio_mono = audio.to_mono().resample(whisper.audio.SAMPLE_RATE)
+        audio_mono = audio.to_mono().resample(_WHISPER_SAMPLE_RATE)
         waveform = torch.from_numpy(audio_mono.data.astype(np.float32)).unsqueeze(0)
         diarization_result = self._diarization_pipeline(
             {"waveform": waveform, "sample_rate": audio_mono.metadata.sample_rate}
@@ -340,7 +409,7 @@ class AudioToText(ManagedPredictor):
         # combined path -- so re-attach it the same way. Without this, splitting
         # transcription and diarization into two calls silently loses confidence
         # that running them as one keeps.
-        source_segments = transcription.segments
+        source_segments = sorted(transcription.segments, key=lambda segment: (segment.start, segment.end))
         rebuilt = Transcription(words=all_words, language=transcription.language)
         _attach_confidence_by_overlap(rebuilt.segments, source_segments)
         return rebuilt
@@ -348,7 +417,7 @@ class AudioToText(ManagedPredictor):
     def _run_vad(self, audio_mono: Audio) -> list[tuple[float, float]]:
         """Return voiced spans in seconds using Silero VAD.
 
-        Audio must already be mono at ``whisper.audio.SAMPLE_RATE`` (16 kHz),
+        Audio must already be mono at 16 kHz,
         which is one of Silero's two supported rates.
         """
         import numpy as np
@@ -374,16 +443,13 @@ class AudioToText(ManagedPredictor):
         Whisper's auto-detection only inspects the first 30s of input. When
         the file opens with silence/music/credits, that window contains no
         speech and detection picks the closest-looking thing (typically
-        English). Concatenating voiced spans up to 30s and running
-        ``model.detect_language()`` on the resulting mel fixes this.
+        English). Concatenating up to 30 seconds of voiced audio fixes this.
         """
         import numpy as np
-        import torch
-        import whisper
 
         sample_rate = audio_mono.metadata.sample_rate
         chunks: list[np.ndarray] = []
-        remaining = whisper.audio.N_SAMPLES
+        remaining = _WHISPER_LANGUAGE_SAMPLES
         for start, end in voiced_spans:
             if remaining <= 0:
                 break
@@ -391,12 +457,9 @@ class AudioToText(ManagedPredictor):
             chunks.append(chunk)
             remaining -= len(chunk)
 
-        voiced_audio = np.concatenate(chunks).astype(np.float32) if chunks else np.zeros(0, dtype=np.float32)
-        padded = whisper.audio.pad_or_trim(torch.from_numpy(voiced_audio))
-        mel = whisper.audio.log_mel_spectrogram(padded, n_mels=self._model.dims.n_mels).to(self._model.device)
-
-        _, probs = self._model.detect_language(mel)
-        return max(probs, key=probs.get)
+        voiced_audio = np.concatenate(chunks).astype(np.float32)
+        language, _, _ = self._model.detect_language(audio=voiced_audio)
+        return language
 
     def _transcribe_with_diarization(
         self, audio_mono: Audio, language: str | None, vocabulary: list[str]
@@ -409,7 +472,7 @@ class AudioToText(ManagedPredictor):
             self._init_diarization()
 
         audio_data = audio_mono.data
-        transcription_result = self._model.transcribe(audio=audio_data, **self._transcribe_kwargs(language, vocabulary))
+        transcription_result = self._run_whisper(audio_data, language, vocabulary)
 
         waveform = torch.from_numpy(audio_data.astype(np.float32)).unsqueeze(0)
         diarization_result = self._diarization_pipeline(
@@ -448,12 +511,10 @@ class AudioToText(ManagedPredictor):
         finds no speech, an empty Transcription is returned without
         invoking Whisper.
         """
-        import whisper
-
         if self._model is None:
             self._init_local()
 
-        audio_mono = audio.to_mono().resample(whisper.audio.SAMPLE_RATE)
+        audio_mono = audio.to_mono().resample(_WHISPER_SAMPLE_RATE)
 
         language: str | None = None
         if self.enable_vad:
@@ -465,9 +526,7 @@ class AudioToText(ManagedPredictor):
         if self.enable_diarization:
             return self._transcribe_with_diarization(audio_mono, language, vocabulary)
 
-        transcription_result = self._model.transcribe(
-            audio=audio_mono.data, **self._transcribe_kwargs(language, vocabulary)
-        )
+        transcription_result = self._run_whisper(audio_mono.data, language, vocabulary)
         return self._process_transcription_result(transcription_result)
 
     def transcribe(self, media: Audio | Video, vocabulary: list[str] | None = None) -> Transcription:

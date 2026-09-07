@@ -36,7 +36,7 @@ _AI_ROOT = Path(__file__).parent.parent / "videopython" / "ai"
 # Top-level distributions whose import names differ from the PyPI package name.
 # Used by the "every declared dep is actually imported somewhere" check.
 _DIST_TO_IMPORT_NAMES: dict[str, set[str]] = {
-    "openai-whisper": {"whisper"},
+    "faster-whisper": {"faster_whisper"},
     "pyannote-audio": {"pyannote"},
     "silero-vad": {"silero_vad"},
     "transnetv2-pytorch": {"transnetv2_pytorch"},
@@ -51,7 +51,7 @@ _HEAVY_IMPORT_NAMES: set[str] = {
     "torchaudio",
     "transformers",
     "diffusers",
-    "whisper",
+    "faster_whisper",
     "pyannote",
     "silero_vad",
     "transnetv2_pytorch",
@@ -130,9 +130,8 @@ def test_mcp_extra_contains_only_the_agent_editing_stack(pyproject: Pyproject) -
     assert mcp == {
         "imagehash",
         "mcp",
-        "numba",
         "ollama",
-        "openai-whisper",
+        "faster-whisper",
         "torch",
         "torchvision",
         "transformers",
@@ -166,13 +165,12 @@ def test_no_conflicting_opencv_distribution() -> None:
 
 # Deps that are declared as resolver co-pins/floors but have NO direct import
 # under ai/ — they're pulled transitively by a sibling dep that we DO import:
-#   torchaudio   -> co-pin for the torch stack (whisper/chatterbox/demucs)
+#   torchaudio   -> co-pin for the torch stack (pyannote/chatterbox/demucs)
 #   torchvision  -> backs the transformers "fast" image processor used by D-FINE
 #   accelerate   -> diffusers/transformers device-map plumbing (transitive)
+#   numba         -> floor for the librosa runtime imported by chatterbox
 #   torchcodec   -> torchaudio 2.11+ routes save()/load() through it; arrives via
 #                   pyannote-audio, declared so the torch-coupled set is explicit
-#   numba        -> pulled by openai-whisper; floored so its own numpy cap binds
-#                   rather than being dodged by backtracking to an old release
 _TRANSITIVE_ONLY_DEPS = {"torchaudio", "torchvision", "torchcodec", "accelerate", "numba"}
 
 # Deps we must declare for a *dependency's* runtime code path, never imported by our code:

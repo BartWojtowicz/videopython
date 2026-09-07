@@ -11,15 +11,10 @@ engine](../explanation/streaming-engine.md#why-pixel-effects-are-not-ffmpeg-filt
 
 ## MCP workflow verification
 
-The real MCP workflow passed over stdio on 2026-09-06. The client called
-`analyze_video`, `build_catalog`, `validate_edit`, and `run_edit` against library commit
-`8af4f71754a0d16859475093dcdfea8d31fe2b72`. It used the same representative Polish
-clip as the AI model verification below.
-
-The run used Python 3.13.5 on a 16 GB Apple M1 Mac mini with macOS 14.8.9 and Ollama
-0.33.3. The verification server used `gemma3:12b` for scene captioning because that
-model was available on the test host. This is a compatibility check, not a change to
-the public `qwen3.6:27b` default.
+The stdio workflow passed on 2026-09-06 at commit
+`8af4f71754a0d16859475093dcdfea8d31fe2b72`, using Python 3.13.5 on a 16 GB M1 Mac
+mini with macOS 14.8.9 and Ollama 0.33.3. It used the representative Polish clip from
+the AI check and the locally available `gemma3:12b` caption model.
 
 | MCP call | Elapsed | Result |
 |---|---:|---|
@@ -28,12 +23,9 @@ the public `qwen3.6:27b` default.
 | `validate_edit` | 0.039 s | The one-scene plan was valid with no errors |
 | `run_edit` | 10.350 s | 60.08-second 1280×720 H.264/AAC MP4 with 1,502 frames |
 
-The editing profile intentionally skipped audio classification and reported it as
-disabled. Gemma captioned the shot as a man speaking into a microphone during a podcast
-recording. Manual review at four points across the rendered file confirmed that
-description and showed a consistent source shot. FFmpeg decoded the complete video and
-audio streams without an error. The full client session took 154.153 seconds, including
-model loading and output checks.
+The full session took 154.153 seconds. Manual review confirmed the caption and rendered
+shot; FFmpeg decoded both output streams without an error. Audio classification was
+disabled and reported as such.
 
 The model files were present before the measured run. Reproduce it with the real stdio
 client and server harness:
@@ -57,6 +49,25 @@ The environment used Python 3.12.3, an NVIDIA RTX PRO 6000 Blackwell Workstation
 Edition with 97,887 MiB VRAM and compute capability 12.0, driver 595.71.05, PyTorch
 2.13.0+cu130, Diffusers 0.39.0, Transformers 5.14.1, Safetensors 0.8.0, Ollama server
 0.33.3, and Ollama Python client 0.6.2.
+
+### CPU diarization reconstruction comparison
+
+On 2026-09-07, pyannote's original reconstruction and the `0.60.1` implementation at
+commit `1ae2b789c5c91e64bd419614208c3ab578ec7163` ran against the same 60.024-second
+audio and 121 timed words on an M1 CPU.
+
+| | Original | `0.60.1` |
+|---|---:|---:|
+| Reconstruction workspace | 478.6 KiB (`float64`) | 239.3 KiB (`float32`) |
+| Wall time | 43.708 s | 42.347 s |
+| Process peak RSS | 3,036.9 MB | 3,049.3 MB |
+
+Both runs produced the same two speakers, four segments, and word labels. The exact
+workspace is 50% smaller. Process RSS is model-dominated at this input length.
+
+Environment: macOS 14.8.9, Python 3.13.5, pyannote-audio 4.0.7, PyTorch 2.13.0,
+NumPy 2.4.6. Input SHA-256:
+`472540f20091958d5283f26701927e0cf0ea193f35c4d5a3e70ac0ae905d8d66`.
 
 ### Default-setting results and timings
 
@@ -84,103 +95,20 @@ Manual review confirmed that both images matched their prompts. The text-to-vide
 kept a coherent mountain-lake scene while mist and water moved. The image-to-video clip
 kept the bicycle from its source image while a camera push moved it partly out of frame.
 
-### Timing protocol and reproduction
+### Reproduction
 
-The harness calls the generation interfaces with their public defaults. The commands
-below produce the default-settings baseline.
-
-The download caches were populated before the measured run. The harness then ran from a
-fresh Python process and wrote to a new output directory. Ollama used
-`OLLAMA_KEEP_ALIVE=0`, and `ollama stop` confirmed that the model was not loaded before
-the run. Each check time includes cached model loading, inference, output writing,
-semantic validation, and weight cleanup. It excludes dependency installation and model
-downloads.
-
-Start the Ollama server separately with
-`OLLAMA_HOST=127.0.0.1:11434 OLLAMA_KEEP_ALIVE=0 ollama serve` before these commands.
-
-Populate caches through the same pinned model loaders without running generation. Each
-initializer runs in its own process so that its weights are released before the next
-one. Then stop Ollama and run the harness in a new process. Do not interrupt an active
-CUDA generation.
+Run the harness once to populate model caches, then again from a fresh process into a
+new output directory. The reported time includes cached model loading, inference,
+output writing, semantic validation, and weight cleanup.
 
 ```bash
 uv sync --all-extras --group ai --frozen
-ollama pull qwen3.6:27b
-
-HF_HOME=/workspace/.hf_home TOKENIZERS_PARALLELISM=false \
-  uv run python -c 'from videopython.ai import TextToImage; TextToImage()._init_local()'
-HF_HOME=/workspace/.hf_home TOKENIZERS_PARALLELISM=false \
-  uv run python -c 'from videopython.ai import TextToVideo; TextToVideo()._init_local()'
-HF_HOME=/workspace/.hf_home TOKENIZERS_PARALLELISM=false \
-  uv run python -c 'from videopython.ai import ImageToVideo; ImageToVideo()._init_local()'
-HF_HOME=/workspace/.hf_home TOKENIZERS_PARALLELISM=false \
-  uv run python -c 'from videopython.ai import TextToSpeech; TextToSpeech()._init_local()'
-HF_HOME=/workspace/.hf_home TOKENIZERS_PARALLELISM=false \
-  uv run python -c 'from videopython.ai import AudioToText; m = AudioToText(); m._init_local(); m._init_vad()'
-HF_HOME=/workspace/.hf_home TOKENIZERS_PARALLELISM=false \
-  uv run python -c 'from videopython.ai.dubbing.separation import AudioSeparator; AudioSeparator()._init_local()'
-HF_HOME=/workspace/.hf_home TOKENIZERS_PARALLELISM=false \
-  uv run python -c 'from videopython.ai import TextToMusic; TextToMusic()._init_local()'
-HF_HOME=/workspace/.hf_home TOKENIZERS_PARALLELISM=false \
-  uv run python -c 'from videopython.ai import ObjectDetector; ObjectDetector()._load_model()'
-
-OLLAMA_HOST=127.0.0.1:11434 ollama stop qwen3.6:27b
-
 HF_HOME=/workspace/.hf_home TOKENIZERS_PARALLELISM=false OLLAMA_HOST=127.0.0.1:11434 \
   uv run python scripts/verify_ai_models.py \
   --all \
   --video verification-input/cam1_1min.mp4 \
   --workdir verify-results/measured
 ```
-
-### Earlier reduced-setting compatibility run
-
-The 2026-09-05 run used reduced generation settings to limit rented-GPU time. It
-verified model compatibility but does not represent the public API defaults.
-
-| # | Check | Elapsed | Result | Semantic evidence |
-|---|---|---:|---|---|
-| 1 | `env` — Environment and package versions | 1.042 s | **PASS** | PyTorch 2.13.0, RTX PRO 6000 Blackwell |
-| 2 | `imports` — Public AI entrypoints resolve | 0.179 s | **PASS** | 38/38 entrypoints |
-| 3 | `ollama` — Schema-constrained output | 4.111 s | **PASS** | `qwen3.6:27b` returned a valid Spanish translation |
-| 4 | `t2i` — Prompt conditions image output | 84.273 s | **PASS** | Same-seed cross-prompt correlation 0.017 |
-| 5 | `t2v` — Video renders and moves | 524.665 s | **PASS** | 49 frames, 71.1% of pixels moved |
-| 6 | `i2v` — Input conditions frame 0 | 245.381 s | **PASS** | Input correlation 0.993, 88.7% of pixels moved |
-| 7 | `tts` — Speech is intelligible | 15.176 s | **PASS** | Round-trip word overlap 82%; cloned sample also written |
-| 8 | `separation` — Voice reaches vocals stem | 6.481 s | **PASS** | Vocals correlation 0.989 with voice, -0.225 with music |
-| 9 | `music` — Output is audible and conditioned | 5.318 s | **PASS** | Peak 0.260, cross-prompt envelope correlation 0.074 |
-| 10 | `detect` — Known objects are detected | 0.897 s | **PASS** | Five objects: cat, remote, sofa |
-| 11 | `dub` — Full Polish-to-Spanish dub | 40.493 s | **PASS** | 17/17 translated; cloned voice; worst truncation 1.440 seconds |
-
-The complete run took 928.017 seconds. The default dub uses voice cloning without
-speaker diarization. It groups segments under one `speaker_0` clone.
-
-The optional diarization path was timed separately so that it does not replace the
-default baseline. Run it once to populate the pyannote cache, unload Ollama, then repeat
-it from a fresh process:
-
-```bash
-HF_HOME=/workspace/.hf_home TOKENIZERS_PARALLELISM=false \
-  uv run python scripts/verify_ai_models.py \
-  --only dub --enable-diarization \
-  --video verification-input/cam1_1min.mp4 \
-  --workdir verify-results/diarized-warm
-
-OLLAMA_HOST=127.0.0.1:11434 ollama stop qwen3.6:27b
-
-HF_HOME=/workspace/.hf_home TOKENIZERS_PARALLELISM=false \
-  uv run python scripts/verify_ai_models.py \
-  --only dub --enable-diarization \
-  --video verification-input/cam1_1min.mp4 \
-  --workdir verify-results/diarized-measured
-```
-
-The measured diarized dub passed in 37.017 seconds. Pyannote found two speakers, and
-voice cloning produced one sample for each speaker. All three speaker-aligned segments
-were translated and audible, with no truncation. The segment count differs from the
-default dub because diarization changes transcription segmentation, so the two dub
-times are separate baselines.
 
 ### Dubbing synchronization threshold
 

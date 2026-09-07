@@ -6,7 +6,7 @@ analysis](video-analysis.md).
 
 | Class | Local model family |
 |---|---|
-| `AudioToText` | Whisper (+ pyannote for diarization) |
+| `AudioToText` | faster-whisper float32 (+ pyannote for diarization) |
 | `AudioClassifier` | AST |
 | `SemanticSceneDetector` | TransNetV2 |
 | `SceneVLM` | Ollama vision model |
@@ -22,8 +22,8 @@ transcription = AudioToText().transcribe(video)
 ```
 
 Model sizes: `tiny`, `base`, `small`, `medium`, `large`, `turbo` (default). Diarization is
-opt-in with `enable_diarization=True`. VAD-gated language detection runs by default
-(`enable_vad=False` to skip).
+opt-in with `enable_diarization=True`. VAD-gated language detection runs by default;
+`enable_vad=False` detects from the leading audio instead.
 
 ### Anti-hallucination knobs
 

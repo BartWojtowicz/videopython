@@ -1,6 +1,6 @@
 [project]
 name = "videopython"
-version = "0.60.0"
+version = "0.60.1"
 description = "LLM-friendly Python video editing with JSON plans, local AI, and MCP tools."
 authors = [
     { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
@@ -77,11 +77,9 @@ ai = ["videopython[ai]"]
 [project.optional-dependencies]
 ai = [
     # Speech recognition / diarization (understanding/audio.py)
-    "openai-whisper>=20240930",
-    # Floored, not capped: numba declares the numpy cap, and without a floor a
-    # resolver satisfies a newer numpy by backtracking numba instead, breaking
-    # `import whisper`. 0.62 is the oldest release for the lower supported
-    # Python versions; Numba's metadata selects a compatible release on 3.14.
+    "faster-whisper>=1.2.1",
+    # videopython-chatterbox imports librosa, which imports numba. Keep the resolver
+    # from backtracking to a numba release incompatible with the selected NumPy.
     "numba>=0.62",
     "pyannote-audio>=4.0.0",
     "silero-vad>=5.1",
@@ -123,8 +121,7 @@ ai = [
 # dubbing, diarization, source separation, or TTS. Pin MCP <2 — v2 is breaking.
 mcp = [
     "mcp>=1.27,<2",
-    "openai-whisper>=20240930",
-    "numba>=0.62",
+    "faster-whisper>=1.2.1",
     "transnetv2-pytorch>=1.0.5",
     "transformers>=5.2.0",
     "imagehash>=4.3",
