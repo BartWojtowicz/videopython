@@ -1143,13 +1143,13 @@ def test_language_propagated_by_slice():
 
 
 class TestTranscriptionSerialization:
-    """Tests for to_dict/from_dict serialization methods."""
+    """Tests for Pydantic serialization."""
 
     def test_transcription_word_roundtrip(self):
         """Test TranscriptionWord serialization roundtrip."""
         word = TranscriptionWord(start=0.0, end=0.5, word="hello", speaker="SPEAKER_00")
-        data = word.to_dict()
-        restored = TranscriptionWord.from_dict(data)
+        data = word.model_dump()
+        restored = TranscriptionWord.model_validate(data)
 
         assert restored.start == word.start
         assert restored.end == word.end
@@ -1159,8 +1159,8 @@ class TestTranscriptionSerialization:
     def test_transcription_word_without_speaker(self):
         """Test TranscriptionWord serialization without speaker."""
         word = TranscriptionWord(start=1.0, end=1.5, word="world")
-        data = word.to_dict()
-        restored = TranscriptionWord.from_dict(data)
+        data = word.model_dump()
+        restored = TranscriptionWord.model_validate(data)
 
         assert restored.word == word.word
         assert restored.speaker is None
@@ -1178,8 +1178,8 @@ class TestTranscriptionSerialization:
             words=words,
             speaker="SPEAKER_00",
         )
-        data = segment.to_dict()
-        restored = TranscriptionSegment.from_dict(data)
+        data = segment.model_dump()
+        restored = TranscriptionSegment.model_validate(data)
 
         assert restored.start == segment.start
         assert restored.end == segment.end
@@ -1191,8 +1191,8 @@ class TestTranscriptionSerialization:
 
     def test_transcription_roundtrip(self, dummy_transcription):
         """Test Transcription serialization roundtrip."""
-        data = dummy_transcription.to_dict()
-        restored = Transcription.from_dict(data)
+        data = dummy_transcription.model_dump()
+        restored = Transcription.model_validate(data)
 
         assert len(restored.segments) == len(dummy_transcription.segments)
         for orig_seg, rest_seg in zip(dummy_transcription.segments, restored.segments):
@@ -1200,6 +1200,11 @@ class TestTranscriptionSerialization:
             assert rest_seg.end == orig_seg.end
             assert rest_seg.text == orig_seg.text
             assert len(rest_seg.words) == len(orig_seg.words)
+
+    def test_transcription_json_roundtrip(self, dummy_transcription):
+        restored = Transcription.model_validate_json(dummy_transcription.model_dump_json())
+
+        assert restored == dummy_transcription
 
     def test_transcription_with_speakers_roundtrip(self):
         """Test Transcription with speaker info serialization roundtrip."""
@@ -1210,8 +1215,8 @@ class TestTranscriptionSerialization:
         ]
         transcription = Transcription(words=words)
 
-        data = transcription.to_dict()
-        restored = Transcription.from_dict(data)
+        data = transcription.model_dump()
+        restored = Transcription.model_validate(data)
 
         assert len(restored.segments) == len(transcription.segments)
         assert restored.segments[0].speaker == "SPEAKER_00"
@@ -1220,8 +1225,8 @@ class TestTranscriptionSerialization:
     def test_empty_transcription_roundtrip(self):
         """Test empty Transcription serialization roundtrip."""
         transcription = Transcription(segments=[])
-        data = transcription.to_dict()
-        restored = Transcription.from_dict(data)
+        data = transcription.model_dump()
+        restored = Transcription.model_validate(data)
 
         assert len(restored.segments) == 0
 
@@ -1231,20 +1236,20 @@ class TestTranscriptionSerialization:
         segment = TranscriptionSegment(start=0.0, end=1.0, text="test", words=words)
         transcription = Transcription(segments=[segment], language="pl")
 
-        data = transcription.to_dict()
+        data = transcription.model_dump()
         assert data["language"] == "pl"
 
-        restored = Transcription.from_dict(data)
+        restored = Transcription.model_validate(data)
         assert restored.language == "pl"
 
-    def test_language_missing_from_dict(self):
-        """Test backwards compatibility: from_dict with no language key."""
+    def test_language_defaults_when_missing(self):
+        """The optional language defaults to None when it is absent."""
         data = {"segments": []}
-        restored = Transcription.from_dict(data)
+        restored = Transcription.model_validate(data)
         assert restored.language is None
 
     def test_segment_confidence_fields_roundtrip(self):
-        """avg_logprob/no_speech_prob/compression_ratio survive to_dict/from_dict."""
+        """Confidence fields survive a model dump and validation round-trip."""
         words = [TranscriptionWord(start=0.0, end=1.0, word="hi")]
         segment = TranscriptionSegment(
             start=0.0,
@@ -1257,12 +1262,12 @@ class TestTranscriptionSerialization:
             compression_ratio=1.8,
         )
 
-        data = segment.to_dict()
+        data = segment.model_dump()
         assert data["avg_logprob"] == -0.7
         assert data["no_speech_prob"] == 0.05
         assert data["compression_ratio"] == 1.8
 
-        restored = TranscriptionSegment.from_dict(data)
+        restored = TranscriptionSegment.model_validate(data)
         assert restored.avg_logprob == -0.7
         assert restored.no_speech_prob == 0.05
         assert restored.compression_ratio == 1.8
@@ -1272,18 +1277,18 @@ class TestTranscriptionSerialization:
         words = [TranscriptionWord(start=0.0, end=1.0, word="hi")]
         segment = TranscriptionSegment(start=0.0, end=1.0, text="hi", words=words)
 
-        data = segment.to_dict()
+        data = segment.model_dump()
         assert data["avg_logprob"] is None
         assert data["no_speech_prob"] is None
         assert data["compression_ratio"] is None
 
-        restored = TranscriptionSegment.from_dict(data)
+        restored = TranscriptionSegment.model_validate(data)
         assert restored.avg_logprob is None
         assert restored.no_speech_prob is None
         assert restored.compression_ratio is None
 
-    def test_segment_from_dict_back_compat_without_confidence_keys(self):
-        """Old persisted JSON without the new keys must still load (back-compat)."""
+    def test_segment_confidence_fields_default_when_missing(self):
+        """Optional confidence fields default to None when absent."""
         data = {
             "start": 0.0,
             "end": 1.0,
@@ -1292,7 +1297,7 @@ class TestTranscriptionSerialization:
             "speaker": None,
         }
 
-        restored = TranscriptionSegment.from_dict(data)
+        restored = TranscriptionSegment.model_validate(data)
         assert restored.text == "hi"
         assert restored.avg_logprob is None
         assert restored.no_speech_prob is None

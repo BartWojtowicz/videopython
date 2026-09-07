@@ -1,11 +1,14 @@
 # Transcription and subtitles
 
-Transcription data classes (`videopython.base`) and the subtitle-burning operation
+Transcription result models (`videopython.base`) and the subtitle-burning operation
 (`videopython.editing`). Producing a transcription is
 [`AudioToText`](ai/understanding.md#audiototext); a worked example is
 [Tutorial 2](../tutorials/subtitles.md).
 
-## Data classes
+## Result models
+
+These are Pydantic models. Use `model_dump()` or `model_dump_json()` to serialize them,
+and `model_validate()` or `model_validate_json()` to load them.
 
 ::: videopython.base.Transcription
 

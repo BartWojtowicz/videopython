@@ -23,9 +23,10 @@ analysis.save("video_analysis.json")
 loaded = VideoAnalysis.load("video_analysis.json")
 ```
 
-`VideoAnalysis` is a Pydantic model, so `model_dump()`, `model_dump_json()`,
-`model_validate()` and `model_validate_json()` all work. `save()` / `load()` wrap the JSON
-pair with UTF-8 and parent-directory creation.
+`VideoAnalysis` and its nested result types are Pydantic models, so `model_dump()`,
+`model_dump_json()`, `model_validate()` and `model_validate_json()` work throughout the
+result tree. `save()` / `load()` wrap the JSON pair with UTF-8 and parent-directory
+creation.
 
 ## Configuration
 

@@ -201,6 +201,7 @@ def test_scene_first_full_run_outputs_scene_payload(monkeypatch: pytest.MonkeyPa
     payload = analysis.model_dump()
     assert "frames" not in payload
     assert "temporal" not in payload
+    assert va.VideoAnalysis.model_validate(payload) == analysis
     assert {analyzer: outcome.status for analyzer, outcome in _outcomes(analysis).items()} == {
         analyzer: "completed" for analyzer in va.ALL_ANALYZER_IDS
     }

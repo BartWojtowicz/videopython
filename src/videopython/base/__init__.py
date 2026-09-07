@@ -41,7 +41,7 @@ __all__ = [
     "draw_detections",
     "DetectionStyle",
     "class_color",
-    # Transcription data classes
+    # Transcription result models
     "Transcription",
     "TranscriptionSegment",
     "TranscriptionWord",
