@@ -1,5 +1,13 @@
 # Release Notes
 
+## 0.61.0
+
+- Shared transcription, detection, scene, motion, and audio-analysis results are now
+  Pydantic models. Use `model_dump()` and `model_validate()` instead of the removed
+  `to_dict()` and `from_dict()` methods. Their constructors now accept keyword
+  arguments only. Saved `VideoAnalysis` JSON from version 0.60.1 keeps the same shape
+  and remains loadable.
+
 ## 0.60.1
 
 - `AudioToText` now runs Whisper models through faster-whisper and CTranslate2 in

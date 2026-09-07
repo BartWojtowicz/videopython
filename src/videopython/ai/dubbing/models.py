@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Annotated, Any
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, PlainSerializer, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from videopython.ai.dubbing.quality import TranscriptQuality
 from videopython.audio import Audio
@@ -37,26 +36,6 @@ class TimingAdjustment:
 # adjustment (no perceptible compression/stretch). Heuristic threshold for
 # the TimingSummary classification only.
 CLEAN_SPEED_TOLERANCE = 0.01
-
-
-# TranscriptionSegment and Transcription still live in videopython.base as
-# plain dataclasses with hand-rolled to_dict/from_dict. Bridge them at
-# the field boundary so the dubbing cache wire format stays identical.
-def _validate_transcription_segment(value: Any) -> Any:
-    if value is None or isinstance(value, TranscriptionSegment):
-        return value
-    return TranscriptionSegment.from_dict(value)
-
-
-def _serialize_with_to_dict(value: Any) -> Any:
-    return value.to_dict() if value is not None else None
-
-
-_TranscriptionSegmentField = Annotated[
-    TranscriptionSegment,
-    BeforeValidator(_validate_transcription_segment),
-    PlainSerializer(_serialize_with_to_dict, return_type=dict, when_used="always"),
-]
 
 
 class Expressiveness(BaseModel):
@@ -108,9 +87,7 @@ class TranslatedSegment(BaseModel):
         end: End time in seconds.
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    original_segment: _TranscriptionSegmentField
+    original_segment: TranscriptionSegment
     translated_text: str
     source_lang: str
     target_lang: str

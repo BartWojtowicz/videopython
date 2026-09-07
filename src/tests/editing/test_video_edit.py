@@ -971,7 +971,10 @@ class TestSegmentContextHelper:
 
     def test_rebases_mid_video_cut_to_zero_based(self):
         tx = Transcription(
-            words=[TranscriptionWord(12.0, 13.0, "a"), TranscriptionWord(14.5, 15.5, "b")],
+            words=[
+                TranscriptionWord(start=12.0, end=13.0, word="a"),
+                TranscriptionWord(start=14.5, end=15.5, word="b"),
+            ],
             language="en",
         )
         out = _segment_context({"transcription": tx}, "a.mp4", 12.0, 16.0)

@@ -156,6 +156,18 @@ def test_scene_analysis_sample_roundtrip_dict() -> None:
     assert restored == sample
 
 
+def test_scene_analysis_rejects_unknown_nested_result_fields() -> None:
+    payload = {
+        "scene_index": 0,
+        "start_second": 0.0,
+        "end_second": 2.0,
+        "scene_description": {"caption": "test", "unexpected": True},
+    }
+
+    with pytest.raises(ValueError, match="Extra inputs are not permitted"):
+        va.SceneAnalysisSample.model_validate(payload)
+
+
 def test_config_defaults_and_rejects_unknown_ids() -> None:
     restored = va.VideoAnalysisConfig.model_validate({})
     assert restored.enabled_analyzers == set(va.ALL_ANALYZER_IDS)
@@ -201,6 +213,7 @@ def test_scene_first_full_run_outputs_scene_payload(monkeypatch: pytest.MonkeyPa
     payload = analysis.model_dump()
     assert "frames" not in payload
     assert "temporal" not in payload
+    assert va.VideoAnalysis.model_validate(payload) == analysis
     assert {analyzer: outcome.status for analyzer, outcome in _outcomes(analysis).items()} == {
         analyzer: "completed" for analyzer in va.ALL_ANALYZER_IDS
     }

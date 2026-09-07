@@ -1,4 +1,4 @@
-"""Tests for detection dataclasses in videopython.base."""
+"""Tests for detection models in videopython.base."""
 
 import pytest
 
@@ -6,7 +6,7 @@ from videopython.base.description import AudioClassification, AudioEvent, Boundi
 
 
 class TestBoundingBox:
-    """Tests for BoundingBox dataclass."""
+    """Tests for BoundingBox."""
 
     def test_bounding_box_creation(self):
         """Test BoundingBox can be created with valid values."""
@@ -30,7 +30,7 @@ class TestBoundingBox:
 
 
 class TestDetectedObject:
-    """Tests for DetectedObject dataclass."""
+    """Tests for DetectedObject."""
 
     def test_detected_object_creation(self):
         """Test DetectedObject can be created."""
@@ -49,10 +49,10 @@ class TestDetectedObject:
 
 
 class TestAudioClassification:
-    """Tests for AudioClassification serialization helpers."""
+    """Tests for AudioClassification serialization."""
 
     def test_roundtrip_dict_serialization(self):
-        """AudioClassification should roundtrip via to_dict/from_dict."""
+        """AudioClassification should round-trip through its wire format."""
         original = AudioClassification(
             events=[
                 AudioEvent(start=0.0, end=1.2, label="Speech", confidence=0.93),
@@ -61,5 +61,5 @@ class TestAudioClassification:
             clip_predictions={"Speech": 0.93, "Music": 0.78},
         )
 
-        restored = AudioClassification.from_dict(original.to_dict())
+        restored = AudioClassification.model_validate(original.model_dump())
         assert restored == original

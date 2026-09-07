@@ -93,6 +93,16 @@ class TestTranslatedSegment:
 
         assert segment.speaker == "speaker_1"
 
+    def test_roundtrip_dict_serialization(self, sample_segment):
+        segment = TranslatedSegment(
+            original_segment=sample_segment,
+            translated_text="Hola mundo",
+            source_lang="en",
+            target_lang="es",
+        )
+
+        assert TranslatedSegment.model_validate(segment.model_dump()) == segment
+
 
 class TestSeparatedAudio:
     """Tests for SeparatedAudio data model."""

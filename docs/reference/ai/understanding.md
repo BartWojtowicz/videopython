@@ -185,7 +185,7 @@ per_frame = detector.detect_batch(video.frames[:16])
 
 ## Result types
 
-Shared, AI-free data classes from `videopython.base`, produced by the analyzers above and
+Shared, AI-free Pydantic models from `videopython.base`, produced by the analyzers above and
 consumed by `videopython.editing`.
 
 ::: videopython.base.SceneBoundary

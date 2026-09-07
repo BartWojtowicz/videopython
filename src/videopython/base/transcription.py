@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict, PrivateAttr
 
 __all__ = ["Transcription", "TranscriptionSegment", "TranscriptionWord"]
 
@@ -14,35 +15,18 @@ _SENTENCE_TERMINATORS = (".", "!", "?", "…")
 _TRAILING_WRAPPERS = "\"')]}»”’ "
 
 
-@dataclass
-class TranscriptionWord:
+class TranscriptionWord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     start: float
     end: float
     word: str
     speaker: str | None = None
 
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for JSON serialization."""
-        return {
-            "start": self.start,
-            "end": self.end,
-            "word": self.word,
-            "speaker": self.speaker,
-        }
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> TranscriptionWord:
-        """Create TranscriptionWord from dictionary."""
-        return cls(
-            start=data["start"],
-            end=data["end"],
-            word=data["word"],
-            speaker=data.get("speaker"),
-        )
+class TranscriptionSegment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
-
-@dataclass
-class TranscriptionSegment:
     start: float
     end: float
     text: str
@@ -51,33 +35,6 @@ class TranscriptionSegment:
     avg_logprob: float | None = None
     no_speech_prob: float | None = None
     compression_ratio: float | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for JSON serialization."""
-        return {
-            "start": self.start,
-            "end": self.end,
-            "text": self.text,
-            "words": [w.to_dict() for w in self.words],
-            "speaker": self.speaker,
-            "avg_logprob": self.avg_logprob,
-            "no_speech_prob": self.no_speech_prob,
-            "compression_ratio": self.compression_ratio,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> TranscriptionSegment:
-        """Create TranscriptionSegment from dictionary."""
-        return cls(
-            start=data["start"],
-            end=data["end"],
-            text=data["text"],
-            words=[TranscriptionWord.from_dict(w) for w in data["words"]],
-            speaker=data.get("speaker"),
-            avg_logprob=data.get("avg_logprob"),
-            no_speech_prob=data.get("no_speech_prob"),
-            compression_ratio=data.get("compression_ratio"),
-        )
 
     @classmethod
     def from_words(
@@ -112,35 +69,42 @@ class TranscriptionSegment:
         )
 
 
-class Transcription:
+class Transcription(BaseModel):
+    """A timed transcription grouped into segments.
+
+    Construct it with exactly one of ``segments`` or ``words``. The ``words``
+    form groups adjacent words by speaker.
+
+    Raises:
+        ValueError: If both ``segments`` and ``words`` are set, or neither is set.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    _speakers: set[str] = PrivateAttr(default_factory=set)
+
+    segments: list[TranscriptionSegment]
+    language: str | None = None
+
     def __init__(
         self,
+        *,
         segments: list[TranscriptionSegment] | None = None,
         words: list[TranscriptionWord] | None = None,
         language: str | None = None,
-    ):
-        """Initialize Transcription from either segments or words.
-
-        Args:
-            segments: Pre-constructed segments (backward compatible)
-            words: Words to group into segments by speaker (for diarization)
-            language: ISO 639-1 language code detected during transcription (e.g. "en", "pl")
-
-        Raises:
-            ValueError: If both or neither arguments are provided
-        """
-        if (segments is None) == (words is None):
+        **data: Any,
+    ) -> None:
+        if segments is not None and words is not None:
+            raise ValueError("Exactly one of 'segments' or 'words' must be provided")
+        if segments is not None:
+            resolved_segments = segments
+        elif words is not None:
+            resolved_segments = self._words_to_segments(words)
+        else:
             raise ValueError("Exactly one of 'segments' or 'words' must be provided")
 
-        self.language = language
-
-        if segments is not None:
-            self.segments = segments
-            self.speakers = {s.speaker for s in segments if s.speaker is not None}
-        else:
-            assert words is not None
-            self.segments = self._words_to_segments(words)
-            self.speakers = {w.speaker for w in words if w.speaker is not None}
+        super().__init__(segments=resolved_segments, language=language, **data)
+        self._speakers = {segment.speaker for segment in self.segments if segment.speaker is not None}
 
     @property
     def words(self) -> list[TranscriptionWord]:
@@ -150,7 +114,17 @@ class Transcription:
             all_words.extend(segment.words)
         return all_words
 
-    def _words_to_segments(self, words: list[TranscriptionWord]) -> list[TranscriptionSegment]:
+    @property
+    def speakers(self) -> set[str]:
+        """Return the stored speaker identifiers."""
+        return self._speakers
+
+    @speakers.setter
+    def speakers(self, value: set[str]) -> None:
+        self._speakers = value
+
+    @staticmethod
+    def _words_to_segments(words: list[TranscriptionWord]) -> list[TranscriptionSegment]:
         """Group words into segments based on speaker changes."""
         if not words:
             return []
@@ -206,10 +180,10 @@ class Transcription:
                 TranscriptionWord(start=w.start + time, end=w.end + time, word=w.word, speaker=w.speaker)
                 for w in segment.words
             ]
-            # ``replace`` carries text, speaker, and confidence fields through a
-            # pure timing shift unchanged -- only timestamps move.
             offset_segments.append(
-                replace(segment, start=segment.start + time, end=segment.end + time, words=offset_words)
+                segment.model_copy(
+                    update={"start": segment.start + time, "end": segment.end + time, "words": offset_words}
+                )
             )
 
         return Transcription(segments=offset_segments, language=self.language)
@@ -312,9 +286,9 @@ class Transcription:
                     start_of_sentence = True
                 new_words.append(TranscriptionWord(start=word.start, end=word.end, word=token, speaker=word.speaker))
 
-            # Casing-only rewrite: segment boundaries, speaker, and confidence
-            # are unchanged; only the tokens (and joined text) differ.
-            capitalized_segments.append(replace(segment, text=" ".join(w.word for w in new_words), words=new_words))
+            capitalized_segments.append(
+                segment.model_copy(update={"text": " ".join(w.word for w in new_words), "words": new_words})
+            )
 
         return Transcription(segments=capitalized_segments, language=self.language)
 
@@ -341,9 +315,7 @@ class Transcription:
         for segment in self.segments:
             words = segment.words
             if not words:
-                # Nothing to split; emit a fresh copy so the result never
-                # aliases the source segment.
-                chunked_segments.append(replace(segment, words=list(segment.words)))
+                chunked_segments.append(segment.model_copy(update={"words": list(segment.words)}))
                 continue
             for i in range(0, len(words), max_words):
                 group = words[i : i + max_words]
@@ -476,18 +448,3 @@ class Transcription:
             path: Output file path.
         """
         Path(path).write_text(self.to_srt(), encoding="utf-8")
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for JSON serialization."""
-        return {
-            "segments": [s.to_dict() for s in self.segments],
-            "language": self.language,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Transcription:
-        """Create Transcription from dictionary."""
-        return cls(
-            segments=[TranscriptionSegment.from_dict(s) for s in data["segments"]],
-            language=data.get("language"),
-        )

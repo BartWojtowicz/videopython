@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, PlainSerializer, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from videopython.base.description import AudioClassification, FaceTrack, SceneDescription
 from videopython.base.transcription import Transcription
@@ -49,59 +49,6 @@ ALL_ANALYZER_IDS: tuple[_AnalyzerId, ...] = (
     SCENE_VLM,
     FACE_TRACKER,
 )
-
-
-# Nested-type bridges: Transcription, SceneDescription, AudioClassification,
-# and FaceTrack still live in videopython.base as plain dataclasses with
-# hand-rolled to_dict/from_dict. Until they migrate to BaseModel, we
-# interop at the field boundary so the wire format stays identical.
-def _build_validator(cls: Any) -> Any:
-    def _validate(value: Any) -> Any:
-        if value is None or isinstance(value, cls):
-            return value
-        return cls.from_dict(value)
-
-    return _validate
-
-
-def _serialize(value: Any) -> Any:
-    return value.to_dict() if value is not None else None
-
-
-_TranscriptionField = Annotated[
-    Transcription,
-    BeforeValidator(_build_validator(Transcription)),
-    PlainSerializer(_serialize, return_type=dict, when_used="always"),
-]
-_SceneDescriptionField = Annotated[
-    SceneDescription,
-    BeforeValidator(_build_validator(SceneDescription)),
-    PlainSerializer(_serialize, return_type=dict, when_used="always"),
-]
-_AudioClassificationField = Annotated[
-    AudioClassification,
-    BeforeValidator(_build_validator(AudioClassification)),
-    PlainSerializer(_serialize, return_type=dict, when_used="always"),
-]
-
-
-def _validate_face_tracks(value: Any) -> Any:
-    if value is None:
-        return None
-    return [item if isinstance(item, FaceTrack) else FaceTrack.from_dict(item) for item in value]
-
-
-def _serialize_face_tracks(value: Any) -> Any:
-    if value is None:
-        return None
-    return [track.to_dict() for track in value]
-
-
-_FaceTracksField = Annotated[
-    list[FaceTrack],
-    BeforeValidator(_validate_face_tracks),
-    PlainSerializer(_serialize_face_tracks, return_type=list, when_used="always"),
-]
 
 
 class GeoMetadata(BaseModel):
@@ -206,9 +153,7 @@ class VideoAnalysisConfig(BaseModel):
 class AudioAnalysisSection(BaseModel):
     """Audio understanding outputs."""
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    transcription: _TranscriptionField | None = None
+    transcription: Transcription | None = None
 
 
 class SceneAnalysisSample(BaseModel):
@@ -220,16 +165,14 @@ class SceneAnalysisSample(BaseModel):
     trajectory internally.
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
     scene_index: int
     start_second: float
     end_second: float
     start_frame: int | None = None
     end_frame: int | None = None
-    scene_description: _SceneDescriptionField | None = None
-    audio_classification: _AudioClassificationField | None = None
-    faces: _FaceTracksField | None = None
+    scene_description: SceneDescription | None = None
+    audio_classification: AudioClassification | None = None
+    faces: list[FaceTrack] | None = None
 
 
 class SceneAnalysisSection(BaseModel):
