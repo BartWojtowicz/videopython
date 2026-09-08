@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.11, <3.15"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -5445,7 +5445,7 @@ wheels = [
 
 [[package]]
 name = "videopython"
-version = "0.61.0"
+version = "0.61.1"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },
@@ -5528,7 +5528,7 @@ requires-dist = [
     { name = "ollama", marker = "extra == 'mcp'", specifier = ">=0.5.0" },
     { name = "opencv-python-headless", specifier = ">=4.9.0.80" },
     { name = "pillow", specifier = ">=12.1.1" },
-    { name = "pyannote-audio", marker = "extra == 'ai'", specifier = ">=4.0.0" },
+    { name = "pyannote-audio", marker = "extra == 'ai'", specifier = ">=4.0.7,<4.1" },
     { name = "pydantic", specifier = ">=2.8.0" },
     { name = "pyloudnorm", marker = "extra == 'ai'", specifier = ">=0.1.1" },
     { name = "resvg-py", specifier = ">=0.3.2" },

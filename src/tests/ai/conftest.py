@@ -11,6 +11,12 @@ import pytest
 
 
 class _Tensor(np.ndarray):
+    def cpu(self):
+        return self
+
+    def numpy(self):
+        return np.asarray(self)
+
     def to(self, *_args, **_kwargs):
         return self
 
@@ -40,9 +46,11 @@ def _fake_torch() -> ModuleType:
         "Tensor": _Tensor,
         "Generator": _Generator,
         "no_grad": nullcontext,
+        "inference_mode": nullcontext,
         "tensor": _tensor,
         "from_numpy": _tensor,
-        "zeros": lambda shape, dtype=None: _tensor(np.zeros(shape, dtype=dtype)),
+        "zeros": lambda *shape, dtype=None: _tensor(np.zeros(shape, dtype=dtype)),
+        "vstack": lambda tensors: _tensor(np.vstack(tensors)),
         "device": lambda value: value,
         "use_deterministic_algorithms": lambda _enabled: None,
         "cuda": SimpleNamespace(is_available=lambda: False),

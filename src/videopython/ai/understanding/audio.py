@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from bisect import bisect_left
-from types import MethodType
 from typing import Any, Literal
 
 from videopython.ai._device import log_device_initialization, select_device
@@ -29,28 +28,6 @@ _WHISPER_MODELS = {
     "large": "Systran/faster-whisper-large-v3",
     "turbo": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
 }
-
-
-def _reconstruct_diarization(pipeline: Any, segmentations: Any, hard_clusters: Any, count: Any) -> Any:
-    """Reconstruct global clusters without promoting segmentation data to float64."""
-    import numpy as np
-
-    num_chunks, num_frames, _ = segmentations.data.shape
-    num_clusters = int(np.max(hard_clusters)) + 1
-    clustered_data = np.full(
-        (num_chunks, num_frames, num_clusters),
-        np.nan,
-        dtype=segmentations.data.dtype,
-    )
-
-    for chunk_index, (cluster, (_, segmentation)) in enumerate(zip(hard_clusters, segmentations)):
-        for cluster_index in np.unique(cluster):
-            if cluster_index == -2:
-                continue
-            clustered_data[chunk_index, :, cluster_index] = np.max(segmentation[:, cluster == cluster_index], axis=1)
-
-    clustered_segmentations = type(segmentations)(clustered_data, segmentations.sliding_window)
-    return pipeline.to_diarization(clustered_segmentations, count)
 
 
 def _normalize_vocabulary(vocabulary: list[str] | None) -> list[str]:
@@ -264,16 +241,14 @@ class AudioToText(ManagedPredictor):
         import torch
 
         from videopython.ai._optional import require
+        from videopython.ai.understanding import _pyannote_patches
 
         Pipeline = require("pyannote.audio", feature="AudioToText diarization").Pipeline
 
         self._diarization_pipeline = Pipeline.from_pretrained(
             self.PYANNOTE_DIARIZATION_MODEL, revision=pinned(self.PYANNOTE_DIARIZATION_MODEL)
         )
-        if not callable(getattr(self._diarization_pipeline, "reconstruct", None)):
-            raise RuntimeError("The pyannote diarization pipeline no longer provides reconstruct().")
-        # pyannote otherwise promotes its duration-by-speaker workspace to float64.
-        self._diarization_pipeline.reconstruct = MethodType(_reconstruct_diarization, self._diarization_pipeline)
+        _pyannote_patches.install(self._diarization_pipeline)
         self._diarization_pipeline.to(torch.device(self.device))
 
     def _init_vad(self) -> None:

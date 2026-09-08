@@ -39,6 +39,70 @@ OLLAMA_HOST=127.0.0.1:11434 uv run python scripts/verify_mcp_workflow.py \
 
 ## AI model verification
 
+### Diarization optimization, 0.61.1
+
+On 2026-09-08, the diarization embedding path was measured on an NVIDIA GeForce
+RTX 2060 SUPER, Python 3.12.12, pyannote-audio 4.0.7, and PyTorch 2.13.0+cu130. The patch skips inactive
+speaker/chunk pairs and shares frame extraction when the pyannote embedding backend
+provides the compatible split-frame interface in evaluation mode with zero dither.
+This is an internal optimization; videopython does not select an identity model or
+depend on the downstream `wespeakerruntime` package.
+
+Both versions used the same `Audio.from_path(..., sample_rate=16000, channels=1)`
+decode. Precision, segmentation overlap, and clustering settings were unchanged.
+Each variant ran three times per loaded model. The following averages use runs 2
+and 3, exclude loading and decoding, and include final annotation construction.
+"Before" already skips inactive pairs; "after" additionally shares frame extraction.
+
+| Recording | Before | After | Time reduction | Speakers / exclusive turns |
+|---|---:|---:|---:|---:|
+| `cam1_10min.mp4` | 6.46s | 5.22s | 19.3% | 2 / 146 |
+| `all_in_30min.mp4` | 21.18s | 16.16s | 23.7% | 5 / 640 |
+
+Exclusive and overlap-aware labels and exact unrounded timestamps matched in every
+comparison run on both recordings, and their RTTM files were byte-identical. Maximum
+absolute embedding differences were 3.04e-6 and 1.73e-6 respectively. This establishes
+unchanged output on these inputs, not accuracy against human annotations or a guarantee
+for other recordings. The 30-minute clip had 686 overlap-aware turns.
+
+Smaller embedding batches (16 and 24), convolution/batch-normalization fusion, and
+channels-last layout gave no useful improvement over shared frame extraction on the
+10-minute clip. Reduced segmentation overlap was not adopted because it changes output.
+
+These measurements used a local experimental harness, not a maintained repository
+tool. It timed the complete pyannote call with CUDA synchronization and recorded
+exclusive and overlap-aware RTTM, unrounded turn timestamps, and embeddings.
+For an equivalent comparison, disable frame sharing while retaining inactive-pair
+skipping in the reference run, use identical decoded audio, and compare exact
+annotations as well as RTTM files. Input SHA-256 values:
+
+| Recording | SHA-256 |
+|---|---|
+| `cam1_10min.mp4` | `deeaa2055a9061ea04fdddafdcc846be0454c677cabc5e1d5c546b595d4e1e7b` |
+| `all_in_30min.mp4` | `b95a8afe03c39529939ddd0343b3490d665b745ebfb758fee73ef61bb1ee91a6` |
+
+A single stage-timed run on the 30-minute clip with default Whisper turbo (float32),
+VAD, automatic language detection, and diarization produced 5,655 English words and
+five speakers in 105.24s: decode 10.18s, VAD including initialization 16.03s, language
+detection 0.90s, transcription 61.66s, diarization 16.44s, and word processing/speaker
+assignment 0.03s. Whisper and diarization loading added 9.92s, for 115.16s including
+those loads. Python startup/imports and output writing are outside these totals.
+The experimental harness also omitted final transcript regrouping and confidence
+reattachment, so these are sums of the measured stages, not exact public-API
+end-to-end wall times.
+
+The real-model verification harness also passed `env` and `imports` (38/38 public
+AI entrypoints) on this machine. Speaker identity matching remains downstream:
+anonymous diarization labels do not make internal cluster embeddings compatible with
+an application's enrolled voice embeddings.
+
+The dependency range is restricted to pyannote-audio `>=4.0.7,<4.1` because these
+optimizations override private pipeline steps. Before widening it, recheck inactive
+pair filtering, clustering exclusion, the split-frame computation, and exact output
+comparisons. Method availability alone does not establish those semantics.
+
+### Earlier full AI verification
+
 The real-model harness in `scripts/verify_ai_models.py` passed with public defaults on
 2026-09-06. It used library commit
 `3023da1ffc20254abd91c4f8b3005925f0ca4e19` and a representative 60.08-second Polish

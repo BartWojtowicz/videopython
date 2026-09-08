@@ -1,5 +1,20 @@
 # Release Notes
 
+## 0.61.1
+
+- Speaker diarization skips embeddings for chunk/speaker pairs with no speech and
+  shares compatible pyannote backends' frame extraction across active speakers in
+  each chunk. Speaker masks, segmentation overlap, model precision, and clustering
+  settings are unchanged.
+- Sharing frame extraction reduced warm diarization time from 6.46s to 5.22s on a
+  10-minute two-speaker clip and from 21.18s to 16.16s on a 30-minute five-speaker
+  clip, compared with silent-pair skipping alone. Exact speaker labels and timestamps,
+  including overlapping speech, matched on both recordings; embeddings have small
+  floating-point differences. These measurements do not guarantee identical results
+  on other recordings. See the diarization verification record for measurement details.
+- Restrict pyannote-audio to `>=4.0.7,<4.1` while its private diarization integration
+  is validated against the 4.0 series.
+
 ## 0.61.0
 
 - Shared transcription, detection, scene, motion, and audio-analysis results are now
