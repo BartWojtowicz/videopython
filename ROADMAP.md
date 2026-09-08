@@ -42,6 +42,25 @@ release gate therefore needs evidence from the real model stack:
 
 - make the required real-model sign-off visible in the release process;
 
+### Use the channel layout of the source in diarization
+
+`Audio` downmixes to mono before transcription and diarization. When a recording gives
+each speaker a microphone, this removes the strongest speaker cue in the file.
+
+Measured on a two-person 10-minute recording: the correlation between the two source
+channels is 0.009. The channel energy ratio separates the two speakers by approximately
+33 dB, and the two ranges do not overlap, so the channel alone gives the speaker of
+every turn. The pipeline discards the channels and then spends its largest stage to find
+the same result from voice timbre.
+
+The mono result is also unstable. Two mono renderings of that source differ by 0.63% RMS
+because they use a different resampler. Their diarization results differ by 10.5%
+diarization error rate, and almost all of the difference is missed speech.
+
+Examine whether diarization must keep the channels when they are not correlated, and use
+them to constrain or to replace the speaker clustering. Keep the mono path for correlated
+stereo, which is the usual case.
+
 ### Validate the release candidate
 
 Publish `1.0.0rc1` before the stable release. Use it from a clean consumer environment

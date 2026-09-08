@@ -1,6 +1,6 @@
 [project]
 name = "videopython"
-version = "0.61.0"
+version = "0.61.1"
 description = "LLM-friendly Python video editing with JSON plans, local AI, and MCP tools."
 authors = [
     { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
@@ -81,7 +81,9 @@ ai = [
     # videopython-chatterbox imports librosa, which imports numba. Keep the resolver
     # from backtracking to a numba release incompatible with the selected NumPy.
     "numba>=0.62",
-    "pyannote-audio>=4.0.0",
+    # Diarization overrides private pipeline steps verified against 4.0.7.
+    # Revalidate inactive-pair filtering and split-frame semantics before 4.1.
+    "pyannote-audio>=4.0.7,<4.1",
     "silero-vad>=5.1",
     # Visual understanding: detection (D-FINE/YuNet via transformers + opencv core
     # dep), scene/temporal, VLM (understanding/*, video_analysis)

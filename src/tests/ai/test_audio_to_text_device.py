@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 import videopython.ai.understanding.audio as audio_mod
+from videopython.ai.understanding import _pyannote_patches
 from videopython.audio import Audio, AudioMetadata
 
 
@@ -413,7 +414,7 @@ class TestDiarizationReconstruction:
         )
         hard_clusters = np.array([[0, 1], [1, 1]])
 
-        reconstructed = audio_mod._reconstruct_diarization(_Pipeline(), segmentations, hard_clusters, count=object())
+        reconstructed = _pyannote_patches._reconstruct(_Pipeline(), segmentations, hard_clusters, count=object())
 
         assert reconstructed.data.dtype == np.float32
         np.testing.assert_allclose(reconstructed.data[0, :, 0], [0.1, 0.2, 0.3])
@@ -789,3 +790,165 @@ class TestVocabularyBiasing:
         monkeypatch.setattr(audio_mod, "select_device", lambda _r, mps_allowed=False: "cpu")
         with pytest.raises(TypeError, match="vocabulary"):
             audio_mod.AudioToText(vocabulary="Klarna", device=None)  # type: ignore[arg-type]
+
+
+class TestSkippingSilentEmbeddings:
+    """_get_embeddings must place real embeddings exactly where pyannote would,
+    and reuse the silent-mask constant everywhere pyannote's result is discarded."""
+
+    SILENT = np.array([9.0, 9.0])
+
+    class _Segmentations:
+        def __init__(self, data: np.ndarray) -> None:
+            self.data = data
+            self.sliding_window = SimpleNamespace(duration=10.0)
+
+        def __iter__(self) -> Any:
+            for index, chunk in enumerate(self.data):
+                yield f"chunk{index}", chunk
+
+    class _Embedding:
+        sample_rate = 16000
+        min_num_samples = 400
+        dimension = 2
+
+        def __init__(self, silent: np.ndarray, calls: list[int]) -> None:
+            self._silent = silent
+            self._calls = calls
+
+        def __call__(self, waveforms: Any, masks: Any = None) -> np.ndarray:
+            masks = np.asarray(masks)
+            self._calls.append(len(masks))
+            return np.array([self._silent if mask.sum() == 0 else np.array([mask.sum(), 1.0]) for mask in masks])
+
+    class _Audio:
+        def __init__(self, crops: list[str]) -> None:
+            self._crops = crops
+
+        def crop(self, _file: Any, chunk: str, mode: str) -> tuple[Any, int]:
+            import torch
+
+            self._crops.append(chunk)
+            return torch.zeros(1, 4), 16000
+
+    def test_silent_pairs_reuse_the_constant_and_skip_the_model(self) -> None:
+        # 3 chunks x 4 frames x 2 speakers; only 3 of the 6 pairs carry speech.
+        data = np.zeros((3, 4, 2), dtype=np.float32)
+        data[0, :2, 0] = 1.0  # chunk 0: speaker 0 only
+        data[2, :, 0] = 1.0  # chunk 2: both speakers
+        data[2, :3, 1] = 1.0
+
+        batch_sizes: list[int] = []
+        crops: list[str] = []
+        pipeline = SimpleNamespace(
+            _embedding=self._Embedding(self.SILENT, batch_sizes),
+            _audio=self._Audio(crops),
+            embedding_batch_size=2,
+        )
+
+        embeddings = _pyannote_patches._get_embeddings(pipeline, {}, self._Segmentations(data), exclude_overlap=False)
+
+        assert embeddings.shape == (3, 2, 2)
+        np.testing.assert_allclose(embeddings[0, 0], [2.0, 1.0])
+        np.testing.assert_allclose(embeddings[2, 0], [4.0, 1.0])
+        np.testing.assert_allclose(embeddings[2, 1], [3.0, 1.0])
+        for silent_pair in ((0, 1), (1, 0), (1, 1)):
+            np.testing.assert_allclose(embeddings[silent_pair], self.SILENT)
+
+        # One probe for the constant, then the 3 speaking pairs in batches of 2.
+        assert batch_sizes == [1, 2, 1]
+        # The fully silent chunk is never even decoded.
+        assert crops == ["chunk0", "chunk2"]
+
+    @pytest.mark.parametrize("exclude_overlap", [False, True])
+    @pytest.mark.parametrize("batch_size", [2, 3, 4])
+    @pytest.mark.parametrize("batch_chunks", [False, True])
+    def test_shared_frames_preserve_masks_and_scatter(
+        self, exclude_overlap: bool, batch_size: int, batch_chunks: bool
+    ) -> None:
+        import torch
+
+        class Model:
+            def __init__(self):
+                self.chunk_count = 0
+
+            def forward_frames(self, waveforms):
+                self.chunk_count += len(waveforms)
+                return waveforms[:, 0, :]
+
+            def forward_embedding(self, frames, weights):
+                return (frames * weights).sum(axis=1)[:, None]
+
+        class Embedding:
+            sample_rate = 16000
+            min_num_samples = 400
+            device = "cpu"
+
+            def __init__(self):
+                self.model_ = Model()
+
+            def __call__(self, waveforms, masks):
+                # The zero-mask probe uses a full-length waveform.
+                if not np.asarray(masks).any():
+                    return np.zeros((len(masks), 1), dtype=np.float32)
+                return self.model_.forward_embedding(self.model_.forward_frames(waveforms), masks).cpu().numpy()
+
+        class Audio:
+            def crop(self, file, chunk, mode):
+                offset = int(chunk.removeprefix("chunk")) * 10
+                return torch.from_numpy(np.arange(4, dtype=np.float32)[None] + offset), 16000
+
+        data = np.zeros((4, 4, 3), dtype=np.float32)
+        data[0, :3, 0] = 1
+        data[0, 1:, 1] = 1  # overlap with clean speech available
+        data[2, :, :2] = 1  # no clean speech: retain original masks
+        data[3, 2:, 2] = 1  # final partial batch and nonzero speaker index
+        pipeline = SimpleNamespace(_embedding=Embedding(), _audio=Audio(), embedding_batch_size=batch_size)
+        expected = _pyannote_patches._get_embeddings(pipeline, {}, self._Segmentations(data), exclude_overlap)
+        original_count = pipeline._embedding.model_.chunk_count
+        pipeline._embedding.model_.chunk_count = 0
+        pipeline._share_embedding_frames = True
+        pipeline._batch_embedding_chunks = batch_chunks
+        progress = []
+        actual = _pyannote_patches._get_embeddings(
+            pipeline,
+            {},
+            self._Segmentations(data),
+            exclude_overlap,
+            hook=lambda *args, **kwargs: progress.append(kwargs),
+        )
+        np.testing.assert_array_equal(actual, expected)
+        assert pipeline._embedding.model_.chunk_count < original_count
+        assert progress[-1]["completed"] == progress[-1]["total"]
+        if batch_chunks:
+            assert pipeline._embedding.model_.chunk_count == 3
+
+    @pytest.mark.parametrize(
+        "training,dither,expected", [(False, 0.0, True), (True, 0.0, False), (False, 1.0, False), (False, None, False)]
+    )
+    def test_sharing_requires_deterministic_split_frame_backend(self, training, dither, expected):
+        class Model:
+            def forward_frames(self):
+                pass
+
+            def forward_embedding(self):
+                pass
+
+        model = Model()
+        model.training = training
+        model.hparams = {"dither": dither}
+        pipeline = SimpleNamespace(
+            _embedding=SimpleNamespace(model_=model), reconstruct=lambda: None, get_embeddings=lambda: None
+        )
+        _pyannote_patches.install(pipeline)
+        assert pipeline._share_embedding_frames is expected
+        assert pipeline._batch_embedding_chunks is expected
+
+    @pytest.mark.parametrize("missing", ["model_", "hparams", "training", "forward_frames", "forward_embedding"])
+    def test_unknown_embedding_capabilities_keep_previous_path(self, missing):
+        model = SimpleNamespace(
+            training=False, hparams={"dither": 0.0}, forward_frames=lambda: None, forward_embedding=lambda: None
+        )
+        embedding = SimpleNamespace(model_=model)
+        delattr(embedding if missing == "model_" else model, missing)
+        assert not _pyannote_patches._supports_shared_frames(embedding)

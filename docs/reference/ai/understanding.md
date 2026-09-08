@@ -25,6 +25,30 @@ Model sizes: `tiny`, `base`, `small`, `medium`, `large`, `turbo` (default). Diar
 opt-in with `enable_diarization=True`. VAD-gated language detection runs by default;
 `enable_vad=False` detects from the leading audio instead.
 
+Diarization skips speaker embeddings for chunk/speaker pairs with no speech. Compatible
+pyannote embedding backends also share frame extraction across speakers in each chunk, then apply
+each speaker's original mask separately. Segmentation overlap, precision, and clustering
+settings are unchanged. Other embedding models keep the existing extraction path.
+
+On a 30-minute five-speaker recording, sharing frame extraction reduced warm diarization
+time from 21.18s to 16.16s, with identical speaker labels and exact timestamps. Small
+floating-point differences remain in the embeddings, so identical output is not
+guaranteed for every recording. See the [verification record](../verification.md#diarization-optimization-0611)
+for the tested inputs, comparison method, and full transcription timing.
+
+### Downstream speaker identification
+
+Speaker labels such as `SPEAKER_00` identify speakers within one recording. They are
+not person identities and are not stable across recordings. Downstream applications
+can use `Transcription.speakers` and each segment's `speaker`, `start`, and `end` to
+select audio with `Audio.slice()`, then run their own identity embedding and matching
+models. Model selection, enrollment, and similarity thresholds belong to that consumer.
+Videopython does not expose its internal diarization embeddings as identity vectors.
+
+ASR and diarization can also run as separate jobs: call `AudioToText().transcribe(audio)`
+for timed words, then `AudioToText(enable_diarization=True).diarize_transcription(audio,
+transcription)` to attach speaker labels without loading Whisper again.
+
 ### Anti-hallucination knobs
 
 Three Whisper decoder kwargs are surfaced for noisy or sparse-speech audio. Defaults:
