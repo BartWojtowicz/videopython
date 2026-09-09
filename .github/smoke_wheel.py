@@ -76,9 +76,12 @@ async def _check_mcp() -> None:
     assert tools == {
         "analyze_video",
         "build_catalog",
+        "export_analysis",
+        "import_analysis",
         "repair_edit",
         "run_edit",
         "scene_keyframes",
+        "scene_transcripts",
         "validate_edit",
     }
     assert resources == {"schema://videopython/edit-plan"}

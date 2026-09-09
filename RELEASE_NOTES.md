@@ -4,6 +4,29 @@ Entries describe the named release. Older APIs, defaults, and limitations can be
 superseded by later entries. Use the [current reference](docs/reference/index.md)
 for new code.
 
+## 0.62.0
+
+- Add captioned interview, branded excerpt, and explicit two-pass summary examples
+  using ordinary edit plans. See the [social clip guide](docs/how-to/social-clip.md).
+- Add speech-passage catalogs with sentence/pause boundaries and duration limits.
+  MCP can retrieve full transcript text for selected catalog IDs. Candidate boundaries
+  still require editorial review.
+- Batch catalog keyframe extraction and limit the MCP image cache to 12 downscaled
+  images. Clarify the bounded frame-buffer contract and separate it from total memory.
+- Add MCP analysis import/export with source-content verification, a format version,
+  and model provenance. Reuse saved results across sessions without inference.
+  **Migration:** regenerate older saved analyses that lack required provenance.
+  `VideoAnalysis` now requires `AnalysisProvenance`; MCP source paths are absolute.
+  Analyzing or importing a source clears the current catalog. See the
+  [saved-analysis contract](docs/reference/ai/video-analysis.md#saved-identity-and-migration).
+- Add `VideoEdit.run_to_file(on_progress=...)` callbacks and live MCP render
+  notifications. Report stage boundaries and observed frames; only final completion
+  means the whole render succeeded. Saved edit plans and final MCP render results
+  keep their existing formats.
+- Document source-token spacing limitations without changing word text or timing.
+  Dubbing quality limitations from 0.61.2 still apply. Measurements and real-media
+  checks are recorded in the [verification reference](docs/reference/verification.md).
+
 ## 0.61.2
 
 - Dub sentences at source-word timestamps using per-speaker voice references.

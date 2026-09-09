@@ -3,7 +3,7 @@
 These point-in-time measurements support release checks and implementation decisions.
 Older entries include candidate designs that were later replaced. The
 [final dubbing review](#final-dubbing-review-0612) describes the latest recorded
-release result; API behavior belongs in the reference pages. These records
+dubbing release result; API behavior belongs in the reference pages. These records
 describe the tested environment and are not performance guarantees for other
 hardware, inputs, or dependency versions.
 
@@ -11,6 +11,30 @@ For the interfaces covered by the AI checks, see [AI generation](ai/generation.m
 [AI understanding](ai/understanding.md), and [Dubbing](ai/dubbing.md). For the design
 decision supported by the effects profile, see [The streaming
 engine](../explanation/streaming-engine.md#why-pixel-effects-are-not-ffmpeg-filters).
+
+## Release preparation, 0.62.0
+
+Local checks on 2026-09-09 used Linux and Python 3.12.12. The package, lockfile,
+release-note heading, and wheel metadata all report 0.62.0. Remaining dubbing work
+and 1.0-specific release work were deferred.
+
+The full suite ran without visible CUDA devices and with model downloads disabled:
+1,310 tests passed and two failed in 382.96 s, with 12 missing-audio fixture warnings.
+The version assertion overlapped an editable-package version refresh; it passed in
+a fresh process. The speech-catalog test still called the now-async MCP handler
+synchronously; its invocation was corrected. The failed-test rerun passed both tests
+in 1.53 s. Pre-commit and the strict documentation build passed.
+
+The source distribution and wheel built offline. A clean environment installed the
+wheel and MCP dependencies from the local cache, passed the repository's wheel smoke
+check, then imported a real saved analysis and rendered a catalog selection with
+11 progress notifications. Imports came from the installed wheel's `site-packages`,
+and the result passed full FFmpeg decoding. The wheel smoke check now expects the
+new analysis import/export and transcript tools.
+
+Logs and artifacts remain in `.cache/release-0.62.0/`. These checks do not establish
+other Python/OS matrix results or external-agent compatibility. No tag, remote push,
+or publication was performed.
 
 ## Catalog keyframe extraction
 

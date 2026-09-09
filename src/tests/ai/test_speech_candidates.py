@@ -1,4 +1,6 @@
+import asyncio
 import json
+from unittest.mock import AsyncMock
 
 import pytest
 from mcp.types import TextContent
@@ -108,7 +110,7 @@ def test_mcp_speech_catalog_transcripts_and_render(tmp_path, monkeypatch):
     assert json.loads(error.text)["code"] == "unknown_scene_ids"
     plan = {"segments": [{"scene_id": first["id"]}]}
     assert server.validate_edit(plan).valid
-    result = server.run_edit(plan, str(tmp_path / "speech.mp4"))
+    result = asyncio.run(server.run_edit(plan, str(tmp_path / "speech.mp4"), AsyncMock()))
     assert result.output_path is not None
     assert VideoMetadata.from_path(result.output_path).total_seconds == pytest.approx(2.5, abs=0.05)
     empty = server.build_catalog(mode="speech", speech=SpeechCandidateConfig(min_duration=20, max_duration=30))
