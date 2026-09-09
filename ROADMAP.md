@@ -61,6 +61,34 @@ Examine whether diarization must keep the channels when they are not correlated,
 them to constrain or to replace the speaker clustering. Keep the mono path for correlated
 stereo, which is the usual case.
 
+### Improve dubbing quality
+
+Fast-paced dialogue with multiple speakers, short interruptions, numerical claims
+and specialized vocabulary needs stronger quality checks across transcription,
+translation, synthesis and timing.
+
+- Improve speaker assignment across interruptions and different recording lengths.
+- Keep cloned voices consistent across phrases while retaining natural expression.
+- Fit translated speech without extreme acceleration or loss of intelligibility.
+- Preserve meaning, units and terminology, and pronounce numbers correctly.
+- Check missing, added and repeated speech independently of generation success.
+
+Use varied recordings and language directions for validation, with listening review
+alongside automated checks. Current limitations and measurements are in the
+[verification record](docs/reference/verification.md#final-dubbing-review-0612).
+
+### Reduce speech synthesis time
+
+Speech generation dominates local dubbing time, even when transcription, diarization
+and voice references are processed efficiently. Build on decoder graph replay with
+further measured runtime improvements that reduce complete dubbing time. Keep only
+changes whose benefit justifies their implementation and maintenance cost.
+
+Prioritize inference improvements with the existing model and voice settings. Measure
+setup cost, complete dubbing time and memory use, while checking intelligibility,
+speaker identity, expression and timing against the current output. Keep the injectable
+speech backend contract usable by downstream projects.
+
 ### Validate the release candidate
 
 Publish `1.0.0rc1` before the stable release. Use it from a clean consumer environment

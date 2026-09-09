@@ -41,7 +41,8 @@ or the same knobs as flat kwargs — the constructor builds a `DubbingConfig` ei
 result = dubber.dub(video, target_lang="es")
 
 result.num_segments, result.source_lang, result.target_lang
-result.translation_failures            # indices the model never returned
+result.translation_failures            # original indices with missing/invalid translation parts
+result.synthesis_failures              # original indices without generated speech
 
 for segment in result.translated_segments:
     print(f"{segment.original_text!r} -> {segment.translated_text!r}")
@@ -75,9 +76,14 @@ loud/quiet shape instead of using flat defaults everywhere.
 
 ## TimingSummary
 
-Aggregate stats over the per-segment timing adjustments the synchronizer applied. High
-truncation counts mean the translation produced text too long for the source's spoken
-regions.
+Aggregate stats over the per-segment timing adjustments. `excessive_speed_count`
+counts turns exceeding the preferred maximum speed; `max_speed_factor` records the
+fastest adjustment. The pipeline borrows following silence before speeding up and
+preserves complete speech instead of clipping its tail. Small tempo-filter duration
+errors are corrected by resampling the entire output, which can slightly shift pitch.
+`clean_count` includes speed factors within 0.01 of 1.0; `stretched_count` includes
+the remaining adjustments. See [Update timing consumers](../../how-to/dubbing.md#update-timing-consumers)
+when migrating callers or saved results.
 
 ::: videopython.ai.dubbing.models.TimingSummary
 

@@ -28,6 +28,7 @@ class Context:
     source_lang: str
     target_lang: str
     enable_diarization: bool
+    low_memory: bool = False
 
 
 @dataclass
@@ -506,6 +507,7 @@ def check_tts(ctx: Context) -> Outcome:
         cloned_note = "tts_cloned.wav written"
     except Exception as exc:  # noqa: BLE001 - reported, not fatal to the check
         cloned_note = f"cloning raised {type(exc).__name__}: {exc}"
+    tts.unload()
     free_weights()
 
     heard = AudioToText().transcribe(audio)
@@ -655,22 +657,9 @@ def check_detection(ctx: Context) -> Outcome:
     )
 
 
-_MAX_DUB_TRUNCATION_SECONDS = 3.0
-
-
 @check("dub", "Full dub end-to-end, translated and audible", needs_video=True, needs_cuda=True)
 def check_dub(ctx: Context) -> Outcome:
-    """The integration that has broken most often, asserted on its output.
-
-    Checks, in order of how badly each has bitten:
-
-    1. ``translation_failures`` is empty. This is the exact signal the 0.53.0
-       reasoning-model bug produced -- every segment failed and was dubbed with
-       empty text, while the pipeline reported success.
-    2. The dubbed track is not silent. A pipeline that "succeeds" into silence
-       has happened via the separator writing stems to the wrong directory.
-    3. The worst timing truncation does not exceed the manual-run baseline.
-    """
+    """Check translation, synthesis, requested speaker cloning, and audible output."""
     import numpy as np
 
     from videopython.ai.dubbing import VideoDubber
@@ -678,7 +667,12 @@ def check_dub(ctx: Context) -> Outcome:
 
     assert ctx.video is not None  # guaranteed by needs_video
     video = Video.from_path(str(ctx.video))
-    dubber = VideoDubber(device=ctx.device) if ctx.device else VideoDubber()
+    dubbing_options: dict[str, Any] = {"low_memory": ctx.low_memory}
+    if ctx.device:
+        dubbing_options["device"] = ctx.device
+    if ctx.ollama_model:
+        dubbing_options["translator_model"] = ctx.ollama_model
+    dubber = VideoDubber(**dubbing_options)
     result = dubber.dub(
         video,
         target_lang=ctx.target_lang,
@@ -710,6 +704,9 @@ def check_dub(ctx: Context) -> Outcome:
     measurements: dict[str, Any] = {
         "segments": segments,
         "translation_failures": len(failures),
+        "synthesis_failures": result.synthesis_failures,
+        "low_memory": ctx.low_memory,
+        "translator_model": ctx.ollama_model or "default",
         "dubbed_peak_amplitude": round(peak, 6),
         "diarization": ctx.enable_diarization,
         "speakers": sorted(result.source_transcription.speakers),
@@ -718,9 +715,9 @@ def check_dub(ctx: Context) -> Outcome:
     }
     if timing is not None:
         measurements |= {
-            "truncated": f"{timing.truncated_count}/{timing.total_segments}",
             "mean_speed_factor": round(timing.mean_speed_factor, 3),
-            "max_truncation_seconds": round(timing.max_truncation_seconds, 3),
+            "excessive_speed_count": timing.excessive_speed_count,
+            "max_speed_factor": round(timing.max_speed_factor, 3),
         }
 
     if failures:
@@ -731,28 +728,24 @@ def check_dub(ctx: Context) -> Outcome:
         )
     if ctx.enable_diarization and not result.source_transcription.speakers:
         return Outcome(passed=False, detail="diarization returned no speakers", measurements=measurements)
+    if result.synthesis_failures:
+        return Outcome(
+            passed=False,
+            detail=f"speech failed for original segments {result.synthesis_failures}",
+            measurements=measurements,
+        )
     if ctx.enable_diarization and not result.voice_samples:
         return Outcome(passed=False, detail="voice cloning produced no speaker samples", measurements=measurements)
     if peak <= 1e-4:
         return Outcome(passed=False, detail="dubbed track is silent", measurements=measurements)
     if timing is None:
         return Outcome(passed=False, detail="timing summary is missing", measurements=measurements)
-    if timing.max_truncation_seconds > _MAX_DUB_TRUNCATION_SECONDS:
-        return Outcome(
-            passed=False,
-            detail=(
-                f"worst timing truncation {timing.max_truncation_seconds:.3f}s exceeds "
-                f"{_MAX_DUB_TRUNCATION_SECONDS:.1f}s"
-            ),
-            measurements=measurements,
-        )
-
     free_weights()
     return Outcome(
         passed=True,
         detail=(
             f"{segments} segments {ctx.source_lang}->{ctx.target_lang}, all translated, audible, "
-            f"worst truncation {timing.max_truncation_seconds:.3f}s"
+            f"{timing.excessive_speed_count} above preferred speed, maximum {timing.max_speed_factor:.3f}x"
         ),
         measurements=measurements,
     )
@@ -794,6 +787,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--workdir", type=Path, default=Path("./verify-out"), help="where checks write artifacts")
     parser.add_argument("--device", help="torch device override (default: auto)")
     parser.add_argument("--ollama-model", help="override the Ollama model under test")
+    parser.add_argument("--low-memory", action="store_true", help="unload models between dubbing stages")
     parser.add_argument("--source-lang", default="pl")
     parser.add_argument("--target-lang", default="es")
     parser.add_argument(
@@ -830,6 +824,7 @@ def main(argv: list[str] | None = None) -> int:
         source_lang=args.source_lang,
         target_lang=args.target_lang,
         enable_diarization=args.enable_diarization,
+        low_memory=args.low_memory,
     )
 
     results: list[tuple[Check, str, str, dict[str, Any]]] = []

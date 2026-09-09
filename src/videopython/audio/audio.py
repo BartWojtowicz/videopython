@@ -6,7 +6,7 @@ import tempfile
 import wave
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 import soxr
@@ -667,16 +667,18 @@ class Audio:
             return self.concat(silence)
         return self
 
-    def time_stretch(self, speed: float) -> Audio:
+    def time_stretch(self, speed: float, *, method: Literal["atempo", "rubberband"] = "atempo") -> Audio:
         """
         Time-stretch audio by a speed factor (pitch-preserving).
 
-        Uses ffmpeg's atempo filter for high-quality time stretching.
-        For speeds outside the 0.5-2.0 range, multiple atempo filters are chained.
+        Uses ffmpeg's atempo filter by default. Rubber Band is available for
+        speech when ffmpeg was built with librubberband.
 
         Args:
             speed: Speed multiplier. 2.0 = twice as fast (half duration),
                    0.5 = half speed (double duration).
+            method: Time-stretch filter. Rubber Band preserves formants and uses
+                smooth transients for speech; requires ffmpeg's rubberband filter.
 
         Returns:
             Audio: New Audio object with time-stretched audio.
@@ -685,8 +687,10 @@ class Audio:
             ValueError: If speed is not positive.
             AudioLoadError: If ffmpeg fails.
         """
-        if speed <= 0:
-            raise ValueError("Speed must be positive")
+        if not np.isfinite(speed) or speed <= 0:
+            raise ValueError("Speed must be positive and finite")
+        if method not in ("atempo", "rubberband"):
+            raise ValueError(f"Unknown time-stretch method: {method}")
 
         if abs(speed - 1.0) < 0.001:
             # No change needed
@@ -696,6 +700,16 @@ class Audio:
         # decomposition the streaming filter graph uses (single source of truth).
         filters = atempo_chain(speed)
         filter_str = ",".join(filters) if filters else "anull"
+        if method == "rubberband":
+            # Prefer a single pass; decompose only outside Rubber Band's range.
+            factors = [speed] if 0.01 <= speed <= 100 else [float(stage.split("=")[1]) for stage in filters]
+            filter_str = (
+                ",".join(
+                    f"rubberband=tempo={factor}:pitch=1:transients=smooth:formant=preserved:pitchq=quality"
+                    for factor in factors
+                )
+                or "anull"
+            )
 
         # Save current audio to temp WAV, process with ffmpeg, read back
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as input_file:

@@ -5445,7 +5445,7 @@ wheels = [
 
 [[package]]
 name = "videopython"
-version = "0.61.1"
+version = "0.61.2"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },
@@ -5545,7 +5545,7 @@ requires-dist = [
     { name = "transformers", marker = "extra == 'mcp'", specifier = ">=5.2.0" },
     { name = "transnetv2-pytorch", marker = "extra == 'ai'", specifier = ">=1.0.5" },
     { name = "transnetv2-pytorch", marker = "extra == 'mcp'", specifier = ">=1.0.5" },
-    { name = "videopython-chatterbox", marker = "extra == 'ai'", specifier = ">=0.1.7.post1" },
+    { name = "videopython-chatterbox", marker = "extra == 'ai'", specifier = ">=0.1.7.post2" },
 ]
 provides-extras = ["ai", "mcp"]
 
@@ -5571,7 +5571,7 @@ dev = [
 
 [[package]]
 name = "videopython-chatterbox"
-version = "0.1.7.post1"
+version = "0.1.7.post2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "conformer" },
@@ -5590,9 +5590,9 @@ dependencies = [
     { name = "torchaudio" },
     { name = "transformers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/96/8d/a4f718a91cac10d5a8f6e31df2c58bf494ccd2b3d5f8ca00e11b7e8129a2/videopython_chatterbox-0.1.7.post1.tar.gz", hash = "sha256:15f4694174d03b09b5614a00179db0169b45eeb9c17183150cbf5f43be8a44f3", size = 74663, upload-time = "2026-08-02T17:45:08.388Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/64/98/cfc94fb87ef600e06c31ba9865b1cd56692bf39e0fa65cc85f3ca8e5680b/videopython_chatterbox-0.1.7.post2.tar.gz", hash = "sha256:4d2a5221cbe407ffbe0b369c57b340fd6bc1958092d923b4756cdfc50835a56b", size = 75096, upload-time = "2026-09-08T16:15:29.415Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/65/e4/7d9af958a4d08e76fc13c87cccaf57103366e6b04241950f7a6b9d7b75a5/videopython_chatterbox-0.1.7.post1-py3-none-any.whl", hash = "sha256:9d41d2727d845147eeacf611fd5fd730b1c8ac33a411b004a4e840d6d782d095", size = 107473, upload-time = "2026-08-02T17:45:06.758Z" },
+    { url = "https://files.pythonhosted.org/packages/48/37/ad055353e911a502a3251bdbc31452fcc537fcab91bd9c621ace7dadaba1/videopython_chatterbox-0.1.7.post2-py3-none-any.whl", hash = "sha256:df9d37fcd637b67ac67670ef23c976b180b6de7bc158017a136130aa95a11db8", size = 107909, upload-time = "2026-09-08T16:15:27.86Z" },
 ]
 
 [[package]]

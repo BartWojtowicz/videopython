@@ -75,12 +75,19 @@ result = dubber.dub(video=video, target_lang="es", progress_callback=on_progress
 
 ## Fit it in less memory
 
-The default pipeline keeps all four models resident. `low_memory=True` releases each
-one after its stage — recommended for GPUs with ≤12 GB VRAM or hosts under 32 GB RAM:
+`low_memory=True` releases the in-process transcription, separation and speech
+synthesis models after their stages — recommended for GPUs with ≤12 GB VRAM or
+hosts under 32 GB RAM:
 
 ```python
 dubber = VideoDubber(low_memory=True)
 ```
+
+Translation requests keep the Ollama model resident for five minutes between calls,
+including when the server defaults to immediate eviction. `low_memory=True`
+explicitly unloads it after translation, before speech synthesis loads. Standalone
+`OllamaTranslator` users can override `keep_alive` (`None` uses the server policy)
+and call `unload()` to release residency requested by the translator.
 
 Combine it with `dub_file()` for the smallest footprint; see
 [Process hour-long videos](long-videos.md#dub-without-loading-frames).
@@ -129,14 +136,15 @@ except GarbageTranscriptError as exc:
 
 ## Check the timing fit
 
-Translated speech that does not fit the source's spoken gaps gets time-stretched or
-truncated. High truncation rates are a translation-quality red flag worth surfacing:
+The pipeline first uses available silence before the next turn. If complete speech
+still cannot fit at the preferred 1.1× maximum, it goes faster instead of cutting
+words from the end. Excessive speed can sound unnatural and warrants review:
 
 ```python
 ts = result.timing_summary
 if ts is not None:
     print(f"{ts.clean_count}/{ts.total_segments} clean")
-    print(f"{ts.truncated_count} truncated, worst {ts.max_truncation_seconds:.2f}s")
+    print(f"{ts.excessive_speed_count} above preferred speed; maximum {ts.max_speed_factor:.2f}×")
     print(f"mean speed factor {ts.mean_speed_factor:.3f}")
 ```
 
@@ -157,6 +165,12 @@ for seg in transcription.segments:
 dubber.dub_and_replace(video=video, target_lang="es", transcription=transcription)
 ```
 
+On CUDA, compatible local speech decoder operations use graph replay to reduce
+launch overhead. Model weights, precision and generation settings stay unchanged.
+Other input layouts use the original execution path, as does CPU synthesis; if
+graph capture is unavailable, synthesis falls back automatically. Graph buffers
+are released with the model.
+
 | Supplied transcription | `enable_diarization` | Behavior |
 |---|---|---|
 | Has speaker labels | any | Supplied speakers are used; the flag is ignored |
@@ -168,22 +182,96 @@ The diarize-on-supplied path needs word-level timings, so transcriptions loaded 
 
 ## Pick the translation model
 
-Translation goes through `OllamaTranslator`, a single Ollama text model. It sends
-segments under a structured-output schema and reads back length-budgeted translations —
-the prompt carries a per-segment character budget derived from the source duration and a
-`low_confidence` hint sourced from Whisper's `avg_logprob`. Long sources are chunked to
-fit the context window, with one parse-retry for segments the first pass misses.
+Translation goes through `OllamaTranslator`, a single Ollama text model. Each request
+translates one bounded source part, with neighboring text marked as context only.
+Long turns split at sentence, clause or word boundaries, falling back to character
+boundaries for text without spaces, and reassemble under their original segment
+and speaker. A duration-derived character target encourages concise speech while
+preserving meaning. Requests remain sequential to isolate segment identities; this
+adds request overhead compared with batching. Invalid identities,
+duplicate entries, empty responses and output-budget exhaustion trigger a retry.
+If any part remains unavailable, the whole parent appears in `translation_failures`.
+
+When constructing `OllamaTranslator` directly, set `max_tokens` to at least 140 and
+`n_ctx` to at least `max_tokens + 1020`. Defaults are 4096 and 8192 respectively.
+The equivalent `options` keys, `num_predict` and `num_ctx`, override these values;
+invalid effective budgets fail at construction. For example, a 4096-token context
+can use `max_tokens=1024`. These are allocation estimates, not tokenizer guarantees.
+
+Unloading requests release of the model on the Ollama server. A failed release
+request logs a warning and clears the local client without discarding translations
+or masking an exception from the caller. Server memory may remain allocated.
+
+Select a model already downloaded in Ollama. For example, run
+`ollama pull translategemma:12b`, then configure the dubber:
 
 ```python
 dubber = VideoDubber(
-    translator_model="qwen3.6:27b",
+    translator_model="translategemma:12b",
     translator_host="http://localhost:11434",
+    low_memory=True,
 )
 ```
 
-Segments the model never returns land on `result.translation_failures` as indices, with
-empty translated text. Any language pair is attempted — the pipeline does not reject a
-target language up front.
+Any language pair is attempted — the pipeline does not reject a target language up
+front. An empty `translation_failures` list establishes response availability, not
+semantic accuracy. Review meaning, numbers, names and speaker alignment before publishing.
+
+Local Chatterbox synthesis splits long translations into bounded calls, preserving
+voice and expression settings, and joins their audio before synchronizing the parent
+turn. Calls approaching the backend's speech-token ceiling retry with smaller text
+units. Sampling excludes invalid vocoder token IDs while preserving end-of-speech.
+Invalid token outputs are also rejected before GPU indexing and retried up
+to three attempts. The required `videopython-chatterbox>=0.1.7.post2` fixes the empty alignment
+reduction for short text in the backend itself. The duration check can flag a likely cap but cannot prove
+every word was spoken.
+Tiny adjacent fragments can join within one speaker when the gap is at most 150 ms;
+groups contain at most four turns spanning at most ten seconds. The longer fragment
+supplies the expression profile. Isolated groups shorter than 100 ms are reported
+as synthesis failures. Original transcript entries remain available separately.
+
+Check `result.synthesis_failures` for original segment indices whose speech could not
+be generated or timed. Also inspect `result.timing_summary`: fitting the complete
+speech into the source window can require excessive speed. Verify the final audio,
+including the ends of long turns, rather than relying on success counts alone.
+
+Speaker diarization turns are not necessarily good dubbing units. Before translation,
+long turns are split into phrases at sentence ends, then clauses or pauses, using
+validated word timestamps. Phrase text is sliced from the source transcript to retain
+its internal spacing. Complete sentences take priority over earlier commas;
+roughly eight-second phrases are preferred without creating tiny word fragments.
+Missing, partial or inconsistent word alignment leaves the source segment intact;
+we do not invent timestamps by dividing text proportionally.
+
+`source_transcription` remains unchanged. Translated phrases expose
+`source_segment_index` to trace them to that transcript; translation and synthesis
+failure lists still refer to original source segment indices. Speaker reference
+extraction uses the full original turns, preserving voice identity across phrases.
+
+Each phrase starts at its source-word anchor. Shorter generated speech keeps its
+natural speed and pauses until the next phrase, instead of filling the whole window
+with a slowdown. Available gaps can absorb longer speech before acceleration.
+Assembly applies a 5 ms fade at each phrase edge to reduce clicks at silence
+boundaries. It keeps the sample count and source anchor unchanged.
+See [Check the timing fit](#check-the-timing-fit) for speed limits and result checks.
+
+Dubbing prefers FFmpeg's [Rubber Band filter](https://ffmpeg.org/ffmpeg-filters.html#rubberband)
+when stretching is necessary and the filter is available, with an explicit warning
+and `atempo` fallback on builds without it. General `Audio.time_stretch()` calls
+retain the `atempo` default; callers may select `method="rubberband"` explicitly.
+Phrase alignment reduces accumulated timing drift; it is not phoneme-level lip sync,
+and translation or TTS quality still requires listening review.
+
+## Update timing consumers
+
+Remove the `min_speed` argument from `TimingSynchronizer` calls. Shorter speech
+keeps its natural speed. Use `max_speed` to set the preferred acceleration limit.
+
+Remove uses of `TimingAdjustment.was_truncated`, `truncation_seconds`, and
+`excessive_slowdown`. Remove uses of `TimingSummary.truncated_count`,
+`max_truncation_seconds`, `excessive_slowdown_count`, and `min_speed_factor`.
+Regenerate saved timing summaries from the current pipeline. Use
+`excessive_speed_count` and `max_speed_factor` to select output for listening review.
 
 ## Swap the TTS backend
 

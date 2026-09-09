@@ -1,5 +1,28 @@
 # Release Notes
 
+## 0.61.2
+
+- Dub sentences at source-word timestamps using per-speaker voice references.
+  Keep shorter speech at natural speed; report speedups above 1.1×.
+  Apply 5 ms fades at phrase boundaries without moving or cutting speech.
+- Improve translation validation, long-text synthesis, failure reporting and
+  audio-only MP4 support. Select the dubbed track for default playback when retaining
+  original audio. Require `videopython-chatterbox>=0.1.7.post2`.
+- Document a TranslateGemma 12B configuration tested on Polish/English speech.
+  The default translation model remains unchanged.
+- Preserve source spacing when splitting phrases, reject invalid translation budgets
+  at construction, and keep Ollama cleanup failures from discarding completed work.
+- Reduce CUDA speech-decoder overhead and avoid repeated translation-model reloads.
+- Remove obsolete slowdown and truncation settings and result fields. See
+  [Update timing consumers](docs/how-to/dubbing.md#update-timing-consumers).
+- Fast-paced multi-speaker dialogue, short interruptions and dense jargon remain
+  challenging. Speaker assignment and voice consistency can vary; numbers and
+  technical terms can be mistranslated or mispronounced. Longer generated speech
+  can require excessive acceleration. Review dubbed audio before publication.
+  No overall dubbing speedup is established. See the
+  [verification results](docs/reference/verification.md#final-dubbing-review-0612)
+  and [planned quality work](ROADMAP.md#improve-dubbing-quality).
+
 ## 0.61.1
 
 - Speaker diarization skips embeddings for chunk/speaker pairs with no speech and

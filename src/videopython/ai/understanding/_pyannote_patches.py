@@ -70,16 +70,10 @@ def _get_embeddings(
     exclude_overlap: bool = False,
     hook: Any = None,
 ) -> np.ndarray:
-    """Extract embeddings, skipping (chunk, speaker) pairs that cannot affect the result.
+    """Extract active pair embeddings; reuse the zero-mask constant for inactive pairs.
 
-    pyannote runs the embedding model on every pair, but a pair whose mask is
-    empty is discarded twice downstream: the clustering filter drops it, and the
-    pipeline force-assigns it to the throw-away cluster. Its embedding is the
-    silent-mask constant regardless of the audio, so reusing that constant keeps
-    the output bit-exact. For compatible deterministic pyannote backends,
-    also share frame extraction between speakers of the same chunk. Masks only
-    enter the network after frame extraction. Different batch shapes can still
-    introduce small floating-point differences in the embeddings.
+    Compatible backends share frame extraction across speakers. Different batch
+    shapes can introduce small floating-point differences in the embeddings.
     """
     import torch
 

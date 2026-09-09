@@ -21,7 +21,7 @@ class TimingAdjustment:
         target_duration: Target duration to fit into.
         actual_duration: Actual duration after adjustment.
         speed_factor: Speed factor applied (> 1 means sped up).
-        was_truncated: Whether the segment had to be truncated.
+        excessive_speed: Whether fitting exceeded the preferred speed maximum.
     """
 
     segment_index: int
@@ -29,7 +29,7 @@ class TimingAdjustment:
     target_duration: float
     actual_duration: float
     speed_factor: float
-    was_truncated: bool
+    excessive_speed: bool
 
 
 # Speed factors within this band of 1.0 are treated as a "clean" timing
@@ -85,6 +85,7 @@ class TranslatedSegment(BaseModel):
         speaker: Speaker identifier if available.
         start: Start time in seconds.
         end: End time in seconds.
+        source_segment_index: Original transcript index when this is a dubbing phrase.
     """
 
     original_segment: TranscriptionSegment
@@ -94,6 +95,7 @@ class TranslatedSegment(BaseModel):
     speaker: str | None = None
     start: float = 0.0
     end: float = 0.0
+    source_segment_index: int | None = None
 
     @model_validator(mode="after")
     def _default_timing_from_segment(self) -> TranslatedSegment:
@@ -142,20 +144,14 @@ class SeparatedAudio(BaseModel):
 
 
 class TimingSummary(BaseModel):
-    """Aggregate stats over per-segment timing adjustments.
-
-    Surfaces how aggressively the timing synchronizer had to compress or
-    truncate dubbed segments to fit the source's spoken regions. High
-    truncation rates indicate translation produced text too long for the
-    source duration.
-    """
+    """Summarize speed changes and count adjustments above the preferred maximum."""
 
     total_segments: int
     clean_count: int
     stretched_count: int
-    truncated_count: int
     mean_speed_factor: float
-    max_truncation_seconds: float
+    excessive_speed_count: int
+    max_speed_factor: float
 
     @classmethod
     def from_adjustments(cls, adjustments: list[TimingAdjustment]) -> TimingSummary:
@@ -166,35 +162,20 @@ class TimingSummary(BaseModel):
                 total_segments=0,
                 clean_count=0,
                 stretched_count=0,
-                truncated_count=0,
                 mean_speed_factor=1.0,
-                max_truncation_seconds=0.0,
+                excessive_speed_count=0,
+                max_speed_factor=1.0,
             )
 
-        clean = 0
-        stretched = 0
-        truncated = 0
-        speed_sum = 0.0
-        max_truncation = 0.0
-        for adj in adjustments:
-            speed_sum += adj.speed_factor
-            if adj.was_truncated:
-                truncated += 1
-                truncation = adj.original_duration - adj.actual_duration
-                if truncation > max_truncation:
-                    max_truncation = truncation
-            elif abs(adj.speed_factor - 1.0) <= CLEAN_SPEED_TOLERANCE:
-                clean += 1
-            else:
-                stretched += 1
+        clean = sum(abs(adj.speed_factor - 1.0) <= CLEAN_SPEED_TOLERANCE for adj in adjustments)
 
         return cls(
             total_segments=total,
             clean_count=clean,
-            stretched_count=stretched,
-            truncated_count=truncated,
-            mean_speed_factor=speed_sum / total,
-            max_truncation_seconds=max_truncation,
+            stretched_count=total - clean,
+            mean_speed_factor=sum(adj.speed_factor for adj in adjustments) / total,
+            excessive_speed_count=sum(adj.excessive_speed for adj in adjustments),
+            max_speed_factor=max(adj.speed_factor for adj in adjustments),
         )
 
 
@@ -215,6 +196,8 @@ class DubbingResult(BaseModel):
         translation_failures: Indices of segments the translator could not
             translate (missing after its parse-retry pass); those segments are
             dubbed with empty text.
+        synthesis_failures: Original segment indices whose speech failed to
+            generate or had less than 100 ms after fragment joining.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -229,6 +212,8 @@ class DubbingResult(BaseModel):
     timing_summary: TimingSummary | None = None
     transcript_quality: TranscriptQuality | None = None
     translation_failures: list[int] = Field(default_factory=list)
+    # Original segment indices, including every member of a failed joined turn.
+    synthesis_failures: list[int] = Field(default_factory=list)
 
     @property
     def num_segments(self) -> int:
