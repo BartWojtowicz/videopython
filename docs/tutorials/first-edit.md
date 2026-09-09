@@ -171,7 +171,7 @@ edit.run_to_file("output.mp4")
 
 - [Tutorial 2: subtitle a video with AI](subtitles.md) — put a local Whisper model and a
   burned-in subtitle track on top of what you just learned.
-- [How-to: build a vertical social clip](../how-to/social-clip.md) — the same ideas,
+- [How-to: build styled excerpts and summaries](../how-to/social-clip.md) — the same ideas,
   aimed at a real deliverable.
 - [Explanation: the streaming engine](../explanation/streaming-engine.md) — what
   `run_to_file()` actually does with your operations.

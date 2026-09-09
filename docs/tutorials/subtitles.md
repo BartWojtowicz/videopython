@@ -131,6 +131,9 @@ edit.run_to_file("clip.mp4", context={"transcription": transcription})
 
 ## Next
 
+- [Styled excerpts and summaries](../how-to/social-clip.md) — reuse the transcription
+  with caption, branding, and music recipes.
+
 - [How-to: dub a video into another language](../how-to/dubbing.md) — the same
   transcription, plus translation and voice cloning.
 - [How-to: let a local LLM edit for you](../how-to/auto-editing.md) — hand over the

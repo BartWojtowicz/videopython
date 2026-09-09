@@ -118,7 +118,7 @@ nav:
       - 2. Subtitle a video with AI: tutorials/subtitles.md
   - How-to guides:
       - how-to/index.md
-      - Build a vertical social clip: how-to/social-clip.md
+      - Build styled excerpts and summaries: how-to/social-clip.md
       - Process hour-long videos: how-to/long-videos.md
       - Assemble a video from AI-generated media: how-to/ai-generated-video.md
       - Dub a video into another language: how-to/dubbing.md

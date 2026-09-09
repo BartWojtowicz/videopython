@@ -51,6 +51,38 @@ estimate. RGB equality establishes unchanged keyframes, not editorial selection
 quality. The local scripts, saved analysis, payload hashes, and logs are under
 `.cache/catalog-keyframes/` and are not distributed.
 
+## Editing recipes
+
+On 2026-09-09, the caption and branding examples rendered seconds 0–6 of
+`cam1_1min.mp4` at 640×360 and 360×640. The caption example used the saved Polish
+word transcription. The title was “Początek roku: rozmowa o biznesie, planach i
+nowych możliwościach”, with a 24-pixel font and a caller-supplied SVG mark. Frames
+at 3.2 s were inspected: Polish text was readable and wrapped within the margins,
+and the mark stayed at the top left in both orientations. Center cropping fit
+this shot; it is not a general subject-framing guarantee.
+
+The two-pass summary rendered ranges 8–12 s then 0–4 s from the same source at
+both sizes. It used a local synthetic chord bed with gain 0.490981 and duck 0.8.
+Both final files were 8 s long with the requested dimensions. The saved transcript
+was mapped to cut order before the second pass. All plans passed JSON round trips
+and validation. Outputs and review frames remain local in `.cache/editing-recipes/`.
+
+The automated two-pass check used red/blue video, a 440 Hz tone, and two timed
+words. It verified reversed visual order, copied source words, mapped word times,
+a nonzero bed, and speech-window RMS below 40% of the pause level. This measures
+ducking behavior. The user listened to the real-clip sample at gain 0.35 and found
+the music only slightly too quiet. After a first increase to 0.39, the user requested
+another 2 dB. The final gain is `0.39 * 10 ** (2 / 20)`, or 0.490981, with the same
+ducking settings. The latest sample has not had a further listening review. The mix had peaks above full scale, so
+the final review exports also use an audio-only finishing pass with overall gain
+0.89 and video stream copy. Float PCM decode measured a peak of 0.90625 in both
+orientations, below full scale.
+This finishing gain preserves the adjusted music-to-speech ratio.
+
+The recipe is limited to frame-aligned cuts from one source with no transitions
+or retiming. It requires an intermediate file and a second encode. No model ran,
+and these checks do not assess transcription accuracy or music suitability.
+
 ## MCP workflow verification
 
 The stdio workflow passed on 2026-09-06 at commit
