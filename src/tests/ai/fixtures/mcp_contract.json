@@ -1,11 +1,12 @@
 {
-  "sha256": "97a515d00c4febb30599dc9c4e4b6dd3b04c8946b26d496bf10692f11ebfdcde",
+  "sha256": "084056dabf132d844a371477c5207e413940093bc5a2040b326f469420670886",
   "tool_names": [
     "analyze_video",
     "build_catalog",
     "repair_edit",
     "run_edit",
     "scene_keyframes",
+    "scene_transcripts",
     "validate_edit"
   ],
   "resource_uris": [

@@ -20,7 +20,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ImageContent, TextContent
 from pydantic import ValidationError
 
-from videopython.ai.auto_edit import EditPlan, UnknownSceneIdsError, resolve_plan
+from videopython.ai.auto_edit import EditPlan, SpeechCandidateConfig, UnknownSceneIdsError, resolve_plan
 from videopython.ai.auto_edit import build_catalog as _build_scene_catalog
 from videopython.ai.auto_edit.catalog import extract_catalog_keyframes
 from videopython.ai.keyframe import downscale_keyframe, encode_png_b64
@@ -79,8 +79,12 @@ def analyze_video(path: str, profile: Literal["full", "editing"] = "editing") ->
 
 
 @mcp.tool(structured_output=False)
-def build_catalog(sources: list[str] | None = None) -> list[TextContent | ImageContent]:
-    """Build the candidate-scene catalog from analyzed videos and cache it.
+def build_catalog(
+    sources: list[str] | None = None,
+    mode: Literal["visual", "speech"] = "visual",
+    speech: SpeechCandidateConfig | None = None,
+) -> list[TextContent | ImageContent]:
+    """Build and cache visual scenes, or speech passages with explicit speech settings.
 
     The first text block is the full catalog JSON (id/duration/shot_type/caption/
     transcript per scene -- enough to shortlist from text alone). Up to
@@ -92,7 +96,7 @@ def build_catalog(sources: list[str] | None = None) -> list[TextContent | ImageC
     analyses = _selected_analyses(sources)
     if not analyses:
         raise ValueError("No analyzed videos cached; call analyze_video first.")
-    _bundle = _build_scene_catalog(analyses, keyframes=False)
+    _bundle = _build_scene_catalog(analyses, keyframes=False, mode=mode, speech=speech)
 
     ids = [scene.id for scene in _bundle.catalog.scenes]
     inlined, omitted = ids[:_MAX_INLINE_KEYFRAMES], ids[_MAX_INLINE_KEYFRAMES:]
@@ -100,6 +104,8 @@ def build_catalog(sources: list[str] | None = None) -> list[TextContent | ImageC
         TextContent(type="text", text=_bundle.catalog.model_dump_json()),
         *_keyframe_blocks(inlined),
     ]
+    if mode == "speech" and not ids:
+        blocks.append(TextContent(type="text", text="No complete, aligned speech passages fit these duration limits."))
     if omitted:
         blocks.append(
             TextContent(
@@ -122,6 +128,18 @@ def scene_keyframes(scene_ids: list[str]) -> list[TextContent | ImageContent]:
         error = {"code": "unknown_scene_ids", "value": unknown, "message": f"Unknown scene ids: {unknown}"}
         return [TextContent(type="text", text=json.dumps(error))]
     return _keyframe_blocks(list(dict.fromkeys(scene_ids)))
+
+
+@mcp.tool(structured_output=False)
+def scene_transcripts(scene_ids: list[str]) -> list[TextContent]:
+    """Return full transcript text by catalog ID, without the catalog excerpt limit."""
+    if _bundle is None:
+        raise ValueError("No catalog cached; call build_catalog first.")
+    unknown = sorted(set(scene_ids) - _bundle.transcripts.keys())
+    if unknown:
+        error = {"code": "unknown_scene_ids", "value": unknown, "message": f"Unknown scene ids: {unknown}"}
+        return [TextContent(type="text", text=json.dumps(error))]
+    return [TextContent(type="text", text=json.dumps({sid: _bundle.transcripts[sid] for sid in scene_ids}))]
 
 
 @mcp.tool()

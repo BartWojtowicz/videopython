@@ -29,17 +29,32 @@ Returns `source`, `duration`, `fps`, `width`, `height`, `scenes`, and `analyzers
 The remaining analysis is still cached when one analyzer fails. Check these records
 before building a plan that depends on a missing transcript, caption, or face result.
 
-### `build_catalog(sources=None)`
+### `build_catalog(sources=None, mode="visual", speech=None)`
 
 Returns the candidate scenes as one JSON text block — id, duration, shot_type, caption
 and transcript per scene, enough to shortlist from text alone — followed by up to **12**
 downscaled keyframe images. If more scenes exist, a trailing note names the omitted ids.
 Author the edit by referencing the returned `id` values.
 
+For spoken passages, use `mode="speech"` and a `speech` object such as
+`{"min_duration": 10, "max_duration": 30, "pause_duration": 0.8}`. Visual mode
+requires `speech=null`. The [speech-candidate contract](ai/auto-edit.md#speech-candidates)
+defines boundaries, missing-alignment behavior, and ID invalidation. If speech mode
+finds no passages, the catalog has an empty `scenes` list and a following text block
+explains that no complete aligned passages fit. Building any catalog clears the
+previous selection and image cache.
+
 ### `scene_keyframes(scene_ids)`
 
 Downscaled keyframes for a chosen shortlist of scene ids. Use after `build_catalog` to
 pull frames that were capped out, without re-inlining the whole library.
+
+### `scene_transcripts(scene_ids)`
+
+Return a JSON text block mapping requested IDs to full normalized transcript text.
+This works for visual scenes and speech passages. Duplicate IDs return one entry.
+Unknown IDs return a text block with code `unknown_scene_ids`, as with
+`scene_keyframes`. Requires a catalog; it performs no inference or media read.
 
 ### `validate_edit(plan)`
 

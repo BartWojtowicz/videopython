@@ -26,12 +26,15 @@ boundary](../explanation/mcp-security.md) before connecting an agent.
 2. `build_catalog()` — returns every candidate scene as JSON text, plus a limited set of
    downscaled keyframes. Any omitted ids are named in a trailing note.
 3. `scene_keyframes(scene_ids)` — pull the frames that were capped out, for a shortlist
-   the agent picked from the catalog text.
+   the agent picked from the catalog text. Use `scene_transcripts(scene_ids)` for full
+   text before choosing spoken passages.
 4. Author an `EditPlan` against the `schema://videopython/edit-plan` resource, referencing
    scenes by `id`.
 5. `validate_edit(plan)` → `run_edit(plan, output_path)`.
 
-The tool signatures are in the [MCP reference](../reference/mcp.md).
+For transcript-based cuts, build the catalog with `mode="speech"` and explicit
+`speech` duration settings. This can select several passages from a single visual
+shot. The tool signatures are in the [MCP reference](../reference/mcp.md).
 
 The server is a thin wrapper over the same primitives as the programmatic
 [`AutoEditor`](auto-editing.md) — the only difference is who owns the planning model. It

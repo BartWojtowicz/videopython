@@ -73,7 +73,7 @@ a nonzero bed, and speech-window RMS below 40% of the pause level. This measures
 ducking behavior. The user listened to the real-clip sample at gain 0.35 and found
 the music only slightly too quiet. After a first increase to 0.39, the user requested
 another 2 dB. The final gain is `0.39 * 10 ** (2 / 20)`, or 0.490981, with the same
-ducking settings. The latest sample has not had a further listening review. The mix had peaks above full scale, so
+ducking settings. The user accepted the latest sample. The mix had peaks above full scale, so
 the final review exports also use an audio-only finishing pass with overall gain
 0.89 and video stream copy. Float PCM decode measured a peak of 0.90625 in both
 orientations, below full scale.
@@ -82,6 +82,47 @@ This finishing gain preserves the adjusted music-to-speech ratio.
 The recipe is limited to frame-aligned cuts from one source with no transitions
 or retiming. It requires an intermediate file and a second encode. No model ran,
 and these checks do not assess transcription accuracy or music suitability.
+
+## Speech candidate selection
+
+On 2026-09-09, speech selection used fresh audio from seconds 300–390 of
+`all_in_30min.mp4`, outside the translation comparison range at 750–1050 s.
+The audio was paired with a static 640×360, 25 fps video for render checks.
+The resulting source SHA256 was
+`74f29ad82c870627ccd40dc1dd7404d871647168329709d0b5ff1ad44b3d5250`.
+No scene detector, planner, translator, or synthesis model ran.
+
+Transcription used the cached Whisper turbo revision
+`0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf` on CUDA, with VAD disabled and the
+library's other defaults. The recorded transcription-plus-catalog interval was
+10.78 s. The analysis supplied one visual scene; speech settings were 5 s minimum,
+20 s maximum, and a 0.8 s pause. This was a boundary check, not a speed comparison.
+
+Nine candidates were produced, from 5.08 to 13.60 s long. All nine resolved,
+validated, rendered, and passed full FFmpeg decode. Their boundaries did not pass
+through any supplied word interval. Ranges did not overlap, and the full retrieved
+transcripts had no exact duplicates. Source timestamps remain ASR estimates;
+these checks do not establish acoustic alignment accuracy.
+
+Transcript review found a complete response on company innovation, several units
+that depend on preceding context, a candidate that changes topic between complete
+sentences, and a final unit that introduces an explanation without including it.
+The first candidate starts mid-question because the supplied 90-second excerpt
+starts there. Punctuation and pause rules do not establish standalone meaning.
+There was no listening score or claim of automatic editorial quality.
+
+The synthetic suite additionally checks multiple candidates from a single shot,
+passages crossing visual cuts, overlapping words, zero-duration word ownership,
+missing alignment, impossible limits, repeated builds, identical file stems,
+changed-setting ID rejection, full MCP transcript retrieval, and a selected render.
+
+Two preliminary checks were retained separately. `cam1_10min.mp4` repeated the
+previously reviewed minute, so it was not counted as fresh content. The selected
+`dreams_15min.mp4` excerpt mixed sparse Japanese speech with an English language
+detection result and zero-duration words; its transcript was not used as a quality
+baseline. Zero-duration words retain their supplied times without invented length.
+Scripts, transcripts, exports, and per-candidate notes remain local under
+`.cache/speech-candidates/`. No model downloads or paid APIs were used.
 
 ## MCP workflow verification
 

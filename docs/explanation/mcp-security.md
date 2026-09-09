@@ -20,6 +20,7 @@ links work when the operating-system account can read them.
 | `analyze_video(path)` | Reads the selected media, including its video, audio, and container metadata. |
 | `build_catalog()` | Reads analyzed sources again to extract keyframes. |
 | `scene_keyframes(scene_ids)` | Reads analyzed sources again for requested keyframes that are not cached. |
+| `scene_transcripts(scene_ids)` | Returns transcript text held in the current catalog. |
 | Plan operations | Path-bearing operations can read assets such as overlay images. Source video paths come from scenes that were already analyzed. |
 | `validate_edit()` and `repair_edit()` | Can probe source media and inspect referenced assets while checking a plan. |
 | `run_edit()` | Reads the source media and referenced assets, then renders the result. |
