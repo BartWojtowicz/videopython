@@ -1,6 +1,6 @@
 # Architecture
 
-videopython has four subpackages in a strict dependency order. The order is the point:
+videopython has four library layers and an optional MCP server. The order is the point:
 it is what lets a video-editing install stay free of PyTorch.
 
 ```
@@ -23,9 +23,9 @@ source separation, and TTS remain exclusive to the full `[ai]` extra.
 
 ## Why the layering is enforced, not just intended
 
-Only `videopython.ai` may import ML dependencies. If that invariant erodes — a single
-`import torch` inside `editing/` — then `pip install videopython` starts dragging a
-multi-gigabyte CUDA stack behind it for users who only wanted to crop a video.
+The core layers must not import AI modules or ML runtimes. An eager `import torch`
+in `editing/` would make core imports fail when PyTorch is absent. Dependency extras
+control what gets installed; import boundaries keep the core usable without them.
 
 The invariant is not left to code review: `src/tests/test_import_isolation.py` fails the
 build if a lower package imports a higher package or if `base`, `audio`, or `editing`
@@ -44,13 +44,12 @@ and nothing else — not diffusers, not chatterbox.
 
 Two consequences worth knowing:
 
-- **Import errors arrive at first use, not at import.** Without `[ai]` installed,
-  `import videopython.ai` succeeds and touching a symbol raises an `ImportError` that
-  names the extra to install. That is deliberate: a missing optional dependency should not
-  break the whole package import.
+- **Dependencies load at feature use.** Without `[ai]` installed,
+  `import videopython.ai` and public class imports can succeed. A missing model
+  dependency raises when the feature tries to load it.
 - **AI operations register lazily.** `face_crop` and `object_detection_overlay` only
-  appear in the operation registry (and therefore the LLM schema) after `videopython.ai`
-  has been imported. See [LLM-first design](llm-first-design.md).
+  appear in the operation registry (and therefore the LLM schema) after their classes
+  have been imported. See [LLM-first design](llm-first-design.md).
 
 ## Why AI effects live in `ai`, not `editing`
 
@@ -64,14 +63,5 @@ The same split explains `FaceTrackingCrop`: the crop transform is in
 `videopython.ai.transforms`, while the geometry types it produces
 (`BoundingBox`, `FaceTrack`) are ordinary `base` result types with no AI dependency.
 
-## Where the repository puts things
-
-```
-src/
-├── stubs        # mypy stubs for untyped third-party packages
-├── tests        # mirrors the package tree
-└── videopython  # library code
-```
-
-Contributor workflow, test commands and the release process are in
+Contributor workflow, repository layout, and releases are in
 [`DEVELOPMENT.md`](https://github.com/bartwojtowicz/videopython/blob/main/DEVELOPMENT.md).

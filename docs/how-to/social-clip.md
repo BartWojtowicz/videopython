@@ -30,17 +30,21 @@ edit.run_to_file("social_clip.mp4")
 
 ## Add a music bed
 
-Audio mixing happens on a `Video`, not in the plan, so render first and mix after:
+Set the plan's `music_bed` before rendering. The runner mixes it over the assembled
+program and keeps the video frames in the streaming path:
 
 ```python
-from videopython.base import Video
+from videopython.editing.audio_ops import MusicBed
 
-(Video.from_path("social_clip.mp4")
-      .add_audio_from_file("upbeat_music.mp3")     # overlay=False replaces instead
-      .save("social_clip.mp4"))
+edit.music_bed = MusicBed(source="upbeat_music.mp3", gain=0.2, fade_out=1.0)
+edit.validate()
+edit.run_to_file("social_clip.mp4")
 ```
 
-To duck or mute the source audio inside the plan instead, add `VolumeAdjust` — it is an
+For speech-based ducking and loop behavior, see
+[MusicBed](../reference/video-edit.md#musicbed).
+
+To lower or mute the source audio, add `VolumeAdjust` — it is an
 audio-only effect and takes a `window`:
 
 ```python
@@ -70,6 +74,7 @@ plan = {
             {"op": "fade", "mode": "in", "duration": 0.5},
         ],
     }],
+    "music_bed": {"source": "upbeat_music.mp3", "gain": 0.2, "fade_out": 1.0},
 }
 
 edit = VideoEdit.from_dict(plan)
@@ -99,6 +104,5 @@ jittering. See [AI operations](../reference/ai/operations.md).
 - **Aspect ratio** — 1080×1920 (9:16) is the safe target for all three platforms.
 - **Order matters** — resize before crop, and put `fade` last so it applies to the final
   framing.
-- **Silent clips underperform.** Add music or narration.
 - **Check each platform's current duration limits** before publishing and trim the
   segment accordingly.

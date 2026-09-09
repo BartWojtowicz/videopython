@@ -1,5 +1,9 @@
 # Release Notes
 
+Entries describe the named release. Older APIs, defaults, and limitations can be
+superseded by later entries. Use the [current reference](docs/reference/index.md)
+for new code.
+
 ## 0.61.2
 
 - Dub sentences at source-word timestamps using per-speaker voice references.
@@ -14,14 +18,13 @@
   at construction, and keep Ollama cleanup failures from discarding completed work.
 - Reduce CUDA speech-decoder overhead and avoid repeated translation-model reloads.
 - Remove obsolete slowdown and truncation settings and result fields. See
-  [Update timing consumers](docs/how-to/dubbing.md#update-timing-consumers).
+  [Update timing consumers](docs/how-to/update-dubbing.md).
 - Fast-paced multi-speaker dialogue, short interruptions and dense jargon remain
   challenging. Speaker assignment and voice consistency can vary; numbers and
   technical terms can be mistranslated or mispronounced. Longer generated speech
   can require excessive acceleration. Review dubbed audio before publication.
   No overall dubbing speedup is established. See the
-  [verification results](docs/reference/verification.md#final-dubbing-review-0612)
-  and [planned quality work](ROADMAP.md#improve-dubbing-quality).
+  [verification results](docs/reference/verification.md#final-dubbing-review-0612).
 
 ## 0.61.1
 
@@ -397,7 +400,7 @@ Replace the AGPL-3.0 and restricted-license default models with permissively-lic
 
 ## 0.52.1
 
-`videopython.ai` internal cleanup (PR-3): the two Tier-5 items deferred from 0.52.0.
+`videopython.ai` internal cleanup of two items deferred from 0.52.0.
 No public API or behavior change.
 
 ### Internal
@@ -414,9 +417,8 @@ No public API or behavior change.
 
 ## 0.52.0
 
-`videopython.ai` technical-debt cleanup (PR-2 of 2): the taxonomy moves, file/class
-splits, and remaining cleanups from the `TODO.md` audit. Reorganization, not feature
-work — no AI capability changes. Follows 0.51.0 (PR-1).
+`videopython.ai` package and API cleanup: module moves and file/class splits.
+No AI capability changes. Follows 0.51.0.
 
 ### Breaking
 
@@ -454,20 +456,20 @@ work — no AI capability changes. Follows 0.51.0 (PR-1).
   source-metadata parsing (ffmpeg tags / ISO-6709 geo / creation-time) extracted into
   `video_analysis/source_metadata.py` with a `try_init` best-effort helper.
 
-### Deferred (tracked in `TODO.md`)
+### Deferred at release
 
-Two pure-internal Tier-5 items are left for a focused follow-up (no API/behavior
+Two internal items were left for a follow-up (no API/behavior
 change): deduplicating the Demucs block shared by the dubbing pipeline's `process()`
 and `revoice()`, and dropping the speculative single-entry `SUPPORTED_MODELS` /
 `STEM_NAMES_6S` config.
 
 ## 0.51.0
 
-`videopython.ai` technical-debt cleanup (PR-1 of 2): a correctness fix plus the
+`videopython.ai` cleanup: a correctness fix plus the
 removal of abstraction residue left behind when the granular extras (0.43.0) were
 collapsed into one `[ai]` (0.48.0) and the alternative translator/TTS backends
-were deleted (0.49.0). Net ~430 fewer lines; no capability removed. See `TODO.md`
-for the full audit and the PR-2 (taxonomy) follow-up.
+were deleted (0.49.0). Net ~430 fewer lines; no capability removed.
+Package reorganization followed in 0.52.0.
 
 ### Fixed
 
@@ -860,10 +862,9 @@ memory to edit it: `ai/dubbing` and `ai/video_analysis` slice `Video` directly
 
 ## 0.43.1
 
-Four low-risk consumer wins (P2.14 + P3), all additive or bugfix -- no breaking
-changes.
+Four additions and fixes, with no breaking changes.
 
-### `PlanError.to_prompt_line()` (P2.14)
+### `PlanError.to_prompt_line()`
 
 A structured `PlanError` can now render itself as a single actionable line for
 an LLM refine loop, composed from its fields:
@@ -911,8 +912,7 @@ replace keep the incoming rate. Behavior-only fix; signature unchanged.
 
 ## 0.43.0
 
-The P1 roadmap items, shipped as one
-release. Highlights: dubbing dependency isolation, multi-clip per-source
+Highlights: dubbing dependency isolation, multi-clip per-source
 context, and an ffprobe probe cache.
 
 ### Dubbing dependency isolation: granular `[ai]` extras + a pluggable TTS backend
@@ -1631,9 +1631,7 @@ extending `Effect` with `window` support and per-frame streaming via
 
 ## 0.33.1
 
-Point-fix cleanup of the AI predictor classes. No new abstractions —
-just removing six drifts the broader DESIGN.md §4 mixin was meant to
-unify, but at a fraction of the churn.
+Six consistency fixes in the AI predictor classes.
 
 ### Changes
 
@@ -2090,7 +2088,7 @@ For JSON plans, flatten op shapes and merge `transforms`/`effects` into
 
 ### Changed
 
-- `_transcribe_with_diarization` now re-attaches per-segment Whisper confidence (`avg_logprob`, `no_speech_prob`, `compression_ratio`) to the diarization-rebuilt segments by max-overlap match. Without this fix the segments-from-words rebuild dropped the metadata that 0.28.0 plumbed through, so on every diarized run the M1.3 confidence fields were `None`. M1.5's logprob-based reject rule and any prompt that branches on confidence now have signal on the diarized path too.
+- `_transcribe_with_diarization` now re-attaches per-segment Whisper confidence (`avg_logprob`, `no_speech_prob`, `compression_ratio`) to the diarization-rebuilt segments by max-overlap match. Without this fix the segments-from-words rebuild dropped the metadata that 0.28.0 plumbed through, so on every diarized run the confidence fields were `None`. The logprob-based reject rule and any prompt that branches on confidence now have signal on the diarized path too.
 - `TextTranslator` is renamed to `MarianTranslator`. The old name remains as a back-compat alias through 0.28.x; remove in 0.30.0. Existing imports continue to work unchanged.
 
 ### Known limitations

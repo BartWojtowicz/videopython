@@ -8,15 +8,15 @@ hold more than one frame at a time.
 
 | Approach | Memory | Use it for |
 |---|---|---|
-| `VideoEdit.run_to_file()` | O(1) (~250 MB) | Editing with transforms and effects |
+| `VideoEdit.run_to_file()` | Bounded frame buffers; auxiliary state varies | Editing with transforms and effects |
 | `FrameIterator` | O(1) | Single-pass analysis over frames |
 | `VideoDubber.dub_file()` | O(audio + weights) | Dubbing without touching frames |
 | `Video.from_path()` | O(all frames) | Short clips that need random access |
 
 ## Edit without loading frames
 
-`run_to_file()` streams FFmpeg decode → per-frame effects → FFmpeg encode. Memory is flat
-regardless of duration — this is the normal path, not a special mode.
+`run_to_file()` streams FFmpeg decode → per-frame effects → FFmpeg encode. Frame buffers stay bounded
+as duration grows — this is the normal path, not a special mode.
 
 ```python
 from videopython.editing import VideoEdit
@@ -126,7 +126,7 @@ for scene in (analysis.scenes.samples if analysis.scenes else []):
 `Audio.from_path()` loads at the source's own sample rate and keeps mono or stereo audio.
 It downmixes sources with more channels to stereo. For a long recording, this can use
 much more memory than needed: speech recognition, diarization, and speaker embeddings
-all want 16kHz mono, a twelfth the size of 48kHz stereo.
+use 16 kHz mono, one sixth of the samples in 48 kHz stereo.
 
 Ask for it during the decode rather than after it:
 
@@ -140,15 +140,12 @@ audio = Audio.from_path("sitting.mp3").to_mono().resample(16000)
 audio = Audio.from_path("sitting.mp3", sample_rate=16000, channels=1)
 ```
 
-On a 4.7-hour 48kHz stereo recording that is 21.6 GB against 1.55 GB, for the same
-audio. Resampling uses soxr either way, so the two agree to within a 16-bit LSB.
-
-The saving scales with how far you are converting: a 12-hour recording is ~55 GB the
-first way and ~4 GB the second.
+This avoids holding both the full-rate decode and its converted copy. Exact peak
+memory depends on sample dtype, decode buffers, and conversion stages.
 
 ## Dub without loading frames
 
-`dub_and_replace()` goes through `Video.from_path()` and is impractical on long sources.
+`dub_and_replace()` requires an in-memory `Video` and is impractical on long sources.
 `dub_file()` works on paths: it extracts the audio with FFmpeg, dubs the audio only, and
 muxes it back with a video **stream copy** — no re-encode. Add `low_memory=True` to
 unload each stage's model (Whisper, Demucs, translator, Chatterbox) after it runs.
@@ -166,8 +163,8 @@ result = dubber.dub_file(
 )
 ```
 
-Peak memory is model weights plus the audio track — independent of resolution and
-duration. See [Dub a video](dubbing.md).
+Peak memory includes model weights, audio tracks, and intermediate speech. Audio
+memory grows with duration, but video resolution does not affect decoded-frame memory. See [Dub a video](dubbing.md).
 
 ## Notes
 

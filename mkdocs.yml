@@ -84,6 +84,12 @@ plugins:
             show_signature_annotations: true
             separate_signature: true
 
+validation:
+  links:
+    not_found: warn
+    unrecognized_links: warn
+    anchors: warn
+
 markdown_extensions:
   - pymdownx.highlight:
       anchor_linenums: true
@@ -116,10 +122,12 @@ nav:
       - Process hour-long videos: how-to/long-videos.md
       - Assemble a video from AI-generated media: how-to/ai-generated-video.md
       - Dub a video into another language: how-to/dubbing.md
+      - Update dubbing timing consumers: how-to/update-dubbing.md
       - Author edit plans with your own LLM: how-to/llm-plans.md
       - Let a local LLM edit for you: how-to/auto-editing.md
       - Drive editing from an MCP agent: how-to/mcp-server.md
       - Reproduce the agent-authored edit demo: how-to/agent-edit-demo.md
+      - Verify local AI models: how-to/verify-models.md
   - Reference:
       - reference/index.md
       - Video: reference/video.md
@@ -146,5 +154,6 @@ nav:
       - The plan lifecycle: explanation/plan-lifecycle.md
       - LLM-first design: explanation/llm-first-design.md
       - Local AI: explanation/local-ai.md
+      - The dubbing pipeline: explanation/dubbing.md
       - MCP security boundary: explanation/mcp-security.md
   - Glossary: glossary.md

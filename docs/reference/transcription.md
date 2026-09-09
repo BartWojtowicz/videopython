@@ -47,7 +47,7 @@ edit.run_to_file("output.mp4", context={"transcription": transcription})
 
 | Field | Meaning |
 |---|---|
-| `style` | A named look bundling text/highlight colors, border and background. `boxed` reproduces the historical defaults. |
+| `style` | A named look bundling text/highlight colors, border and background. `boxed` uses a background box. |
 | `region` | Which vertical safe-area band the box sits in: `top`, `center`, `bottom`. |
 | `font_scale` | Base font height as a fraction of frame height, so one plan renders correctly at 480p and 4K. Long cues wrap inside the box. |
 | `font` | A bundled font by name: `anton`, `bebas-neue`, `lato-bold`, `poppins-bold` (full list: `videopython.base.fonts.FONT_NAMES`). `None` uses the bundled default. |
@@ -64,8 +64,8 @@ can fill them in — see [LLM-first design](../explanation/llm-first-design.md#t
 
     Prefer *not* setting `font_size`: an absolute size chosen without knowing the final
     post-transform frame is exactly what overflows at render time. With the relative
-    surface, `VideoEdit.validate()` rejects an un-fittable plan up front instead of
-    crashing mid-render.
+    surface, libass wraps long cues inside the subtitle box. Validation does not
+    measure every cue for visual fit; inspect the rendered subtitles.
 
     `font_filename` is a raw TrueType path; it takes precedence over `font` and is
     `llm_hidden`, so it never appears in an LLM-facing schema.

@@ -7,7 +7,7 @@ TTS, Demucs for source separation. Task recipes are in
 
 ## VideoDubber
 
-Four entry points:
+Entry points:
 
 | Method | Input → output | Notes |
 |---|---|---|
@@ -30,7 +30,7 @@ audio as a secondary track.
 
 ## DubbingConfig
 
-Knobs shared by `VideoDubber` and `LocalDubbingPipeline`. Pass `config=DubbingConfig(...)`
+Settings shared by `VideoDubber` and `LocalDubbingPipeline`. Pass `config=DubbingConfig(...)`
 or the same knobs as flat kwargs — the constructor builds a `DubbingConfig` either way.
 
 ::: videopython.ai.dubbing.DubbingConfig
@@ -82,7 +82,7 @@ fastest adjustment. The pipeline borrows following silence before speeding up an
 preserves complete speech instead of clipping its tail. Small tempo-filter duration
 errors are corrected by resampling the entire output, which can slightly shift pitch.
 `clean_count` includes speed factors within 0.01 of 1.0; `stretched_count` includes
-the remaining adjustments. See [Update timing consumers](../../how-to/dubbing.md#update-timing-consumers)
+the remaining adjustments. See [Update timing consumers](../../how-to/update-dubbing.md)
 when migrating callers or saved results.
 
 ::: videopython.ai.dubbing.models.TimingSummary
@@ -106,6 +106,37 @@ VideoDubber.get_supported_languages()
 # {'en': 'English', 'es': 'Spanish', 'fr': 'French', ...}
 ```
 
-English, Spanish, French, German, Italian, Portuguese, Polish, Hindi, Arabic, Czech,
-Danish, Dutch, Finnish, Greek, Hebrew, Indonesian, Japanese, Korean, Malay, Norwegian,
-Romanian, Russian, Slovak, Swedish, Tamil, Thai, Turkish, Ukrainian, Vietnamese, Chinese.
+The returned map names languages known to the translator. It is not a tested
+language matrix for the complete dubbing pipeline. Translation attempts other codes;
+actual translation and synthesis support depends on the selected models.
+
+## OllamaTranslator
+
+Import from `videopython.ai.dubbing.translation`. The default model is
+`qwen3.6:27b`; `VideoDubber(translator_model=..., translator_host=...)` forwards a
+model tag and host. Vision is not required.
+
+`max_tokens` defaults to 4096 and must be at least 140. `n_ctx` defaults to 8192
+and must be at least `max_tokens + 1020`. The `options` keys `num_predict` and
+`num_ctx` override these values. Invalid effective budgets raise at construction.
+These are allocation estimates, not tokenizer guarantees.
+
+`keep_alive` defaults to five minutes between requests. `None` uses the server
+policy. `unload()` requests release on the Ollama server. A failed release logs a
+warning and clears the local client without discarding completed translations;
+server memory can remain allocated. `VideoDubber(low_memory=True)` requests
+release after translation and before speech synthesis.
+
+::: videopython.ai.dubbing.translation.OllamaTranslator
+
+## Phrase and synthesis limits
+
+Tiny adjacent fragments can join within one speaker when the gap is at most
+150 ms. A group contains at most four turns spanning at most ten seconds. The
+longer fragment supplies the expression profile. Isolated groups shorter than
+100 ms become synthesis failures. Original transcript entries remain separate.
+
+Local synthesis retries invalid token outputs up to three attempts. Duration
+checks can flag the backend's output limit but cannot verify spoken-word coverage.
+For the relationship between turns, phrases, and source indices, see
+[The dubbing pipeline](../../explanation/dubbing.md).

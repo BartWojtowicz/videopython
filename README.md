@@ -13,8 +13,7 @@ bounded-memory streaming engine.
 
 [Documentation](https://videopython.com) ·
 [First edit](https://videopython.com/tutorials/first-edit/) ·
-[API reference](https://videopython.com/reference/) ·
-[Roadmap](ROADMAP.md)
+[API reference](https://videopython.com/reference/)
 
 ## Why videopython?
 
@@ -31,19 +30,10 @@ bounded-memory streaming engine.
 
 ## Installation
 
-Install [FFmpeg](https://ffmpeg.org/download.html), then choose the package extras you
-need:
-
-```bash
-pip install videopython              # core video and audio editing
-pip install "videopython[ai]"        # all local AI features
-pip install "videopython[mcp]"       # MCP and its focused analysis stack
-```
-
-Videopython supports Python `>=3.11, <3.15`. The `ai` and `mcp` extras are independent;
-install `videopython[ai,mcp]` if you need both. See the
-[installation guide](https://videopython.com/install/) for FFmpeg features, model
-downloads, Ollama setup, and hardware requirements.
+Install FFmpeg, then run `uv add videopython` (or `pip install videopython`).
+The optional `ai` and `mcp` extras add model runtimes and the MCP server.
+See the [installation guide](https://videopython.com/install/) for supported
+Python versions, extras, FFmpeg features, and model setup.
 
 ## Quick start
 
@@ -87,22 +77,17 @@ use stays bounded for long videos. Continue with
 Core editing does not install PyTorch or other model runtimes. AI dependencies load only
 when you use an AI feature.
 
-## Documentation
+## Scope
 
-The documentation follows [Diataxis](https://diataxis.fr/):
-
-- [Tutorials](https://videopython.com/tutorials/) teach the library through complete
-  examples.
-- [How-to guides](https://videopython.com/how-to/) cover specific editing and AI tasks.
-- [Reference](https://videopython.com/reference/) documents the API, operations, and
-  JSON wire format.
-- [Explanation](https://videopython.com/explanation/) covers the streaming engine,
-  plan lifecycle, architecture, and LLM-first design.
+Videopython is a library for programmatic editing. It does not provide a hosted
+inference service, an interactive editing application, universal support for model
+runtimes and FFmpeg builds, or a second in-memory operation engine.
 
 ## Project status
 
 Videopython is pre-1.0, so public interfaces can still change. See the
-[roadmap](ROADMAP.md) for the stability criteria and [release notes](RELEASE_NOTES.md)
+[compatibility policy](docs/reference/compatibility.md) for public contracts and
+versioning rules, and [release notes](RELEASE_NOTES.md)
 for changes between versions. Report vulnerabilities through the [security
 policy](SECURITY.md).
 

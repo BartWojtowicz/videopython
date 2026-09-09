@@ -1,7 +1,10 @@
 # Verification records
 
 These point-in-time measurements support release checks and implementation decisions.
-They describe the tested environment and are not performance guarantees for other
+Older entries include candidate designs that were later replaced. The
+[final dubbing review](#final-dubbing-review-0612) describes the latest recorded
+release result; API behavior belongs in the reference pages. These records
+describe the tested environment and are not performance guarantees for other
 hardware, inputs, or dependency versions.
 
 For the interfaces covered by the AI checks, see [AI generation](ai/generation.md),
@@ -115,8 +118,7 @@ and changes to financial actions. The fresh excerpt produced three speaker label
 an earlier full-recording run assigned four labels within that same interval. Neither
 count is a verified count of people. The listener also reported inconsistent voices
 and dramatic speedups. This remains a difficult quality case, not a clean quality
-pass or evidence of a regression caused by the review fixes. The
-[roadmap](https://github.com/BartWojtowicz/videopython/blob/main/ROADMAP.md#improve-dubbing-quality) tracks the broader improvement work.
+pass or evidence of a regression caused by the review fixes.
 
 ### Dubbing decoder optimization, 0.61.2
 
@@ -168,6 +170,10 @@ Experimental benchmark helpers and intermediate media are kept outside the commi
 
 ### Dubbing reliability, 0.61.2
 
+These entries record successive candidates. Truncation and slowdown behavior below
+was superseded by the final source-word phrase scheduling. Measurements remain
+attached to the candidate that produced them.
+
 Follow-up checks on 2026-09-08 used the same GPU environment and explicitly selected
 `qwen3.5:4b`; the library default remains unchanged. These checks include bounded
 translation and synthesis and are separate from the decoder-only comparison above.
@@ -189,9 +195,9 @@ full All-In run with every final guard has not been measured.
 This is a robustness improvement, not a translation or timing quality pass.
 The tested 4B model still reversed meanings and mishandled idioms. All-In timing
 adjustment truncated 33 of 42 generated turns; final ASR confirmed missing closing
-speech. Raw long-turn synthesis retained its endings. The current reported
-truncation-seconds metric also includes time-stretch savings, so it overstates
-actual tail removal. These remain follow-up work.
+speech. Raw long-turn synthesis retained its endings. That candidate's reported
+truncation-seconds metric also included time-stretch savings, so it overstates
+actual tail removal. The review follow-up below records the next changes.
 
 The implementation suite passed 1,265 tests with CUDA hidden, plus lint, typing
 and strict documentation checks. Experimental scripts, intermediate transcripts,
@@ -258,8 +264,8 @@ restore soft spoken-length hints. Translation explicitly retains Ollama between
 requests and unloads it at the low-memory stage boundary. Requests still isolate
 one source part at a time; this trades batching throughput for segment ownership.
 
-Timing now borrows following silence and preserves the entire generated utterance
-by allowing speeds above the preferred 1.3× maximum. Excessive speeds are reported
+That candidate borrowed following silence and preserves the entire generated utterance
+by allowing speeds above its preferred 1.3× maximum. Excessive speeds are reported
 in the timing summary and logs. This avoids deliberate tail clipping, but does not
 guarantee natural delivery or correct translation. Residual tempo-filter duration
 errors are fitted by resampling the entire output, with a possible small pitch shift.
@@ -270,7 +276,7 @@ calls, with matching sample counts and maximum waveform difference below 8e-7.
 Timings varied and do not establish a pool-sharing speedup. A separate GPU probe
 verified replay under `no_grad` after capture in inference mode.
 
-The short-alignment dependency fix is prepared as local Chatterbox commit `57fb312`
+At this stage the short-alignment dependency fix was local Chatterbox commit `57fb312`
 (version 0.1.7.post2). Seven direct PyTorch boundary tests and the GPU probes above
 passed without the alignment monkeypatch. At that stage publication was deferred:
 the review candidate retained `>=0.1.7.post1` and the compatibility guard. The full
@@ -394,7 +400,7 @@ the original segment rather than inventing proportional timestamps.
 On `cam1_1min.mp4`, three original turns became ten phrases; the middle turn became
 six sentences anchored at 8.02, 13.34, 19.30, 26.44, 33.64 and 39.68 seconds. Shorter
 generated phrases keep their natural pace; available gaps absorb overruns before
-acceleration. The user's preferred range is now 0.9–1.1×. Larger necessary speedups
+acceleration. That experiment used a preferred range of 0.9–1.1×. Larger necessary speedups
 remain reported to preserve complete generated speech. Forced slowdowns are removed.
 
 The new full-pipeline review video used the same existing 4B translator, post2
@@ -488,19 +494,6 @@ optimizations override private pipeline steps. Before widening it, recheck inact
 pair filtering, clustering exclusion, the split-frame computation, and exact output
 comparisons. Method availability alone does not establish those semantics.
 
-### Earlier full AI verification
-
-The real-model harness in `scripts/verify_ai_models.py` passed with public defaults on
-2026-09-06. It used library commit
-`3023da1ffc20254abd91c4f8b3005925f0ca4e19` and a representative 60.08-second Polish
-clip. The input was 1280×720 H.264 video with AAC audio. Its SHA-256 was
-`4a258bf9eb50a120485399a60768479bec8b72fae2e98de21361c751eff350f0`.
-
-The environment used Python 3.12.3, an NVIDIA RTX PRO 6000 Blackwell Workstation
-Edition with 97,887 MiB VRAM and compute capability 12.0, driver 595.71.05, PyTorch
-2.13.0+cu130, Diffusers 0.39.0, Transformers 5.14.1, Safetensors 0.8.0, Ollama server
-0.33.3, and Ollama Python client 0.6.2.
-
 ### CPU diarization reconstruction comparison
 
 On 2026-09-07, pyannote's original reconstruction and the `0.60.1` implementation at
@@ -519,6 +512,19 @@ workspace is 50% smaller. Process RSS is model-dominated at this input length.
 Environment: macOS 14.8.9, Python 3.13.5, pyannote-audio 4.0.7, PyTorch 2.13.0,
 NumPy 2.4.6. Input SHA-256:
 `472540f20091958d5283f26701927e0cf0ea193f35c4d5a3e70ac0ae905d8d66`.
+
+### Earlier full AI verification
+
+The real-model harness in `scripts/verify_ai_models.py` passed with public defaults on
+2026-09-06. It used library commit
+`3023da1ffc20254abd91c4f8b3005925f0ca4e19` and a representative 60.08-second Polish
+clip. The input was 1280×720 H.264 video with AAC audio. Its SHA-256 was
+`4a258bf9eb50a120485399a60768479bec8b72fae2e98de21361c751eff350f0`.
+
+The environment used Python 3.12.3, an NVIDIA RTX PRO 6000 Blackwell Workstation
+Edition with 97,887 MiB VRAM and compute capability 12.0, driver 595.71.05, PyTorch
+2.13.0+cu130, Diffusers 0.39.0, Transformers 5.14.1, Safetensors 0.8.0, Ollama server
+0.33.3, and Ollama Python client 0.6.2.
 
 ### Default-setting results and timings
 
@@ -548,18 +554,9 @@ kept the bicycle from its source image while a camera push moved it partly out o
 
 ### Reproduction
 
-Run the harness once to populate model caches, then again from a fresh process into a
-new output directory. The reported time includes cached model loading, inference,
-output writing, semantic validation, and weight cleanup.
-
-```bash
-uv sync --all-extras --group ai --frozen
-HF_HOME=/workspace/.hf_home TOKENIZERS_PARALLELISM=false OLLAMA_HOST=127.0.0.1:11434 \
-  uv run python scripts/verify_ai_models.py \
-  --all \
-  --video verification-input/cam1_1min.mp4 \
-  --workdir verify-results/measured
-```
+Use [Verify local AI models](../how-to/verify-models.md) for the maintained harness
+and cache-warming procedure. The historical runs above used the stated commits,
+dependencies, and inputs; running today's harness does not reproduce older code.
 
 ### Dubbing synchronization threshold
 
@@ -577,6 +574,18 @@ These historical runs used the former truncation threshold. The current dub
 verification fails on missing timing measurements or translation/synthesis failures.
 It reports excessive speeds for listening review; synchronization preserves complete
 generated speech.
+
+## Channel layout observations
+
+An earlier local review of a two-person, ten-minute recording reported source-channel
+correlation of 0.009 and about 33 dB separation between channel-energy ranges. Two
+mono decodes made with different resamplers differed by 0.63% RMS; their diarization
+outputs differed by a reported 10.5% diarization error rate, mostly missed speech.
+
+The original notes did not record the source hash, model configuration, reference
+annotation, or measurement method. These observations motivate investigation of
+channel-aware diarization; they do not establish speaker accuracy or a reproducible
+performance result.
 
 ## 4K effects performance
 

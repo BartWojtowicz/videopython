@@ -7,8 +7,9 @@ explains what that buys and what it costs.
 ## One execution path, constant memory
 
 The engine streams: FFmpeg decode → the operation chain → FFmpeg encode, one frame at a
-time. Peak memory is roughly a frame plus the encoder's buffers, so an hour-long source
-costs the same as a ten-second one.
+time. Frame buffers stay bounded as duration grows. Total memory also includes codec
+buffers, model weights, transcripts, and operation state such as face tracks and
+noise offsets. Intermediate media uses temporary disk space.
 
 The alternative — the design most editing libraries take — is to load frames into an array
 and let each operation return a new array. That is friendlier for one-off scripting and
@@ -30,7 +31,8 @@ reserved for what FFmpeg does that numpy cannot do, or cannot do as well:
 
 - all transforms — `resize`, `crop`, `resample_fps`, the duration-changing `speed_change`
   and `freeze_frame`, the transcription-consuming `silence_removal`, and `face_crop`;
-- the two text-rendering effects — `text_overlay` (drawtext) and `add_subtitles` (libass).
+- the text-rendering effects — `text_overlay` (drawtext) and `add_subtitles` (libass);
+- `volume_adjust`, which changes the audio graph without processing pixels.
 
 **Per-frame effects** are shape-preserving Python over each decoded frame, via
 `streaming_init` + `process_frame`. **Every pixel effect** lives here: `blur_effect`, `sharpen`,
@@ -97,7 +99,7 @@ report.errors()          # the same as structured PlanErrors
 
 ## Context data on a streaming path
 
-Some operations need input a JSON plan cannot carry — a whole `Transcription`, for
+Some operations need input the edit plan does not embed — a whole `Transcription`, for
 instance. Those declare `requires: ClassVar[tuple[str, ...]]`, and the runner pulls the
 matching keys out of `run_to_file(context=...)`.
 

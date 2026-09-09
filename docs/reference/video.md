@@ -30,8 +30,8 @@ video.save("output.mp4", preset="slow", crf=18)
 
 `preset` is the FFmpeg speed/compression trade-off (`ultrafast`, `superfast`, `veryfast`,
 `faster`, `fast`, `medium` (default), `slow`, `slower`, `veryslow`); slower presets
-produce smaller files. `crf` is quality, 0–51, default 23, lower is better; 18 is
-visually lossless.
+trade encoding speed for compression. `crf` controls quality, 0–51, default 23;
+lower values increase quality and usually file size.
 
 ::: videopython.base.Video
     options:
@@ -88,7 +88,9 @@ stop as an error.
 
 ## Exceptions
 
-All videopython errors derive from `VideoPythonError`.
+Media errors derive from `VideoPythonError`. Plan validation uses
+[`PlanValidationError`](video-edit.md#error-types), a `ValueError` subclass;
+parsing can also raise Pydantic validation errors.
 
 ::: videopython.base.VideoPythonError
 

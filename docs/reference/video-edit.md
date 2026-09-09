@@ -27,7 +27,8 @@ edit = VideoEdit.from_dict({
                  "window": {"start": 0.0, "stop": 1.0}},
             ],
         },
-        {"source": "input.mp4", "start": 20.0, "end": 28.0},
+        {"source": "input.mp4", "start": 20.0, "end": 28.0,
+         "operations": [{"op": "resize", "width": 1080, "height": 1920}]},
     ],
     "post_operations": [{"op": "color_adjust", "brightness": 0.05}],
 })
@@ -105,22 +106,41 @@ from the runner:
 edit.run_to_file("out.mp4", context={"transcription": my_transcription})
 ```
 
-Time-based values are re-based onto each segment's local timeline before delivery.
+Time-based values are sliced and shifted onto each segment's local timeline. A bare
+value is shared by all sources. For multiple sources, use a map keyed by the exact
+`str(segment.source)` value:
+
+```python
+context = {"transcription": {"a.mp4": transcript_a, "b.mp4": transcript_b}}
+edit.validate(context=context)
+edit.run_to_file("out.mp4", context=context)
+```
+
+A missing source entry is a validation error for operations that require it.
+Time-based context in `post_operations` is unsupported on multi-segment plans.
 
 ## Validation, repair, normalization
 
-| Call | Returns | Raises |
-|---|---|---|
-| `validate()` | Predicted final `VideoMetadata` | `PlanValidationError` on the first failure |
-| `validate_with_metadata(meta, context=...)` | Same, without disk access | Same |
-| `check(meta, context=..., clamp_windows=...)` | `list[PlanError]`, `[]` means valid | never |
-| `repair(meta, context=..., clamp_op_params=True, clamp_segment_end=False)` | `(repaired_edit, list[PlanRepair])` | only on a segment `end` past the source |
-| `normalize_dimensions(meta, target, context=...)` | `(normalized_edit, list[PlanRepair])` | never |
+| Call | Result |
+|---|---|
+| `validate(context=..., clamp_windows=False)` | Predicted final `VideoMetadata`; raises on the first failure |
+| `validate_with_metadata(meta, context=..., clamp_windows=False)` | Same, using supplied source metadata |
+| `check(meta, context=..., clamp_windows=False)` | Collects independent plan errors; `[]` means no reported errors |
+| `repair(meta, context=..., clamp_op_params=True, clamp_segment_end=False)` | `(repaired_edit, list[PlanRepair])`; a segment end past its source raises unless clamping is enabled |
+| `normalize_dimensions(meta, target, context=...)` | `(normalized_edit, list[PlanRepair])` with appended resize operations |
 
-All of them chain each operation's `predict_metadata` and check segment bounds, effect
-windows, and concat compatibility (exact fps and dimensions). `normalize_dimensions`
-accepts an explicit `(width, height)`, `"first"`, `"largest"`, or `"match"` (the lowest
-common resolution).
+`meta` is one `VideoMetadata` shared by all segments, or a map keyed by
+`str(segment.source)`. An incomplete map raises `ValueError`, including in `check`,
+`repair`, and `normalize_dimensions`. Supplying metadata avoids source-video probes;
+referenced assets such as music and overlays can still be read or probed.
+
+Validation predicts operations in order. A failure can prevent later checks on the
+same chain. `check()` also reports structural streamability errors. Repair and
+normalization are separate, best-effort steps; check their returned plans again.
+
+`normalize_dimensions` accepts `(width, height)`, `"first"`, `"largest"` (greatest
+predicted area), or `"match"` (minimum predicted width and height when resolution
+matching is enabled, otherwise the first predictable size).
 
 What each stage owns — and why numeric bounds parse cleanly and fail at validation — is
 [the plan lifecycle](../explanation/plan-lifecycle.md).
@@ -139,13 +159,60 @@ What each stage owns — and why numeric bounds parse cleanly and fail at valida
 
 ## Matching sources
 
-- `match_to_lowest_fps` (default `true`) — resample every segment to the lowest source
-  fps.
-- `match_to_lowest_resolution` (default `true`) — resize every segment to the lowest
-  source resolution.
+For multiple segments, `match_to_lowest_fps=True` and
+`match_to_lowest_resolution=True` normalize source metadata before each segment's
+operations. Resolution matching uses the minimum width and minimum height across
+sources. A single-segment plan needs no matching.
 
-Set either to `false` to require native agreement; otherwise `validate()` /
-`run_to_file()` raises.
+Operations can change those dimensions or fps again. The final segment outputs must
+agree before concatenation. Set a flag to `False` to skip that source normalization;
+your operations must then produce matching outputs. Use `normalize_dimensions()` to
+append resizes for a common output canvas. Exact width-and-height resizes can distort
+aspect ratio; crop to the target aspect first when that matters.
+
+## Transitions
+
+Set `transition_in` on the incoming segment. The first segment must leave it `None`.
+The overlap must be shorter than both adjacent segments after operations.
+
+```python
+from videopython.editing import SegmentConfig, TransitionSpec, VideoEdit
+
+edit = VideoEdit(segments=[
+    SegmentConfig(source="input.mp4", start=0, end=5),
+    SegmentConfig(source="input.mp4", start=5, end=10,
+                  transition_in=TransitionSpec(type="dissolve", duration=0.5)),
+])
+edit.validate()
+edit.run_to_file("dissolve.mp4")
+```
+
+This produces a 9.5-second program. Each transition subtracts its overlap from the
+sum of segment durations. `audio=True` crossfades when both adjacent segments have
+audio; otherwise audio joins at the boundary. The generated schema lists the
+accepted transition types.
+
+## MusicBed
+
+`music_bed` mixes music across the assembled program, after transitions and
+`post_operations`. It is a plan field, not an operation.
+
+```python
+from videopython.editing.audio_ops import MusicBed
+
+edit.music_bed = MusicBed(source="music.mp3", gain=0.25, fade_in=0.5, fade_out=1.0)
+```
+
+The bed loops by default, is trimmed to the program duration, and does not extend
+output length. With `loop=False`, a shorter bed is padded with silence. The source
+must have a readable audio stream and is probed during validation.
+
+`duck` reduces bed gain during transcription-derived speech windows: `0` leaves
+it unchanged and `1` silences it. Ducking accepts only a single-segment plan. Pass
+its source transcription in `context`; without one, the bed mixes at a flat gain.
+Speech windows use source timing, so use ducking with operations that keep that timing.
+
+::: videopython.editing.audio_ops.MusicBed
 
 ## JSON Schema
 
@@ -155,8 +222,9 @@ strict = VideoEdit.json_schema(strict=True)    # closed provider grammar
 ```
 
 The default excludes server-only ops such as `image_overlay`
-([why](operations.md#llm-exposed-vs-server-only)). AI operations appear only after
-`import videopython.ai`. `strict=True` closes every object, makes every property
+([why](operations.md#llm-exposed-vs-server-only)). Import the AI operation classes
+before schema generation to include them; see the [LLM guide](../how-to/llm-plans.md#include-ai-operations).
+`strict=True` closes every object, makes every property
 required, expresses the union as an `anyOf` without a `discriminator`, and hoists `$defs`
 to the document root. Usage: [Author edit plans with your own
 LLM](../how-to/llm-plans.md).

@@ -46,6 +46,8 @@ Crop(width=0.5, height=1.0, x=0.5, y=0.0, mode=CropMode.CUSTOM)
 `SilenceRemoval` declares `requires = ("transcription",)`:
 
 ```python
+from videopython.editing import SilenceRemoval
+
 edit = VideoEdit(segments=[SegmentConfig(source="input.mp4", start=0, end=10,
                                          operations=[SilenceRemoval()])])
 edit.run_to_file("out.mp4", context={"transcription": my_transcription})

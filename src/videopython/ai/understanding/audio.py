@@ -138,9 +138,9 @@ class AudioToText(ManagedPredictor):
       clean audio is small (slightly less context for ambiguous homophones
       across sentence boundaries).
     - ``no_speech_threshold`` and ``logprob_threshold`` are forwarded with
-      Whisper's documented defaults (``0.6`` and ``-1.0``); raising
-      ``no_speech_threshold`` biases toward dropping low-confidence windows
-      instead of emitting filler.
+      Whisper's defaults (``0.6`` and ``-1.0``). Lowering
+      ``no_speech_threshold`` makes the no-speech probability gate easier
+      to trigger; ``logprob_threshold`` also affects whether a window is skipped.
 
     ``vocabulary`` biases Whisper's first-window decoder toward a caller-
     supplied list of brand names, product names, or proper nouns via the

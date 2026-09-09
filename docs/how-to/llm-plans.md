@@ -21,110 +21,51 @@ edit.validate()                 # dry run over metadata; no frames touched
 edit.run_to_file("output.mp4")
 ```
 
-## Pass the schema as a tool
+## Pass the schema to your model
 
-`VideoEdit.json_schema()` returns a Draft-07-compatible schema covering segments,
-`post_operations`, the matching flags, and a discriminated union over every LLM-exposed
-operation. Server-only ops (those needing a server-resolved path, like `image_overlay`)
-are excluded so the model cannot emit a plan it is unable to fill in.
+`VideoEdit.json_schema()` describes the plan and its LLM-exposed operations. Give
+that schema, the source paths, and source metadata to your integration. The
+`call_your_llm` function above is a placeholder for your own model call; videopython
+does not install a hosted-provider SDK.
 
-=== "Anthropic"
-
-    ```python
-    import anthropic
-    from videopython.editing import VideoEdit
-
-    client = anthropic.Anthropic()
-
-    response = client.messages.create(
-        model="claude-sonnet-5",
-        max_tokens=1024,
-        tools=[{
-            "name": "create_video_edit",
-            "description": "Create a video editing plan",
-            "input_schema": VideoEdit.json_schema(),
-        }],
-        messages=[{"role": "user", "content":
-                   "Cut input.mp4 to the first 10 seconds, resize to 1080x1920, fade in."}],
-    )
-
-    tool_block = next(b for b in response.content if b.type == "tool_use")
-    edit = VideoEdit.from_dict(tool_block.input)
-    edit.validate()
-    edit.run_to_file("output.mp4")
-    ```
-
-=== "OpenAI"
-
-    ```python
-    import json
-    from openai import OpenAI
-    from videopython.editing import VideoEdit
-
-    client = OpenAI()
-
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": "You are a video editor."},
-            {"role": "user", "content":
-             "Cut input.mp4 to the first 10 seconds, resize to 1080x1920, fade in."},
-        ],
-        tools=[{
-            "type": "function",
-            "function": {
-                "name": "create_video_edit",
-                "description": "Create a video editing plan",
-                "parameters": VideoEdit.json_schema(),
-            },
-        }],
-    )
-
-    plan = json.loads(response.choices[0].message.tool_calls[0].function.arguments)
-    edit = VideoEdit.from_dict(plan)
-    edit.validate()
-    edit.run_to_file("output.mp4")
-    ```
-
-### Strict / grammar-constrained decoding
-
-For providers with a strict structured-output grammar, pass `strict=True`:
+If your decoder accepts a closed structured-output schema, use:
 
 ```python
-VideoEdit.json_schema(strict=True)
-Operation.json_schema(strict=True)
+from videopython.editing import Operation, VideoEdit
+
+plan_schema = VideoEdit.json_schema(strict=True)
+operation_schema = Operation.json_schema(strict=True)
 ```
 
-That emits a submittable closed grammar — every object `additionalProperties: false`,
-every property `required`, the op union as an `anyOf` of closed variants with no
-`discriminator`, and the union's `$defs` hoisted to the document root so every `$ref`
-resolves. Optionality follows the Pydantic type, so a grammar-valid response always
-parses back.
-
-Constraining the decode makes a whole class of violations (`window.start >= 0`, enums,
-required fields) impossible up front. Cross-field constraints — `timestamp < duration`,
-segment dimension equality — cannot live in a grammar and stay with the refine loop
-below.
+See the [schema reference](../reference/video-edit.md#json-schema) for the generated
+structure. Decoder support varies. Parse and validate the returned plan even when
+the model accepts the schema: numeric bounds and cross-field rules still need checks.
 
 ## Refine a plan the model got wrong
 
-Four methods, all taking `source_metadata` first:
+Build metadata keyed by the exact source paths, then repair and check the plan:
 
 ```python
-edit = VideoEdit.from_dict(plan)                          # permissive parse
-edit, repairs = edit.repair(source_metadata)              # clamp the mechanical faults
+from videopython.base import VideoMetadata
+
+edit = VideoEdit.from_dict(plan)
+source_metadata = {
+    str(segment.source): VideoMetadata.from_path(segment.source)
+    for segment in edit.segments
+}
+edit, repairs = edit.repair(source_metadata, clamp_segment_end=True)
 edit, dim_repairs = edit.normalize_dimensions(source_metadata, "largest")
-errors = edit.check(source_metadata)                      # whatever is left, all at once
+errors = edit.check(source_metadata)
 if errors:
-    ...  # re-prompt with the previous plan + the full structured error list
+    ...  # re-prompt with the previous plan and the structured errors
+else:
+    edit.run_to_file("output.mp4")
 ```
 
-| Method | Does | Raises |
-|---|---|---|
-| `check(meta)` | Collects **every** `PlanError` in one pass; `[]` means valid | never |
-| `repair(meta)` | Clamps unambiguous violations, returns `(edit, changelog)` | only on a segment `end` past the source, unless `clamp_segment_end=True` |
-| `normalize_dimensions(meta, target)` | Appends a per-segment `resize` so concat geometry matches | never |
-| `validate()` / `validate_with_metadata(meta)` | Dry run, first error wins | `PlanValidationError` |
+Clamping segment ends can shorten the requested edit. Omit `clamp_segment_end=True`
+if the caller must decide how to handle an overrun. Signatures, failure behavior,
+and metadata requirements are in the
+[validation reference](../reference/video-edit.md#validation-repair-normalization).
 
 Surface what was changed:
 
@@ -173,17 +114,17 @@ the `font` name enum.
 
 ## Include AI operations
 
-AI ops register only once `videopython.ai` is imported. Import it before generating the
+AI ops register when their classes are imported. Import the classes before generating the
 schema if your plans may use them:
 
 ```python
-import videopython.ai                 # registers face_crop, object_detection_overlay
+from videopython.ai import FaceTrackingCrop, ObjectDetectionOverlay
 
 from videopython.editing import VideoEdit
 schema = VideoEdit.json_schema()      # now includes them
 ```
 
-## Supply data the plan cannot carry
+## Supply context data
 
 Operations that need bulky side-channel input declare it via
 `requires: ClassVar[tuple[str, ...]]`; the runner pulls the matching keys out of
@@ -198,10 +139,8 @@ needs_transcript = [op_id for op_id, cls in Operation.registry().items()
 
 ## Notes
 
-- **Lead with the schema.** It encodes the structural rules, so the model needs no
-  few-shot examples.
+- **Lead with the schema.** It describes the available operations and structural rules.
 - **Give the model source metadata** — duration, dimensions, fps — or it will invent time
   ranges that do not exist.
-- **Always `validate()` before `run_to_file()`.** It is cheap and catches almost
-  everything.
+- **Always `validate()` before `run_to_file()`.** Inspect structured errors before spending time on rendering.
 - **Re-prompt with the whole error list** from `check()`, not one error at a time.

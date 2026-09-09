@@ -29,8 +29,8 @@ print(f"Translated {result.num_segments} segments")
 ```
 
 Two things happen automatically on this path: subtitle streams are copied through from
-the source, and the dubbed audio is gain-matched to the source with BS.1770 integrated
-loudness (within ~1 LU on dialogue-heavy mixes). Add `keep_original_audio=True` to retain
+the source, and the dubbed audio is gain-matched to the source; see the
+[file-output reference](../reference/ai/dubbing.md#videodubber). Add `keep_original_audio=True` to retain
 the source audio as a second track for A/B review — the dub stays the default track.
 
 ## Dub an in-memory video
@@ -96,15 +96,14 @@ Combine it with `dub_file()` for the smallest footprint; see
 
 ```python
 dubber = VideoDubber(whisper_model="large")        # tiny|base|small|medium|large|turbo
-dubber = VideoDubber(no_speech_threshold=0.85)     # tighter gate under heavy music
+dubber = VideoDubber(no_speech_threshold=0.4)      # lower the no-speech probability cutoff
 dubber = VideoDubber(vocabulary=["Klarna", "Allegro", "InPost"])  # brand-name biasing
 ```
 
-`turbo` is the default: large-v3 quality at ~8× the speed. `condition_on_previous_text`
-defaults to `False`, which stops one hallucinated filler from cascading through the whole
-track. Details in [AI understanding](../reference/ai/understanding.md#audiototext).
+`turbo` is the default. `condition_on_previous_text=False` reduces propagation of
+incorrect text from one decoder window to the next. Details in [AI understanding](../reference/ai/understanding.md#audiototext).
 
-## Reject garbage input before paying for it
+## Reject poor transcripts before synthesis
 
 Degenerate audio (ambient music, near-silence read as speech) produces unusable
 transcripts. Every result carries a heuristic assessment:
@@ -117,10 +116,7 @@ if q is not None:
     print(q.dominant_phrase_fraction)
 ```
 
-Three checks fire flags: one phrase covering ≥70% of segment characters, a median
-`avg_logprob` below `-1.5`, or speech covering <5% of a clip longer than 30 s. The
-recommendation is `reject` when the dominance flag fires together with another, `warn`
-for any single flag. Repetition alone (chants, lyrics) only warns.
+See [TranscriptQuality](../reference/ai/dubbing.md#transcriptquality) for flag thresholds.
 
 To refuse before Demucs, translation and TTS run:
 
@@ -152,7 +148,7 @@ if ts is not None:
 
 Per-speaker cloning is driven by speaker labels on the transcription. `dub()`,
 `dub_and_replace()` and `dub_file()` all accept a pre-computed `transcription`, which also
-lets you correct the text before it is translated:
+lets you inspect speaker labels before translation:
 
 ```python
 from videopython.ai import AudioToText
@@ -160,16 +156,10 @@ from videopython.ai import AudioToText
 transcription = AudioToText(enable_diarization=True).transcribe(video)
 
 for seg in transcription.segments:
-    seg.text = seg.text.replace("incorrect word", "correct word")
+    print(seg.speaker, seg.start, seg.end, seg.text)
 
 dubber.dub_and_replace(video=video, target_lang="es", transcription=transcription)
 ```
-
-On CUDA, compatible local speech decoder operations use graph replay to reduce
-launch overhead. Model weights, precision and generation settings stay unchanged.
-Other input layouts use the original execution path, as does CPU synthesis; if
-graph capture is unavailable, synthesis falls back automatically. Graph buffers
-are released with the model.
 
 | Supplied transcription | `enable_diarization` | Behavior |
 |---|---|---|
@@ -177,30 +167,17 @@ are released with the model.
 | No speakers | `True` | pyannote runs on the audio and attaches speakers to the supplied words |
 | No speakers | `False` | Used as-is; all segments share one voice clone |
 
+If you correct the transcript, keep segment text and timed word text consistent.
+Phrase splitting relies on their alignment.
+
 The diarize-on-supplied path needs word-level timings, so transcriptions loaded from SRT
 (one synthetic word per block) are rejected.
 
 ## Pick the translation model
 
-Translation goes through `OllamaTranslator`, a single Ollama text model. Each request
-translates one bounded source part, with neighboring text marked as context only.
-Long turns split at sentence, clause or word boundaries, falling back to character
-boundaries for text without spaces, and reassemble under their original segment
-and speaker. A duration-derived character target encourages concise speech while
-preserving meaning. Requests remain sequential to isolate segment identities; this
-adds request overhead compared with batching. Invalid identities,
-duplicate entries, empty responses and output-budget exhaustion trigger a retry.
-If any part remains unavailable, the whole parent appears in `translation_failures`.
-
-When constructing `OllamaTranslator` directly, set `max_tokens` to at least 140 and
-`n_ctx` to at least `max_tokens + 1020`. Defaults are 4096 and 8192 respectively.
-The equivalent `options` keys, `num_predict` and `num_ctx`, override these values;
-invalid effective budgets fail at construction. For example, a 4096-token context
-can use `max_tokens=1024`. These are allocation estimates, not tokenizer guarantees.
-
-Unloading requests release of the model on the Ollama server. A failed release
-request logs a warning and clears the local client without discarding translations
-or masking an exception from the caller. Server memory may remain allocated.
+Use an Ollama text model that supports structured output. The translator needs no
+vision capability. See [OllamaTranslator](../reference/ai/dubbing.md#ollamatranslator)
+for request budgets and model residency.
 
 Select a model already downloaded in Ollama. For example, run
 `ollama pull translategemma:12b`, then configure the dubber:
@@ -213,69 +190,19 @@ dubber = VideoDubber(
 )
 ```
 
-Any language pair is attempted — the pipeline does not reject a target language up
-front. An empty `translation_failures` list establishes response availability, not
-semantic accuracy. Review meaning, numbers, names and speaker alignment before publishing.
+Check both `result.translation_failures` and `result.synthesis_failures`. Their indices
+refer to the original source transcription. No failures means that outputs were
+available; it does not prove correct translation or speech.
 
-Local Chatterbox synthesis splits long translations into bounded calls, preserving
-voice and expression settings, and joins their audio before synchronizing the parent
-turn. Calls approaching the backend's speech-token ceiling retry with smaller text
-units. Sampling excludes invalid vocoder token IDs while preserving end-of-speech.
-Invalid token outputs are also rejected before GPU indexing and retried up
-to three attempts. The required `videopython-chatterbox>=0.1.7.post2` fixes the empty alignment
-reduction for short text in the backend itself. The duration check can flag a likely cap but cannot prove
-every word was spoken.
-Tiny adjacent fragments can join within one speaker when the gap is at most 150 ms;
-groups contain at most four turns spanning at most ten seconds. The longer fragment
-supplies the expression profile. Isolated groups shorter than 100 ms are reported
-as synthesis failures. Original transcript entries remain available separately.
-
-Check `result.synthesis_failures` for original segment indices whose speech could not
-be generated or timed. Also inspect `result.timing_summary`: fitting the complete
-speech into the source window can require excessive speed. Verify the final audio,
-including the ends of long turns, rather than relying on success counts alone.
-
-Speaker diarization turns are not necessarily good dubbing units. Before translation,
-long turns are split into phrases at sentence ends, then clauses or pauses, using
-validated word timestamps. Phrase text is sliced from the source transcript to retain
-its internal spacing. Complete sentences take priority over earlier commas;
-roughly eight-second phrases are preferred without creating tiny word fragments.
-Missing, partial or inconsistent word alignment leaves the source segment intact;
-we do not invent timestamps by dividing text proportionally.
-
-`source_transcription` remains unchanged. Translated phrases expose
-`source_segment_index` to trace them to that transcript; translation and synthesis
-failure lists still refer to original source segment indices. Speaker reference
-extraction uses the full original turns, preserving voice identity across phrases.
-
-Each phrase starts at its source-word anchor. Shorter generated speech keeps its
-natural speed and pauses until the next phrase, instead of filling the whole window
-with a slowdown. Available gaps can absorb longer speech before acceleration.
-Assembly applies a 5 ms fade at each phrase edge to reduce clicks at silence
-boundaries. It keeps the sample count and source anchor unchanged.
-See [Check the timing fit](#check-the-timing-fit) for speed limits and result checks.
-
-Dubbing prefers FFmpeg's [Rubber Band filter](https://ffmpeg.org/ffmpeg-filters.html#rubberband)
-when stretching is necessary and the filter is available, with an explicit warning
-and `atempo` fallback on builds without it. General `Audio.time_stretch()` calls
-retain the `atempo` default; callers may select `method="rubberband"` explicitly.
-Phrase alignment reduces accumulated timing drift; it is not phoneme-level lip sync,
-and translation or TTS quality still requires listening review.
-
-## Update timing consumers
-
-Remove the `min_speed` argument from `TimingSynchronizer` calls. Shorter speech
-keeps its natural speed. Use `max_speed` to set the preferred acceleration limit.
-
-Remove uses of `TimingAdjustment.was_truncated`, `truncation_seconds`, and
-`excessive_slowdown`. Remove uses of `TimingSummary.truncated_count`,
-`max_truncation_seconds`, `excessive_slowdown_count`, and `min_speed_factor`.
-Regenerate saved timing summaries from the current pipeline. Use
-`excessive_speed_count` and `max_speed_factor` to select output for listening review.
+Review meaning, numbers, names, speaker alignment, and the ends of long phrases.
+Use `result.timing_summary` to find excessive speedups. Current measured limitations
+are in the [verification record](../reference/verification.md#final-dubbing-review-0612).
+The [pipeline explanation](../explanation/dubbing.md) describes phrase timing and
+why successful generation can still need listening review.
 
 ## Swap the TTS backend
 
-Synthesis sits behind a `runtime_checkable` `SpeechBackend` protocol. Inject your own to
+Supply an object with the `generate_audio` method below to
 keep chatterbox out of the process entirely:
 
 ```python
@@ -290,8 +217,10 @@ class RemoteTTS:
 dubber = VideoDubber(tts_backend=RemoteTTS())
 ```
 
-videopython ships the protocol and the local backend only — there is no reference
-remote/HTTP implementation.
+The method returns `Audio`. Voice sample paths take precedence over in-memory
+samples. Expression arguments may be `None`. A backend can also provide `unload()`
+for cleanup in low-memory mode. The example is an interface sketch; implement its
+method before use. The `ai` extra still installs the local backend dependencies.
 
 ## Reusable presets
 

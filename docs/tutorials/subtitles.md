@@ -4,21 +4,23 @@ In this tutorial you will transcribe a video's speech with a local Whisper model
 word-level subtitles onto it. Everything runs on your machine — no API keys — and it
 works on CPU, though the first run downloads model weights.
 
-You need `pip install "videopython[ai]"` ([Install](../install.md)) and a video with
+You need `pip install "videopython[ai]"` ([Install](../install.md)) and a landscape video with
 speech in it, saved as `input.mp4`. [Tutorial 1](first-edit.md) is assumed.
 
 ## Step 1 — Transcribe
 
 ```python
-from videopython.base import Video
+from videopython.audio import Audio
+from videopython.base import VideoMetadata
 from videopython.ai import AudioToText
 
-video = Video.from_path("input.mp4")
-transcription = AudioToText().transcribe(video)
+meta = VideoMetadata.from_path("input.mp4")
+audio = Audio.from_path("input.mp4", sample_rate=16000, channels=1)
+transcription = AudioToText(device="cpu").transcribe(audio)
 ```
 
 The first call downloads the Whisper weights; later runs reuse them. `AudioToText` uses
-the `turbo` model by default — large-v3 quality at roughly 8× the speed.
+the `turbo` model by default. This example decodes only audio; it does not load video frames.
 
 Look at what came back:
 
@@ -44,7 +46,7 @@ from videopython.editing import VideoEdit, SegmentConfig, TranscriptionOverlay
 edit = VideoEdit(segments=[SegmentConfig(
     source="input.mp4",
     start=0,
-    end=video.total_seconds,
+    end=meta.total_seconds,
     operations=[
         TranscriptionOverlay(
             style="boxed",     # boxed | outline | clean | karaoke
@@ -71,11 +73,8 @@ edit.run_to_file("subtitled.mp4", context={"transcription": transcription})
 
 Play `subtitled.mp4` — each word lights up as it is spoken.
 
-Why the detour? Because a plan is data. A `Transcription` is a big object that would not
-survive a round trip through JSON in any useful way, so operations that need bulky
-side-channel input declare *what* they need, and the caller passes it in separately. The
-runner also re-bases the timestamps: if your segment started at 30 s, the transcription's
-source-absolute times are shifted onto the segment's local timeline for you.
+The runner shifts source timestamps onto each segment's local timeline. The
+[context reference](../reference/video-edit.md#context-data) covers multiple sources.
 
 ## Step 4 — Restyle
 
@@ -105,19 +104,20 @@ Subtitles are an ordinary operation, so they compose. Here is the whole tutorial
 vertical, subtitled, faded-in clip:
 
 ```python
-from videopython.editing import VideoEdit, SegmentConfig, Resize, Fade, TranscriptionOverlay
+from videopython.editing import VideoEdit, SegmentConfig, Resize, Crop, Fade, TranscriptionOverlay
 
 edit = VideoEdit(segments=[SegmentConfig(
     source="input.mp4",
     start=0,
-    end=min(30.0, video.total_seconds),
+    end=min(30.0, meta.total_seconds),
     operations=[
         Resize(height=1920),
+        Crop(width=1080, height=1920),
         Fade(mode="in", duration=0.5),
         TranscriptionOverlay(style="karaoke", region="center", font_scale=0.07),
     ],
 )])
-edit.validate()
+edit.validate(context={"transcription": transcription})
 edit.run_to_file("clip.mp4", context={"transcription": transcription})
 ```
 

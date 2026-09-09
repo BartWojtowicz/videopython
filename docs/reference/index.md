@@ -29,7 +29,7 @@ produce them, in [AI understanding](ai/understanding.md#result-types).
 
 | Page | Contents |
 |---|---|
-| [Edit plans](video-edit.md) | `VideoEdit`, `SegmentConfig`, the JSON wire format, validation and schema generation |
+| [Edit plans](video-edit.md) | `VideoEdit`, `SegmentConfig`, transitions, `MusicBed`, context, validation and schema generation |
 | [Operations](operations.md) | The `Operation` base, the registry, and the full op table |
 | [Transforms](transforms.md) | `Resize`, `Crop`, `ResampleFPS`, `SpeedChange`, `FreezeFrame`, `SilenceRemoval` |
 | [Effects](effects.md) | Blur, zoom, color, overlays, fades and the rest |

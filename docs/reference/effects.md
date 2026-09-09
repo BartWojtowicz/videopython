@@ -67,9 +67,9 @@ Kaleidoscope(segments=6)
 
 ## How effects execute
 
-Only `text_overlay` (drawtext) and `add_subtitles` (libass) compile to native FFmpeg
-filters. Every other effect runs vectorised numpy/cv2 per frame; `Fade` and `VolumeAdjust`
-additionally contribute an audio filter. The measurements behind that split are in
+`text_overlay` (drawtext) and `add_subtitles` (libass) compile to video filters.
+`volume_adjust` changes only the audio graph. Other effects process pixels per frame;
+`Fade` also adds an audio filter. The measurements behind that split are in
 [the streaming engine](../explanation/streaming-engine.md#why-pixel-effects-are-not-ffmpeg-filters).
 
 ## Classes

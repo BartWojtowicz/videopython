@@ -4,7 +4,7 @@ In this tutorial you will turn a raw video file into a short, polished clip: a t
 cut, resized to vertical, fading in from black. Then you will add a second piece of
 footage and let videopython stitch the two together.
 
-You need videopython and FFmpeg installed ([Install](../install.md)) and one `.mp4` file.
+You need videopython and FFmpeg installed ([Install](../install.md)) and one `.mp4` file at least 28 seconds long.
 Save it next to your script as `input.mp4`. Nothing here needs a GPU or the `[ai]` extra.
 
 ## Step 1 — Look at the source
@@ -91,7 +91,7 @@ You can control the encode:
 edit.run_to_file("output.mp4", crf=20, preset="slow")   # higher quality, slower
 ```
 
-`crf` is quality (0–51, lower is better, 23 is the default, 18 is visually lossless) and
+`crf` is quality (0–51, lower is better, 23 is the default; lower values increase output size) and
 `preset` is the speed/compression trade-off (`ultrafast` … `veryslow`).
 
 ## Step 5 — Add a second segment
@@ -130,10 +130,10 @@ edit.validate()
 edit.run_to_file("output.mp4")
 ```
 
-Concatenation requires the segments to agree on fps and dimensions. Here you resized both
-by hand, but the plan also does it for you: `match_to_lowest_fps` and
-`match_to_lowest_resolution` are `true` by default, so mixing sources of different sizes
-still renders.
+Concatenation requires matching fps and dimensions after operations. The matching
+flags normalize sources before operations; later operations can make them differ
+again. Here both segments use the same source and resize. See
+[Matching sources](../reference/video-edit.md#matching-sources) for mixed inputs.
 
 ## Step 6 — The same plan, as objects
 

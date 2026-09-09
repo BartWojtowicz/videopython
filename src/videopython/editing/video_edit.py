@@ -996,7 +996,7 @@ class VideoEdit(BaseModel):
         *,
         clamp_windows: bool = False,
     ) -> VideoMetadata:
-        """Dry-run with pre-built metadata, avoiding disk access.
+        """Dry-run with supplied video metadata; referenced assets can still be probed.
 
         See :meth:`validate` for the ``clamp_windows`` semantics.
         """
@@ -1012,8 +1012,9 @@ class VideoEdit(BaseModel):
     ) -> list[PlanError]:
         """Collect **every** plan error in one pass; ``[]`` means valid.
 
-        The non-raising sibling of :meth:`validate_with_metadata`: it runs the
-        same dry-run but accumulates instead of aborting on the first failure,
+        Like :meth:`validate_with_metadata`, but collects independent plan errors.
+        An incomplete source metadata map raises ``ValueError``. The walk accumulates
+        errors instead of aborting on the first failure,
         so an LLM refine loop can fix all problems in a single re-prompt instead
         of playing whack-a-mole across a retry budget. Best-effort: each segment
         is checked against its own source metadata, per-op and per-segment errors
@@ -1620,8 +1621,9 @@ class VideoEdit(BaseModel):
     ) -> Path:
         """Execute the plan, streaming directly to a file.
 
-        Memory usage is O(1) w.r.t. video length (video; segment audio is
-        in-memory). Streaming is the only engine: a plan with an unstreamable
+        Video frames and segment audio stream through FFmpeg. Frame buffers stay
+        bounded; context and operation state can grow with duration.
+        Streaming is the only engine: a plan with an unstreamable
         shape raises :class:`PlanValidationError` carrying one
         ``STREAMING_UNSUPPORTED`` :class:`PlanError` per offending op -- before
         any decode. Gate plans early with :meth:`check` or
