@@ -9,7 +9,7 @@ Structured, local-first video editing for Python and AI agents.
 
 Videopython represents an edit as a validated Python model or JSON plan. Whether the
 plan comes from your code, an LLM, or an MCP client, it renders through the same
-bounded-memory streaming engine.
+streaming engine with bounded frame buffers.
 
 [Documentation](https://videopython.com) ·
 [First edit](https://videopython.com/tutorials/first-edit/) ·
@@ -61,8 +61,8 @@ edit.validate()
 edit.run_to_file("output.mp4")
 ```
 
-`run_to_file()` streams the source through FFmpeg and the operation pipeline, so memory
-use stays bounded for long videos. Continue with
+`run_to_file()` streams the source through FFmpeg and the operation pipeline, so frame buffers
+stay bounded for long videos. Continue with
 [Your first edit](https://videopython.com/tutorials/first-edit/).
 
 ## What you can build
