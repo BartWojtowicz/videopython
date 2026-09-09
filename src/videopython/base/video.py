@@ -392,11 +392,13 @@ def extract_frames_at_indices(
     if not path.exists():
         raise FileNotFoundError(f"Video file not found: {path}")
 
-    if not frame_indices:
-        metadata = VideoMetadata.from_path(path)
-        return np.empty((0, metadata.height, metadata.width, 3), dtype=np.uint8)
-
     metadata = VideoMetadata.from_path(path)
+    return _extract_frames_at_indices(path, frame_indices, metadata)
+
+
+def _extract_frames_at_indices(path: Path, frame_indices: list[int], metadata: VideoMetadata) -> np.ndarray:
+    if not frame_indices:
+        return np.empty((0, metadata.height, metadata.width, 3), dtype=np.uint8)
 
     # Remove duplicates and sort for ffmpeg
     unique_sorted_indices = sorted(set(frame_indices))
@@ -412,6 +414,8 @@ def extract_frames_at_indices(
         f"select='{select_expr}'",
         "-fps_mode",
         "vfr",  # Variable frame rate output
+        "-frames:v",
+        str(len(unique_sorted_indices)),
         "-f",
         "rawvideo",
         "-pix_fmt",
@@ -468,7 +472,7 @@ def extract_frames_at_times(
     """
     metadata = VideoMetadata.from_path(path)
     frame_indices = [int(t * metadata.fps) for t in timestamps]
-    return extract_frames_at_indices(path, frame_indices)
+    return _extract_frames_at_indices(Path(path), frame_indices, metadata)
 
 
 class Video:

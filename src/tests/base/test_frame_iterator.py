@@ -251,3 +251,29 @@ class TestExtractFramesAtTimes:
         frames = extract_frames_at_times(SMALL_VIDEO_PATH, [])
 
         assert frames.shape[0] == 0
+
+
+def test_batched_extraction_matches_decoded_frames(tmp_path, monkeypatch):
+    import subprocess
+
+    path = tmp_path / "colors.mp4"
+    frames = np.zeros((30, 48, 64, 3), dtype=np.uint8)
+    frames[:10, :, :, 0] = 255
+    frames[10:20, :, :, 1] = 255
+    frames[20:, :, :, 2] = 255
+    Video(frames, fps=10).save(path)
+    decoded = Video.from_path(path).frames
+    VideoMetadata.clear_cache()
+    calls = []
+    original = subprocess.Popen
+
+    def record(args, *a, **kwargs):
+        calls.append(args)
+        return original(args, *a, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", record)
+    selected = extract_frames_at_times(path, [2.1, 0.2, 1.1, 0.2])
+    np.testing.assert_array_equal(selected, decoded[[21, 2, 11, 2]])
+    assert len([args for args in calls if args[0] == "ffprobe"]) == 1
+    [command] = [args for args in calls if args[0] == "ffmpeg"]
+    assert command[command.index("-frames:v") + 1] == "3"

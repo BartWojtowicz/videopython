@@ -130,6 +130,14 @@ documented in [AI auto-editing](ai/auto-edit.md).
 
 ## Image budget
 
-Every image the MCP path returns is downscaled to a longest side of ≤768 px (~10× smaller
-than a full-resolution PNG), and `build_catalog` inlines at most 12. Downscaling is scoped
-to MCP — `SceneVLM` captioning and the in-process planner keep full-resolution frames.
+Every image the MCP path returns is downscaled to a longest side of 768 px, and
+`build_catalog` extracts and inlines at most 12. Catalog text does not require image
+extraction. Each image request batches scene midpoints by source and decodes only
+through the last requested frame. The server retains at most 12 downscaled images,
+evicting the least recently requested image when the cache is full. A cache hit needs
+no decode. Building a new catalog clears the image cache. Omitted catalog rows do not
+cause image extraction until requested.
+
+`SceneVLM` captioning and the in-process planner keep full-resolution frames.
+The [catalog measurements](verification.md#catalog-keyframe-extraction) record the
+latency and memory tradeoff.

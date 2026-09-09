@@ -19,7 +19,7 @@ links work when the operating-system account can read them.
 |---|---|
 | `analyze_video(path)` | Reads the selected media, including its video, audio, and container metadata. |
 | `build_catalog()` | Reads analyzed sources again to extract keyframes. |
-| `scene_keyframes(scene_ids)` | Returns cached keyframes for analyzed sources. |
+| `scene_keyframes(scene_ids)` | Reads analyzed sources again for requested keyframes that are not cached. |
 | Plan operations | Path-bearing operations can read assets such as overlay images. Source video paths come from scenes that were already analyzed. |
 | `validate_edit()` and `repair_edit()` | Can probe source media and inspect referenced assets while checking a plan. |
 | `run_edit()` | Reads the source media and referenced assets, then renders the result. |
@@ -28,7 +28,9 @@ Analysis results can contain transcripts, captions, file metadata, and keyframe 
 The connected MCP client receives this data. Do not connect a client that is not allowed
 to see the source content.
 
-Analyses and keyframes stay in process memory for the stdio session. Rendering uses the
+Analyses and catalog text stay in process memory for the stdio session, along with
+a bounded cache of downscaled keyframes. The [MCP reference](../reference/mcp.md#image-budget)
+defines its limits. Rendering uses the
 operating system's temporary directory for intermediate media. Normal completion removes
 owned temporary files, but an abrupt process or machine failure can leave them behind.
 

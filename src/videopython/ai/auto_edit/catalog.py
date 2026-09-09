@@ -27,7 +27,6 @@ def build_catalog(
 ) -> CatalogBundle:
     """Project VideoAnalysis results into a flat scene catalog with one midpoint keyframe per scene."""
     scenes: list[CatalogScene] = []
-    frames: dict[str, np.ndarray] = {}
     used_ids: set[str] = set()
 
     for analysis in analyses:
@@ -56,13 +55,25 @@ def build_catalog(
                     has_faces=bool(sample.faces),
                 )
             )
-            if keyframes:
-                if source_path is None:
-                    raise ValueError(f"Scene {scene_id!r} has no source path to extract a keyframe from.")
-                midpoint = (sample.start_second + sample.end_second) / 2.0
-                frames[scene_id] = extract_frames_at_times(source_path, [midpoint])[0]
+            if keyframes and source_path is None:
+                raise ValueError(f"Scene {scene_id!r} has no source path to extract a keyframe from.")
 
+    frames = extract_catalog_keyframes(scenes) if keyframes else {}
     return CatalogBundle(catalog=EditCatalog(scenes=scenes), keyframes=frames)
+
+
+def extract_catalog_keyframes(scenes: Sequence[CatalogScene]) -> dict[str, np.ndarray]:
+    """Extract scene midpoints in one decode per source, preserving scene IDs."""
+    by_source: dict[Path, list[CatalogScene]] = {}
+    for scene in scenes:
+        by_source.setdefault(scene.source, []).append(scene)
+    frames: dict[str, np.ndarray] = {}
+    for source, source_scenes in by_source.items():
+        timestamps = [(scene.start + scene.end) / 2.0 for scene in source_scenes]
+        extracted = extract_frames_at_times(source, timestamps)
+        for index, scene in enumerate(source_scenes):
+            frames[scene.id] = extracted[index]
+    return frames
 
 
 def _unique_id(stem: str, scene_index: int, used: set[str]) -> str:

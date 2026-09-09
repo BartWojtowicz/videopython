@@ -329,7 +329,7 @@ def test_mcp_tool_contracts_are_structured() -> None:
     assert set(tools["run_edit"].outputSchema["properties"]) == {"errors", "output_path"}
 
 
-def test_build_catalog_caps_inlined_keyframes_and_notes_omitted() -> None:
+def test_build_catalog_caps_inlined_keyframes_and_notes_omitted(monkeypatch) -> None:
     n = server._MAX_INLINE_KEYFRAMES + 3
     server._analyses = {str(SMALL_VIDEO_PATH): _analysis_with_scenes(n)}
     blocks = server.build_catalog()
@@ -342,6 +342,19 @@ def test_build_catalog_caps_inlined_keyframes_and_notes_omitted() -> None:
     assert server._bundle is not None
     omitted = [s.id for s in server._bundle.catalog.scenes][server._MAX_INLINE_KEYFRAMES :]
     assert all(oid in note.text for oid in omitted)
+    assert len(server._bundle.keyframes) == server._MAX_INLINE_KEYFRAMES
+    assert all(max(frame.shape[:2]) <= 768 for frame in server._bundle.keyframes.values())
+    fetched = server.scene_keyframes([omitted[-1]])
+    assert sum(isinstance(block, ImageContent) for block in fetched) == 1
+    assert len(server._bundle.keyframes) == server._MAX_INLINE_KEYFRAMES
+    assert omitted[-1] in server._bundle.keyframes
+
+    def cached_only(scenes):
+        assert scenes == []
+        return {}
+
+    monkeypatch.setattr(server, "extract_catalog_keyframes", cached_only)
+    assert server.scene_keyframes([omitted[-1]]) == fetched
 
 
 def test_scene_keyframes_returns_requested_images() -> None:

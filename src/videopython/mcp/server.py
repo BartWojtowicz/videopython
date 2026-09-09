@@ -22,7 +22,8 @@ from pydantic import ValidationError
 
 from videopython.ai.auto_edit import EditPlan, UnknownSceneIdsError, resolve_plan
 from videopython.ai.auto_edit import build_catalog as _build_scene_catalog
-from videopython.ai.keyframe import keyframe_to_png_b64
+from videopython.ai.auto_edit.catalog import extract_catalog_keyframes
+from videopython.ai.keyframe import downscale_keyframe, encode_png_b64
 from videopython.editing import VideoEdit
 
 from ._models import (
@@ -91,7 +92,7 @@ def build_catalog(sources: list[str] | None = None) -> list[TextContent | ImageC
     analyses = _selected_analyses(sources)
     if not analyses:
         raise ValueError("No analyzed videos cached; call analyze_video first.")
-    _bundle = _build_scene_catalog(analyses)
+    _bundle = _build_scene_catalog(analyses, keyframes=False)
 
     ids = [scene.id for scene in _bundle.catalog.scenes]
     inlined, omitted = ids[:_MAX_INLINE_KEYFRAMES], ids[_MAX_INLINE_KEYFRAMES:]
@@ -209,11 +210,19 @@ def _selected_analyses(sources: list[str] | None) -> list[VideoAnalysis]:
 def _keyframe_blocks(scene_ids: list[str]) -> list[TextContent | ImageContent]:
     assert _bundle is not None  # callers guard; narrows the module global for mypy
     blocks: list[TextContent | ImageContent] = []
+    known = _bundle.catalog.by_id()
+    frames = {sid: _bundle.keyframes[sid] for sid in scene_ids if sid in _bundle.keyframes}
+    extracted = extract_catalog_keyframes([known[sid] for sid in scene_ids if sid not in frames])
+    # Copies prevent small cached frames from retaining the full decode batch.
+    frames.update({sid: downscale_keyframe(frame).copy() for sid, frame in extracted.items()})
+    del extracted
     for sid in scene_ids:
-        frame = _bundle.keyframes.get(sid)
-        if frame is not None:
-            blocks.append(TextContent(type="text", text=f"scene {sid}:"))
-            blocks.append(ImageContent(type="image", data=keyframe_to_png_b64(frame), mimeType="image/png"))
+        _bundle.keyframes.pop(sid, None)
+        _bundle.keyframes[sid] = frames[sid]
+        while len(_bundle.keyframes) > _MAX_INLINE_KEYFRAMES:
+            del _bundle.keyframes[next(iter(_bundle.keyframes))]
+        blocks.append(TextContent(type="text", text=f"scene {sid}:"))
+        blocks.append(ImageContent(type="image", data=encode_png_b64(frames[sid]), mimeType="image/png"))
     return blocks
 
 

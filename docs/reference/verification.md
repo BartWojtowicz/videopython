@@ -12,6 +12,45 @@ For the interfaces covered by the AI checks, see [AI generation](ai/generation.m
 decision supported by the effects profile, see [The streaming
 engine](../explanation/streaming-engine.md#why-pixel-effects-are-not-ffmpeg-filters).
 
+## Catalog keyframe extraction
+
+On 2026-09-09, catalog construction was checked on `cam1_10min.mp4`: 599.8 s,
+1280×720, 25 fps, SHA256
+`deeaa2055a9061ea04fdddafdcc846be0454c677cabc5e1d5c546b595d4e1e7b`.
+The saved analysis used 24 fixed 25-second ranges to exercise a large catalog;
+these were test ranges, not model-detected scene boundaries. No analyzer ran.
+Environment: Linux under WSL2, Python 3.12.12, FFmpeg 6.1.1.
+
+The baseline was commit `60142cf`. Each run built the MCP catalog, then requested
+its final scene twice. Process-tree RSS was sampled every 20 ms across the Python
+process and its children. Metadata was warm in each run: zero `ffprobe` processes.
+The initial response contained 12 images and an omitted-ID note.
+
+| Measurement | Baseline | Batched, no image cache | Batched, 12-image cache |
+|---|---:|---:|---:|
+| Initial response | 415.00 s | 9.17 s | 9.14 s |
+| Initial FFmpeg invocations | 24 | 1 | 1 |
+| Peak process-tree RSS over all requests | 262.81 MiB | 238.16 MiB | 236.45 MiB |
+| Retained image arrays after initial response | 63.28 MiB | 0 MiB | 11.39 MiB |
+| First final-scene request | 0.089 s | 16.25 s | 16.86 s |
+| Repeated final-scene request | 0.088 s | 16.48 s | 0.089 s |
+
+Catalog JSON and every initial PNG payload had identical SHA256 values across
+all three runs. The synthetic RGB test also compared unsorted and duplicate
+requests with a full decode, and the MCP test retrieved an omitted scene, checked
+the image-size/cache bounds, and repeated the request without extraction.
+
+The 12-image cache was selected because an uncached request near the end still
+requires a long sequential decode. Cache entries are downscaled and independently
+owned, so they do not retain the full extraction batch. The local planner still
+receives full-resolution frames. No sparse-seek strategy was added.
+
+These are single observations. Focused tests overlapped part of the baseline run;
+the changed measurements ran alone. The timings are not a controlled speedup
+estimate. RGB equality establishes unchanged keyframes, not editorial selection
+quality. The local scripts, saved analysis, payload hashes, and logs are under
+`.cache/catalog-keyframes/` and are not distributed.
+
 ## MCP workflow verification
 
 The stdio workflow passed on 2026-09-06 at commit

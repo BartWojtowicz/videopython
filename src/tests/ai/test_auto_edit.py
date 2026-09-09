@@ -425,3 +425,23 @@ def test_editplan_strict_schema_round_trips() -> None:
         "post_operations": [],
     }
     EditPlan.model_validate(full)
+
+
+def test_catalog_batches_midpoints_by_source(monkeypatch) -> None:
+    from videopython.ai.auto_edit import catalog
+
+    analysis, _ = _real_video_analysis()
+    calls = []
+    original = catalog.extract_frames_at_times
+
+    def record(path, timestamps):
+        calls.append((path, timestamps))
+        return original(path, timestamps)
+
+    monkeypatch.setattr(catalog, "extract_frames_at_times", record)
+    bundle = build_catalog([analysis, analysis])
+    assert len(calls) == 1
+    assert len(calls[0][1]) == 4
+    frames = list(bundle.keyframes.values())
+    np.testing.assert_array_equal(frames[0], frames[2])
+    np.testing.assert_array_equal(frames[1], frames[3])
