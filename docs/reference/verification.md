@@ -68,6 +68,15 @@ user's request after 509 passing tests; further verification disabled CUDA. The
 CPU-only full suite passed all 1,321 tests in 395.18 s with 12 missing-audio fixture
 warnings. The earlier release run remains explicitly recorded as CUDA-hidden. The portrait recipe is now labeled as a 9:16 workflow.
 
+After GPU access was re-enabled, an AST-only `VideoAnalyzer` run used CUDA and low
+sampling on the same six-second Cam1 source as [saved-analysis reuse](#saved-analysis-reuse).
+Cached AST weights returned `Speech` (0.6915) and recorded the requested revision
+`f826b80d28226b62986cc218e5cec390b1096902`; all other analyzers were disabled. The run
+completed in 9.45 s on the RTX 2060 SUPER with downloads disabled. This checks inference
+and provenance capture, not classification quality across recordings or throughput.
+All 23 object-detector tests also passed with CUDA visible. Results are saved in
+`gpu-analysis.json`, `gpu-report.json`, and `gpu-sanity.log` in the directory below.
+
 Scripts, hashes, allocation results, and validation logs remain local under
 `.cache/review-0.62.0/` (the focused log is `.cache/review-tests.log`).
 
