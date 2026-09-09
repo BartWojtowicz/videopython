@@ -80,6 +80,51 @@ All 23 object-detector tests also passed with CUDA visible. Results are saved in
 Scripts, hashes, allocation results, and validation logs remain local under
 `.cache/review-0.62.0/` (the focused log is `.cache/review-tests.log`).
 
+## Installed-wheel branch workflows, 0.62.0
+
+On 2026-09-09, the reviewed wheel was installed in an isolated Python 3.12 consumer
+environment with MCP but without Torch, Transformers, or faster-whisper. Its Python
+files matched the current branch. The examples module was copied into the consumer's
+working directory, as documented; it is not bundled in the wheel.
+
+A fresh Whisper turbo CUDA run analyzed the All-In source excerpt at seconds
+300–390, outside the reserved dubbing comparison range. It used low analysis sampling,
+VAD disabled, and cached weights, with downloads disabled. The 90-second audio is paired
+with a static 640×360 image for video rendering. Source SHA256:
+`74f29ad82c870627ccd40dc1dd7404d871647168329709d0b5ff1ad44b3d5250`.
+The run produced 317 words in 28.75 s and saved the pinned Whisper revision. This is
+an integration observation, not a performance baseline.
+
+A new stdio server in the consumer environment passed these checks:
+
+- Import the saved analysis without installed inference runtimes; preserve config,
+  provenance, and full transcripts; export the same result.
+- Build nine speech candidates within 5–20 seconds, with valid source bounds and no
+  boundaries through aligned words. Rebuild with changed settings and reject old IDs.
+- Retrieve 12 initial images, fetch and repeat an omitted image, compare it with its
+  source midpoint, and reject 13 distinct requested IDs. These image-budget checks
+  used 13 fixed ranges on the six-second Cam1 source, not detected visual scenes.
+- Validate and repair two speech selections, reverse their order, add a 0.24-second
+  transition and a post-effect, and render an 18.44-second result. The result matched
+  predicted duration, contained non-silent audio, and passed full FFmpeg decoding.
+  Twenty-two ordered progress notifications arrived over 5.41 s, including updates
+  before the render finished and the expected stage-completion sequence.
+- Clear the catalog on import and reject unknown image IDs, uncached export,
+  unsupported saved-analysis format, and a changed source-content digest.
+
+Caption, branding, and two-pass summary recipes also rendered from the installed
+wheel at 640×360 and 360×640 after JSON plan round-trips. Sampled frames showed readable
+captions, a visible logo, wrapped titles, and the subject inside the portrait crop.
+Both summaries matched the previously accepted outputs' decoded audio and video hashes.
+Their audio peak was 0.90625 after the same finishing gain, retaining the user's accepted
+music balance. This was an exact regression comparison, not a new listening review.
+
+No production fix was needed. Candidate timing is not semantic editing: the first
+All-In candidate starts inside an existing question, and later passages retain context
+dependencies and source-token spacing limits. The checks do not establish external-agent
+compatibility or automatic editorial quality. Reports, exports, and the inspected contact
+sheet remain in `.cache/branch-check-0.62.0/`.
+
 ## Catalog keyframe extraction
 
 On 2026-09-09, catalog construction was checked on `cam1_10min.mp4`: 599.8 s,
