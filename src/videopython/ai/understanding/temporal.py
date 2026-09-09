@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 from videopython.ai._device import log_device_initialization, select_device
 from videopython.ai._predictor import ManagedPredictor
+from videopython.ai._revisions import package_revision
 from videopython.base.description import SceneBoundary
 
 if TYPE_CHECKING:
@@ -52,7 +53,11 @@ class SemanticSceneDetector(ManagedPredictor):
         self.threshold = threshold
         self.min_scene_length = min_scene_length
         self.device: str | None = device
+        self._loaded_models: dict[str, str | None] | None = None
         self._model: Any = None
+
+    def model_provenance(self) -> dict[str, str | None] | None:
+        return self._loaded_models
 
     def _init_local(self) -> None:
         """Load the TransNetV2 model with pretrained weights."""
@@ -73,6 +78,7 @@ class SemanticSceneDetector(ManagedPredictor):
         self.device = device
         self._model = TransNetV2(device=device)
         self._model.eval()
+        self._loaded_models = {"transnetv2-pytorch/bundled": package_revision("transnetv2-pytorch")}
 
     def detect(self, video: Video) -> list[SceneBoundary]:
         """Detect scenes in a video using ML-based boundary detection.

@@ -7,11 +7,27 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from videopython.editing._schema import array_field_schema, field_schema, optional_model_field_schema
 from videopython.editing.operation import Operation, _to_strict_schema
 from videopython.editing.video_edit import OperationInput, TransitionSpec
+
+
+class SpeechCandidateConfig(BaseModel):
+    """Duration limits and minimum pause for deterministic speech candidates."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+
+    min_duration: float = Field(gt=0)
+    max_duration: float = Field(gt=0)
+    pause_duration: float = Field(0.8, gt=0)
+
+    @model_validator(mode="after")
+    def _ordered_limits(self) -> SpeechCandidateConfig:
+        if self.max_duration < self.min_duration:
+            raise ValueError("max_duration must be at least min_duration")
+        return self
 
 
 class CatalogScene(BaseModel):
@@ -44,6 +60,7 @@ class CatalogBundle:
 
     catalog: EditCatalog
     keyframes: dict[str, np.ndarray] = field(default_factory=dict)
+    transcripts: dict[str, str] = field(default_factory=dict)
 
 
 class PlanSegment(BaseModel):

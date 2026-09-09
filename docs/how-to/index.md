@@ -5,9 +5,9 @@ Task-oriented recipes. Each one assumes you already know the basics from the
 
 ## Editing
 
-- [Build a vertical social clip](social-clip.md) — landscape source to a 9:16 clip with
-  a fade and a music bed.
-- [Process hour-long videos](long-videos.md) — constant-memory rendering, frame
+- [Build styled excerpts and summaries](social-clip.md) — selected footage with
+  captions, a logo and title, or a ducked music bed.
+- [Process hour-long videos](long-videos.md) — bounded frame buffers, frame
   iteration, and the memory-efficient dubbing path.
 
 ## AI

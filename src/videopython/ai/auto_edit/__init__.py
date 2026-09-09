@@ -14,7 +14,7 @@ from .backend import PlannerError, StructuredVisionLLM
 from .catalog import build_catalog
 from .editor import AutoEditError, AutoEditor
 from .local import OllamaVisionLLM
-from .models import CatalogBundle, CatalogScene, EditCatalog, EditPlan, PlanSegment
+from .models import CatalogBundle, CatalogScene, EditCatalog, EditPlan, PlanSegment, SpeechCandidateConfig
 from .resolve import UnknownSceneIdsError, resolve_plan
 
 __all__ = [
@@ -28,6 +28,7 @@ __all__ = [
     "PlanSegment",
     "PlannerError",
     "StructuredVisionLLM",
+    "SpeechCandidateConfig",
     "UnknownSceneIdsError",
     "build_catalog",
     "resolve_plan",

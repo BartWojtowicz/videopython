@@ -8,6 +8,7 @@ import json
 from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -19,6 +20,7 @@ from tests.test_config import SMALL_VIDEO_PATH  # noqa: E402
 from videopython.ai.video_analysis.models import (  # noqa: E402
     ALL_ANALYZER_IDS,
     AUDIO_TO_TEXT,
+    AnalysisProvenance,
     AnalysisRunInfo,
     AnalyzerOutcome,
     SceneAnalysisSample,
@@ -66,6 +68,7 @@ def _real_analysis() -> VideoAnalysis:
         ),
     ]
     return VideoAnalysis(
+        provenance=AnalysisProvenance(format_version=1, source_sha256=None, sampling="medium", models={}),
         source=VideoAnalysisSource(
             path=str(SMALL_VIDEO_PATH),
             fps=meta.fps,
@@ -98,6 +101,7 @@ def _analysis_with_scenes(n: int) -> VideoAnalysis:
         for i in range(n)
     ]
     return VideoAnalysis(
+        provenance=AnalysisProvenance(format_version=1, source_sha256=None, sampling="medium", models={}),
         source=VideoAnalysisSource(
             path=str(SMALL_VIDEO_PATH),
             fps=meta.fps,
@@ -217,7 +221,7 @@ def test_run_edit_renders(tmp_path: Path) -> None:
     server._analyses = {str(SMALL_VIDEO_PATH): _real_analysis()}
     server.build_catalog()
     out_path = tmp_path / "out.mp4"
-    result = server.run_edit({"segments": [{"scene_id": f"{_stem()}#0"}]}, str(out_path))
+    result = asyncio.run(server.run_edit({"segments": [{"scene_id": f"{_stem()}#0"}]}, str(out_path), AsyncMock()))
     assert result.errors == []
     assert result.output_path
     assert out_path.exists()
@@ -242,7 +246,9 @@ def test_validate_edit_schema_invalid_returns_structured_error() -> None:
 def test_run_edit_resolve_failure_returns_errors(tmp_path: Path) -> None:
     server._analyses = {str(SMALL_VIDEO_PATH): _real_analysis()}
     server.build_catalog()
-    result = server.run_edit({"segments": [{"scene_id": "missing#0"}]}, str(tmp_path / "out.mp4"))
+    result = asyncio.run(
+        server.run_edit({"segments": [{"scene_id": "missing#0"}]}, str(tmp_path / "out.mp4"), AsyncMock())
+    )
     assert result.output_path is None
     assert result.errors[0].code == "unknown_scene_ids"
 
@@ -329,7 +335,7 @@ def test_mcp_tool_contracts_are_structured() -> None:
     assert set(tools["run_edit"].outputSchema["properties"]) == {"errors", "output_path"}
 
 
-def test_build_catalog_caps_inlined_keyframes_and_notes_omitted() -> None:
+def test_build_catalog_caps_inlined_keyframes_and_notes_omitted(monkeypatch) -> None:
     n = server._MAX_INLINE_KEYFRAMES + 3
     server._analyses = {str(SMALL_VIDEO_PATH): _analysis_with_scenes(n)}
     blocks = server.build_catalog()
@@ -342,6 +348,19 @@ def test_build_catalog_caps_inlined_keyframes_and_notes_omitted() -> None:
     assert server._bundle is not None
     omitted = [s.id for s in server._bundle.catalog.scenes][server._MAX_INLINE_KEYFRAMES :]
     assert all(oid in note.text for oid in omitted)
+    assert len(server._bundle.keyframes) == server._MAX_INLINE_KEYFRAMES
+    assert all(max(frame.shape[:2]) <= 768 for frame in server._bundle.keyframes.values())
+    fetched = server.scene_keyframes([omitted[-1]])
+    assert sum(isinstance(block, ImageContent) for block in fetched) == 1
+    assert len(server._bundle.keyframes) == server._MAX_INLINE_KEYFRAMES
+    assert omitted[-1] in server._bundle.keyframes
+
+    def cached_only(scenes):
+        assert scenes == []
+        return {}
+
+    monkeypatch.setattr(server, "extract_catalog_keyframes", cached_only)
+    assert server.scene_keyframes([omitted[-1]]) == fetched
 
 
 def test_scene_keyframes_returns_requested_images() -> None:
@@ -369,3 +388,21 @@ def test_scene_keyframes_unknown_id_structured_error() -> None:
 def test_scene_keyframes_without_catalog_errors() -> None:
     with pytest.raises(ValueError, match="catalog"):
         server.scene_keyframes(["x#0"])
+
+
+def test_scene_keyframes_limits_distinct_ids_before_decode(monkeypatch):
+    server._analyses = {str(SMALL_VIDEO_PATH): _analysis_with_scenes(13)}
+    server.build_catalog()
+    ids = [scene.id for scene in server._bundle.catalog.scenes]
+
+    def no_decode(scenes):
+        raise AssertionError("Oversized request must not decode")
+
+    monkeypatch.setattr(server, "extract_catalog_keyframes", no_decode)
+    with pytest.raises(ValueError, match="at most 12 distinct"):
+        server.scene_keyframes(ids)
+
+
+def test_export_analysis_explains_missing_source():
+    with pytest.raises(ValueError, match="analyze_video or import_analysis"):
+        server.export_analysis("uncached.mp4", "unused.json")

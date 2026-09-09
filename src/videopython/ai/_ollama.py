@@ -154,6 +154,19 @@ class OllamaStructuredClient:
             raise OllamaError(f"Ollama returned a non-object JSON value: {type(data).__name__}")
         return data
 
+    def model_provenance(self) -> dict[str, str | None] | None:
+        """Resolve the used model tag to a server digest, without inference."""
+        if self._client is None:
+            return None
+        try:
+            models = self._client.list().models
+        except Exception:
+            return None
+        for model in models:
+            if model.model in (self.model, f"{self.model}:latest"):
+                return {model.model: model.digest}
+        return None
+
     def unload(self) -> None:
         try:
             if self._client is not None and self.keep_alive is not None:

@@ -31,6 +31,7 @@ from videopython.base.video import Video, VideoMetadata, extract_frames_at_times
 from .models import (
     AUDIO_TO_TEXT,
     SEMANTIC_SCENE_DETECTOR,
+    AnalysisProvenance,
     AnalysisRunInfo,
     VideoAnalysisConfig,
 )
@@ -123,14 +124,18 @@ def run_whisper(
     config: VideoAnalysisConfig,
     source_path: Path | None,
     video: Video | None,
+    provenance: AnalysisProvenance,
 ) -> Transcription | None:
+    transcriber = None
     try:
-        return AudioToText(**config.get_params(AUDIO_TO_TEXT)).transcribe(
-            Audio.from_path(source_path) if source_path is not None else require_video(video)
-        )
+        transcriber = AudioToText(**config.get_params(AUDIO_TO_TEXT))
+        return transcriber.transcribe(Audio.from_path(source_path) if source_path is not None else require_video(video))
     except (ImportError, OSError, RuntimeError, ValueError):
         logger.warning("AudioToText failed, skipping transcription", exc_info=True)
         return None
+    finally:
+        if transcriber is not None:
+            provenance.models[AUDIO_TO_TEXT] = transcriber.model_provenance()
 
 
 def run_scene_detection(
@@ -138,7 +143,9 @@ def run_scene_detection(
     config: VideoAnalysisConfig,
     source_path: Path | None,
     video: Video | None,
+    provenance: AnalysisProvenance,
 ) -> list[SceneBoundary] | None:
+    scene_detector = None
     try:
         scene_detector = SemanticSceneDetector(**config.get_params(SEMANTIC_SCENE_DETECTOR))
         return (
@@ -149,6 +156,9 @@ def run_scene_detection(
     except (ImportError, OSError, RuntimeError, ValueError):
         logger.warning("SemanticSceneDetector failed, using default scene boundaries", exc_info=True)
         return None
+    finally:
+        if scene_detector is not None:
+            provenance.models[SEMANTIC_SCENE_DETECTOR] = scene_detector.model_provenance()
 
 
 def run_whisper_and_scene_detection(
@@ -157,6 +167,7 @@ def run_whisper_and_scene_detection(
     source_path: Path | None,
     video: Video | None,
     run_info: AnalysisRunInfo,
+    provenance: AnalysisProvenance,
 ) -> tuple[Transcription | None, list[SceneBoundary] | None]:
     # Whisper and TransNetV2 operate on independent data (audio vs video
     # frames) and both fit comfortably in GPU memory together. Run them
@@ -172,6 +183,7 @@ def run_whisper_and_scene_detection(
                 config=config,
                 source_path=source_path,
                 video=video,
+                provenance=provenance,
             )
             scene_future = pool.submit(
                 run_with_stage,
@@ -181,6 +193,7 @@ def run_whisper_and_scene_detection(
                 config=config,
                 source_path=source_path,
                 video=video,
+                provenance=provenance,
             )
             transcription = whisper_future.result()
             detected = scene_future.result()

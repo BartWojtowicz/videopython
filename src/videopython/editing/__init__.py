@@ -24,6 +24,7 @@ from .effects import (
 )
 from .errors import PlanError, PlanErrorCode, PlanRepair, PlanValidationError
 from .operation import FilterCtx, OpCategory, Operation, TimeRange
+from .progress import RenderProgress
 from .streaming import OpStreamability, StreamabilityReport, StreamingClass
 from .transcription_overlay import SubtitleRegion, SubtitleStyle, TranscriptionOverlay
 from .transforms import (
@@ -82,6 +83,7 @@ __all__ = [
     "Kaleidoscope",
     # Plan runner
     "VideoEdit",
+    "RenderProgress",
     "SegmentConfig",
     "TransitionSpec",
     # Subtitle placement

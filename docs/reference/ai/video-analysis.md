@@ -26,7 +26,44 @@ loaded = VideoAnalysis.load("video_analysis.json")
 `VideoAnalysis` and its nested result types are Pydantic models, so `model_dump()`,
 `model_dump_json()`, `model_validate()` and `model_validate_json()` work throughout the
 result tree. `save()` / `load()` wrap the JSON pair with UTF-8 and parent-directory
-creation.
+creation. Use `loaded.verify_source()` to compare the recorded source digest with
+the current file; `load()` alone does not read the media.
+
+## Saved identity and migration
+
+Every result requires an `AnalysisProvenance` object at `analysis.provenance`:
+
+| Field | Contract |
+|---|---|
+| `format_version` | Required integer `1`; other versions are rejected. |
+| `source_sha256` | SHA256 of the source file, or `null` for unbound in-memory input. |
+| `sampling` | The `low`, `medium`, or `high` preset used for the run. |
+| `models` | Analyzer ID to a model-ID/revision map, or `null` when provenance is unknown. A model revision can also be `null`. |
+
+Model identities are recorded during analysis. Hugging Face models use repository
+revisions (AST records its requested pin, or `null` for an unpinned model); Ollama uses the server's resolved tag and digest. Bundled Silero and
+TransNetV2 weights use a `package:<version>` revision, which identifies the package
+release rather than a weight-file hash. A disabled stage, an early load failure, or
+an unavailable identity can leave unknown provenance. Check stage outcomes separately:
+known identity is not a successful-analysis flag.
+
+`analyze_path()` records a resolved absolute source path and hashes the file with
+bounded reads. `analyze(video, ...)` leaves `source_sha256=null`, even if a source-path
+label was supplied, because the in-memory frames are not verified against that file.
+Those unbound results can be serialized but cannot be imported into MCP.
+
+`verify_source()` requires a recorded file identity, compares its digest, and returns
+the resolved source path. It starts no models and does not replace saved settings
+or unknown provenance with values from the current environment. MCP import/export
+performs this check once per call. Source files must remain unchanged while a cached
+analysis is in use.
+
+**Migration:** regenerate older saved analyses with `VideoAnalyzer.analyze_path()`.
+Files without provenance are rejected; there is no legacy loader. Do not add the
+currently installed models as if they had produced an old result. See
+[reuse across MCP sessions](../../how-to/mcp-server.md#reuse-analysis-across-sessions).
+
+::: videopython.ai.video_analysis.AnalysisProvenance
 
 ## Configuration
 

@@ -4,18 +4,19 @@
 `operation.apply(video)`, and operations never run against a `Video` object. This page
 explains what that buys and what it costs.
 
-## One execution path, constant memory
+## One execution path, bounded frame buffers
 
 The engine streams: FFmpeg decode → the operation chain → FFmpeg encode, one frame at a
 time. Frame buffers stay bounded as duration grows. Total memory also includes codec
 buffers, model weights, transcripts, and operation state such as face tracks and
 noise offsets. Intermediate media uses temporary disk space.
 
-The alternative — the design most editing libraries take — is to load frames into an array
-and let each operation return a new array. That is friendlier for one-off scripting and
-catastrophic for the actual use cases here: hour-long sources, LLM-authored plans running
-on a server, batch jobs. Rather than maintain both paths and have every operation
-implement two semantics that can silently diverge, videopython keeps one.
+An in-memory frame array is another possible design, but streaming is not unique to
+videopython. Other editors can generate frames on demand. Videopython uses one
+execution path so operations share the same timing, context, and validation rules.
+Its memory contract covers render frame buffers, not total process memory.
+Analysis and catalog keyframes are separate allocations; see
+[keyframe memory](../reference/ai/auto-edit.md#keyframe-memory).
 
 The cost is real and worth stating: you cannot apply an effect to a `Video` you built in
 memory. Save it and put the file in a plan. Generated media (`TextToVideo`,

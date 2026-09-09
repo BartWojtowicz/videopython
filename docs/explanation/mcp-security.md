@@ -18,8 +18,11 @@ links work when the operating-system account can read them.
 | Tool or input | File access |
 |---|---|
 | `analyze_video(path)` | Reads the selected media, including its video, audio, and container metadata. |
+| `import_analysis(path)` | Reads saved JSON and the source file referenced by it to verify the digest. |
+| `export_analysis(source, output_path)` | Reads the cached source file to verify its digest. |
 | `build_catalog()` | Reads analyzed sources again to extract keyframes. |
-| `scene_keyframes(scene_ids)` | Returns cached keyframes for analyzed sources. |
+| `scene_keyframes(scene_ids)` | Reads analyzed sources again for requested keyframes that are not cached. |
+| `scene_transcripts(scene_ids)` | Returns transcript text held in the current catalog. |
 | Plan operations | Path-bearing operations can read assets such as overlay images. Source video paths come from scenes that were already analyzed. |
 | `validate_edit()` and `repair_edit()` | Can probe source media and inspect referenced assets while checking a plan. |
 | `run_edit()` | Reads the source media and referenced assets, then renders the result. |
@@ -28,11 +31,16 @@ Analysis results can contain transcripts, captions, file metadata, and keyframe 
 The connected MCP client receives this data. Do not connect a client that is not allowed
 to see the source content.
 
-Analyses and keyframes stay in process memory for the stdio session. Rendering uses the
+Analyses and catalog text stay in process memory for the stdio session, along with
+a bounded cache of downscaled keyframes. The [MCP reference](../reference/mcp.md#image-budget)
+defines its limits. Rendering uses the
 operating system's temporary directory for intermediate media. Normal completion removes
 owned temporary files, but an abrupt process or machine failure can leave them behind.
 
 ## Output writes
+
+`export_analysis(source, output_path)` writes JSON at any path the server can write.
+It creates parent directories and replaces an existing file at that path.
 
 `run_edit(plan, output_path)` accepts any path that the process can write. It:
 

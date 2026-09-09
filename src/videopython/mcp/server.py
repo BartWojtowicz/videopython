@@ -12,18 +12,22 @@ from __future__ import annotations
 import json
 import sys
 from contextlib import redirect_stdout
+from dataclasses import asdict
+from functools import partial
 from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from mcp.server.fastmcp import FastMCP
+import anyio
+from mcp.server.fastmcp import Context, FastMCP
 from mcp.types import ImageContent, TextContent
 from pydantic import ValidationError
 
-from videopython.ai.auto_edit import EditPlan, UnknownSceneIdsError, resolve_plan
+from videopython.ai.auto_edit import EditPlan, SpeechCandidateConfig, UnknownSceneIdsError, resolve_plan
 from videopython.ai.auto_edit import build_catalog as _build_scene_catalog
-from videopython.ai.keyframe import keyframe_to_png_b64
-from videopython.editing import VideoEdit
+from videopython.ai.auto_edit.catalog import extract_catalog_keyframes
+from videopython.ai.keyframe import downscale_keyframe, encode_png_b64
+from videopython.editing import RenderProgress, VideoEdit
 
 from ._models import (
     AnalyzeVideoResult,
@@ -31,6 +35,7 @@ from ._models import (
     McpRepair,
     RepairEditResult,
     RunEditResult,
+    SavedAnalysisResult,
     SchemaIssue,
     ValidateEditResult,
 )
@@ -60,14 +65,16 @@ def analyze_video(path: str, profile: Literal["full", "editing"] = "editing") ->
     audio classification. The result reports whether each analyzer completed,
     was disabled, or failed. Call this once per source, then build_catalog.
     """
+    global _bundle
     # Heavy analyzer deps (e.g. transnetv2-pytorch) bare-print to stdout, which here is
     # the stdio JSON-RPC channel; send that to stderr so the transport stays clean.
     with redirect_stdout(sys.stderr):
         analysis = _get_analyzer(profile).analyze_path(path)
-    _analyses[str(Path(path))] = analysis
+    _analyses[str(Path(path).resolve())] = analysis
+    _bundle = None
     src = analysis.source
     return AnalyzeVideoResult(
-        source=str(Path(path)),
+        source=str(Path(path).resolve()),
         duration=src.duration,
         fps=src.fps,
         width=src.width,
@@ -77,9 +84,52 @@ def analyze_video(path: str, profile: Literal["full", "editing"] = "editing") ->
     )
 
 
+@mcp.tool()
+def export_analysis(source: str, output_path: str) -> SavedAnalysisResult:
+    """Verify the source and save its cached analysis, without inference."""
+    analysis = _analyses.get(str(Path(source).resolve()))
+    if analysis is None:
+        raise ValueError(f"No analysis cached for {source!r}; call analyze_video or import_analysis first.")
+    verified = analysis.verify_source()
+    path = Path(output_path).resolve()
+    analysis.save(path)
+    return SavedAnalysisResult(
+        path=str(path),
+        source=str(verified),
+        config=analysis.config,
+        provenance=analysis.provenance,
+        analyzers=analysis.run_info.analyzer_outcomes,
+    )
+
+
+@mcp.tool()
+def import_analysis(path: str) -> SavedAnalysisResult:
+    """Verify and cache a saved analysis; clear the catalog without starting models."""
+    from videopython.ai.video_analysis.models import VideoAnalysis
+
+    global _bundle
+    saved = Path(path).resolve()
+    analysis = VideoAnalysis.load(saved)
+    source = analysis.verify_source()
+    analysis.source.path = str(source)
+    _analyses[str(source)] = analysis
+    _bundle = None
+    return SavedAnalysisResult(
+        path=str(saved),
+        source=str(source),
+        config=analysis.config,
+        provenance=analysis.provenance,
+        analyzers=analysis.run_info.analyzer_outcomes,
+    )
+
+
 @mcp.tool(structured_output=False)
-def build_catalog(sources: list[str] | None = None) -> list[TextContent | ImageContent]:
-    """Build the candidate-scene catalog from analyzed videos and cache it.
+def build_catalog(
+    sources: list[str] | None = None,
+    mode: Literal["visual", "speech"] = "visual",
+    speech: SpeechCandidateConfig | None = None,
+) -> list[TextContent | ImageContent]:
+    """Build and cache visual scenes, or speech passages with explicit speech settings.
 
     The first text block is the full catalog JSON (id/duration/shot_type/caption/
     transcript per scene -- enough to shortlist from text alone). Up to
@@ -91,7 +141,7 @@ def build_catalog(sources: list[str] | None = None) -> list[TextContent | ImageC
     analyses = _selected_analyses(sources)
     if not analyses:
         raise ValueError("No analyzed videos cached; call analyze_video first.")
-    _bundle = _build_scene_catalog(analyses)
+    _bundle = _build_scene_catalog(analyses, keyframes=False, mode=mode, speech=speech)
 
     ids = [scene.id for scene in _bundle.catalog.scenes]
     inlined, omitted = ids[:_MAX_INLINE_KEYFRAMES], ids[_MAX_INLINE_KEYFRAMES:]
@@ -99,6 +149,8 @@ def build_catalog(sources: list[str] | None = None) -> list[TextContent | ImageC
         TextContent(type="text", text=_bundle.catalog.model_dump_json()),
         *_keyframe_blocks(inlined),
     ]
+    if mode == "speech" and not ids:
+        blocks.append(TextContent(type="text", text="No complete, aligned speech passages fit these duration limits."))
     if omitted:
         blocks.append(
             TextContent(
@@ -120,7 +172,22 @@ def scene_keyframes(scene_ids: list[str]) -> list[TextContent | ImageContent]:
     if unknown:
         error = {"code": "unknown_scene_ids", "value": unknown, "message": f"Unknown scene ids: {unknown}"}
         return [TextContent(type="text", text=json.dumps(error))]
-    return _keyframe_blocks(list(dict.fromkeys(scene_ids)))
+    unique_ids = list(dict.fromkeys(scene_ids))
+    if len(unique_ids) > _MAX_INLINE_KEYFRAMES:
+        raise ValueError(f"Request at most {_MAX_INLINE_KEYFRAMES} distinct scene IDs per scene_keyframes call.")
+    return _keyframe_blocks(unique_ids)
+
+
+@mcp.tool(structured_output=False)
+def scene_transcripts(scene_ids: list[str]) -> list[TextContent]:
+    """Return full transcript text by catalog ID, without the catalog excerpt limit."""
+    if _bundle is None:
+        raise ValueError("No catalog cached; call build_catalog first.")
+    unknown = sorted(set(scene_ids) - _bundle.transcripts.keys())
+    if unknown:
+        error = {"code": "unknown_scene_ids", "value": unknown, "message": f"Unknown scene ids: {unknown}"}
+        return [TextContent(type="text", text=json.dumps(error))]
+    return [TextContent(type="text", text=json.dumps({sid: _bundle.transcripts[sid] for sid in scene_ids}))]
 
 
 @mcp.tool()
@@ -163,7 +230,7 @@ def repair_edit(plan: dict[str, Any]) -> RepairEditResult:
 
 
 @mcp.tool()
-def run_edit(plan: dict[str, Any], output_path: str) -> RunEditResult:
+async def run_edit(plan: dict[str, Any], output_path: str, ctx: Context[Any, Any, Any]) -> RunEditResult:
     """Render an edit plan to an MP4 file (the path suffix is normalized to .mp4).
 
     Resolves scene ids, repairs + normalizes, validates, then renders. If the
@@ -180,7 +247,14 @@ def run_edit(plan: dict[str, Any], output_path: str) -> RunEditResult:
     errors = [_error_dict(e) for e in edit.check(metadata, context=context)]
     if errors:
         return RunEditResult(output_path=None, errors=errors)
-    out = edit.run_to_file(output_path, context=context)
+    sequence = 0
+
+    def report(event: RenderProgress) -> None:
+        nonlocal sequence
+        sequence += 1
+        anyio.from_thread.run(ctx.report_progress, sequence, None, json.dumps(asdict(event)))
+
+    out = await anyio.to_thread.run_sync(partial(edit.run_to_file, output_path, context=context, on_progress=report))
     return RunEditResult(output_path=str(out), errors=[])
 
 
@@ -203,17 +277,25 @@ def _get_analyzer(profile: str = "full") -> VideoAnalyzer:
 def _selected_analyses(sources: list[str] | None) -> list[VideoAnalysis]:
     if sources is None:
         return list(_analyses.values())
-    return [_analyses[str(Path(s))] for s in sources if str(Path(s)) in _analyses]
+    return [_analyses[str(Path(s).resolve())] for s in sources if str(Path(s).resolve()) in _analyses]
 
 
 def _keyframe_blocks(scene_ids: list[str]) -> list[TextContent | ImageContent]:
     assert _bundle is not None  # callers guard; narrows the module global for mypy
     blocks: list[TextContent | ImageContent] = []
+    known = _bundle.catalog.by_id()
+    frames = {sid: _bundle.keyframes[sid] for sid in scene_ids if sid in _bundle.keyframes}
+    extracted = extract_catalog_keyframes([known[sid] for sid in scene_ids if sid not in frames])
+    # Copies prevent small cached frames from retaining the full decode batch.
+    frames.update({sid: downscale_keyframe(frame).copy() for sid, frame in extracted.items()})
+    del extracted
     for sid in scene_ids:
-        frame = _bundle.keyframes.get(sid)
-        if frame is not None:
-            blocks.append(TextContent(type="text", text=f"scene {sid}:"))
-            blocks.append(ImageContent(type="image", data=keyframe_to_png_b64(frame), mimeType="image/png"))
+        _bundle.keyframes.pop(sid, None)
+        _bundle.keyframes[sid] = frames[sid]
+        while len(_bundle.keyframes) > _MAX_INLINE_KEYFRAMES:
+            del _bundle.keyframes[next(iter(_bundle.keyframes))]
+        blocks.append(TextContent(type="text", text=f"scene {sid}:"))
+        blocks.append(ImageContent(type="image", data=encode_png_b64(frames[sid]), mimeType="image/png"))
     return blocks
 
 

@@ -10,6 +10,18 @@ Transcription result models (`videopython.base`) and the subtitle-burning operat
 These are Pydantic models. Use `model_dump()` or `model_dump_json()` to serialize them,
 and `model_validate()` or `model_validate_json()` to load them.
 
+`TranscriptionWord.word` retains the supplied token text, including whitespace.
+`TranscriptionSegment.from_words()` inserts one space between those values; it does
+not infer whether adjacent values are complete words or tokenizer fragments. Thus
+`["hello", "world"]` becomes `"hello world"`, while `[" 5", ",000"]` becomes
+`" 5 ,000"`. Regrouping words by speaker or time uses this constructor.
+
+When exact source spacing matters, retain the source segment's `text` and word
+records. Dubbing phrase cuts preserve that supplied text; they cannot recover spacing
+already changed upstream. Do not strip or join tokens to repair saved transcriptions
+without reviewing their source text. See the
+[reconstruction investigation](verification.md#source-word-reconstruction).
+
 ::: videopython.base.Transcription
 
 ::: videopython.base.TranscriptionSegment

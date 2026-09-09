@@ -15,6 +15,7 @@ from videopython.base.description import SceneBoundary, SceneDescription
 from videopython.base.video import Video, VideoMetadata
 
 from . import detectors, source_metadata
+from ._identity import source_digest
 from .models import (
     ALL_ANALYZER_IDS,
     AUDIO_CLASSIFIER,
@@ -22,6 +23,7 @@ from .models import (
     FACE_TRACKER,
     SCENE_VLM,
     SEMANTIC_SCENE_DETECTOR,
+    AnalysisProvenance,
     AnalysisRunInfo,
     AnalyzerOutcome,
     AudioAnalysisSection,
@@ -65,7 +67,7 @@ class VideoAnalyzer:
 
     def analyze_path(self, path: str | Path) -> VideoAnalysis:
         """Analyze a video path in scene-first mode."""
-        path_obj = Path(path)
+        path_obj = Path(path).resolve()
         metadata = VideoMetadata.from_path(path_obj)
         source = self._build_source(
             metadata=metadata,
@@ -104,6 +106,13 @@ class VideoAnalyzer:
         if source_path is None and video is None:
             raise ValueError("Either `source_path` or `video` must be provided")
 
+        t_analysis_start = time.perf_counter()
+        provenance = AnalysisProvenance(
+            format_version=1,
+            source_sha256=source_digest(source_path) if source_path is not None and video is None else None,
+            sampling=self.sampling,
+            models={analyzer: None for analyzer in ALL_ANALYZER_IDS},
+        )
         enabled = self.config.enabled_analyzers
         analyzer_outcomes: dict[str, AnalyzerOutcome] = {
             analyzer: AnalyzerOutcome(
@@ -121,8 +130,6 @@ class VideoAnalyzer:
             analyzer_outcomes=list(analyzer_outcomes.values()),
         )
 
-        t_analysis_start = time.perf_counter()
-
         run_whisper = AUDIO_TO_TEXT in enabled
         run_scene_det = SEMANTIC_SCENE_DETECTOR in enabled
 
@@ -136,16 +143,20 @@ class VideoAnalyzer:
         # same time.
         if run_whisper and run_scene_det:
             transcription, detected = detectors.run_whisper_and_scene_detection(
-                config=self.config, source_path=source_path, video=video, run_info=run_info
+                config=self.config, source_path=source_path, video=video, run_info=run_info, provenance=provenance
             )
         else:
             if run_whisper:
                 with detectors.record_stage(run_info, "whisper"):
-                    transcription = detectors.run_whisper(config=self.config, source_path=source_path, video=video)
+                    transcription = detectors.run_whisper(
+                        config=self.config, source_path=source_path, video=video, provenance=provenance
+                    )
 
             if run_scene_det:
                 with detectors.record_stage(run_info, "scene_detection"):
-                    detected = detectors.run_scene_detection(config=self.config, source_path=source_path, video=video)
+                    detected = detectors.run_scene_detection(
+                        config=self.config, source_path=source_path, video=video, provenance=provenance
+                    )
 
         if run_whisper and transcription is None:
             analyzer_outcomes[AUDIO_TO_TEXT] = AnalyzerOutcome(
@@ -185,6 +196,7 @@ class VideoAnalyzer:
                 scenes=scenes,
                 run_info=run_info,
                 analyzer_outcomes=analyzer_outcomes,
+                provenance=provenance,
             )
 
         audio_section = AudioAnalysisSection(transcription=transcription) if transcription is not None else None
@@ -194,6 +206,7 @@ class VideoAnalyzer:
         logger.info("Total analysis completed in %.2fs", run_info.total_duration_seconds)
         return VideoAnalysis(
             source=source,
+            provenance=provenance,
             config=self.config,
             run_info=run_info,
             audio=audio_section,
@@ -209,6 +222,7 @@ class VideoAnalyzer:
         scenes: list[SceneBoundary],
         run_info: AnalysisRunInfo,
         analyzer_outcomes: dict[str, AnalyzerOutcome],
+        provenance: AnalysisProvenance,
     ) -> SceneAnalysisSection:
         enabled = self.config.enabled_analyzers
 
@@ -358,6 +372,13 @@ class VideoAnalyzer:
                 reason="execution_failed",
             )
 
+        for analyzer, component in (
+            (SCENE_VLM, scene_vlm),
+            (AUDIO_CLASSIFIER, audio_classifier),
+            (FACE_TRACKER, face_tracker),
+        ):
+            if component is not None:
+                provenance.models[analyzer] = component.model_provenance()
         return SceneAnalysisSection(samples=samples)
 
     def _load_scene_video_clip(

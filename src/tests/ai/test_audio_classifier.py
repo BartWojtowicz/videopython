@@ -116,3 +116,23 @@ class TestAudioClassification:
 
         assert len(classification.events) == 2
         assert classification.clip_predictions["Music"] == 0.75
+
+
+def test_classifier_provenance_uses_requested_pin(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from videopython.ai import _optional
+    from videopython.ai._revisions import pinned
+    from videopython.ai.understanding.classification import AudioClassifier
+
+    model = Mock(config=SimpleNamespace(id2label={0: "Speech"}))
+    runtime = SimpleNamespace(ASTFeatureExtractor=Mock(), ASTForAudioClassification=Mock())
+    runtime.ASTForAudioClassification.from_pretrained.return_value = model
+    monkeypatch.setattr(_optional, "require", lambda *args, **kwargs: runtime)
+    classifier = AudioClassifier(device="cpu")
+    classifier._init_local()
+    provenance = classifier.model_provenance()
+    assert provenance == {classifier.model_name: pinned(classifier.model_name)}
+    provenance.clear()
+    assert classifier.model_provenance() == {classifier.model_name: pinned(classifier.model_name)}

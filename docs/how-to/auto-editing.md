@@ -93,4 +93,37 @@ edit = resolve_plan(plan, bundle.catalog)        # -> VideoEdit
 edit.run_to_file("out.mp4")
 ```
 
+## Select spoken passages from a long take
+
+Use a saved analysis with timed words. Build a speech catalog, inspect the full text,
+then select IDs through the same resolver:
+
+```python
+from videopython.ai.auto_edit import SpeechCandidateConfig, build_catalog, EditPlan, resolve_plan
+
+bundle = build_catalog(
+    analyses,
+    mode="speech",
+    speech=SpeechCandidateConfig(min_duration=10, max_duration=30, pause_duration=0.8),
+    keyframes=False,
+)
+for candidate in bundle.catalog.scenes:
+    print(candidate.id, candidate.start, candidate.end)
+    print(bundle.transcripts[candidate.id])
+
+# After reviewing the text, choose one returned ID.
+if bundle.catalog.scenes:
+    plan = EditPlan.model_validate({"segments": [{"scene_id": bundle.catalog.scenes[0].id}]})
+    edit = resolve_plan(plan, bundle.catalog)
+    edit.validate()
+    edit.run_to_file("spoken-passage.mp4")
+```
+
+An empty catalog means no complete aligned passage fits the limits. Check word
+alignment and duration settings instead of forcing a requested clip count.
+`AutoEditor.edit()` still uses visual scenes; use the catalog primitives above for
+custom speech selection. See the [boundary and ID contract](../reference/ai/auto-edit.md#speech-candidates)
+before reusing saved plans. Local [verification](../reference/verification.md#speech-candidate-selection)
+records boundary quality separately from successful rendering.
+
 Full signatures: [AI auto-editing reference](../reference/ai/auto-edit.md).

@@ -76,6 +76,9 @@ class SceneVLM(ManagedPredictor):
             shot_type=shot_type if shot_type in _SHOT_TYPES else None,
         )
 
+    def model_provenance(self) -> dict[str, str | None] | None:
+        return self._client.model_provenance()
+
     def unload(self) -> None:
         self._client.unload()
 

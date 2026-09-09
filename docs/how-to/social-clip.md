@@ -1,108 +1,124 @@
-# Build a vertical social clip
+# Build styled excerpts and summaries
 
-Turn a landscape source into a 9:16 clip for TikTok, Reels, or Shorts: pick a 15-second
-range, standardize the frame rate, convert to vertical, fade in, and lay music over it.
+Use the functions in
+[`examples/editing_recipes.py`](https://github.com/bartwojtowicz/videopython/blob/main/examples/editing_recipes.py)
+to build ordinary `VideoEdit` plans. Copy the example module into your project, or
+run these snippets from the repository root. Each recipe takes caller-owned media
+and selected source ranges. It does not run models or download assets.
 
-## The plan
+## Make a 9:16 vertical clip with captions
 
-The cut is the segment's `start`/`end`; everything else is an operation. Scale to the
-target height first, then center-crop the width — that fills the frame instead of
-letterboxing it.
+Prepare a source-timed `Transcription` as shown in the
+[subtitle tutorial](../tutorials/subtitles.md), or load one you saved earlier:
 
 ```python
-from videopython.editing import VideoEdit, SegmentConfig, Resize, Crop, ResampleFPS, Fade
+from pathlib import Path
 
-edit = VideoEdit(segments=[SegmentConfig(
-    source="raw_footage.mp4",
-    start=30.0,
-    end=45.0,
-    operations=[
-        ResampleFPS(fps=30),
-        Resize(height=1920),                       # scale to height, keep aspect
-        Crop(width=1080, height=1920, mode="center"),
-        Fade(mode="in", duration=0.5),
-    ],
-)])
+from examples.editing_recipes import captioned_interview
+from videopython.base import Transcription
 
+transcription = Transcription.model_validate_json(Path("transcription.json").read_text())
+edit = captioned_interview(
+    Path("interview.mp4"), 30.0, 45.0,
+    width=1080, height=1920,
+    font_scale=0.055, margin=0.08,
+)
+context = {"transcription": transcription}
+edit.validate(context=context)
+edit.run_to_file("captioned.mp4", context=context)
+```
+
+The 1080×1920 output is a 9:16 portrait clip. The recipe preserves source proportions
+while resizing, then crops the center to fill the vertical frame. Preview the result
+to check that the subject remains visible.
+
+The runner maps the source timestamps to the excerpt. Supply the full source
+transcription; do not subtract the cut start yourself.
+
+## Add a logo and title
+
+```python
+from pathlib import Path
+
+from examples.editing_recipes import branded_excerpt
+
+edit = branded_excerpt(
+    Path("interview.mp4"), 30.0, 45.0,
+    logo=Path("logo.png"), title="Nowe pomysły na kolejny rok",
+    width=1920, height=1080,
+    margin=0.08, logo_width=0.15, font_size=48,
+)
 edit.validate()
-edit.run_to_file("social_clip.mp4")
+edit.run_to_file("branded.mp4")
 ```
 
-## Add a music bed
+The logo sits at the top left. The title wraps above the bottom margin. Use a
+shorter title or smaller font if the rendered text covers the subject.
 
-Set the plan's `music_bed` before rendering. The runner mixes it over the assembled
-program and keeps the video frames in the streaming path:
+## Assemble a summary with ducked music
+
+This example uses two explicit passes because music ducking accepts a single
+segment. The first pass assembles cuts. The second adds music to that rendered
+file, using a transcription mapped to the cuts.
+
+Choose frame-aligned ranges from one source. Keep this recipe to cuts and framing;
+transitions, speed changes, and cuts from sources with different frame rates need
+a different transcript mapping.
 
 ```python
-from videopython.editing.audio_ops import MusicBed
+from pathlib import Path
 
-edit.music_bed = MusicBed(source="upbeat_music.mp3", gain=0.2, fade_out=1.0)
-edit.validate()
-edit.run_to_file("social_clip.mp4")
+from examples.editing_recipes import ducked_music, summary_cuts, summary_transcription
+from videopython.base import Transcription
+
+source = Path("interview.mp4")
+transcription = Transcription.model_validate_json(Path("transcription.json").read_text())
+ranges = [(30.0, 40.0), (60.0, 75.0), (15.0, 20.0)]
+
+cuts = summary_cuts(source, ranges, width=1080, height=1920)
+cuts.validate()
+assembled = cuts.run_to_file("summary-cuts.mp4")
+
+mapped = summary_transcription(transcription, ranges)
+edit = ducked_music(assembled, Path("music.wav"), gain=0.2, duck=0.8)
+context = {"transcription": mapped}
+edit.validate(context=context)
+edit.run_to_file("summary.mp4", context=context)
 ```
 
-For speech-based ducking and loop behavior, see
-[MusicBed](../reference/video-edit.md#musicbed).
+Supply actual timed words for ducking. The mapping preserves cut order, including
+repeated ranges, and clips words at selected boundaries. It does not infer missing
+speech timing. Select complete words when choosing the cuts.
 
-To lower or mute the source audio, add `VolumeAdjust` — it is an
-audio-only effect and takes a `window`:
+Keep `summary-cuts.mp4` until the second pass finishes. This approach needs an
+intermediate file and a second encode. Choose source and bed levels that leave
+headroom in the mix. For bed gain, looping, and attack/release
+behavior, see [MusicBed](../reference/video-edit.md#musicbed).
+
+## Choose framing and style
+
+All three recipes resize with the source aspect ratio, then center-crop to the
+requested dimensions. Use positive, even output dimensions. Center cropping can
+remove an off-center subject; inspect each selected range. Face tracking is an
+alternative described in [AI operations](../reference/ai/operations.md), but face
+selection does not identify the active speaker.
+
+`margin` is a fraction of output width and height, between zero and one half.
+`logo_width` is a fraction of output width; logo height follows its aspect ratio.
+`font_size` is in output pixels. Caption styles and fonts are described once in the
+[subtitle tutorial](../tutorials/subtitles.md#step-4-restyle).
+
+The functions return serializable plans:
 
 ```python
-from videopython.editing import VolumeAdjust, TimeRange
-
-VolumeAdjust(volume=0.2)                                   # whole segment
-VolumeAdjust(volume=0.0, window=TimeRange(stop=2.0))       # mute the first 2s
-```
-
-## The same plan as data
-
-For a UI or an LLM that stores plans, use the dict (JSON) form — same models, same
-validation:
-
-```python
+import json
 from videopython.editing import VideoEdit
 
-plan = {
-    "segments": [{
-        "source": "raw_footage.mp4",
-        "start": 30.0,
-        "end": 45.0,
-        "operations": [
-            {"op": "resample_fps", "fps": 30},
-            {"op": "resize", "height": 1920},
-            {"op": "crop", "width": 1080, "height": 1920, "mode": "center"},
-            {"op": "fade", "mode": "in", "duration": 0.5},
-        ],
-    }],
-    "music_bed": {"source": "upbeat_music.mp3", "gain": 0.2, "fade_out": 1.0},
-}
-
-edit = VideoEdit.from_dict(plan)
-edit.validate()
-edit.run_to_file("social_clip.mp4")
+saved = json.dumps(edit.to_dict())
+restored = VideoEdit.from_dict(json.loads(saved))
 ```
 
-## Reframe around a speaker instead of center-cropping
-
-A center crop cuts the subject in half when they stand off-axis. With the `[ai]` extra,
-`FaceTrackingCrop` follows them:
-
-```python
-from videopython.ai import FaceTrackingCrop
-
-operations = [
-    FaceTrackingCrop(target_aspect=(9, 16), framing_rule="headroom", max_speed=0.1),
-    Fade(mode="in", duration=0.5),
-]
-```
-
-`max_speed` bounds how fast the virtual camera may move, which keeps the result from
-jittering. See [AI operations](../reference/ai/operations.md).
-
-## Notes
-
-- **Aspect ratio** — 1080×1920 (9:16) is the safe target for all three platforms.
-- **Order matters** — resize before crop, and put `fade` last so it applies to the final
-  framing.
-- **Check each platform's current duration limits** before publishing and trim the
-  segment accordingly.
+Transcriptions remain separate render context. Inspect landscape and portrait
+outputs for text fit and subject framing, and listen to the music balance before
+publishing. The local [recipe verification](../reference/verification.md#editing-recipes)
+records the tested compositions and limits.

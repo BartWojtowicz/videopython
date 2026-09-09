@@ -5,8 +5,9 @@ import threading
 from collections import OrderedDict
 from dataclasses import dataclass
 from fractions import Fraction
+from io import FileIO
 from pathlib import Path
-from typing import Any, Generator
+from typing import Any, Generator, cast
 
 import numpy as np
 
@@ -373,6 +374,7 @@ def extract_frames_at_indices(
 ) -> np.ndarray:
     """Extract specific frames from video without loading all frames.
 
+    Raises ``VideoLoadError`` if any requested frame cannot be decoded.
     Uses ffmpeg's select filter for extraction. For sparse frame selection
     (e.g., 1 frame every 100), this is much more memory-efficient than
     loading all frames.
@@ -392,11 +394,13 @@ def extract_frames_at_indices(
     if not path.exists():
         raise FileNotFoundError(f"Video file not found: {path}")
 
-    if not frame_indices:
-        metadata = VideoMetadata.from_path(path)
-        return np.empty((0, metadata.height, metadata.width, 3), dtype=np.uint8)
-
     metadata = VideoMetadata.from_path(path)
+    return _extract_frames_at_indices(path, frame_indices, metadata)
+
+
+def _extract_frames_at_indices(path: Path, frame_indices: list[int], metadata: VideoMetadata) -> np.ndarray:
+    if not frame_indices:
+        return np.empty((0, metadata.height, metadata.width, 3), dtype=np.uint8)
 
     # Remove duplicates and sort for ffmpeg
     unique_sorted_indices = sorted(set(frame_indices))
@@ -412,6 +416,8 @@ def extract_frames_at_indices(
         f"select='{select_expr}'",
         "-fps_mode",
         "vfr",  # Variable frame rate output
+        "-frames:v",
+        str(len(unique_sorted_indices)),
         "-f",
         "rawvideo",
         "-pix_fmt",
@@ -420,31 +426,28 @@ def extract_frames_at_indices(
         "pipe:1",
     ]
 
-    frame_size = metadata.width * metadata.height * 3
+    frames = np.empty((len(frame_indices), metadata.height, metadata.width, 3), dtype=np.uint8)
+    positions: dict[int, list[int]] = {}
+    for position, index in enumerate(frame_indices):
+        positions.setdefault(index, []).append(position)
 
-    with _ffmpeg.popen_decode(cmd, bufsize=10**8) as process:
-        raw_data, _ = process.communicate()
-        try:
+    try:
+        with _ffmpeg.popen_decode(cmd, bufsize=0) as process:
+            for index in unique_sorted_indices:
+                destinations = positions[index]
+                target = memoryview(frames[destinations[0]]).cast("B")
+                offset = 0
+                while offset < len(target):
+                    count = cast(FileIO, process.stdout).readinto(target[offset:])
+                    if not count:
+                        process.check()
+                        raise VideoLoadError(f"Cannot extract requested frame {index} from {path}: incomplete decode")
+                    offset += count
+                for destination in destinations[1:]:
+                    frames[destination] = frames[destinations[0]]
             process.check()
-        except FFmpegRunError as e:
-            raise VideoLoadError(f"FFmpeg failed: {e}") from e
-
-    actual_frames = len(raw_data) // frame_size
-    if actual_frames == 0:
-        return np.empty((0, metadata.height, metadata.width, 3), dtype=np.uint8)
-
-    # Truncate to complete frames only
-    raw_data = raw_data[: actual_frames * frame_size]
-
-    # Chained rather than reshaped in place: numpy>=2.5 shape-types ndarray, so
-    # rebinding a 1-D frombuffer result to a 4-D view is an assignment error.
-    frames = np.frombuffer(raw_data, dtype=np.uint8).copy().reshape(-1, metadata.height, metadata.width, 3)
-
-    # Reorder to match original frame_indices order if needed
-    if unique_sorted_indices != frame_indices:
-        index_map = {idx: i for i, idx in enumerate(unique_sorted_indices)}
-        reorder = [index_map[idx] for idx in frame_indices if idx in index_map]
-        frames = frames[reorder]
+    except FFmpegRunError as e:
+        raise VideoLoadError(f"FFmpeg failed: {e}") from e
 
     return frames
 
@@ -453,7 +456,7 @@ def extract_frames_at_times(
     path: str | Path,
     timestamps: list[float],
 ) -> np.ndarray:
-    """Extract frames at specific timestamps.
+    """Extract frames at specific timestamps; raise ``VideoLoadError`` on a short decode.
 
     Args:
         path: Path to video file
@@ -468,7 +471,7 @@ def extract_frames_at_times(
     """
     metadata = VideoMetadata.from_path(path)
     frame_indices = [int(t * metadata.fps) for t in timestamps]
-    return extract_frames_at_indices(path, frame_indices)
+    return _extract_frames_at_indices(Path(path), frame_indices, metadata)
 
 
 class Video:

@@ -2,7 +2,7 @@
 
 `Video.from_path()` loads every frame into RAM. A 2-hour 1080p30 source is ~216,000
 frames — over a terabyte uncompressed — so for long sources you want the APIs that never
-hold more than one frame at a time.
+retain all decoded frames.
 
 ## Pick the right entry point
 

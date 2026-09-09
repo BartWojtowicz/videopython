@@ -31,7 +31,12 @@ def _detector_with(results, class_names=None, **kwargs):
     det = ObjectDetector(**kwargs)
     det._class_names = class_names or {0: "person", 2: "car"}
     processor = MagicMock()
-    processor.return_value = {"pixel_values": np.zeros((len(results), 3, 8, 8), dtype=np.float32)}
+
+    class Inputs(dict):
+        def to(self, device):
+            return self
+
+    processor.return_value = Inputs(pixel_values=np.zeros((len(results), 3, 8, 8), dtype=np.float32))
     processor.post_process_object_detection.return_value = results
     det._processor = processor
     det._model = MagicMock(return_value=MagicMock())

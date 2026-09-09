@@ -3,7 +3,7 @@
 These point-in-time measurements support release checks and implementation decisions.
 Older entries include candidate designs that were later replaced. The
 [final dubbing review](#final-dubbing-review-0612) describes the latest recorded
-release result; API behavior belongs in the reference pages. These records
+dubbing release result; API behavior belongs in the reference pages. These records
 describe the tested environment and are not performance guarantees for other
 hardware, inputs, or dependency versions.
 
@@ -11,6 +11,331 @@ For the interfaces covered by the AI checks, see [AI generation](ai/generation.m
 [AI understanding](ai/understanding.md), and [Dubbing](ai/dubbing.md). For the design
 decision supported by the effects profile, see [The streaming
 engine](../explanation/streaming-engine.md#why-pixel-effects-are-not-ffmpeg-filters).
+
+## Release preparation, 0.62.0
+
+Local checks on 2026-09-09 used Linux and Python 3.12.12. The package, lockfile,
+release-note heading, and wheel metadata all report 0.62.0. Remaining dubbing work
+and 1.0-specific release work were deferred.
+
+The full suite ran without visible CUDA devices and with model downloads disabled:
+1,310 tests passed and two failed in 382.96 s, with 12 missing-audio fixture warnings.
+The version assertion overlapped an editable-package version refresh; it passed in
+a fresh process. The speech-catalog test still called the now-async MCP handler
+synchronously; its invocation was corrected. The failed-test rerun passed both tests
+in 1.53 s. Pre-commit and the strict documentation build passed.
+
+The source distribution and wheel built offline. A clean environment installed the
+wheel and MCP dependencies from the local cache, passed the repository's wheel smoke
+check, then imported a real saved analysis and rendered a catalog selection with
+11 progress notifications. Imports came from the installed wheel's `site-packages`,
+and the result passed full FFmpeg decoding. The wheel smoke check now expects the
+new analysis import/export and transcript tools.
+
+Logs and artifacts remain in `.cache/release-0.62.0/`. These checks do not establish
+other Python/OS matrix results or external-agent compatibility. No tag, remote push,
+or publication was performed.
+
+## Catalog review checks, 0.62.0
+
+The 2026-09-09 review reproduced speech timestamps beyond a three-second source and
+short utterances separated by 6.5 seconds of silence. Catalog construction now omits
+out-of-source passages without changing word times and does not merge across the
+configured pause threshold. Regression checks cover both keyframe modes, validation,
+and rendering of the retained selection. Selected-frame extraction raises on missing
+frames, including sorted, unsorted, and negative-index requests.
+
+A separate-process allocation check selected 120 frames in reverse order from
+`cam1_1min.mp4` (1280×720; SHA256
+`4a258bf9eb50a120485399a60768479bec8b72fae2e98de21361c751eff350f0`).
+Both versions made one FFmpeg call and returned identical RGB SHA256
+`336c824d40cec066dd2e966a77ea9d06026589b91f82cb00a407030c3167d612`.
+The baseline was `1e2fd75`; peak Python RSS was 997.83 MiB before and 363.75 MiB
+after reading directly into the output array. In chronological order, peak RSS was
+681.41 MiB before and 363.89 MiB after, with matching RGB SHA256
+`30cd05e9375374736c477a358083a582460669a68305d222f15e12cb1efea45b`.
+The array itself was 316.41 MiB. These process high-water marks exclude FFmpeg child memory. Tests overlapped part
+of the check; the individual timings are not a throughput comparison. A Python
+catalog still retains all requested full-resolution frames. The earlier 24-scene
+MCP measurement below does not establish an arbitrary-size catalog memory bound.
+
+MCP now rejects more than 12 distinct image IDs before decoding. Tests also cover
+unknown-source export guidance and AST provenance without a private Transformers
+config attribute. The object-detector test fake now supports the processor result's
+`.to()` method; production detection code is unchanged. The 112 focused tests passed
+outside the sandbox with CUDA available. A subsequent full run was stopped at the
+user's request after 509 passing tests; further verification disabled CUDA. The
+CPU-only full suite passed all 1,321 tests in 395.18 s with 12 missing-audio fixture
+warnings. The earlier release run remains explicitly recorded as CUDA-hidden. The portrait recipe is now labeled as a 9:16 workflow.
+
+After GPU access was re-enabled, an AST-only `VideoAnalyzer` run used CUDA and low
+sampling on the same six-second Cam1 source as [saved-analysis reuse](#saved-analysis-reuse).
+Cached AST weights returned `Speech` (0.6915) and recorded the requested revision
+`f826b80d28226b62986cc218e5cec390b1096902`; all other analyzers were disabled. The run
+completed in 9.45 s on the RTX 2060 SUPER with downloads disabled. This checks inference
+and provenance capture, not classification quality across recordings or throughput.
+All 23 object-detector tests also passed with CUDA visible. Results are saved in
+`gpu-analysis.json`, `gpu-report.json`, and `gpu-sanity.log` in the directory below.
+
+Scripts, hashes, allocation results, and validation logs remain local under
+`.cache/review-0.62.0/` (the focused log is `.cache/review-tests.log`).
+
+## Installed-wheel branch workflows, 0.62.0
+
+On 2026-09-09, the reviewed wheel was installed in an isolated Python 3.12 consumer
+environment with MCP but without Torch, Transformers, or faster-whisper. Its Python
+files matched the current branch. The examples module was copied into the consumer's
+working directory, as documented; it is not bundled in the wheel.
+
+A fresh Whisper turbo CUDA run analyzed the All-In source excerpt at seconds
+300–390, outside the reserved dubbing comparison range. It used low analysis sampling,
+VAD disabled, and cached weights, with downloads disabled. The 90-second audio is paired
+with a static 640×360 image for video rendering. Source SHA256:
+`74f29ad82c870627ccd40dc1dd7404d871647168329709d0b5ff1ad44b3d5250`.
+The run produced 317 words in 28.75 s and saved the pinned Whisper revision. This is
+an integration observation, not a performance baseline.
+
+A new stdio server in the consumer environment passed these checks:
+
+- Import the saved analysis without installed inference runtimes; preserve config,
+  provenance, and full transcripts; export the same result.
+- Build nine speech candidates within 5–20 seconds, with valid source bounds and no
+  boundaries through aligned words. Rebuild with changed settings and reject old IDs.
+- Retrieve 12 initial images, fetch and repeat an omitted image, compare it with its
+  source midpoint, and reject 13 distinct requested IDs. These image-budget checks
+  used 13 fixed ranges on the six-second Cam1 source, not detected visual scenes.
+- Validate and repair two speech selections, reverse their order, add a 0.24-second
+  transition and a post-effect, and render an 18.44-second result. The result matched
+  predicted duration, contained non-silent audio, and passed full FFmpeg decoding.
+  Twenty-two ordered progress notifications arrived over 5.41 s, including updates
+  before the render finished and the expected stage-completion sequence.
+- Clear the catalog on import and reject unknown image IDs, uncached export,
+  unsupported saved-analysis format, and a changed source-content digest.
+
+Caption, branding, and two-pass summary recipes also rendered from the installed
+wheel at 640×360 and 360×640 after JSON plan round-trips. Sampled frames showed readable
+captions, a visible logo, wrapped titles, and the subject inside the portrait crop.
+Both summaries matched the previously accepted outputs' decoded audio and video hashes.
+Their audio peak was 0.90625 after the same finishing gain, retaining the user's accepted
+music balance. This was an exact regression comparison, not a new listening review.
+
+No production fix was needed. Candidate timing is not semantic editing: the first
+All-In candidate starts inside an existing question, and later passages retain context
+dependencies and source-token spacing limits. The checks do not establish external-agent
+compatibility or automatic editorial quality. Reports, exports, and the inspected contact
+sheet remain in `.cache/branch-check-0.62.0/`.
+
+## Catalog keyframe extraction
+
+On 2026-09-09, catalog construction was checked on `cam1_10min.mp4`: 599.8 s,
+1280×720, 25 fps, SHA256
+`deeaa2055a9061ea04fdddafdcc846be0454c677cabc5e1d5c546b595d4e1e7b`.
+The saved analysis used 24 fixed 25-second ranges to exercise a large catalog;
+these were test ranges, not model-detected scene boundaries. No analyzer ran.
+Environment: Linux under WSL2, Python 3.12.12, FFmpeg 6.1.1.
+
+The baseline was commit `60142cf`. Each run built the MCP catalog, then requested
+its final scene twice. Process-tree RSS was sampled every 20 ms across the Python
+process and its children. Metadata was warm in each run: zero `ffprobe` processes.
+The initial response contained 12 images and an omitted-ID note.
+
+| Measurement | Baseline | Batched, no image cache | Batched, 12-image cache |
+|---|---:|---:|---:|
+| Initial response | 415.00 s | 9.17 s | 9.14 s |
+| Initial FFmpeg invocations | 24 | 1 | 1 |
+| Peak process-tree RSS over all requests | 262.81 MiB | 238.16 MiB | 236.45 MiB |
+| Retained image arrays after initial response | 63.28 MiB | 0 MiB | 11.39 MiB |
+| First final-scene request | 0.089 s | 16.25 s | 16.86 s |
+| Repeated final-scene request | 0.088 s | 16.48 s | 0.089 s |
+
+Catalog JSON and every initial PNG payload had identical SHA256 values across
+all three runs. The synthetic RGB test also compared unsorted and duplicate
+requests with a full decode, and the MCP test retrieved an omitted scene, checked
+the image-size/cache bounds, and repeated the request without extraction.
+
+The 12-image cache was selected because an uncached request near the end still
+requires a long sequential decode. Cache entries are downscaled and independently
+owned, so they do not retain the full extraction batch. The local planner still
+receives full-resolution frames. No sparse-seek strategy was added.
+
+These are single observations. Focused tests overlapped part of the baseline run;
+the changed measurements ran alone. The timings are not a controlled speedup
+estimate. RGB equality establishes unchanged keyframes, not editorial selection
+quality. The local scripts, saved analysis, payload hashes, and logs are under
+`.cache/catalog-keyframes/` and are not distributed.
+
+## Editing recipes
+
+On 2026-09-09, the caption and branding examples rendered seconds 0–6 of
+`cam1_1min.mp4` at 640×360 and 360×640. The caption example used the saved Polish
+word transcription. The title was “Początek roku: rozmowa o biznesie, planach i
+nowych możliwościach”, with a 24-pixel font and a caller-supplied SVG mark. Frames
+at 3.2 s were inspected: Polish text was readable and wrapped within the margins,
+and the mark stayed at the top left in both orientations. Center cropping fit
+this shot; it is not a general subject-framing guarantee.
+
+The two-pass summary rendered ranges 8–12 s then 0–4 s from the same source at
+both sizes. It used a local synthetic chord bed with gain 0.490981 and duck 0.8.
+Both final files were 8 s long with the requested dimensions. The saved transcript
+was mapped to cut order before the second pass. All plans passed JSON round trips
+and validation. Outputs and review frames remain local in `.cache/editing-recipes/`.
+
+The automated two-pass check used red/blue video, a 440 Hz tone, and two timed
+words. It verified reversed visual order, copied source words, mapped word times,
+a nonzero bed, and speech-window RMS below 40% of the pause level. This measures
+ducking behavior. The user listened to the real-clip sample at gain 0.35 and found
+the music only slightly too quiet. After a first increase to 0.39, the user requested
+another 2 dB. The final gain is `0.39 * 10 ** (2 / 20)`, or 0.490981, with the same
+ducking settings. The user accepted the latest sample. The mix had peaks above full scale, so
+the final review exports also use an audio-only finishing pass with overall gain
+0.89 and video stream copy. Float PCM decode measured a peak of 0.90625 in both
+orientations, below full scale.
+This finishing gain preserves the adjusted music-to-speech ratio.
+
+The recipe is limited to frame-aligned cuts from one source with no transitions
+or retiming. It requires an intermediate file and a second encode. No model ran,
+and these checks do not assess transcription accuracy or music suitability.
+
+## Speech candidate selection
+
+On 2026-09-09, speech selection used fresh audio from seconds 300–390 of
+`all_in_30min.mp4`, outside the translation comparison range at 750–1050 s.
+The audio was paired with a static 640×360, 25 fps video for render checks.
+The resulting source SHA256 was
+`74f29ad82c870627ccd40dc1dd7404d871647168329709d0b5ff1ad44b3d5250`.
+No scene detector, planner, translator, or synthesis model ran.
+
+Transcription used the cached Whisper turbo revision
+`0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf` on CUDA, with VAD disabled and the
+library's other defaults. The recorded transcription-plus-catalog interval was
+10.78 s. The analysis supplied one visual scene; speech settings were 5 s minimum,
+20 s maximum, and a 0.8 s pause. This was a boundary check, not a speed comparison.
+
+Nine candidates were produced, from 5.08 to 13.60 s long. All nine resolved,
+validated, rendered, and passed full FFmpeg decode. Their boundaries did not pass
+through any supplied word interval. Ranges did not overlap, and the full retrieved
+transcripts had no exact duplicates. Source timestamps remain ASR estimates;
+these checks do not establish acoustic alignment accuracy.
+
+Transcript review found a complete response on company innovation, several units
+that depend on preceding context, a candidate that changes topic between complete
+sentences, and a final unit that introduces an explanation without including it.
+The first candidate starts mid-question because the supplied 90-second excerpt
+starts there. Punctuation and pause rules do not establish standalone meaning.
+There was no listening score or claim of automatic editorial quality.
+
+The synthetic suite additionally checks multiple candidates from a single shot,
+passages crossing visual cuts, overlapping words, zero-duration word ownership,
+missing alignment, impossible limits, repeated builds, identical file stems,
+changed-setting ID rejection, full MCP transcript retrieval, and a selected render.
+
+Two preliminary checks were retained separately. `cam1_10min.mp4` repeated the
+previously reviewed minute, so it was not counted as fresh content. The selected
+`dreams_15min.mp4` excerpt mixed sparse Japanese speech with an English language
+detection result and zero-duration words; its transcript was not used as a quality
+baseline. Zero-duration words retain their supplied times without invented length.
+Scripts, transcripts, exports, and per-candidate notes remain local under
+`.cache/speech-candidates/`. No model downloads or paid APIs were used.
+
+## Source-word reconstruction
+
+The 2026-09-09 investigation used the frozen All-In English transcription for source
+seconds 750–1050: 27 turns, 980 words, and 72 dubbing phrases. Transcription JSON SHA256:
+`3cef5573dedb1b2bf76b66b0d994122494cbe9af83dcaee34ad821c9cef0fc6c`.
+No inference, translation tuning, or changes to the evaluation data were made.
+
+`AudioToText` retains Whisper's word strings and initial segment text. Speaker
+regrouping calls `Transcription(words=...)`, which calls `from_words()` and inserts
+spaces between all tokens. Reproductions from this recording include:
+
+| Cut-relative start | Supplied tokens | Reconstructed text |
+|---|---|---|
+| 39.14 s | `" dot"`, `"-com"` | `" dot -com"` |
+| 221.36 s | `" 3"`, `",000"` | `" 3 ,000"` |
+| 226.92 s | `" 5"`, `",000"` | `" 5 ,000"` |
+| 239.82 s | `" supply"`, `"-demand"` | `" supply -demand"` |
+
+The constructor preserved raw word text, timing, and speaker values in every
+reproduction. Current phrase splitting preserved the non-whitespace source text
+for every turn; it did not introduce or repair these upstream boundaries.
+
+**Decision:** retain the explicit single-space constructor contract. Concatenating
+all tokens would repair these examples but would break ordinary inputs such as
+`["hello", "world"]`; punctuation and whitespace heuristics cannot establish the
+caller's intended token convention. A future change needs an explicit spacing
+contract and migration. Preserve original segment text for exact-text workflows,
+and review source errors separately from translation errors. Scripts and reproductions
+remain in `.cache/dubbing/word-reconstruction/`. This investigation does not fix
+numeric recognition, translation, or speech pronunciation.
+
+## Saved-analysis reuse
+
+On 2026-09-09, a six-second cut from `cam1_1min.mp4` ran all five analysis stages
+with low sampling. Its SHA256 was
+`8438091834357f5677236ad8878a0441a77b07aa359b2f1b4f5ecdf5dd8e44e6`.
+Whisper used CUDA with VAD and diarization enabled; TransNetV2 used CPU; AST used
+CUDA. Scene captioning used the cached `qwen3.5:4b` model with 8192 context tokens
+and a 512-token output budget on the local Ollama service. Analysis took 36.48 s.
+This was a compatibility check, not a default-model performance baseline.
+
+All stages completed and the saved result recorded:
+
+| Model | Recorded revision |
+|---|---|
+| Whisper turbo | `0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf` |
+| Silero VAD | `package:6.2.1` |
+| Pyannote community diarization | `3533c8cf8e369892e6b79ff1bf80f7b0286a54ee` |
+| AST audio classification | `f826b80d28226b62986cc218e5cec390b1096902` |
+| TransNetV2 | `package:1.0.5` |
+| Qwen3.5 4B | `2a654d98e6fba55d452b7043684e9b57a947e393bbffa62485a7aac05ee4eefd` |
+| YuNet | `3cc26e7f1014a5ee5d74a42acee58bafc9d0a310` |
+
+Import preserved the result and rendered a catalog selection with analyzer creation
+blocked. The SDK test separately used a fresh stdio server process to import,
+inspect a failed/skipped analysis, retrieve catalog images, render a cut, and export
+the same result. It also checked exactly one source-hash call per import/export,
+changed-source rejection, and rejection of unsupported or missing provenance.
+
+Model identity does not establish analysis quality or guarantee identical results
+on another environment. Package revisions do not hash bundled weights. The pinned
+YuNet file was downloaded with a 3,800,000 byte/s limit; the other weights were cached.
+Local inputs, serialized results, scripts, and logs are under `.cache/saved-analysis/`.
+
+## Render progress
+
+On 2026-09-09, seconds 10–20 of `cam1_1min.mp4` were rendered at 640×360 with
+H.264 medium/CRF 23, first with resizing alone and then with seeded film grain
+(intensity 0.05, seed 7). Source SHA256:
+`4a258bf9eb50a120485399a60768479bec8b72fae2e98de21361c751eff350f0`.
+Three renders per setting alternated progress off/on after the test suite finished.
+
+| Path | Median without callbacks | Median with callbacks |
+|---|---:|---:|
+| FFmpeg filter graph | 1.286 s | 1.320 s |
+| Python frame effects | 2.208 s | 2.187 s |
+
+The 34 ms filter-path difference and negative frame-path difference are small-sample
+observations, not a stable overhead bound or speedup. Decoded video and audio hashes
+were identical with callbacks enabled and disabled for each path.
+
+A separate official Python MCP SDK client imported the analysis in a new stdio
+server process and rendered the full Cam1 source. It received 37 notifications over
+11.73 s. A non-final segment update reported 53 frames at 1.05 s, well before the
+final tool result. The notification sequence increased throughout, the final event
+reported success, and the exported media passed full FFmpeg decoding. This checks
+SDK transport delivery; it does not establish progress display in a desktop client
+or external agent. Four further full-source requests alternated notifications off/on
+(two each). Median tool time was 12.52 s without notifications and 11.71 s with
+notifications (40–42 events). Decoded audio/video hashes matched. The negative
+difference shows run-to-run variation; this sample establishes no measurable
+notification penalty, not a transport speedup or general overhead guarantee.
+
+Automated checks cover filter and Python output equivalence, transitions, post-operations,
+music mixing, and stage order. An invalid FFmpeg encoder emits no successful segment
+or final event; a callback exception reaps the process and closes its progress pipe.
+Updates are throttled to 0.25 s except at stage boundaries. Assembly and audio mixing
+report whole-step boundaries, without intermediate frame counts. Scripts, timings,
+notification logs, and exports remain under `.cache/render-progress/`.
 
 ## MCP workflow verification
 

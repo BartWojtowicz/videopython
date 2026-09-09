@@ -37,6 +37,46 @@ predicted = edit.validate()
 edit.run_to_file("output.mp4", crf=20, preset="medium")
 ```
 
+## Render progress
+
+Pass `on_progress` to `run_to_file()` to receive immutable `RenderProgress` events:
+
+```python
+from videopython.editing import RenderProgress
+
+
+def report(event: RenderProgress) -> None:
+    print(event.stage, event.segment_index, event.completed, event.total, event.finished)
+
+
+edit.run_to_file("output.mp4", on_progress=report)
+```
+
+| Field | Meaning |
+|---|---|
+| `stage` | `compilation`, `segment`, `assembly`, `post_operations`, `audio_mix`, or `complete` |
+| `segment_index` | Zero-based segment index during segment rendering; otherwise `None` |
+| `completed` | Work observed within this stage, reset at each stage or segment |
+| `total` | `1` for a single stage step; `None` when the actual frame count is unknown |
+| `unit` | `frames` or `steps` |
+| `finished` | The current stage succeeded; it does not imply whole-job success |
+
+Only a `complete` event with `finished=True` means the render succeeded. Stages that
+are not needed are omitted. Compilation includes execution checks and plan compilation;
+assembly includes hard cuts and transitions. Assembly and audio mixing report start
+and completion of one step. Segment and post-operation passes report FFmpeg output
+frames or processed Python frames. These are different measurements when an encode
+filter changes frame rate. Frame totals remain unknown rather than treating a duration
+prediction as an exact decoded count.
+
+Intermediate updates are limited to one per 0.25 seconds. Stage boundaries are always
+reported. Callbacks run synchronously on the calling thread; keep them short. Callback
+exceptions stop execution and propagate, with active FFmpeg processes cleaned up. A
+failed render does not emit final success. There is no estimated finish time or overall
+percentage, and callbacks are not part of saved plans. The returned path is unchanged.
+
+::: videopython.editing.RenderProgress
+
 ## JSON wire format
 
 ```json

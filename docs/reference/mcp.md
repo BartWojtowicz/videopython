@@ -16,7 +16,8 @@ Analyze a source: scenes, transcript, captions. Cached server-side for the catal
 Returns a short summary. The default `profile="editing"` skips audio classification,
 which the catalog never reads. `profile="full"` runs all analyzers.
 
-Returns `source`, `duration`, `fps`, `width`, `height`, `scenes`, and `analyzers`.
+Returns `source` as a resolved absolute path, plus `duration`, `fps`, `width`,
+`height`, `scenes`, and `analyzers`. A successful analysis clears the current catalog.
 `analyzers` contains one record for each configured analysis stage:
 
 | `status` | `reason` | Meaning |
@@ -29,17 +30,52 @@ Returns `source`, `duration`, `fps`, `width`, `height`, `scenes`, and `analyzers
 The remaining analysis is still cached when one analyzer fails. Check these records
 before building a plan that depends on a missing transcript, caption, or face result.
 
-### `build_catalog(sources=None)`
+### `export_analysis(source, output_path)`
+
+Verify the selected source's content digest and write its cached `VideoAnalysis`
+as JSON at `output_path`. `source` resolves to an absolute path. No inference runs.
+
+### `import_analysis(path)`
+
+Load saved JSON, reject unsupported formats or changed/unbound sources, then cache
+it under its resolved source path. This clears the current catalog. Call
+`build_catalog` before using scene IDs. Import does not start analyzers, change the
+saved configuration, or fill unknown provenance from current models.
+
+Both tools return `path`, `source`, `config`, `provenance`, and `analyzers`.
+`path` and `source` are absolute paths. Failed and skipped stage outcomes are
+preserved. Format, identity, and file-access errors are MCP tool errors; they do not
+use edit-plan error codes. The [analysis reference](ai/video-analysis.md#saved-identity-and-migration)
+defines provenance and migration.
+
+### `build_catalog(sources=None, mode="visual", speech=None)`
 
 Returns the candidate scenes as one JSON text block — id, duration, shot_type, caption
 and transcript per scene, enough to shortlist from text alone — followed by up to **12**
 downscaled keyframe images. If more scenes exist, a trailing note names the omitted ids.
 Author the edit by referencing the returned `id` values.
 
+For spoken passages, use `mode="speech"` and a `speech` object such as
+`{"min_duration": 10, "max_duration": 30, "pause_duration": 0.8}`. Visual mode
+requires `speech=null`. The [speech-candidate contract](ai/auto-edit.md#speech-candidates)
+defines boundaries, missing-alignment behavior, and ID invalidation. If speech mode
+finds no passages, the catalog has an empty `scenes` list and a following text block
+explains that no complete aligned passages fit. Building any catalog clears the
+previous selection and image cache.
+
 ### `scene_keyframes(scene_ids)`
 
 Downscaled keyframes for a chosen shortlist of scene ids. Use after `build_catalog` to
-pull frames that were capped out, without re-inlining the whole library.
+pull frames that were capped out, without re-inlining the whole library. Each call
+accepts at most 12 distinct IDs. Duplicates count once; a larger shortlist raises a
+descriptive tool error before extraction. Split it into calls of at most 12 IDs.
+
+### `scene_transcripts(scene_ids)`
+
+Return a JSON text block mapping requested IDs to full normalized transcript text.
+This works for visual scenes and speech passages. Duplicate IDs return one entry.
+Unknown IDs return a text block with code `unknown_scene_ids`, as with
+`scene_keyframes`. Requires a catalog; it performs no inference or media read.
 
 ### `validate_edit(plan)`
 
@@ -108,6 +144,17 @@ return the remaining errors.
 
 `output_path` is `null` when the plan cannot be resolved or validated.
 
+When the request includes `_meta.progressToken`, `run_edit` sends MCP progress
+notifications during rendering. The numeric `progress` is a monotonically increasing
+notification sequence; `total` is omitted. The `message` is JSON containing the
+[`RenderProgress` fields](video-edit.md#render-progress). Counts inside the message
+apply to one stage and can reset. Do not display the notification sequence as a
+percentage. The tool's final result schema is unchanged.
+
+Rendering runs in a worker thread, leaving the server event loop available to deliver
+notifications. Progress uses the MCP transport, not prints to stdout. Clients that do
+not request progress still receive the usual final result.
+
 ## Error objects
 
 Errors from `validate_edit`, `repair_edit`, and `run_edit` have a stable `code` and a diagnostic `message`. Code-specific fields are:
@@ -130,6 +177,17 @@ documented in [AI auto-editing](ai/auto-edit.md).
 
 ## Image budget
 
-Every image the MCP path returns is downscaled to a longest side of ≤768 px (~10× smaller
-than a full-resolution PNG), and `build_catalog` inlines at most 12. Downscaling is scoped
-to MCP — `SceneVLM` captioning and the in-process planner keep full-resolution frames.
+Every image the MCP path returns is downscaled to a longest side of 768 px, and
+`build_catalog` extracts and inlines at most 12. Catalog text does not require image
+extraction. `scene_keyframes` also limits each request to 12 distinct IDs, separately
+from the retention limit. Each image request batches scene midpoints by source and decodes only
+through the last requested frame. The decode array holds up to 12 full-resolution
+RGB frames before downscaling, so peak allocation also depends on source resolution.
+The server retains at most 12 downscaled images,
+evicting the least recently requested image when the cache is full. A cache hit needs
+no decode. Building a new catalog clears the image cache. Omitted catalog rows do not
+cause image extraction until requested.
+
+`SceneVLM` captioning and the in-process planner keep full-resolution frames.
+The [catalog measurements](verification.md#catalog-keyframe-extraction) record the
+latency and memory tradeoff.
