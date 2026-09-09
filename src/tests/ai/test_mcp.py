@@ -19,6 +19,7 @@ from tests.test_config import SMALL_VIDEO_PATH  # noqa: E402
 from videopython.ai.video_analysis.models import (  # noqa: E402
     ALL_ANALYZER_IDS,
     AUDIO_TO_TEXT,
+    AnalysisProvenance,
     AnalysisRunInfo,
     AnalyzerOutcome,
     SceneAnalysisSample,
@@ -66,6 +67,7 @@ def _real_analysis() -> VideoAnalysis:
         ),
     ]
     return VideoAnalysis(
+        provenance=AnalysisProvenance(format_version=1, source_sha256=None, sampling="medium", models={}),
         source=VideoAnalysisSource(
             path=str(SMALL_VIDEO_PATH),
             fps=meta.fps,
@@ -98,6 +100,7 @@ def _analysis_with_scenes(n: int) -> VideoAnalysis:
         for i in range(n)
     ]
     return VideoAnalysis(
+        provenance=AnalysisProvenance(format_version=1, source_sha256=None, sampling="medium", models={}),
         source=VideoAnalysisSource(
             path=str(SMALL_VIDEO_PATH),
             fps=meta.fps,

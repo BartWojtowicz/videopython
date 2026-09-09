@@ -43,6 +43,8 @@ Usage:
 
 from __future__ import annotations
 
+from importlib import metadata
+
 # Exact model-identifier string -> pinned commit SHA. The key must match the
 # literal value passed to from_pretrained/hf_hub_download at the call site so
 # ``pinned(model_id)`` resolves with a plain dict lookup. SHAs captured from
@@ -100,3 +102,11 @@ def pinned(model_id: str) -> str | None:
         The pinned SHA, or ``None`` when no pin is registered for ``model_id``.
     """
     return MODEL_REVISIONS.get(model_id)
+
+
+def package_revision(distribution: str) -> str | None:
+    """Identify bundled weights by their installed package release, when available."""
+    try:
+        return f"package:{metadata.version(distribution)}"
+    except metadata.PackageNotFoundError:
+        return None

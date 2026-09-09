@@ -41,6 +41,38 @@ The server is a thin wrapper over the same primitives as the programmatic
 caches analyses and the catalog, so the agent passes small payloads (scene ids), never
 whole analysis blobs.
 
+## Reuse analysis across sessions
+
+After `analyze_video`, call `export_analysis(source, output_path)` to save the cached
+result. In a new server session:
+
+1. Call `import_analysis(path)` with the saved JSON file.
+2. Inspect the returned configuration, provenance, and analyzer outcomes. Failed or
+   skipped stages remain failed or skipped; importing does not repair them.
+3. Call `build_catalog()` and select IDs from that new catalog.
+4. Validate and render the plan as usual.
+
+Import needs the recorded source file at its saved path. It verifies its contents
+and the analysis format, and starts no inference or Ollama service. Export also
+checks that the source still matches the cached result. Keep media unchanged during
+the session. Importing or analyzing a source clears the current catalog; rebuild it
+before sending more by-ID plans.
+
+You can also produce the file in Python:
+
+```python
+from videopython.ai import VideoAnalyzer
+
+analysis = VideoAnalyzer().analyze_path("interview.mp4")
+analysis.save("interview-analysis.json")
+```
+
+Use the [saved-analysis contract](../reference/ai/video-analysis.md#saved-identity-and-migration)
+for format details and migration. Old analyses without identity/provenance must be
+regenerated. Installing a newer model does not change the settings saved in an imported
+analysis. The [verification record](../reference/verification.md#saved-analysis-reuse)
+covers fresh-process import and rendering.
+
 ## Keep long footage from flooding the context
 
 Shortlist scenes from catalog text, then request keyframes for those ids. The server

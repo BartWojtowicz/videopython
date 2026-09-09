@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 import videopython.ai.video_analysis as va
+from videopython.ai._predictor import ManagedPredictor
 from videopython.ai.video_analysis import analyzer as _analyzer
 from videopython.ai.video_analysis import detectors as _detectors
 from videopython.base.description import (
@@ -20,7 +21,7 @@ from videopython.base.transcription import Transcription, TranscriptionSegment
 from videopython.base.video import Video
 
 
-class _FakeAudioToText:
+class _FakeAudioToText(ManagedPredictor):
     def __init__(self, **_kwargs):
         pass
 
@@ -34,7 +35,7 @@ class _FakeAudioToText:
         )
 
 
-class _FakeSceneDetector:
+class _FakeSceneDetector(ManagedPredictor):
     def __init__(self, **_kwargs):
         pass
 
@@ -48,7 +49,7 @@ class _FakeSceneDetector:
         return self.detect_streaming(None)
 
 
-class _FakeSceneVLM:
+class _FakeSceneVLM(ManagedPredictor):
     def __init__(self, **_kwargs):
         pass
 
@@ -60,7 +61,7 @@ class _FakeSceneVLM:
         )
 
 
-class _FailingSceneVLM:
+class _FailingSceneVLM(ManagedPredictor):
     def __init__(self, **_kwargs):
         pass
 
@@ -68,12 +69,12 @@ class _FailingSceneVLM:
         raise RuntimeError("scene vlm failure")
 
 
-class _FailingSceneVLMInit:
+class _FailingSceneVLMInit(ManagedPredictor):
     def __init__(self, **_kwargs):
         raise RuntimeError("scene vlm initialization failure")
 
 
-class _FakeAudioClassifier:
+class _FakeAudioClassifier(ManagedPredictor):
     def __init__(self, **_kwargs):
         pass
 
@@ -84,7 +85,7 @@ class _FakeAudioClassifier:
         )
 
 
-class _FakeFaceTracker:
+class _FakeFaceTracker(ManagedPredictor):
     def __init__(self, **_kwargs):
         pass
 

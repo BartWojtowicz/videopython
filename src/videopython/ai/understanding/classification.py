@@ -34,6 +34,7 @@ class AudioClassifier(ManagedPredictor):
         top_k: int = 10,
         device: str | None = None,
     ):
+        self._loaded_models: dict[str, str | None] | None = None
         self.model_name = model_name
         self.confidence_threshold = confidence_threshold
         self.top_k = top_k
@@ -48,6 +49,9 @@ class AudioClassifier(ManagedPredictor):
         self._processor: Any = None
         self._labels: list[str] = []
 
+    def model_provenance(self) -> dict[str, str | None] | None:
+        return self._loaded_models
+
     def _init_local(self) -> None:
         """Initialize local AST model from HuggingFace."""
         from videopython.ai._optional import require
@@ -60,6 +64,7 @@ class AudioClassifier(ManagedPredictor):
         self._model = ASTForAudioClassification.from_pretrained(self.model_name, revision=pinned(self.model_name))
         self._model.to(self.device)
         self._model.eval()
+        self._loaded_models = {self.model_name: self._model.config._commit_hash}
 
         self._labels = [self._model.config.id2label[i] for i in range(len(self._model.config.id2label))]
 

@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from videopython.ai.video_analysis.models import AnalyzerOutcome
+from videopython.ai.video_analysis.models import AnalysisProvenance, AnalyzerOutcome, VideoAnalysisConfig
 
 
 class SchemaIssue(BaseModel):
@@ -84,3 +84,15 @@ class RunEditResult(BaseModel):
 
     output_path: str | None
     errors: list[McpError]
+
+
+class SavedAnalysisResult(BaseModel):
+    """Saved analysis identity, settings, and stage outcomes."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+    source: str
+    config: VideoAnalysisConfig
+    provenance: AnalysisProvenance
+    analyzers: list[AnalyzerOutcome]

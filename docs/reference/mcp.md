@@ -16,7 +16,8 @@ Analyze a source: scenes, transcript, captions. Cached server-side for the catal
 Returns a short summary. The default `profile="editing"` skips audio classification,
 which the catalog never reads. `profile="full"` runs all analyzers.
 
-Returns `source`, `duration`, `fps`, `width`, `height`, `scenes`, and `analyzers`.
+Returns `source` as a resolved absolute path, plus `duration`, `fps`, `width`,
+`height`, `scenes`, and `analyzers`. A successful analysis clears the current catalog.
 `analyzers` contains one record for each configured analysis stage:
 
 | `status` | `reason` | Meaning |
@@ -28,6 +29,24 @@ Returns `source`, `duration`, `fps`, `width`, `height`, `scenes`, and `analyzers
 
 The remaining analysis is still cached when one analyzer fails. Check these records
 before building a plan that depends on a missing transcript, caption, or face result.
+
+### `export_analysis(source, output_path)`
+
+Verify the selected source's content digest and write its cached `VideoAnalysis`
+as JSON at `output_path`. `source` resolves to an absolute path. No inference runs.
+
+### `import_analysis(path)`
+
+Load saved JSON, reject unsupported formats or changed/unbound sources, then cache
+it under its resolved source path. This clears the current catalog. Call
+`build_catalog` before using scene IDs. Import does not start analyzers, change the
+saved configuration, or fill unknown provenance from current models.
+
+Both tools return `path`, `source`, `config`, `provenance`, and `analyzers`.
+`path` and `source` are absolute paths. Failed and skipped stage outcomes are
+preserved. Format, identity, and file-access errors are MCP tool errors; they do not
+use edit-plan error codes. The [analysis reference](ai/video-analysis.md#saved-identity-and-migration)
+defines provenance and migration.
 
 ### `build_catalog(sources=None, mode="visual", speech=None)`
 

@@ -32,6 +32,7 @@ from ._models import (
     McpRepair,
     RepairEditResult,
     RunEditResult,
+    SavedAnalysisResult,
     SchemaIssue,
     ValidateEditResult,
 )
@@ -61,19 +62,58 @@ def analyze_video(path: str, profile: Literal["full", "editing"] = "editing") ->
     audio classification. The result reports whether each analyzer completed,
     was disabled, or failed. Call this once per source, then build_catalog.
     """
+    global _bundle
     # Heavy analyzer deps (e.g. transnetv2-pytorch) bare-print to stdout, which here is
     # the stdio JSON-RPC channel; send that to stderr so the transport stays clean.
     with redirect_stdout(sys.stderr):
         analysis = _get_analyzer(profile).analyze_path(path)
-    _analyses[str(Path(path))] = analysis
+    _analyses[str(Path(path).resolve())] = analysis
+    _bundle = None
     src = analysis.source
     return AnalyzeVideoResult(
-        source=str(Path(path)),
+        source=str(Path(path).resolve()),
         duration=src.duration,
         fps=src.fps,
         width=src.width,
         height=src.height,
         scenes=len(analysis.scenes.samples) if analysis.scenes else 0,
+        analyzers=analysis.run_info.analyzer_outcomes,
+    )
+
+
+@mcp.tool()
+def export_analysis(source: str, output_path: str) -> SavedAnalysisResult:
+    """Verify the source and save its cached analysis, without inference."""
+    analysis = _analyses[str(Path(source).resolve())]
+    verified = analysis.verify_source()
+    path = Path(output_path).resolve()
+    analysis.save(path)
+    return SavedAnalysisResult(
+        path=str(path),
+        source=str(verified),
+        config=analysis.config,
+        provenance=analysis.provenance,
+        analyzers=analysis.run_info.analyzer_outcomes,
+    )
+
+
+@mcp.tool()
+def import_analysis(path: str) -> SavedAnalysisResult:
+    """Verify and cache a saved analysis; clear the catalog without starting models."""
+    from videopython.ai.video_analysis.models import VideoAnalysis
+
+    global _bundle
+    saved = Path(path).resolve()
+    analysis = VideoAnalysis.load(saved)
+    source = analysis.verify_source()
+    analysis.source.path = str(source)
+    _analyses[str(source)] = analysis
+    _bundle = None
+    return SavedAnalysisResult(
+        path=str(saved),
+        source=str(source),
+        config=analysis.config,
+        provenance=analysis.provenance,
         analyzers=analysis.run_info.analyzer_outcomes,
     )
 
@@ -222,7 +262,7 @@ def _get_analyzer(profile: str = "full") -> VideoAnalyzer:
 def _selected_analyses(sources: list[str] | None) -> list[VideoAnalysis]:
     if sources is None:
         return list(_analyses.values())
-    return [_analyses[str(Path(s))] for s in sources if str(Path(s)) in _analyses]
+    return [_analyses[str(Path(s).resolve())] for s in sources if str(Path(s).resolve()) in _analyses]
 
 
 def _keyframe_blocks(scene_ids: list[str]) -> list[TextContent | ImageContent]:

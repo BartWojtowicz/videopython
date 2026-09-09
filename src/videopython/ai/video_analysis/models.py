@@ -10,12 +10,15 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from videopython.base.description import AudioClassification, FaceTrack, SceneDescription
 from videopython.base.transcription import Transcription
 
+from ._identity import source_digest
+
 __all__ = [
     "ALL_ANALYZER_IDS",
     "AUDIO_CLASSIFIER",
     "AUDIO_TO_TEXT",
     "AnalyzerOutcome",
     "AnalysisRunInfo",
+    "AnalysisProvenance",
     "AudioAnalysisSection",
     "FACE_TRACKER",
     "GeoMetadata",
@@ -181,14 +184,35 @@ class SceneAnalysisSection(BaseModel):
     samples: list[SceneAnalysisSample] = Field(default_factory=list)
 
 
+class AnalysisProvenance(BaseModel):
+    """Source identity and model revisions recorded during analysis."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    format_version: Literal[1]
+    source_sha256: str | None = Field(pattern=r"^[0-9a-f]{64}$")
+    sampling: Literal["low", "medium", "high"]
+    models: dict[str, dict[str, str | None] | None]
+
+
 class VideoAnalysis(BaseModel):
     """Serializable aggregate scene-first analysis result for one video."""
 
     source: VideoAnalysisSource
+    provenance: AnalysisProvenance
     config: VideoAnalysisConfig
     run_info: AnalysisRunInfo
     audio: AudioAnalysisSection | None = None
     scenes: SceneAnalysisSection | None = None
+
+    def verify_source(self) -> Path:
+        """Check the recorded file digest and return its resolved path without inference."""
+        if self.source.path is None or self.provenance.source_sha256 is None:
+            raise ValueError("Analysis has no verified file identity; analyze the source path again")
+        path = Path(self.source.path).resolve()
+        if source_digest(path) != self.provenance.source_sha256:
+            raise ValueError("Source content differs from the saved analysis")
+        return path
 
     def save(self, path: str | Path, *, indent: int | None = 2) -> None:
         path_obj = Path(path)

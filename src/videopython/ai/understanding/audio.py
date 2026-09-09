@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 from videopython.ai._device import log_device_initialization, select_device
 from videopython.ai._predictor import ManagedPredictor
-from videopython.ai._revisions import pinned
+from videopython.ai._revisions import package_revision, pinned
 from videopython.audio import Audio
 from videopython.base.transcription import Transcription, TranscriptionSegment, TranscriptionWord
 from videopython.base.video import Video
@@ -166,6 +166,7 @@ class AudioToText(ManagedPredictor):
         if model_name not in _WHISPER_MODELS:
             choices = ", ".join(_WHISPER_MODELS)
             raise ValueError(f"Unsupported Whisper model {model_name!r}. Choose one of: {choices}.")
+        self._loaded_models: dict[str, str | None] = {}
         self.model_name = model_name
         self.enable_diarization = enable_diarization
         self.enable_vad = enable_vad
@@ -204,6 +205,9 @@ class AudioToText(ManagedPredictor):
             kwargs["initial_prompt"] = prompt
         return kwargs
 
+    def model_provenance(self) -> dict[str, str | None] | None:
+        return dict(self._loaded_models) if self._loaded_models else None
+
     def _init_local(self) -> None:
         """Initialize local Whisper model."""
         from videopython.ai._optional import require
@@ -216,6 +220,7 @@ class AudioToText(ManagedPredictor):
             device=self.device,
             compute_type="float32",
         )
+        self._loaded_models[model_id] = pinned(model_id)
 
     def _run_whisper(self, audio: Any, language: str | None, vocabulary: list[str]) -> dict[str, Any]:
         segments_source, info = self._model.transcribe(
@@ -248,6 +253,7 @@ class AudioToText(ManagedPredictor):
         self._diarization_pipeline = Pipeline.from_pretrained(
             self.PYANNOTE_DIARIZATION_MODEL, revision=pinned(self.PYANNOTE_DIARIZATION_MODEL)
         )
+        self._loaded_models[self.PYANNOTE_DIARIZATION_MODEL] = pinned(self.PYANNOTE_DIARIZATION_MODEL)
         _pyannote_patches.install(self._diarization_pipeline)
         self._diarization_pipeline.to(torch.device(self.device))
 
@@ -263,6 +269,7 @@ class AudioToText(ManagedPredictor):
         load_silero_vad = require("silero_vad", feature="AudioToText VAD").load_silero_vad
 
         self._vad_model = load_silero_vad()
+        self._loaded_models["silero-vad/bundled"] = package_revision("silero-vad")
 
     def _process_transcription_result(self, transcription_result: dict[str, Any]) -> Transcription:
         """Process raw transcription result into a Transcription object."""

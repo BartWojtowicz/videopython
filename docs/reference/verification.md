@@ -124,6 +124,39 @@ baseline. Zero-duration words retain their supplied times without invented lengt
 Scripts, transcripts, exports, and per-candidate notes remain local under
 `.cache/speech-candidates/`. No model downloads or paid APIs were used.
 
+## Saved-analysis reuse
+
+On 2026-09-09, a six-second cut from `cam1_1min.mp4` ran all five analysis stages
+with low sampling. Its SHA256 was
+`8438091834357f5677236ad8878a0441a77b07aa359b2f1b4f5ecdf5dd8e44e6`.
+Whisper used CUDA with VAD and diarization enabled; TransNetV2 used CPU; AST used
+CUDA. Scene captioning used the cached `qwen3.5:4b` model with 8192 context tokens
+and a 512-token output budget on the local Ollama service. Analysis took 36.48 s.
+This was a compatibility check, not a default-model performance baseline.
+
+All stages completed and the saved result recorded:
+
+| Model | Recorded revision |
+|---|---|
+| Whisper turbo | `0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf` |
+| Silero VAD | `package:6.2.1` |
+| Pyannote community diarization | `3533c8cf8e369892e6b79ff1bf80f7b0286a54ee` |
+| AST audio classification | `f826b80d28226b62986cc218e5cec390b1096902` |
+| TransNetV2 | `package:1.0.5` |
+| Qwen3.5 4B | `2a654d98e6fba55d452b7043684e9b57a947e393bbffa62485a7aac05ee4eefd` |
+| YuNet | `3cc26e7f1014a5ee5d74a42acee58bafc9d0a310` |
+
+Import preserved the result and rendered a catalog selection with analyzer creation
+blocked. The SDK test separately used a fresh stdio server process to import,
+inspect a failed/skipped analysis, retrieve catalog images, render a cut, and export
+the same result. It also checked exactly one source-hash call per import/export,
+changed-source rejection, and rejection of unsupported or missing provenance.
+
+Model identity does not establish analysis quality or guarantee identical results
+on another environment. Package revisions do not hash bundled weights. The pinned
+YuNet file was downloaded with a 3,800,000 byte/s limit; the other weights were cached.
+Local inputs, serialized results, scripts, and logs are under `.cache/saved-analysis/`.
+
 ## MCP workflow verification
 
 The stdio workflow passed on 2026-09-06 at commit

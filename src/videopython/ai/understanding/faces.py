@@ -53,8 +53,12 @@ class _FaceDetector(DetectorBase[DetectedFace]):
     def __init__(self, min_face_size: int = 30):
         super().__init__(backend="cpu")  # YuNet runs on CPU via OpenCV DNN
         self.min_face_size = min_face_size
+        self._loaded_models: dict[str, str | None] | None = None
         self._yunet: Any = None
         self._input_size: tuple[int, int] | None = None  # (w, h) currently set on the model
+
+    def model_provenance(self) -> dict[str, str | None] | None:
+        return self._loaded_models
 
     def execution_device(self) -> Literal["cpu", "cuda"]:
         """YuNet runs on CPU via OpenCV DNN."""
@@ -78,6 +82,7 @@ class _FaceDetector(DetectorBase[DetectedFace]):
             self.TOP_K,
         )
         self._input_size = (320, 320)
+        self._loaded_models = {f"{_YUNET_REPO}/{_YUNET_FILENAME}": pinned(_YUNET_REPO)}
 
     def _infer(self, images: list[np.ndarray]) -> list[list[DetectedFace]]:
         # YuNet has no batch API; detect one frame at a time.
@@ -162,6 +167,9 @@ class _FaceTrackerBase(ManagedPredictor):
             self._init_detector()
         assert self._detector is not None
         return self._detector
+
+    def model_provenance(self) -> dict[str, str | None] | None:
+        return self._detector.model_provenance() if self._detector is not None else None
 
     def unload(self) -> None:
         """Release the underlying face-detection model (idempotent)."""

@@ -51,6 +51,10 @@ class ManagedPredictor:
     # Attribute holding the resolved device passed to release_device_memory.
     _device_attr: str = "device"
 
+    def model_provenance(self) -> dict[str, str | None] | None:
+        """Return recorded model IDs and revisions, or None when unknown."""
+        return None
+
     def unload(self) -> None:
         """Drop the model reference(s) and release device memory. Idempotent."""
         for attr in self._model_attrs:

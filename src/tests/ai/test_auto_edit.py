@@ -28,6 +28,7 @@ from videopython.ai.auto_edit import (
 )
 from videopython.ai.video_analysis.models import (
     ALL_ANALYZER_IDS,
+    AnalysisProvenance,
     AnalysisRunInfo,
     AnalyzerOutcome,
     AudioAnalysisSection,
@@ -75,6 +76,7 @@ def _analysis(
     duration: float = 10.0,
 ) -> VideoAnalysis:
     return VideoAnalysis(
+        provenance=AnalysisProvenance(format_version=1, source_sha256=None, sampling="medium", models={}),
         source=VideoAnalysisSource(
             path=path, fps=fps, width=width, height=height, frame_count=frame_count, duration=duration
         ),

@@ -18,6 +18,8 @@ links work when the operating-system account can read them.
 | Tool or input | File access |
 |---|---|
 | `analyze_video(path)` | Reads the selected media, including its video, audio, and container metadata. |
+| `import_analysis(path)` | Reads saved JSON and the source file referenced by it to verify the digest. |
+| `export_analysis(source, output_path)` | Reads the cached source file to verify its digest. |
 | `build_catalog()` | Reads analyzed sources again to extract keyframes. |
 | `scene_keyframes(scene_ids)` | Reads analyzed sources again for requested keyframes that are not cached. |
 | `scene_transcripts(scene_ids)` | Returns transcript text held in the current catalog. |
@@ -36,6 +38,9 @@ operating system's temporary directory for intermediate media. Normal completion
 owned temporary files, but an abrupt process or machine failure can leave them behind.
 
 ## Output writes
+
+`export_analysis(source, output_path)` writes JSON at any path the server can write.
+It creates parent directories and replaces an existing file at that path.
 
 `run_edit(plan, output_path)` accepts any path that the process can write. It:
 
