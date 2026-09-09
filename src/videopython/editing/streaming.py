@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from types import TracebackType
-from typing import Any, get_args
+from typing import Any, Callable, get_args
 
 import numpy as np
 from tqdm import tqdm
@@ -593,6 +593,7 @@ def stream_segment(
     format: str = "mp4",
     preset: str = "medium",
     crf: int = 23,
+    on_frame: Callable[[int], None] | None = None,
 ) -> Path:
     """Render one segment, dispatching on whether it needs per-frame Python.
 
@@ -604,9 +605,11 @@ def stream_segment(
     """
     if not plan.effect_schedule:
         return stream_segment_filtergraph(
-            plan, output_path, with_audio=with_audio, format=format, preset=preset, crf=crf
+            plan, output_path, with_audio=with_audio, format=format, preset=preset, crf=crf, on_frame=on_frame
         )
-    return _stream_segment_framewise(plan, output_path, with_audio=with_audio, format=format, preset=preset, crf=crf)
+    return _stream_segment_framewise(
+        plan, output_path, with_audio=with_audio, format=format, preset=preset, crf=crf, on_frame=on_frame
+    )
 
 
 def stream_segment_filtergraph(
@@ -616,6 +619,7 @@ def stream_segment_filtergraph(
     format: str = "mp4",
     preset: str = "medium",
     crf: int = 23,
+    on_frame: Callable[[int], None] | None = None,
 ) -> Path:
     """Render a filter-only segment in ONE ffmpeg process (no rawvideo pipe).
 
@@ -693,7 +697,10 @@ def stream_segment_filtergraph(
     cmd += [str(output_path)]
 
     try:
-        _ffmpeg.run(cmd)
+        if on_frame is None:
+            _ffmpeg.run(cmd)
+        else:
+            _ffmpeg.run_with_progress(cmd, on_frame)
     except Exception:
         if output_path.exists():
             output_path.unlink()
@@ -708,6 +715,7 @@ def _stream_segment_framewise(
     format: str = "mp4",
     preset: str = "medium",
     crf: int = 23,
+    on_frame: Callable[[int], None] | None = None,
 ) -> Path:
     """Execute a streaming pipeline for a single segment.
 
@@ -795,6 +803,8 @@ def _stream_segment_framewise(
 
                     encoder.write_frame(frame)
                     frame_count += 1
+                    if on_frame is not None:
+                        on_frame(frame_count)
 
         return output_path
     except Exception:

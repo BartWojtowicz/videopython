@@ -12,11 +12,14 @@ from __future__ import annotations
 import json
 import sys
 from contextlib import redirect_stdout
+from dataclasses import asdict
+from functools import partial
 from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from mcp.server.fastmcp import FastMCP
+import anyio
+from mcp.server.fastmcp import Context, FastMCP
 from mcp.types import ImageContent, TextContent
 from pydantic import ValidationError
 
@@ -24,7 +27,7 @@ from videopython.ai.auto_edit import EditPlan, SpeechCandidateConfig, UnknownSce
 from videopython.ai.auto_edit import build_catalog as _build_scene_catalog
 from videopython.ai.auto_edit.catalog import extract_catalog_keyframes
 from videopython.ai.keyframe import downscale_keyframe, encode_png_b64
-from videopython.editing import VideoEdit
+from videopython.editing import RenderProgress, VideoEdit
 
 from ._models import (
     AnalyzeVideoResult,
@@ -222,7 +225,7 @@ def repair_edit(plan: dict[str, Any]) -> RepairEditResult:
 
 
 @mcp.tool()
-def run_edit(plan: dict[str, Any], output_path: str) -> RunEditResult:
+async def run_edit(plan: dict[str, Any], output_path: str, ctx: Context[Any, Any, Any]) -> RunEditResult:
     """Render an edit plan to an MP4 file (the path suffix is normalized to .mp4).
 
     Resolves scene ids, repairs + normalizes, validates, then renders. If the
@@ -239,7 +242,14 @@ def run_edit(plan: dict[str, Any], output_path: str) -> RunEditResult:
     errors = [_error_dict(e) for e in edit.check(metadata, context=context)]
     if errors:
         return RunEditResult(output_path=None, errors=errors)
-    out = edit.run_to_file(output_path, context=context)
+    sequence = 0
+
+    def report(event: RenderProgress) -> None:
+        nonlocal sequence
+        sequence += 1
+        anyio.from_thread.run(ctx.report_progress, sequence, None, json.dumps(asdict(event)))
+
+    out = await anyio.to_thread.run_sync(partial(edit.run_to_file, output_path, context=context, on_progress=report))
     return RunEditResult(output_path=str(out), errors=[])
 
 

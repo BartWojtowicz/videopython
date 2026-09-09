@@ -23,7 +23,7 @@ import dataclasses
 import json
 import tempfile
 from pathlib import Path
-from typing import Annotated, Any, Literal, Protocol, get_args, overload, runtime_checkable
+from typing import Annotated, Any, Callable, Literal, Protocol, get_args, overload, runtime_checkable
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SerializeAsAny
 
@@ -34,6 +34,7 @@ from videopython.editing.audio_ops import MusicBed, build_music_bed_filter_compl
 from videopython.editing.effects import Effect
 from videopython.editing.errors import PlanError, PlanErrorCode, PlanRepair, PlanValidationError
 from videopython.editing.operation import FilterCtx, Operation, _to_strict_schema
+from videopython.editing.progress import RenderProgress, _Progress
 from videopython.editing.streaming import (
     TRANSITION_TYPES,
     EffectScheduleEntry,
@@ -1618,6 +1619,8 @@ class VideoEdit(BaseModel):
         preset: ALLOWED_VIDEO_PRESETS = "medium",
         crf: int = 23,
         context: dict[str, Any] | None = None,
+        *,
+        on_progress: Callable[[RenderProgress], None] | None = None,
     ) -> Path:
         """Execute the plan, streaming directly to a file.
 
@@ -1633,6 +1636,8 @@ class VideoEdit(BaseModel):
         output_path = Path(output_path).with_suffix(f".{format}")
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
+        progress = _Progress(on_progress)
+        progress.start("compilation")
         plans = self._compile_streaming_plans(context)
         self._assert_music_bed_supported()
 
@@ -1654,10 +1659,20 @@ class VideoEdit(BaseModel):
 
         try:
             self._assert_transitions_runnable(plans)
+            progress.finish()
             # Stage 1: assemble the segments.
             target = _stage_target(is_last=not (has_post or has_bed))
             if len(plans) == 1:
-                assembled = stream_segment(plans[0], target, format=format, preset=preset, crf=crf)
+                progress.start("segment", total=None, unit="frames", segment_index=0)
+                assembled = stream_segment(
+                    plans[0],
+                    target,
+                    format=format,
+                    preset=preset,
+                    crf=crf,
+                    on_frame=progress.advance if on_progress is not None else None,
+                )
+                progress.finish()
             else:
                 # Realize each segment to its own temp file (effects + audio
                 # already baked by stream_segment's filter_complex), capturing
@@ -1670,19 +1685,31 @@ class VideoEdit(BaseModel):
                 temp_files: list[Path] = []
                 audible: list[bool] = []
                 try:
-                    for plan in plans:
+                    for index, plan in enumerate(plans):
                         tmp = tempfile.NamedTemporaryFile(suffix=f".{format}", delete=False)
                         tmp.close()
                         audible.append(source_has_audio_stream(plan.source_path))
-                        stream_segment(plan, Path(tmp.name), with_audio=True, format=format, preset=preset, crf=crf)
                         temp_files.append(Path(tmp.name))
+                        progress.start("segment", total=None, unit="frames", segment_index=index)
+                        stream_segment(
+                            plan,
+                            Path(tmp.name),
+                            with_audio=True,
+                            format=format,
+                            preset=preset,
+                            crf=crf,
+                            on_frame=progress.advance if on_progress is not None else None,
+                        )
+                        progress.finish()
 
+                    progress.start("assembly")
                     if all(seg.transition_in is None for seg in self.segments):
                         assembled = concat_files(temp_files, target)
                     else:
                         assembled = self._assemble_with_transitions(
                             temp_files, audible, target, format=format, preset=preset, crf=crf
                         )
+                    progress.finish()
                 finally:
                     for f in temp_files:
                         f.unlink(missing_ok=True)
@@ -1691,18 +1718,31 @@ class VideoEdit(BaseModel):
             # program (a synthetic single segment), so filter-class effects,
             # frame effects, and transforms all apply on the assembled timeline.
             if has_post:
+                progress.start("post_operations", total=None, unit="frames")
                 target = _stage_target(is_last=not has_bed)
                 assembled = self._apply_post_operations(
-                    assembled, target, context, format=format, preset=preset, crf=crf
+                    assembled,
+                    target,
+                    context,
+                    format=format,
+                    preset=preset,
+                    crf=crf,
+                    on_frame=progress.advance if on_progress is not None else None,
                 )
+                progress.finish()
 
             # Stage 3: mix the music bed under the assembled program.
             if has_bed:
+                progress.start("audio_mix")
                 speech = self._music_bed_speech_windows(context)
                 assembled = self._mix_music_bed_to_file(
                     assembled, output_path, speech, format=format, preset=preset, crf=crf
                 )
 
+                progress.finish()
+
+            progress.start("complete")
+            progress.finish()
             return assembled
         finally:
             for p in intermediates:
@@ -1720,6 +1760,7 @@ class VideoEdit(BaseModel):
         format: str,
         preset: str,
         crf: int,
+        on_frame: Callable[[int], None] | None = None,
     ) -> Path:
         """Apply ``post_operations`` as one pass over the assembled program.
 
@@ -1757,7 +1798,7 @@ class VideoEdit(BaseModel):
                 [PlanError(code=PlanErrorCode.STREAMING_UNSUPPORTED, location="post_operations")],
             )
         try:
-            return stream_segment(plan, output_path, format=format, preset=preset, crf=crf)
+            return stream_segment(plan, output_path, format=format, preset=preset, crf=crf, on_frame=on_frame)
         finally:
             for f in plan.owned_temp_files:
                 f.unlink(missing_ok=True)

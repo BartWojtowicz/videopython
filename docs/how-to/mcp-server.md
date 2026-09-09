@@ -73,6 +73,13 @@ regenerated. Installing a newer model does not change the settings saved in an i
 analysis. The [verification record](../reference/verification.md#saved-analysis-reuse)
 covers fresh-process import and rendering.
 
+## Follow a render
+
+Enable progress notifications for the `run_edit` request in your client. Display the
+stage and completed work from the notification's JSON message. Wait for the final tool
+result before using its output path. See the [notification contract](../reference/mcp.md)
+and [measured client check](../reference/verification.md#render-progress).
+
 ## Keep long footage from flooding the context
 
 Shortlist scenes from catalog text, then request keyframes for those ids. The server

@@ -14,7 +14,7 @@ import subprocess
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, BinaryIO, Iterator, Sequence, cast
+from typing import Any, BinaryIO, Callable, Iterator, Sequence, cast
 
 from videopython._exceptions import FFmpegProbeError, FFmpegRunError
 
@@ -48,6 +48,29 @@ def run(cmd: Sequence[str], *, stdin: bytes | None = None) -> bytes:
     if result.returncode != 0:
         raise FFmpegRunError(f"ffmpeg failed (exit {result.returncode}): {result.stderr.decode(errors='replace')}")
     return result.stdout
+
+
+def run_with_progress(cmd: Sequence[str], on_frame: Callable[[int], None]) -> None:
+    """Run an FFmpeg file output and drain frame progress until the process exits."""
+    argv = [cmd[0], "-progress", "pipe:1", "-stats_period", "0.25", "-nostats", *cmd[1:]]
+    with tempfile.TemporaryFile() as errors:
+        try:
+            proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=errors)
+        except FileNotFoundError as e:
+            raise FFmpegRunError(f"binary not found on PATH: {cmd[0]}") from e
+        try:
+            for line in cast(BinaryIO, proc.stdout):
+                key, _, value = line.partition(b"=")
+                if key == b"frame":
+                    on_frame(int(value))
+            if proc.wait() != 0:
+                errors.seek(0)
+                raise FFmpegRunError(
+                    f"ffmpeg failed (exit {proc.returncode}): {errors.read().decode(errors='replace')}"
+                )
+        finally:
+            _terminate(proc)
+            cast(BinaryIO, proc.stdout).close()
 
 
 def probe(path: str | Path, *, extra_args: Sequence[str] | None = None) -> dict[str, Any]:

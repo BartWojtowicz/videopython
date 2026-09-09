@@ -157,6 +157,42 @@ on another environment. Package revisions do not hash bundled weights. The pinne
 YuNet file was downloaded with a 3,800,000 byte/s limit; the other weights were cached.
 Local inputs, serialized results, scripts, and logs are under `.cache/saved-analysis/`.
 
+## Render progress
+
+On 2026-09-09, seconds 10–20 of `cam1_1min.mp4` were rendered at 640×360 with
+H.264 medium/CRF 23, first with resizing alone and then with seeded film grain
+(intensity 0.05, seed 7). Source SHA256:
+`4a258bf9eb50a120485399a60768479bec8b72fae2e98de21361c751eff350f0`.
+Three renders per setting alternated progress off/on after the test suite finished.
+
+| Path | Median without callbacks | Median with callbacks |
+|---|---:|---:|
+| FFmpeg filter graph | 1.286 s | 1.320 s |
+| Python frame effects | 2.208 s | 2.187 s |
+
+The 34 ms filter-path difference and negative frame-path difference are small-sample
+observations, not a stable overhead bound or speedup. Decoded video and audio hashes
+were identical with callbacks enabled and disabled for each path.
+
+A separate official Python MCP SDK client imported the analysis in a new stdio
+server process and rendered the full Cam1 source. It received 37 notifications over
+11.73 s. A non-final segment update reported 53 frames at 1.05 s, well before the
+final tool result. The notification sequence increased throughout, the final event
+reported success, and the exported media passed full FFmpeg decoding. This checks
+SDK transport delivery; it does not establish progress display in a desktop client
+or external agent. Four further full-source requests alternated notifications off/on
+(two each). Median tool time was 12.52 s without notifications and 11.71 s with
+notifications (40–42 events). Decoded audio/video hashes matched. The negative
+difference shows run-to-run variation; this sample establishes no measurable
+notification penalty, not a transport speedup or general overhead guarantee.
+
+Automated checks cover filter and Python output equivalence, transitions, post-operations,
+music mixing, and stage order. An invalid FFmpeg encoder emits no successful segment
+or final event; a callback exception reaps the process and closes its progress pipe.
+Updates are throttled to 0.25 s except at stage boundaries. Assembly and audio mixing
+report whole-step boundaries, without intermediate frame counts. Scripts, timings,
+notification logs, and exports remain under `.cache/render-progress/`.
+
 ## MCP workflow verification
 
 The stdio workflow passed on 2026-09-06 at commit

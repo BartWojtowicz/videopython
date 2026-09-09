@@ -142,6 +142,17 @@ return the remaining errors.
 
 `output_path` is `null` when the plan cannot be resolved or validated.
 
+When the request includes `_meta.progressToken`, `run_edit` sends MCP progress
+notifications during rendering. The numeric `progress` is a monotonically increasing
+notification sequence; `total` is omitted. The `message` is JSON containing the
+[`RenderProgress` fields](video-edit.md#render-progress). Counts inside the message
+apply to one stage and can reset. Do not display the notification sequence as a
+percentage. The tool's final result schema is unchanged.
+
+Rendering runs in a worker thread, leaving the server event loop available to deliver
+notifications. Progress uses the MCP transport, not prints to stdout. Clients that do
+not request progress still receive the usual final result.
+
 ## Error objects
 
 Errors from `validate_edit`, `repair_edit`, and `run_edit` have a stable `code` and a diagnostic `message`. Code-specific fields are:

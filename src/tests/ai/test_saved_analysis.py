@@ -54,11 +54,20 @@ server.main()
                 catalog = await session.call_tool("build_catalog", {"sources": [str(analysis.source.path)]})
                 assert not catalog.isError
                 scene = json.loads(catalog.content[0].text)["scenes"][0]
+                notifications = []
+
+                async def progress(number, total, message):
+                    notifications.append((number, total, json.loads(message)))
+
                 rendered = await session.call_tool(
                     "run_edit",
                     {"plan": {"segments": [{"scene_id": scene["id"]}]}, "output_path": str(tmp_path / "out.mp4")},
+                    progress_callback=progress,
                 )
                 assert not rendered.isError
+                assert [n for n, _, _ in notifications] == list(range(1, len(notifications) + 1))
+                assert notifications[-1][2]["stage"] == "complete" and notifications[-1][2]["finished"]
+                assert any(e["stage"] == "segment" and e["completed"] > 0 for _, _, e in notifications)
                 assert Path(rendered.structuredContent["output_path"]).exists()
                 exported = await session.call_tool(
                     "export_analysis",

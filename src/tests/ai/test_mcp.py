@@ -8,6 +8,7 @@ import json
 from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -220,7 +221,7 @@ def test_run_edit_renders(tmp_path: Path) -> None:
     server._analyses = {str(SMALL_VIDEO_PATH): _real_analysis()}
     server.build_catalog()
     out_path = tmp_path / "out.mp4"
-    result = server.run_edit({"segments": [{"scene_id": f"{_stem()}#0"}]}, str(out_path))
+    result = asyncio.run(server.run_edit({"segments": [{"scene_id": f"{_stem()}#0"}]}, str(out_path), AsyncMock()))
     assert result.errors == []
     assert result.output_path
     assert out_path.exists()
@@ -245,7 +246,9 @@ def test_validate_edit_schema_invalid_returns_structured_error() -> None:
 def test_run_edit_resolve_failure_returns_errors(tmp_path: Path) -> None:
     server._analyses = {str(SMALL_VIDEO_PATH): _real_analysis()}
     server.build_catalog()
-    result = server.run_edit({"segments": [{"scene_id": "missing#0"}]}, str(tmp_path / "out.mp4"))
+    result = asyncio.run(
+        server.run_edit({"segments": [{"scene_id": "missing#0"}]}, str(tmp_path / "out.mp4"), AsyncMock())
+    )
     assert result.output_path is None
     assert result.errors[0].code == "unknown_scene_ids"
 
