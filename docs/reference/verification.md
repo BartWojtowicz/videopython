@@ -124,6 +124,37 @@ baseline. Zero-duration words retain their supplied times without invented lengt
 Scripts, transcripts, exports, and per-candidate notes remain local under
 `.cache/speech-candidates/`. No model downloads or paid APIs were used.
 
+## Source-word reconstruction
+
+The 2026-09-09 investigation used the frozen All-In English transcription for source
+seconds 750–1050: 27 turns, 980 words, and 72 dubbing phrases. Transcription JSON SHA256:
+`3cef5573dedb1b2bf76b66b0d994122494cbe9af83dcaee34ad821c9cef0fc6c`.
+No inference, translation tuning, or changes to the evaluation data were made.
+
+`AudioToText` retains Whisper's word strings and initial segment text. Speaker
+regrouping calls `Transcription(words=...)`, which calls `from_words()` and inserts
+spaces between all tokens. Reproductions from this recording include:
+
+| Cut-relative start | Supplied tokens | Reconstructed text |
+|---|---|---|
+| 39.14 s | `" dot"`, `"-com"` | `" dot -com"` |
+| 221.36 s | `" 3"`, `",000"` | `" 3 ,000"` |
+| 226.92 s | `" 5"`, `",000"` | `" 5 ,000"` |
+| 239.82 s | `" supply"`, `"-demand"` | `" supply -demand"` |
+
+The constructor preserved raw word text, timing, and speaker values in every
+reproduction. Current phrase splitting preserved the non-whitespace source text
+for every turn; it did not introduce or repair these upstream boundaries.
+
+**Decision:** retain the explicit single-space constructor contract. Concatenating
+all tokens would repair these examples but would break ordinary inputs such as
+`["hello", "world"]`; punctuation and whitespace heuristics cannot establish the
+caller's intended token convention. A future change needs an explicit spacing
+contract and migration. Preserve original segment text for exact-text workflows,
+and review source errors separately from translation errors. Scripts and reproductions
+remain in `.cache/dubbing/word-reconstruction/`. This investigation does not fix
+numeric recognition, translation, or speech pronunciation.
+
 ## Saved-analysis reuse
 
 On 2026-09-09, a six-second cut from `cam1_1min.mp4` ran all five analysis stages
