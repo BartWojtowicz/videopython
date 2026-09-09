@@ -36,8 +36,7 @@ edit.run_to_file("output.mp4")
 ```
 
 An edit is a plain data structure — a dict, or the JSON an LLM emits — validated before
-any frame is touched and rendered by a streaming engine whose memory stays flat
-regardless of source length.
+any frame is touched and rendered by a streaming engine whose frame buffers do not grow with source length.
 
 ## Where to go next
 
@@ -49,7 +48,7 @@ The documentation is split by what you are trying to do.
 
 ### [Tutorials](tutorials/index.md)
 
-Learn by doing. Start here if you are new: two short, guaranteed-to-work lessons that
+Learn by doing. Start here if you are new: two short lessons that
 take you from an installed package to a rendered video.
 
 </div>
@@ -86,18 +85,12 @@ LLM-first design, and the local AI stack.
 ## What is in the box
 
 - **Editing** — multi-segment plans with cuts, resize, crop, speed, freeze, silence
-  removal, and ~25 effects (blur, color grading, Ken Burns, fades, overlays, subtitles).
+  removal, and pixel effects (blur, color grading, Ken Burns, fades, overlays, subtitles).
 - **Local AI** — generate images, video, speech and music; transcribe with diarization;
   detect scenes, faces and objects; caption shots with a vision model. No cloud API keys.
 - **LLM control** — every operation is a Pydantic model, so the JSON Schema *is* the
-  tool schema. Plans validate, self-repair, and normalize before they render.
+  tool schema. Callers can validate, repair mechanical errors, and normalize plans before rendering.
 - **Agent control** — `videopython-mcp` exposes the whole auto-edit pipeline as
   [Model Context Protocol](https://modelcontextprotocol.io) tools.
 
-```bash
-pip install videopython              # core editing
-pip install "videopython[ai]"        # + all local AI features (GPU recommended)
-pip install "videopython[mcp]"       # + the focused MCP agent-editing stack
-```
-
-Python `>=3.11, <3.15`. See [Install](install.md) for FFmpeg, Ollama, and hardware notes.
+See [Install](install.md) for package extras, FFmpeg, Ollama, and hardware requirements.

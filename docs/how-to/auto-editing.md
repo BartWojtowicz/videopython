@@ -33,8 +33,8 @@ without re-running the model.
    `scene_id`, exact bounds, caption, transcript, and a keyframe image.
 3. **Plan** — the planner sees the catalog (text + keyframes) and your brief, and authors
    a plan that references scenes **by id** plus operations.
-4. **Resolve and run** — ids map back to exact bounds, and the plan is repaired,
-   dimension-normalized and validated before rendering.
+4. **Resolve** — ids map back to exact bounds, and the plan is repaired,
+   dimension-normalized and validated. Call `run_to_file()` to render the returned edit.
 
 The model never authors timestamps, so its temporal imprecision cannot reach the render.
 Precise bounds come from scene detection; editorial judgment comes from the model. See

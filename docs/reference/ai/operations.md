@@ -5,7 +5,7 @@ Editing operations that run a model. They live in `videopython.ai` rather than
 ([why](../../explanation/architecture.md#why-ai-effects-live-in-ai-not-editing)), but they
 are ordinary registry entries: put them in a segment's `operations` list like any other.
 
-They register only after `import videopython.ai`.
+They register only after `from videopython.ai import FaceTrackingCrop, ObjectDetectionOverlay`.
 
 ## FaceTrackingCrop
 

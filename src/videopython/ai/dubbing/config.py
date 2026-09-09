@@ -31,7 +31,7 @@ class DubbingConfig(BaseModel):
             on, a single hallucinated filler phrase cascades through the rest
             of the file. See ``AudioToText`` for the full rationale.
         no_speech_threshold: Forwarded to ``AudioToText``. Whisper's
-            no-speech gate; raise to drop more low-confidence windows.
+            no-speech probability cutoff; lower it to make that gate easier to trigger.
         logprob_threshold: Forwarded to ``AudioToText``. Whisper's average
             log-probability gate.
         vocabulary: Forwarded to ``AudioToText``. Optional list of brand

@@ -56,17 +56,17 @@ Two mechanisms, at different points in the pipeline.
 **At decode time**, `json_schema(strict=True)` emits a closed grammar — every object
 `additionalProperties: false`, every property `required`, the union as an `anyOf` of
 closed variants with no `discriminator`, `$defs` hoisted to the root. Optionality follows
-the Pydantic type, so a grammar-valid response always parses back. With
-grammar-constrained decoding, a whole class of violations (enums, required fields,
-`window.start >= 0`) simply cannot be generated.
+the Pydantic type. A decoder that enforces these features can prevent unknown fields
+and invalid enum values. Structural validators, numeric bounds, and cross-field
+rules still require parsing and validation.
 
 **After decode**, cross-field constraints take over — `timestamp < duration`, segment
 dimension equality. No grammar can express those, so they live in
 `check()` / `repair()` / `normalize_dimensions()`. See [the plan
 lifecycle](plan-lifecycle.md).
 
-The division is deliberate: push everything that a grammar *can* enforce into the
-grammar, and make everything else structured, collectable, and mostly auto-fixable.
+The schema describes the model input. Validation checks whether that input makes
+sense for the selected media. Mechanical repairs handle only unambiguous changes.
 
 ## Selection by id
 
@@ -101,9 +101,8 @@ primitives described above.
 
 ## AI operations are registered lazily
 
-`face_crop` and `object_detection_overlay` appear in the registry, and therefore in the
-schema, only after `videopython.ai` has been imported. That follows from the [lazy AI
-imports](architecture.md#why-import-videopython-is-fast-even-with-ai-installed) — the
-cost of not paying for torch on every import is that AI ops are invisible until you ask
-for them. If your plans may use them, `import videopython.ai` before generating the
-schema.
+AI operation classes register when their defining modules load. Import
+`FaceTrackingCrop` and `ObjectDetectionOverlay` from `videopython.ai` before
+schema generation or parsing a plan that uses them. Importing `videopython.ai`
+alone leaves its lazy exports unloaded. See the
+[LLM guide](../how-to/llm-plans.md#include-ai-operations) for the import example.

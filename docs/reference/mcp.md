@@ -47,7 +47,14 @@ Validate an `EditPlan` (which references catalog `scene_id`s). Returns every pro
 once as structured errors.
 
 ```json
-{"valid": false, "errors": [{"code": "unknown_scene_ids", "value": ["clip#9"], "message": "..."}]}
+{
+  "valid": false,
+  "errors": [{
+    "code": "unknown_scene_ids", "message": "Unknown scene ids: ['clip#9']",
+    "value": ["clip#9"], "location": null, "op": null, "field": null,
+    "limit": null, "detail": null
+  }]
+}
 ```
 
 ### `repair_edit(plan)`
@@ -86,7 +93,8 @@ changelog, **for inspection** — that edit is a concrete `VideoEdit`, not a re-
 }
 ```
 
-`edit` is `null` when resolution fails. Each repair always has `location`, `field`,
+`edit` is `null` when resolution fails. A returned edit has been repaired, but
+`errors=[]` here does not establish that it passes a new validation check. Each repair always has `location`, `field`,
 `old`, `new`, and `code`.
 
 ### `run_edit(plan, output_path)`
@@ -102,13 +110,15 @@ return the remaining errors.
 
 ## Error objects
 
-Every error has a stable `code` and a diagnostic `message`. Code-specific fields are:
+Errors from `validate_edit`, `repair_edit`, and `run_edit` have a stable `code` and a diagnostic `message`. Code-specific fields are:
 
 - plan validation: `location`, `op`, `field`, `value`, `limit`, and `detail`;
 - unknown scene ids: `value`, containing the unknown ids;
 - invalid plan schema: `detail`, containing Pydantic error records.
 
-Fields that do not apply are `null`. Error messages are for diagnostics; branch on
+Fields that do not apply are `null`. `scene_keyframes` instead returns a text block
+with `code`, `value`, and `message` for unknown ids. Missing catalogs and failures
+outside plan validation can surface as MCP tool errors. Error messages are for diagnostics; branch on
 `code` and structured fields instead.
 
 ## Resource

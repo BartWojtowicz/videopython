@@ -1,8 +1,7 @@
 # Tutorials
 
 Two lessons for someone who has never used videopython. They are meant to be typed out
-in order, top to bottom — every step is safe to run and every step produces something
-you can play back.
+in order, top to bottom. Each lesson ends with a rendered video.
 
 Tutorials teach; they do not try to cover the whole API. When you want to accomplish a
 particular task, switch to the [how-to guides](../how-to/index.md); when you want the
@@ -33,6 +32,5 @@ video. Needs `pip install "videopython[ai]"`; runs on CPU.
 ## What you need
 
 - videopython installed, with FFmpeg on your PATH — see [Install](../install.md).
-- One `.mp4` file to work with. Any video will do; free clips are available from
-  [Pexels](https://www.pexels.com/videos/) if you don't have one. Tutorial 2 needs a
-  video with speech in it.
+- One `.mp4` file at least 28 seconds long for Tutorial 1. Tutorial 2 needs
+  a landscape video with speech.

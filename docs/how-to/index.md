@@ -16,6 +16,7 @@ Task-oriented recipes. Each one assumes you already know the basics from the
   video, with narration and crossfades.
 - [Dub a video into another language](dubbing.md) — translate, clone the voice, and
   re-time it onto the source.
+- [Update dubbing timing consumers](update-dubbing.md) — migrate timing calls and saved results to 0.61.2.
 
 Subtitling is covered end to end in
 [Tutorial 2](../tutorials/subtitles.md).
@@ -35,3 +36,7 @@ To inspect and replay a complete JSON-plan example without a model, see
 
 The design behind all three is described in
 [LLM-first design](../explanation/llm-first-design.md).
+
+## Verification
+
+- [Verify local AI models](verify-models.md) — run the repository harnesses and record model checks.

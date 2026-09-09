@@ -27,23 +27,20 @@ while a model that emitted a segment ending past the source would produce a stru
 them repairable. Deferring numbers to validation gives every numeric violation the same
 treatment: structured, collectable, and often auto-fixable.
 
-## The four validation entry points
+## Validation and caller input
 
-| Call | Reports | Raises | Use for |
-|---|---|---|---|
-| `validate()` / `validate_with_metadata(meta)` | First failure | `PlanValidationError` | Scripts, a final gate |
-| `check(meta)` | **Every** error, as a list | never | Refine loops |
-| `repair(meta)` | `(edit, changelog)` | only on a segment `end` past the source | Fixing mechanical faults |
-| `normalize_dimensions(meta, target)` | `(edit, changelog)` | never | Making concat geometry hold |
+`validate()` stops at the first failure. `check()` collects independent plan errors,
+so a caller can correct several faults in one round. A failed operation can prevent
+checks that depend on its predicted output. Both work without decoding video frames.
+Supplied metadata avoids video probes, but referenced assets can still be inspected.
 
-All of them chain each operation's `predict_metadata` across the plan and check segment
-bounds, effect windows, and concatenation compatibility. None of them decode a frame;
-`validate_with_metadata` does not even open the file.
+Repair and dimension normalization return new plans with change records. They do
+not replace validation. All metadata-taking methods require an entry for each
+source; an incomplete map raises before the plan can be checked.
 
-`PlanValidationError` subclasses `ValueError`, so `except ValueError` keeps working, and
-carries structured `PlanError`s: `code` (a small enum), `location` (e.g.
-`"segments[1].operations[0]"`), `field`, `value`, `limit`. **Branch on `code`, never on
-the message text.**
+See the [validation reference](../reference/video-edit.md#validation-repair-normalization)
+for signatures and return types. Branch on `PlanError.code` and structured fields,
+not diagnostic message text.
 
 ## What `repair()` will and will not do
 
@@ -55,6 +52,7 @@ It clamps only what has one obvious correct answer, and records every change in 
 - time-valued op parameters past the clip end (`freeze_frame.timestamp` and friends),
   generically, via each op's declared time fields;
 - a negative segment `start` to `0`;
+- a transition overlap to just below the shorter adjacent segment;
 - with `clamp_segment_end=True`, a segment `end` past the source to the source end. Off by
   default, because shortening a segment changes editorial intent.
 
@@ -76,12 +74,11 @@ So it is a first-class method. Given a target — an explicit `(width, height)`,
 whose predicted output differs, and returns the usual changelog. The "all segments share
 dimensions" invariant becomes satisfiable by construction.
 
-Like `repair()` and `check()`, it is best-effort and non-raising: a segment it cannot
-predict yet is left untouched and deferred.
+It is best-effort: a segment it cannot predict yet is left untouched and deferred.
 
 ## The one thing the runner tolerates
 
-A duration-shrinking operation (`speed_change`, `freeze_frame`) ordered *before* a
+A duration-shrinking operation (`speed_change`, `silence_removal`) ordered *before* a
 windowed effect can leave its endpoints past the now-shorter clip. This is common,
 harmless, and unambiguous, so `run_to_file()` clamps them rather than failing. A window
 that starts at or after the new duration becomes an empty no-op.
@@ -99,7 +96,8 @@ edit, dim_repairs = edit.normalize_dimensions(source_metadata, "largest")
 errors = edit.check(source_metadata)                   # whatever is left, all at once
 if errors:
     ...  # re-prompt with the previous plan + the full structured list
-edit.run_to_file("out.mp4")
+else:
+    edit.run_to_file("out.mp4")
 ```
 
 `source_metadata` leads every signature in the family, so the calls read the same way. The

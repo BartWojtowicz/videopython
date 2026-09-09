@@ -5,7 +5,7 @@ detected scene runs the scene VLM, the audio classifier, and the per-shot face t
 The result is one serializable, scene-first `VideoAnalysis`.
 
 ```python
-from videopython.ai import VideoAnalyzer
+from videopython.ai import VideoAnalysis, VideoAnalyzer
 
 analysis = VideoAnalyzer().analyze_path("video.mp4")
 

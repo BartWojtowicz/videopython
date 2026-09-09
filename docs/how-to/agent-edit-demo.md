@@ -1,6 +1,6 @@
 # Reproduce the agent-authored edit demo
 
-This demo turns the repository's landscape dog clip into an eight-second vertical cut.
+This demo turns a landscape clip using the dog demo's edit plan into an eight-second vertical cut.
 It is a deterministic replay of the JSON plan an LLM or MCP agent can author, so it
 does not need an API key, a model, or the `[ai]` extra.
 
@@ -10,15 +10,16 @@ does not need an API key, a model, or the `[ai]` extra.
 
 ## Run it
 
-Clone the repository, install FFmpeg, and run:
+Clone the repository, install FFmpeg, and provide a landscape video at least ten
+seconds long and at least 400×500 pixels. Run:
 
 ```bash
 uv sync
-uv run python examples/agent_edit_demo.py
+uv run python examples/agent_edit_demo.py --source input.mp4 --output demo.mp4
 ```
 
-The script reads `src/tests/test_data/big_video.mp4` and writes
-`docs/assets/agent-edit-demo.mp4`. Pass `--source` or `--output` to use different paths.
+The original dog source is a local test fixture and is not included in a clean
+checkout. `--source` replaces that default; `--output` selects the rendered file.
 
 ## Give an agent the same brief
 

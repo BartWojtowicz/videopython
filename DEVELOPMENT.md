@@ -10,19 +10,9 @@
     └── videopython # Library code
 ```
 
-The `videopython` library is split into four subpackages, layered by dependency:
-
-* `videopython.audio` — `Audio` container and analysis. Uses shared package internals.
-* `videopython.base` — `Video`, I/O primitives, shared result types. Depends on `audio`.
-* `videopython.editing` — `Operation`/`Effect` foundation and the `VideoEdit` plan runner. Depends on `base` and `audio`.
-* `videopython.ai` — generation, understanding, dubbing, and AI-only transforms. Depends on `base`, `audio`, and optionally `editing`. Only this subpackage requires the `[ai]` extra.
-
-The package direction and the "no AI imports in `base`/`audio`/`editing`" invariant
-are enforced by `src/tests/test_import_isolation.py`.
-
-Why the layering (and the lazy AI re-exports) look like this is written up for users in
-[Architecture](https://videopython.com/explanation/architecture/) — update that page when
-the structure changes.
+Package boundaries and lazy imports are described in
+[Architecture](docs/explanation/architecture.md). The dependency direction is
+checked by `src/tests/test_import_isolation.py`.
 
 ## Running locally
 
@@ -45,18 +35,17 @@ uv run pytest src/tests/editing
 uv run pytest src/tests/ai
 ```
 
-There are no markers and no skipped tiers: **every test in the suite runs on a
-GitHub runner** with the base and development dependencies — no GPU, AI extra,
-or model downloads. The AI tests use lightweight fakes for the model runtimes;
+The default suite runs on a GitHub runner with base and development dependencies.
+It needs no GPU, AI extra, or model downloads. The AI tests use lightweight fakes for the model runtimes;
 small dependencies needed to test algorithms directly belong to the development
-dependency group.
+dependency group. Tests must not call paid APIs.
 
 That means the suite cannot tell you whether a *model* works, only whether the code
 around it does. A fake returns whatever the test handed it. A maintainer verifies
 real-model behaviour with `scripts/verify_ai_models.py`.
 
 To check a test really is runner-feasible, run it without the AI dependency group
-and against an empty model cache:
+and against an empty model cache (Bash):
 
 ```bash
 HF_HOME=$(mktemp -d) HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 uv run --isolated --no-group ai pytest src/tests/ai
@@ -64,13 +53,10 @@ HF_HOME=$(mktemp -d) HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 uv run --isolated -
 
 ### Verifying AI models
 
-Before a release that changes an AI integration, dependency, or default model, run
-`scripts/verify_ai_models.py` on a GPU machine with a representative video. Follow the
-cache-warming and timing protocol in the [verification
-records](docs/reference/verification.md). Do not release an applicable change until all
-selected checks pass. Published performance baselines must use the public API defaults;
-label reduced settings as compatibility checks. The dub check fails on missing timing
-measurements or translation/synthesis failures. It reports excessive speeds for listening review.
+Before releasing a change to an AI integration, dependency, or default model, run
+all affected real-model checks. Follow [Verify local AI models](docs/how-to/verify-models.md)
+and record results in the [verification records](docs/reference/verification.md).
+The release workflow does not enforce this manual check.
 
 ### Linting & type checking
 
@@ -100,8 +86,9 @@ uv run mkdocs serve          # live preview at http://127.0.0.1:8000
 uv run mkdocs build --strict # render to ./site; fails on broken internal links
 ```
 
-Run the `--strict` build before opening a docs PR — it is what catches a link to a page
-or anchor that no longer exists.
+Run the strict build before opening a documentation PR. Link and anchor warnings
+are errors with the repository's `mkdocs.yml` settings. The build cannot prove that
+an example runs or that a statement matches the code; check those separately.
 
 #### Structure
 
@@ -123,8 +110,7 @@ Practical consequences when you add something:
   first hour of using the library.
 * Design decisions belong in `explanation/`, so reference pages stay skimmable. If you
   find yourself writing "because" on a reference page, move it.
-* Renaming or moving a page → add an entry to `redirect_maps` in `mkdocs.yml`. The site is
-  published and linked from PyPI, so URLs are part of the contract.
+* Renaming or moving a page → update navigation, links, and anchors in the same change.
 
 Docstrings are the source for reference content: mkdocstrings pulls them in Google style,
 so a well-documented `Operation` needs almost nothing hand-written on the page.
@@ -149,9 +135,8 @@ be satisfied, fix the metadata rather than patching it locally:
 
 The `pip_resolve` CI job (`.github/workflows/pip-resolve.yml`) builds the wheel and
 resolves the core, `[ai]`, and `[mcp]` dependency graphs with pip on every supported
-Python version, on every push and weekly on a schedule. The schedule matters because
-these breakages arrive from upstream releases tightening their pins, not from our own
-commits.
+Python version, in main-branch and pull-request CI, and weekly on a schedule.
+The scheduled check detects conflicts introduced by upstream dependency releases.
 
 The `platform_smoke` CI job installs the built wheel on Ubuntu, macOS, and Windows. It
 checks the required FFmpeg capabilities, renders a short clip, imports the public
@@ -161,11 +146,10 @@ package layers, and performs an MCP tool and resource handshake.
 
 `[ai]` depends on
 [`videopython-chatterbox`](https://github.com/BartWojtowicz/videopython-chatterbox),
-our fork of `chatterbox-tts`, published to PyPI. It is upstream's source with
-corrected dependency metadata — upstream pins `torch==2.6.0`, `diffusers==0.29.0`
-and `transformers==5.2.0` with `==`, which cannot be satisfied alongside the rest of
-`[ai]` (`pyannote-audio` alone needs `torch>=2.8`). The import name is still
-`chatterbox`, so no application code changes.
+our fork of `chatterbox-tts`, published to PyPI. It corrects dependency metadata
+that conflicts with the AI stack and fixes short-text alignment. The import name
+is `chatterbox`. See the dependency declarations in `pyproject.toml` and the
+[0.54.1 release notes](RELEASE_NOTES.md#0541) for the original resolver failure.
 
 Resync when upstream ships a release we want. Both distributions install a top-level
 `chatterbox` package, so they must never be installed together.
@@ -173,8 +157,14 @@ Resync when upstream ships a release we want. Both distributions install a top-l
 ## Releasing
 
 To release a new version:
-1. Update `version` in `pyproject.toml`
-2. Add a new section in `RELEASE_NOTES.md` with the matching version (e.g., `## 0.7.0`)
-3. Push to `main`
 
-CI will validate that the versions match, run tests, create a GitHub release, and publish to PyPI.
+1. Complete the applicable real-model verification described above.
+2. Update `version` in `pyproject.toml` and refresh `uv.lock` with `uv lock`.
+3. Add a matching version section at the top of `RELEASE_NOTES.md`.
+4. Run tests, `uv run pre-commit run --all-files`, and the strict documentation build.
+5. Review the diff and merge the release changes to `main` after push approval.
+
+A push to `main` that changes `RELEASE_NOTES.md` starts `.github/workflows/publish.yml`.
+It checks that the first release heading matches the package version. If that tag
+already exists, it skips publication. Otherwise it runs CI, creates a GitHub release,
+and publishes to PyPI. Documentation deploys separately on pushes to `main`.

@@ -36,11 +36,8 @@ active speakers per chunk can hold 32 shared plus 96 pooled frame rows. This use
 more frame-tensor memory than the upstream batch of 32 pairs; it is not a fourfold
 estimate of total GPU memory. The measured optimization retains this batching strategy.
 
-On a 30-minute five-speaker recording, sharing frame extraction reduced warm diarization
-time from 21.18s to 16.16s, with identical speaker labels and exact timestamps. Small
-floating-point differences remain in the embeddings, so identical output is not
-guaranteed for every recording. See the [verification record](../verification.md#diarization-optimization-0611)
-for the tested inputs, comparison method, and full transcription timing.
+Measured timing and comparison limits are in the
+[diarization verification record](../verification.md#diarization-optimization-0611).
 
 ### Downstream speaker identification
 
@@ -62,7 +59,7 @@ Three Whisper decoder kwargs are surfaced for noisy or sparse-speech audio. Defa
 `no_speech_threshold=0.6`, `logprob_threshold=-1.0`.
 
 ```python
-AudioToText(no_speech_threshold=0.85)       # tighter gate under heavy ambient music
+AudioToText(no_speech_threshold=0.4)       # lower the no-speech probability cutoff
 AudioToText(condition_on_previous_text=True)  # Whisper's upstream default; helps on clean podcasts
 ```
 
@@ -110,7 +107,7 @@ for segment in result.segments:
 ## AudioClassifier
 
 Sound, music and audio-event classification with timestamps, using an Audio Spectrogram
-Transformer (0.485 mAP on AudioSet).
+Transformer.
 
 ```python
 from videopython.ai import AudioClassifier
@@ -140,7 +137,7 @@ the model returns valid JSON directly.
 ```python
 from videopython.ai import SceneVLM
 
-vlm = SceneVLM(model="llava")
+vlm = SceneVLM()
 description = vlm.analyze_frame(frame_array)
 
 description.caption      # "A man in a cap speaks into a microphone."
@@ -196,8 +193,9 @@ Runs a D-FINE COCO model and returns [`DetectedObject`](#videopython.base.Detect
 normalized bounding boxes sorted by confidence. Weights (Apache-2.0) download from
 HuggingFace on first use; class names come from the model config.
 
-D-FINE uses VOC-style COCO names, so `class_filter` must use the model's exact spellings
-(`motorbike`, `tvmonitor`).
+`class_filter` accepts D-FINE's VOC-style names and their standard COCO equivalents
+(for example, `motorbike` or `motorcycle`, and `tvmonitor` or `tv`). Names are
+normalized for case and spacing; unknown names are logged after the model loads.
 
 ```python
 from videopython.ai import ObjectDetector

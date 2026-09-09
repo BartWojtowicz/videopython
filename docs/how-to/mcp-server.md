@@ -23,7 +23,7 @@ boundary](../explanation/mcp-security.md) before connecting an agent.
 1. `analyze_video(path)` for each source — scenes, transcript, captions, cached
    server-side. Inspect `analyzers` and retry or change the plan if a required analyzer
    failed. See the [status values](../reference/mcp.md#analyze_videopath-profileediting).
-2. `build_catalog()` — returns every candidate scene as JSON text, plus up to 12
+2. `build_catalog()` — returns every candidate scene as JSON text, plus a limited set of
    downscaled keyframes. Any omitted ids are named in a trailing note.
 3. `scene_keyframes(scene_ids)` — pull the frames that were capped out, for a shortlist
    the agent picked from the catalog text.
@@ -40,17 +40,10 @@ whole analysis blobs.
 
 ## Keep long footage from flooding the context
 
-Keyframes are the payload that grows with the footage, so the MCP path bounds it:
-
-- every image it returns is downscaled to a longest side of ≤768 px, roughly 10× smaller
-  than a full-resolution PNG;
-- `build_catalog` inlines at most 12 of them and names the rest;
-- the catalog **text** is always complete, so the agent can shortlist from captions and
-  transcripts alone, then call `scene_keyframes` for the few frames it actually wants to
-  look at.
-
-A ~100-scene library therefore stays workable. Downscaling is scoped to MCP —
-`SceneVLM` captioning and the local planner still see full-resolution frames.
+Shortlist scenes from catalog text, then request keyframes for those ids. The server
+caps the images included by `build_catalog`; see the
+[image budget](../reference/mcp.md#image-budget) for limits. Catalog text is complete
+and grows with the number of scenes.
 
 ## Run the full analysis profile
 

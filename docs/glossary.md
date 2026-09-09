@@ -9,17 +9,17 @@ planner and the MCP agent choose from. See
 [AI auto-editing](reference/ai/auto-edit.md).
 
 **check**
-: The non-raising sibling of `validate`. Runs the same dry run but accumulates **every**
-`PlanError` instead of stopping at the first, so a refine loop can fix everything in one
-round. `[]` means valid.
+: A metadata check that collects independent `PlanError` records instead of stopping
+at the first. It requires complete source metadata. See
+[validation](reference/video-edit.md#validation-repair-normalization).
 
 **context**
-: The dict passed to `run_to_file(context=...)`, carrying input a JSON plan cannot hold —
+: The dict passed to `run_to_file(context=...)`, carrying input separately from the edit plan —
 a `Transcription`, for instance. Operations declare what they need through `requires`, and
 the runner re-bases time-based values onto each segment's local timeline.
 
 **edit plan** / **`VideoEdit`**
-: The complete description of an edit: segments, their operations, `post_operations`, and
+: The complete description of an edit: segments, their operations, `post_operations`, transitions, a music bed, and
 the matching flags. A Pydantic model whose fields are the JSON wire format. See
 [Edit plans](reference/video-edit.md).
 
@@ -34,7 +34,7 @@ Blur, color grading, fades, overlays, subtitles.
 
 **filter (op)**
 : An operation that compiles into the FFmpeg filter chain via `to_ffmpeg_filter`. All
-transforms plus the two text-rendering effects. Contrast with **frame effect**.
+transforms, the text-rendering effects, and the audio-only `volume_adjust`. Contrast with **frame effect**.
 
 **frame effect**
 : An operation implemented as Python over each decoded frame (`streaming_init` +

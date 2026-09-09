@@ -10,7 +10,7 @@ behavior has a reason you can find.
 
 ### [Architecture](architecture.md)
 
-The four subpackages, the dependency layering that keeps AI optional, and why importing
+The library layers and MCP server, the dependency layering that keeps AI optional, and why importing
 videopython stays fast with `[ai]` installed.
 
 </div>
@@ -48,6 +48,14 @@ why the auto-editor makes the model select scenes by id.
 
 Why inference stays under your control, what that costs, and which parts depend on
 Ollama.
+
+</div>
+
+<div class="feature-card" markdown>
+
+### [The dubbing pipeline](dubbing.md)
+
+Why source turns, translation phrases, and generated speech use different units.
 
 </div>
 

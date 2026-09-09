@@ -2,7 +2,8 @@
 
 Every editing primitive is an `Operation` subclass — a Pydantic model whose fields are the
 JSON wire format. Subclasses auto-register on definition, so importing
-`videopython.editing` (or `videopython.ai`) populates the registry that
+`videopython.editing` populates the core registry. Importing the AI operation classes
+adds their entries. The registry is what
 [`VideoEdit.json_schema()`](video-edit.md#json-schema) builds its discriminated union
 from.
 
@@ -56,7 +57,7 @@ listed.
 LLM-facing schema because they need a server-resolved `source` path. Still executable via
 `from_dict` and `registry()`.
 
-### AI (require `import videopython.ai`)
+### AI (require `from videopython.ai import FaceTrackingCrop, ObjectDetectionOverlay`)
 
 | op | Class | Notes |
 |---|---|---|
