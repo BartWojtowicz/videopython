@@ -32,12 +32,3 @@ def encode_png_b64(frame: np.ndarray) -> str:
     buffer = io.BytesIO()
     Image.fromarray(frame).save(buffer, format="PNG")
     return base64.b64encode(buffer.getvalue()).decode("ascii")
-
-
-def keyframe_to_png_b64(frame: np.ndarray, max_dim: int = KEYFRAME_MAX_DIM) -> str:
-    """Downscale a keyframe then PNG-encode it as base64 -- the MCP transport payload.
-
-    SceneVLM captioning and the local planner deliberately encode full-resolution
-    frames via :func:`encode_png_b64` instead.
-    """
-    return encode_png_b64(downscale_keyframe(frame, max_dim=max_dim))

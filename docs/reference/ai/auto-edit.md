@@ -52,11 +52,14 @@ Speech mode uses these deterministic rules:
   brackets allowed), or before a gap of at least `pause_duration`. A boundary cannot
   pass through another overlapping word. An unfinished trailing span is discarded.
 - Consecutive spans are combined until the minimum duration is met. If adding a
-  span would exceed the maximum, the shorter pending group is discarded. A single
-  span longer than the maximum is also discarded. Durations include internal pauses.
+  span would exceed the maximum or cross a gap of at least `pause_duration`, the
+  shorter pending group is discarded. A single
+  span longer than the maximum is also discarded. Durations include shorter internal pauses.
 - Candidates are chronological within each source and do not overlap. Source order
   follows the supplied analyses. Start/end are the first word start and the latest
-  word end, without added padding. An empty `catalog.scenes` is a valid outcome.
+  word end, without added padding. Source duration is required. Passages extending
+  beyond it are omitted, not clamped through a timed word; supplied word records stay
+  unchanged. An empty `catalog.scenes` is a valid outcome.
 
 Speech mode does not assign a shot caption, shot type, or face flag. It can cross
 visual cuts. Sentence punctuation and pauses are selection cues, not a topic or
@@ -110,3 +113,14 @@ not a media-content integrity check.
 ::: videopython.ai.auto_edit.PlannerError
 
 ::: videopython.ai.auto_edit.UnknownSceneIdsError
+
+## Keyframe memory
+
+Python catalogs with `keyframes=True` retain every selected full-resolution RGB frame.
+Selected-frame extraction reads directly into one output array, preserving request
+order and duplicate timestamps. An unreachable frame raises `VideoLoadError` rather
+than returning a shorter array. The array needs approximately `N × width × height × 3`
+bytes for `N` frames, plus decoder and process overhead. At 300 frames of 1920×1080,
+that array alone is about 1.87 GB. Use `keyframes=False` for text-only selection, then
+request a shortlist. This analysis allocation is separate from the renderer's bounded
+frame buffers. MCP has its own [request and cache limits](../mcp.md#image-budget).

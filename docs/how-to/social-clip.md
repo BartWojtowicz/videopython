@@ -6,7 +6,7 @@ to build ordinary `VideoEdit` plans. Copy the example module into your project, 
 run these snippets from the repository root. Each recipe takes caller-owned media
 and selected source ranges. It does not run models or download assets.
 
-## Caption an interview excerpt
+## Make a 9:16 vertical clip with captions
 
 Prepare a source-timed `Transcription` as shown in the
 [subtitle tutorial](../tutorials/subtitles.md), or load one you saved earlier:
@@ -27,6 +27,10 @@ context = {"transcription": transcription}
 edit.validate(context=context)
 edit.run_to_file("captioned.mp4", context=context)
 ```
+
+The 1080×1920 output is a 9:16 portrait clip. The recipe preserves source proportions
+while resizing, then crops the center to fill the vertical frame. Preview the result
+to check that the subject remains visible.
 
 The runner maps the source timestamps to the excerpt. Supply the full source
 transcription; do not subtract the cut start yourself.

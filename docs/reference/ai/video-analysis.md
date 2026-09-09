@@ -41,7 +41,7 @@ Every result requires an `AnalysisProvenance` object at `analysis.provenance`:
 | `models` | Analyzer ID to a model-ID/revision map, or `null` when provenance is unknown. A model revision can also be `null`. |
 
 Model identities are recorded during analysis. Hugging Face models use repository
-revisions; Ollama uses the server's resolved tag and digest. Bundled Silero and
+revisions (AST records its requested pin, or `null` for an unpinned model); Ollama uses the server's resolved tag and digest. Bundled Silero and
 TransNetV2 weights use a `package:<version>` revision, which identifies the package
 release rather than a weight-file hash. A disabled stage, an early load failure, or
 an unavailable identity can leave unknown provenance. Check stage outcomes separately:

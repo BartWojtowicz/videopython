@@ -59,7 +59,7 @@ def test_overlap_pause_and_unfinished_tail():
 def test_combines_short_sentences_and_skips_oversize_passages():
     transcription = _transcription([("One.", 0, 1), ("Two.", 1.1, 2.1), ("Too long.", 3, 10), ("Fits.", 11, 14)])
     bundle = build_catalog(
-        [_analysis("talk.mp4", [], transcription=transcription)],
+        [_analysis("talk.mp4", [], transcription=transcription, duration=15)],
         mode="speech",
         speech=SpeechCandidateConfig(min_duration=2, max_duration=4),
         keyframes=False,
@@ -128,3 +128,37 @@ def test_zero_duration_words_keep_one_owner():
     )
     assert list(bundle.transcripts.values()) == ["First sentence.", "Second."]
     assert [(s.start, s.end) for s in bundle.catalog.scenes] == [(0, 1), (1, 2)]
+
+
+def test_speech_passages_do_not_cross_long_pauses():
+    transcription = _transcription([("Hi.", 0, 0.5), ("Bye.", 7, 7.5)])
+    bundle = build_catalog(
+        [_analysis("talk.mp4", [], transcription=transcription)],
+        mode="speech",
+        speech=SpeechCandidateConfig(min_duration=3, max_duration=8, pause_duration=0.8),
+        keyframes=False,
+    )
+    assert bundle.catalog.scenes == []
+
+
+@pytest.mark.parametrize("keyframes", [False, True])
+def test_speech_catalog_omits_words_beyond_source(tmp_path, keyframes):
+    from videopython.editing import VideoEdit
+
+    source = VideoEdit.from_dict({"segments": [{"source": SMALL_VIDEO_PATH, "start": 0, "end": 3}]}).run_to_file(
+        tmp_path / "source.mp4"
+    )
+    transcription = _transcription([("Fits.", 0.2, 1), ("Overshoots.", 1.2, 8), ("Outside.", 9, 10)])
+    before = transcription.model_dump()
+    analysis = _analysis(str(source), [], transcription=transcription, duration=3)
+    bundle = build_catalog(
+        [analysis], mode="speech", speech=SpeechCandidateConfig(min_duration=0.5, max_duration=10), keyframes=keyframes
+    )
+    assert [(s.start, s.end) for s in bundle.catalog.scenes] == [(0.2, 1)]
+    assert transcription.model_dump() == before
+    plan = EditPlan.model_validate({"segments": [{"scene_id": bundle.catalog.scenes[0].id}]})
+    edit = resolve_plan(plan, bundle.catalog)
+    assert edit.check(VideoMetadata.from_path(source)) == []
+    assert edit.run_to_file(tmp_path / "cut.mp4").exists()
+    if keyframes:
+        assert len(bundle.keyframes) == 1

@@ -87,7 +87,9 @@ def analyze_video(path: str, profile: Literal["full", "editing"] = "editing") ->
 @mcp.tool()
 def export_analysis(source: str, output_path: str) -> SavedAnalysisResult:
     """Verify the source and save its cached analysis, without inference."""
-    analysis = _analyses[str(Path(source).resolve())]
+    analysis = _analyses.get(str(Path(source).resolve()))
+    if analysis is None:
+        raise ValueError(f"No analysis cached for {source!r}; call analyze_video or import_analysis first.")
     verified = analysis.verify_source()
     path = Path(output_path).resolve()
     analysis.save(path)
@@ -170,7 +172,10 @@ def scene_keyframes(scene_ids: list[str]) -> list[TextContent | ImageContent]:
     if unknown:
         error = {"code": "unknown_scene_ids", "value": unknown, "message": f"Unknown scene ids: {unknown}"}
         return [TextContent(type="text", text=json.dumps(error))]
-    return _keyframe_blocks(list(dict.fromkeys(scene_ids)))
+    unique_ids = list(dict.fromkeys(scene_ids))
+    if len(unique_ids) > _MAX_INLINE_KEYFRAMES:
+        raise ValueError(f"Request at most {_MAX_INLINE_KEYFRAMES} distinct scene IDs per scene_keyframes call.")
+    return _keyframe_blocks(unique_ids)
 
 
 @mcp.tool(structured_output=False)

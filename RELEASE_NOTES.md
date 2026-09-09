@@ -11,6 +11,10 @@ for new code.
 - Add speech-passage catalogs with sentence/pause boundaries and duration limits.
   MCP can retrieve full transcript text for selected catalog IDs. Candidate boundaries
   still require editorial review.
+- Omit speech candidates beyond the source duration and prevent merging across the
+  configured pause threshold. Selected-frame extraction raises on unreachable frames
+  and avoids duplicate full-batch allocations. MCP image requests accept at most 12
+  distinct IDs per call; split longer shortlists into multiple calls.
 - Batch catalog keyframe extraction and limit the MCP image cache to 12 downscaled
   images. Clarify the bounded frame-buffer contract and separate it from total memory.
 - Add MCP analysis import/export with source-content verification, a format version,

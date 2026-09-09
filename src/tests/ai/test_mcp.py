@@ -388,3 +388,21 @@ def test_scene_keyframes_unknown_id_structured_error() -> None:
 def test_scene_keyframes_without_catalog_errors() -> None:
     with pytest.raises(ValueError, match="catalog"):
         server.scene_keyframes(["x#0"])
+
+
+def test_scene_keyframes_limits_distinct_ids_before_decode(monkeypatch):
+    server._analyses = {str(SMALL_VIDEO_PATH): _analysis_with_scenes(13)}
+    server.build_catalog()
+    ids = [scene.id for scene in server._bundle.catalog.scenes]
+
+    def no_decode(scenes):
+        raise AssertionError("Oversized request must not decode")
+
+    monkeypatch.setattr(server, "extract_catalog_keyframes", no_decode)
+    with pytest.raises(ValueError, match="at most 12 distinct"):
+        server.scene_keyframes(ids)
+
+
+def test_export_analysis_explains_missing_source():
+    with pytest.raises(ValueError, match="analyze_video or import_analysis"):
+        server.export_analysis("uncached.mp4", "unused.json")

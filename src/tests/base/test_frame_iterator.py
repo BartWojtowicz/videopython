@@ -277,3 +277,9 @@ def test_batched_extraction_matches_decoded_frames(tmp_path, monkeypatch):
     assert len([args for args in calls if args[0] == "ffprobe"]) == 1
     [command] = [args for args in calls if args[0] == "ffmpeg"]
     assert command[command.index("-frames:v") + 1] == "3"
+
+
+@pytest.mark.parametrize("indices", [[0, 10, 100000], [100000, 0], [-1, 0]])
+def test_selected_frames_reject_short_decode(indices):
+    with pytest.raises(VideoLoadError, match="incomplete decode"):
+        extract_frames_at_indices(SMALL_VIDEO_PATH, indices)

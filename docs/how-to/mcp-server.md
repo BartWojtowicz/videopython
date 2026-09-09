@@ -82,7 +82,8 @@ and [measured client check](../reference/verification.md#render-progress).
 
 ## Keep long footage from flooding the context
 
-Shortlist scenes from catalog text, then request keyframes for those ids. The server
+Shortlist scenes from catalog text, then request keyframes in groups of at most 12
+distinct IDs. The server
 caps the images included by `build_catalog`; see the
 [image budget](../reference/mcp.md#image-budget) for limits. Catalog text is complete
 and grows with the number of scenes.

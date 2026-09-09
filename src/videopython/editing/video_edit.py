@@ -1637,6 +1637,7 @@ class VideoEdit(BaseModel):
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         progress = _Progress(on_progress)
+        on_frame = progress.advance if on_progress is not None else None
         progress.start("compilation")
         plans = self._compile_streaming_plans(context)
         self._assert_music_bed_supported()
@@ -1670,7 +1671,7 @@ class VideoEdit(BaseModel):
                     format=format,
                     preset=preset,
                     crf=crf,
-                    on_frame=progress.advance if on_progress is not None else None,
+                    on_frame=on_frame,
                 )
                 progress.finish()
             else:
@@ -1698,7 +1699,7 @@ class VideoEdit(BaseModel):
                             format=format,
                             preset=preset,
                             crf=crf,
-                            on_frame=progress.advance if on_progress is not None else None,
+                            on_frame=on_frame,
                         )
                         progress.finish()
 
@@ -1727,7 +1728,7 @@ class VideoEdit(BaseModel):
                     format=format,
                     preset=preset,
                     crf=crf,
-                    on_frame=progress.advance if on_progress is not None else None,
+                    on_frame=on_frame,
                 )
                 progress.finish()
 

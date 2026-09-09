@@ -14,7 +14,9 @@ noise offsets. Intermediate media uses temporary disk space.
 An in-memory frame array is another possible design, but streaming is not unique to
 videopython. Other editors can generate frames on demand. Videopython uses one
 execution path so operations share the same timing, context, and validation rules.
-Its memory contract covers frame buffers, not total process memory.
+Its memory contract covers render frame buffers, not total process memory.
+Analysis and catalog keyframes are separate allocations; see
+[keyframe memory](../reference/ai/auto-edit.md#keyframe-memory).
 
 The cost is real and worth stating: you cannot apply an effect to a `Video` you built in
 memory. Save it and put the file in a plan. Generated media (`TextToVideo`,

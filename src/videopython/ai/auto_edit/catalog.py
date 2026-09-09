@@ -44,6 +44,8 @@ def build_catalog(
         stem = Path(source_path).stem if source_path else "clip"
 
         if speech is not None:
+            if analysis.source.duration is None:
+                raise ValueError("Speech candidates require the source duration")
             identity = json.dumps(
                 [
                     str(Path(source_path).resolve()) if source_path else None,
@@ -55,6 +57,8 @@ def build_catalog(
             digest = hashlib.sha256(identity.encode()).hexdigest()[:24]
             for index, passage in enumerate(speech_passages(transcription, speech)):
                 start, end = passage[0].start, max(word.end for word in passage)
+                if end > analysis.source.duration or start >= analysis.source.duration:
+                    continue
                 scene_id = _unique_id(f"{stem}#speech-{digest}", index, used_ids)
                 text = " ".join(" ".join(word.word.split()) for word in passage).strip()
                 scenes.append(

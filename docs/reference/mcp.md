@@ -66,7 +66,9 @@ previous selection and image cache.
 ### `scene_keyframes(scene_ids)`
 
 Downscaled keyframes for a chosen shortlist of scene ids. Use after `build_catalog` to
-pull frames that were capped out, without re-inlining the whole library.
+pull frames that were capped out, without re-inlining the whole library. Each call
+accepts at most 12 distinct IDs. Duplicates count once; a larger shortlist raises a
+descriptive tool error before extraction. Split it into calls of at most 12 IDs.
 
 ### `scene_transcripts(scene_ids)`
 
@@ -177,8 +179,11 @@ documented in [AI auto-editing](ai/auto-edit.md).
 
 Every image the MCP path returns is downscaled to a longest side of 768 px, and
 `build_catalog` extracts and inlines at most 12. Catalog text does not require image
-extraction. Each image request batches scene midpoints by source and decodes only
-through the last requested frame. The server retains at most 12 downscaled images,
+extraction. `scene_keyframes` also limits each request to 12 distinct IDs, separately
+from the retention limit. Each image request batches scene midpoints by source and decodes only
+through the last requested frame. The decode array holds up to 12 full-resolution
+RGB frames before downscaling, so peak allocation also depends on source resolution.
+The server retains at most 12 downscaled images,
 evicting the least recently requested image when the cache is full. A cache hit needs
 no decode. Building a new catalog clears the image cache. Omitted catalog rows do not
 cause image extraction until requested.

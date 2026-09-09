@@ -36,6 +36,41 @@ Logs and artifacts remain in `.cache/release-0.62.0/`. These checks do not estab
 other Python/OS matrix results or external-agent compatibility. No tag, remote push,
 or publication was performed.
 
+## Catalog review checks, 0.62.0
+
+The 2026-09-09 review reproduced speech timestamps beyond a three-second source and
+short utterances separated by 6.5 seconds of silence. Catalog construction now omits
+out-of-source passages without changing word times and does not merge across the
+configured pause threshold. Regression checks cover both keyframe modes, validation,
+and rendering of the retained selection. Selected-frame extraction raises on missing
+frames, including sorted, unsorted, and negative-index requests.
+
+A separate-process allocation check selected 120 frames in reverse order from
+`cam1_1min.mp4` (1280×720; SHA256
+`4a258bf9eb50a120485399a60768479bec8b72fae2e98de21361c751eff350f0`).
+Both versions made one FFmpeg call and returned identical RGB SHA256
+`336c824d40cec066dd2e966a77ea9d06026589b91f82cb00a407030c3167d612`.
+The baseline was `1e2fd75`; peak Python RSS was 997.83 MiB before and 363.75 MiB
+after reading directly into the output array. In chronological order, peak RSS was
+681.41 MiB before and 363.89 MiB after, with matching RGB SHA256
+`30cd05e9375374736c477a358083a582460669a68305d222f15e12cb1efea45b`.
+The array itself was 316.41 MiB. These process high-water marks exclude FFmpeg child memory. Tests overlapped part
+of the check; the individual timings are not a throughput comparison. A Python
+catalog still retains all requested full-resolution frames. The earlier 24-scene
+MCP measurement below does not establish an arbitrary-size catalog memory bound.
+
+MCP now rejects more than 12 distinct image IDs before decoding. Tests also cover
+unknown-source export guidance and AST provenance without a private Transformers
+config attribute. The object-detector test fake now supports the processor result's
+`.to()` method; production detection code is unchanged. The 112 focused tests passed
+outside the sandbox with CUDA available. A subsequent full run was stopped at the
+user's request after 509 passing tests; further verification disabled CUDA. The
+CPU-only full suite passed all 1,321 tests in 395.18 s with 12 missing-audio fixture
+warnings. The earlier release run remains explicitly recorded as CUDA-hidden. The portrait recipe is now labeled as a 9:16 workflow.
+
+Scripts, hashes, allocation results, and validation logs remain local under
+`.cache/review-0.62.0/` (the focused log is `.cache/review-tests.log`).
+
 ## Catalog keyframe extraction
 
 On 2026-09-09, catalog construction was checked on `cam1_10min.mp4`: 599.8 s,

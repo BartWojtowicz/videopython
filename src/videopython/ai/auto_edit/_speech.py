@@ -42,7 +42,10 @@ def speech_passages(
         if end - start > config.max_duration:
             pending = []
             continue
-        if pending and end - pending[0].start > config.max_duration:
+        if pending and (
+            start - max(word.end for word in pending) >= config.pause_duration
+            or end - pending[0].start > config.max_duration
+        ):
             pending = []
         pending.extend(span)
         if end - pending[0].start >= config.min_duration:
