@@ -1471,3 +1471,29 @@ def test_from_path_reports_ffmpeg_failure():
 
     with pytest.raises((AudioLoadError, FFmpegProbeError)):
         Audio.from_path(broken_path)
+
+
+@pytest.mark.parametrize("speed", [0.6, 1.5])
+def test_rubberband_preserves_pitch_and_fills_duration(speed):
+    from videopython.ai.dubbing.timing import _speech_stretch_method
+
+    if _speech_stretch_method() != "rubberband":
+        pytest.skip("FFmpeg lacks the optional rubberband filter")
+    sample_rate = 24000
+    t = np.arange(sample_rate * 2) / sample_rate
+    data = (0.2 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+    audio = Audio(data, AudioMetadata(sample_rate, 1, 2, 2.0, len(data)))
+    stretched = audio.time_stretch(speed, method="rubberband")
+    assert stretched.metadata.duration_seconds == pytest.approx(2 / speed, abs=0.06)
+    middle = stretched.data[len(stretched.data) // 4 : 3 * len(stretched.data) // 4]
+    spectrum = np.abs(np.fft.rfft(middle))
+    frequency = np.fft.rfftfreq(len(middle), 1 / sample_rate)[np.argmax(spectrum)]
+    assert frequency == pytest.approx(220, abs=2)
+    assert np.sqrt(np.mean(stretched.data[-2400:] ** 2)) > 0.05
+
+
+def test_time_stretch_rejects_nonfinite_speed():
+    audio = Audio.create_silent(1, stereo=False)
+    for speed in (float("inf"), float("nan")):
+        with pytest.raises(ValueError, match="finite"):
+            audio.time_stretch(speed)

@@ -25,14 +25,9 @@ class RemuxError(AiError, RuntimeError):
 
 
 def _build_stream_maps(keep_original_audio: bool) -> list[str]:
-    """ffmpeg ``-map`` flags for the video + audio + subtitle streams.
-
-    Convention: dubbed audio (input 1) is the *first* audio track so default
-    playback uses it; original audio (input 0) tags onto the back when
-    ``keep_original_audio=True`` for editorial A/B. Subtitles from input 0
-    are carried with ``?`` so sources without subs don't fail the mux.
-    """
-    maps = ["-map", "0:v:0", "-map", "1:a:0"]
+    """Map the dubbed audio first, followed by optional original audio and subtitles."""
+    # MP4/M4A inputs can contain audio only; still produce the dubbed audio.
+    maps = ["-map", "0:v:0?", "-map", "1:a:0"]
     if keep_original_audio:
         maps += ["-map", "0:a?"]
     maps += ["-map", "0:s?"]
@@ -96,6 +91,10 @@ def replace_audio_stream_from_audio(
         "-i",
         "-",
         *_build_stream_maps(keep_original_audio),
+        "-disposition:a",
+        "0",
+        "-disposition:a:0",
+        "default",
         "-c:v",
         "copy",
         "-c:a",

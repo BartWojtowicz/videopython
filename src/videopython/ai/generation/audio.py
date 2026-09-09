@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from videopython.ai._device import log_device_initialization, select_device
 from videopython.ai._predictor import ManagedPredictor
 from videopython.ai._revisions import pinned
+from videopython.ai._text_chunks import split_text
 from videopython.audio import Audio, AudioMetadata
 
 if TYPE_CHECKING:
@@ -33,11 +34,22 @@ class TextToSpeech(ManagedPredictor):
         self.device = device
         self.language = language
         self._model: Any = None
+        self._speech_graphs: Any = None
+
+    def unload(self) -> None:
+        if self._speech_graphs is not None:
+            self._speech_graphs.close()
+            self._speech_graphs = None
+        super().unload()
 
     def _init_local(self) -> None:
         from videopython.ai._optional import require
 
         ChatterboxMultilingualTTS = require("chatterbox.mtl_tts", feature="TextToSpeech").ChatterboxMultilingualTTS
+        from videopython.ai.generation._speech_tokens import (
+            guard_speech_tokens,
+            restrict_speech_vocabulary,
+        )
 
         requested_device = self.device
         device = select_device(self.device, mps_allowed=False)
@@ -45,6 +57,18 @@ class TextToSpeech(ManagedPredictor):
         # No repo id to key a revision on: Chatterbox resolves its own repo +
         # revision internally, so there is nothing to pass revision= to.
         self._model = ChatterboxMultilingualTTS.from_pretrained(device=device)
+        self._model.s3gen.inference = guard_speech_tokens(
+            self._model.s3gen.inference, self._model.s3gen.flow.input_embedding.num_embeddings
+        )
+        restrict_speech_vocabulary(
+            self._model.t3.speech_head,
+            self._model.s3gen.flow.input_embedding.num_embeddings,
+            self._model.t3.hp.stop_speech_token,
+        )
+        if device == "cuda":
+            from videopython.ai.generation._speech_graphs import SpeechGraphs
+
+            self._speech_graphs = SpeechGraphs(self._model)
         self.device = device
         log_device_initialization(
             "TextToSpeech",
@@ -88,6 +112,9 @@ class TextToSpeech(ManagedPredictor):
 
         import numpy as np
 
+        parts = split_text(text, 200)
+        if not parts:
+            raise ValueError("Speech text must not be empty")
         if self._model is None:
             self._init_local()
 
@@ -116,16 +143,39 @@ class TextToSpeech(ManagedPredictor):
             knobs["temperature"] = temperature
 
         try:
-            wav = self._model.generate(
-                text=text,
-                language_id=self.language,
-                audio_prompt_path=str(speaker_wav_path) if speaker_wav_path else None,
-                **knobs,
-            )
+            # Chatterbox caps generation at 1,000 speech tokens (~40 seconds).
+            # Keep individual calls well below that cap, then synchronize the
+            # complete parent utterance once in the dubbing pipeline.
+            def synthesize(part: str, budget: int) -> list[np.ndarray]:
+                from videopython.ai.generation._speech_tokens import InvalidSpeechTokens
 
-            audio_data = wav.cpu().float().numpy().squeeze()
-            if audio_data.ndim == 0:
-                audio_data = np.array([audio_data], dtype=np.float32)
+                for attempt in range(3):
+                    try:
+                        wav = self._model.generate(
+                            text=part,
+                            language_id=self.language,
+                            audio_prompt_path=str(speaker_wav_path) if speaker_wav_path else None,
+                            **knobs,
+                        )
+                        break
+                    except InvalidSpeechTokens:
+                        if attempt == 2:
+                            raise
+                data = wav.cpu().float().numpy().reshape(-1)
+                if not len(data) or not np.isfinite(data).all():
+                    raise ValueError("Speech generation returned empty or non-finite audio")
+                # Duration is a conservative cap warning, not proof of coverage.
+                # Discard suspect audio and regenerate smaller text units.
+                if len(data) >= 38 * self.SAMPLE_RATE:
+                    smaller = split_text(part, max(1, budget // 2))
+                    if len(smaller) < 2 or budget <= 40:
+                        raise RuntimeError("Speech generation may have reached its token limit")
+                    return [audio for chunk in smaller for audio in synthesize(chunk, budget // 2)]
+                return [data]
+
+            arrays = [audio for part in parts for audio in synthesize(part, 200)]
+            # Keep natural leading/trailing pauses; do not crossfade phonemes.
+            audio_data = np.concatenate(arrays) if len(arrays) > 1 else arrays[0]
 
             metadata = AudioMetadata(
                 sample_rate=self.SAMPLE_RATE,

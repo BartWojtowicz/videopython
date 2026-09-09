@@ -69,8 +69,8 @@ Before a release that changes an AI integration, dependency, or default model, r
 cache-warming and timing protocol in the [verification
 records](docs/reference/verification.md). Do not release an applicable change until all
 selected checks pass. Published performance baselines must use the public API defaults;
-label reduced settings as compatibility checks. The dub check fails if its timing
-summary is missing or if one segment loses more than 3.0 seconds during synchronization.
+label reduced settings as compatibility checks. The dub check fails on missing timing
+measurements or translation/synthesis failures. It reports excessive speeds for listening review.
 
 ### Linting & type checking
 

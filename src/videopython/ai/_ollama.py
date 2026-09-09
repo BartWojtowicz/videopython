@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any
 
@@ -11,6 +12,8 @@ import numpy as np
 from videopython.ai._optional import require
 from videopython.ai.errors import AiError
 from videopython.ai.keyframe import encode_png_b64
+
+logger = logging.getLogger(__name__)
 
 
 class OllamaError(AiError, RuntimeError):
@@ -76,9 +79,17 @@ class OllamaStructuredClient:
     reported by Ollama. An explicit ``num_ctx`` in ``options`` always wins.
     """
 
-    def __init__(self, model: str, *, host: str | None = None, options: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        model: str,
+        *,
+        host: str | None = None,
+        options: dict[str, Any] | None = None,
+        keep_alive: str | int | None = None,
+    ) -> None:
         self.model = model
         self.host = host
+        self.keep_alive = keep_alive
         self.options: dict[str, Any] = {"temperature": 0.0, **(options or {})}
         self._client: Any = None
         self._thinking_capable: bool | None = None
@@ -121,6 +132,8 @@ class OllamaStructuredClient:
         kwargs: dict[str, Any] = {}
         if self._supports_thinking():
             kwargs["think"] = False
+        if self.keep_alive is not None:
+            kwargs["keep_alive"] = self.keep_alive
         client = self._get_client()
         try:
             response = client.chat(model=self.model, messages=messages, format=schema, options=options, **kwargs)
@@ -130,6 +143,8 @@ class OllamaStructuredClient:
                 raise
             options = {**options, "num_ctx": retry_num_ctx}
             response = client.chat(model=self.model, messages=messages, format=schema, options=options, **kwargs)
+        if getattr(response, "done_reason", None) == "length":
+            raise OllamaError("Ollama exhausted its output budget; refusing an incomplete response")
         content = response.message.content
         try:
             data = json.loads(content)
@@ -140,4 +155,13 @@ class OllamaStructuredClient:
         return data
 
     def unload(self) -> None:
-        self._client = None
+        try:
+            if self._client is not None and self.keep_alive is not None:
+                # Release explicit residency before the low-memory pipeline
+                # loads its next GPU model. Merely dropping the HTTP client
+                # leaves the Ollama runner resident on the server.
+                self._client.generate(model=self.model, keep_alive=0)
+        except Exception as exc:
+            logger.warning("Could not unload Ollama model %s; server memory may remain allocated: %s", self.model, exc)
+        finally:
+            self._client = None

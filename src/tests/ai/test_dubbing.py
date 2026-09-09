@@ -140,23 +140,19 @@ class TestTimingSynchronizer:
         """Test default initialization values."""
         sync = TimingSynchronizer()
 
-        assert sync.min_speed == 0.8
-        assert sync.max_speed == 1.3
+        assert sync.max_speed == 1.1
 
     def test_initialization_custom(self):
         """Test custom initialization values."""
-        sync = TimingSynchronizer(min_speed=0.5, max_speed=2.0)
+        sync = TimingSynchronizer(max_speed=2.0)
 
-        assert sync.min_speed == 0.5
         assert sync.max_speed == 2.0
 
     def test_initialization_invalid(self):
         """Test that invalid parameters raise errors."""
-        with pytest.raises(ValueError, match="min_speed must be positive"):
-            TimingSynchronizer(min_speed=0)
-
-        with pytest.raises(ValueError, match="max_speed must be greater than min_speed"):
-            TimingSynchronizer(min_speed=1.0, max_speed=0.5)
+        for speed in (0.5, float("inf"), float("nan")):
+            with pytest.raises(ValueError, match="max_speed must be finite and at least 1.0"):
+                TimingSynchronizer(max_speed=speed)
 
     def test_synchronize_segment_no_change(self, sample_audio):
         """Test synchronizing when no change is needed."""
@@ -167,7 +163,6 @@ class TestTimingSynchronizer:
 
         assert abs(result.metadata.duration_seconds - target_duration) < 0.1
         assert adjustment.speed_factor == 1.0
-        assert not adjustment.was_truncated
 
     def test_synchronize_segment_speed_up(self, sample_audio):
         """Test synchronizing by speeding up audio."""
@@ -181,27 +176,34 @@ class TestTimingSynchronizer:
         assert adjustment.speed_factor > 1.0
         assert adjustment.original_duration > adjustment.actual_duration
 
-    def test_synchronize_segment_slow_down(self, sample_audio):
-        """Test synchronizing by slowing down audio."""
+    def test_synchronize_segment_keeps_natural_pace(self, sample_audio):
+        """Shorter speech is not slowed merely to fill its time window."""
         sync = TimingSynchronizer()
-        target_duration = sample_audio.metadata.duration_seconds * 1.2  # Need 20% slowdown
+        target_duration = sample_audio.metadata.duration_seconds * 1.2
 
         result, adjustment = sync.synchronize_segment(sample_audio, target_duration, segment_index=5)
 
-        # Result should be longer (but may still be shorter than target if at min_speed limit)
-        assert adjustment.speed_factor < 1.0
+        np.testing.assert_array_equal(result.data, sample_audio.data)
+        assert adjustment.speed_factor == 1.0
         assert adjustment.segment_index == 5
 
-    def test_synchronize_segment_truncation(self, sample_audio):
-        """Test that audio is truncated when even max speed isn't enough."""
+    def test_short_generated_speech_is_not_stretched_to_fill_turn(self, sample_audio):
+        target = sample_audio.metadata.duration_seconds * 2
+        result, adjustment = TimingSynchronizer().synchronize_segment(sample_audio, target)
+        np.testing.assert_array_equal(result.data, sample_audio.data)
+        assert adjustment.speed_factor == 1.0
+
+    def test_synchronize_segment_preserves_speech_above_preferred_speed(self, sample_audio):
+        """Keep the full utterance when the preferred speed cannot fit it."""
         sync = TimingSynchronizer(max_speed=1.3)
         target_duration = sample_audio.metadata.duration_seconds / 2.0  # Need 50% shorter
 
         result, adjustment = sync.synchronize_segment(sample_audio, target_duration)
 
-        # Should be truncated to target duration
+        # Fit by speeding up, without slicing the tail
         assert abs(result.metadata.duration_seconds - target_duration) < 0.1
-        assert adjustment.was_truncated
+        assert adjustment.excessive_speed
+        assert adjustment.speed_factor >= 2.0
 
     def test_synchronize_segments(self, sample_audio):
         """Test synchronizing multiple segments."""
@@ -291,6 +293,24 @@ class TestTimingSynchronizer:
         # sample_audio peaks at 0.5; with no overlap, output peak should match
         assert abs(peak - 0.5) < 0.01
 
+    def test_assembly_smooths_edges_without_moving_or_cutting_speech(self, sample_audio):
+        sample_audio.data += 0.2
+        original = sample_audio.data.copy()
+        sync = TimingSynchronizer()
+        fitted, _ = sync.synchronize_segment(sample_audio, 2.0)
+        result = sync.assemble_with_timing([fitted, fitted], [0.25, 2.5], 5.0)
+
+        sr = sample_audio.metadata.sample_rate
+        fade = round(0.005 * sr)
+        assert result.metadata.duration_seconds == 5.0
+        for start in (sr // 4, 5 * sr // 2):
+            placed = result.data[start : start + len(original)]
+            assert placed[0] == placed[-1] == 0
+            assert np.any(placed[:fade]) and np.any(placed[-fade:])
+            np.testing.assert_array_equal(placed[fade:-fade], original[fade:-fade])
+        assert not np.any(result.data[9 * sr // 4 : 5 * sr // 2])
+        np.testing.assert_array_equal(sample_audio.data, original)
+
 
 class TestDubbingResult:
     """Tests for DubbingResult data model."""
@@ -373,100 +393,23 @@ class TestTimingSummary:
         assert summary.total_segments == 0
         assert summary.clean_count == 0
         assert summary.stretched_count == 0
-        assert summary.truncated_count == 0
         assert summary.mean_speed_factor == 1.0
-        assert summary.max_truncation_seconds == 0.0
 
-    def test_classifies_clean_stretched_truncated(self):
-        """Mixed adjustments are bucketed into clean / stretched / truncated."""
+    def test_classifies_clean_and_accelerated_segments(self):
         from videopython.ai.dubbing.models import TimingAdjustment, TimingSummary
 
         adjustments = [
-            # Clean: speed factor within tolerance, not truncated.
-            TimingAdjustment(
-                segment_index=0,
-                original_duration=2.0,
-                target_duration=2.0,
-                actual_duration=2.0,
-                speed_factor=1.0,
-                was_truncated=False,
-            ),
-            # Stretched up.
-            TimingAdjustment(
-                segment_index=1,
-                original_duration=2.0,
-                target_duration=2.0,
-                actual_duration=1.9,
-                speed_factor=1.05,
-                was_truncated=False,
-            ),
-            # Stretched down.
-            TimingAdjustment(
-                segment_index=2,
-                original_duration=2.0,
-                target_duration=2.5,
-                actual_duration=2.5,
-                speed_factor=0.85,
-                was_truncated=False,
-            ),
-            # Stretched at max speed but not truncated.
-            TimingAdjustment(
-                segment_index=3,
-                original_duration=2.6,
-                target_duration=2.0,
-                actual_duration=2.0,
-                speed_factor=1.3,
-                was_truncated=False,
-            ),
-            # Truncated: clamped at max speed but still too long.
-            TimingAdjustment(
-                segment_index=4,
-                original_duration=4.0,
-                target_duration=2.0,
-                actual_duration=2.0,
-                speed_factor=1.3,
-                was_truncated=True,
-            ),
+            TimingAdjustment(0, 2.0, 2.0, 2.0, 1.0, False),
+            TimingAdjustment(1, 2.1, 2.0, 2.0, 1.05, False),
+            TimingAdjustment(2, 2.6, 2.0, 2.0, 1.3, True),
         ]
-
         summary = TimingSummary.from_adjustments(adjustments)
-
-        assert summary.total_segments == 5
+        assert summary.total_segments == 3
         assert summary.clean_count == 1
-        assert summary.stretched_count == 3
-        assert summary.truncated_count == 1
-        # Mean of 1.0, 1.05, 0.85, 1.3, 1.3 = 1.10.
-        assert summary.mean_speed_factor == pytest.approx(1.10)
-        # Worst-case truncation: 4.0 - 2.0 = 2.0s.
-        assert summary.max_truncation_seconds == pytest.approx(2.0)
-
-    def test_max_truncation_picks_worst_case(self):
-        """max_truncation_seconds is the largest (original - actual) across truncated segments."""
-        from videopython.ai.dubbing.models import TimingAdjustment, TimingSummary
-
-        adjustments = [
-            TimingAdjustment(
-                segment_index=0,
-                original_duration=3.0,
-                target_duration=2.0,
-                actual_duration=2.0,
-                speed_factor=1.3,
-                was_truncated=True,
-            ),
-            TimingAdjustment(
-                segment_index=1,
-                original_duration=10.0,
-                target_duration=5.0,
-                actual_duration=5.0,
-                speed_factor=1.3,
-                was_truncated=True,
-            ),
-        ]
-
-        summary = TimingSummary.from_adjustments(adjustments)
-
-        assert summary.truncated_count == 2
-        assert summary.max_truncation_seconds == pytest.approx(5.0)
+        assert summary.stretched_count == 2
+        assert summary.mean_speed_factor == pytest.approx((1.0 + 1.05 + 1.3) / 3)
+        assert summary.excessive_speed_count == 1
+        assert summary.max_speed_factor == 1.3
 
     def test_round_trip_to_dict(self):
         """from_dict(to_dict(s)) must equal the original summary."""
@@ -475,10 +418,10 @@ class TestTimingSummary:
         summary = TimingSummary(
             total_segments=10,
             clean_count=5,
-            stretched_count=3,
-            truncated_count=2,
+            stretched_count=5,
             mean_speed_factor=1.12,
-            max_truncation_seconds=0.7,
+            excessive_speed_count=2,
+            max_speed_factor=1.3,
         )
 
         restored = TimingSummary.model_validate(summary.model_dump())
@@ -499,9 +442,9 @@ class TestTimingSummary:
             total_segments=1,
             clean_count=1,
             stretched_count=0,
-            truncated_count=0,
             mean_speed_factor=1.0,
-            max_truncation_seconds=0.0,
+            excessive_speed_count=0,
+            max_speed_factor=1.0,
         )
 
         result = DubbingResult(
@@ -517,7 +460,7 @@ class TestTimingSummary:
         assert result.timing_summary.total_segments == 1
 
     def test_dubbing_result_default_timing_summary_none(self, sample_audio, sample_segment):
-        """DubbingResult constructed without a TimingSummary keeps the field as None (back-compat)."""
+        """DubbingResult constructed without a TimingSummary has no timing measurements."""
         from videopython.base.transcription import Transcription
 
         translated = TranslatedSegment(
@@ -1663,7 +1606,7 @@ class TestVoiceSampleCache:
             TranscriptionSegment(
                 start=1.0,
                 end=2.0,
-                text="hi back",
+                text="hello back there",
                 words=[
                     TranscriptionWord(start=1.0, end=1.5, word="hi", speaker="A"),
                     TranscriptionWord(start=1.5, end=2.0, word="back", speaker="A"),
@@ -1756,6 +1699,8 @@ class TestVoiceSampleCache:
         # time_stretch on the fake-saved WAVs and fail. We're only checking
         # encode counts and TTS argument plumbing here.
         class FakeSynchronizer:
+            max_speed = 1.3
+
             def synchronize_segments(self, segments, durations):
                 return segments, []
 
@@ -1850,6 +1795,8 @@ class TestVoiceSampleCache:
         monkeypatch.setattr(LocalDubbingPipeline, "_init_tts", fake_init_tts)
 
         class FakeSynchronizer:
+            max_speed = 1.3
+
             def synchronize_segments(self, segments, durations):
                 return segments, []
 
@@ -1931,7 +1878,7 @@ class TestReplaceAudioStreamFromAudio:
         # Map: video, dubbed audio (input 1), subtitles from input 0.
         map_indices = [i for i, v in enumerate(cmd) if v == "-map"]
         assert len(map_indices) == 3
-        assert cmd[map_indices[0] + 1] == "0:v:0"
+        assert cmd[map_indices[0] + 1] == "0:v:0?"
         assert cmd[map_indices[1] + 1] == "1:a:0"
         assert cmd[map_indices[2] + 1] == "0:s?"
         assert "-c:v" in cmd and cmd[cmd.index("-c:v") + 1] == "copy"
@@ -1962,7 +1909,7 @@ class TestReplaceAudioStreamFromAudio:
 
         cmd = captured["cmd"]
         map_args = [cmd[i + 1] for i, v in enumerate(cmd) if v == "-map"]
-        assert map_args == ["0:v:0", "1:a:0", "0:a?", "0:s?"]
+        assert map_args == ["0:v:0?", "1:a:0", "0:a?", "0:s?"]
 
 
 class TestVideoDubberDubFile:
@@ -2972,3 +2919,156 @@ class TestProsody:
         # ratio = 1.0 sits squarely in the normal band → no-knobs profile
         result = expressiveness_for(self._audio_with_amplitude(1.0), baseline_rms=1.0)
         assert result == Expressiveness()
+
+
+@pytest.mark.parametrize("fragment_duration", [0, 0.05])
+def test_synthesis_failures_use_original_indices_after_joining(sample_audio, monkeypatch, fragment_duration):
+    from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+    from videopython.base.transcription import Transcription, TranscriptionSegment
+
+    segments = [
+        TranscriptionSegment(start=0, end=0.2, text="And", words=[], speaker="A"),
+        TranscriptionSegment(start=0.2, end=1, text="some longer speech", words=[], speaker="A"),
+        TranscriptionSegment(start=1, end=1 + fragment_duration, text="Yes", words=[], speaker="B"),
+    ]
+    translated = [
+        TranslatedSegment(original_segment=s, translated_text=s.text, source_lang="en", target_lang="pl")
+        for s in segments
+    ]
+    monkeypatch.setattr(LocalDubbingPipeline, "_translate", lambda *args: (translated, []))
+    attempted = []
+
+    def fail(self, **kwargs):
+        attempted.append(kwargs["segment"])
+        return None
+
+    monkeypatch.setattr(LocalDubbingPipeline, "_tts_segment_audio", fail)
+    result = LocalDubbingPipeline().process(
+        source_audio=sample_audio,
+        transcription=Transcription(segments=segments, language="en"),
+        target_lang="pl",
+        preserve_background=False,
+        voice_clone=False,
+    )
+    assert result.synthesis_failures == [0, 1, 2]
+    assert len(attempted) == 1
+    assert attempted[0].translated_text == "And some longer speech"
+    assert [s.translated_text for s in result.translated_segments] == [s.text for s in segments]
+
+
+@pytest.mark.parametrize("channels", [1, 2])
+def test_timing_retains_last_samples_when_tempo_output_overruns(monkeypatch, channels):
+    # Simulate atempo's duration error; an end marker must survive the final fit.
+    data = np.zeros((1010,) if channels == 1 else (1010, 2), dtype=np.float32)
+    data[-10:] = 0.7
+    audio = Audio(data, AudioMetadata(1000, channels, 2, 1.01, 1010))
+    monkeypatch.setattr(Audio, "time_stretch", lambda self, speed, **kwargs: self)
+    fitted, adjustment = TimingSynchronizer().synchronize_segment(audio, 0.5)
+    assert len(fitted.data) == 500
+    np.testing.assert_allclose(fitted.data[-1], 0.7)
+    assert adjustment.excessive_speed
+
+
+def test_pipeline_uses_following_gap_before_excessive_speed(monkeypatch):
+    from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+    from videopython.base.transcription import Transcription
+
+    source = Audio.create_silent(4, stereo=False)
+    segments = [
+        TranscriptionSegment(start=0, end=1, text="first full turn", words=[], speaker="A"),
+        TranscriptionSegment(start=3, end=4, text="next full turn", words=[], speaker="B"),
+    ]
+    translated = [
+        TranslatedSegment(original_segment=s, translated_text=s.text, source_lang="en", target_lang="pl")
+        for s in segments
+    ]
+    monkeypatch.setattr(LocalDubbingPipeline, "_translate", lambda *args: (translated, []))
+    monkeypatch.setattr(
+        LocalDubbingPipeline,
+        "_tts_segment_audio",
+        lambda self, **kw: Audio.create_silent(2 if kw["speaker"] == "A" else 1, stereo=False),
+    )
+    durations = []
+    original = TimingSynchronizer.synchronize_segments
+
+    def record(self, audio_segments, target_durations):
+        durations.extend(target_durations)
+        return original(self, audio_segments, target_durations)
+
+    monkeypatch.setattr(TimingSynchronizer, "synchronize_segments", record)
+    result = LocalDubbingPipeline().process(
+        source_audio=source,
+        transcription=Transcription(segments=segments, language="en"),
+        target_lang="pl",
+        preserve_background=False,
+        voice_clone=False,
+    )
+    assert durations == pytest.approx([2, 1])
+    assert result.timing_summary.excessive_speed_count == 0
+
+
+def test_small_timing_overrun_reports_only_the_applied_speed():
+    from videopython.ai.dubbing.models import TimingSummary
+
+    audio = Audio.create_silent(1.008, sample_rate=24000, stereo=False)
+    fitted, adjustment = TimingSynchronizer().synchronize_segment(audio, 1.0)
+    assert fitted.metadata.duration_seconds == 1.0
+    assert adjustment.speed_factor == pytest.approx(len(audio.data) / len(fitted.data))
+    summary = TimingSummary.from_adjustments([adjustment])
+    assert summary.clean_count == 1
+    assert summary.stretched_count == 0
+    assert summary.mean_speed_factor == pytest.approx(1.008)
+    assert summary.max_speed_factor == pytest.approx(1.008)
+
+
+def test_dub_is_only_default_audio_when_original_tracks_are_retained(tmp_path):
+    import json
+    import subprocess
+
+    from videopython.ai.dubbing.remux import replace_audio_stream_from_audio
+
+    source = tmp_path / "original.m4a"
+    destination = tmp_path / "dubbed.m4a"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=duration=0.2",
+            "-map",
+            "0:a",
+            "-map",
+            "0:a",
+            "-c:a",
+            "aac",
+            "-disposition:a",
+            "default",
+            str(source),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    replace_audio_stream_from_audio(
+        source, Audio.create_silent(0.2, stereo=False), destination, keep_original_audio=True
+    )
+    streams = json.loads(
+        subprocess.check_output(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "a",
+                "-show_entries",
+                "stream_disposition=default",
+                "-of",
+                "json",
+                str(destination),
+            ],
+            text=True,
+        )
+    )["streams"]
+    assert [stream["disposition"]["default"] for stream in streams] == [1, 0, 0]

@@ -39,6 +39,393 @@ OLLAMA_HOST=127.0.0.1:11434 uv run python scripts/verify_mcp_workflow.py \
 
 ## AI model verification
 
+### Final dubbing review, 0.61.2
+
+On 2026-09-09, the listener approved the one-minute Polish-to-English demo with
+TranslateGemma 12B and 5 ms phrase-boundary fades. The fades preserve phrase
+anchors, sample counts and interior samples. The demo used two cloned voices,
+background preservation, seed 1777 and `low_memory=True` on an RTX 2060 SUPER
+with 8 GB VRAM. It reused the saved diarized transcription.
+
+Generation and export took 176.54 seconds. All ten phrases had speed factor 1.0,
+with no reported translation or synthesis failures. The H.264 video and single
+default AAC audio track fully decoded. Independent ASR recognized 141 words in
+both raw and faded speech, matching the expected count. Both checks recognized
+“health” as “hell”; equal word counts do not establish exact pronunciation.
+The listener accepted the recording, rather than providing a phonetic audit.
+
+The model comparison also covered 72 timed phrases from seconds 750–1050 of an
+English podcast, translated into Polish. Assistant text review favored the 12B
+library configuration among the tested Qwen3.5 9B, Hy-MT2 7B and TranslateGemma
+4B/12B configurations. Remaining errors include units, names, financial terms
+and duplicated context. This is a local qualitative comparison, not an independent
+human ranking. The default `qwen3.6:27b` was not compared and remains unchanged.
+
+The 12B library translation run took 535.34 seconds with no structural failures.
+It used CPU offloading; these settings are a compatibility check, not a default-model
+performance baseline. No new ten-minute performance comparison was completed.
+Further tuning needs fresh validation material because the podcast cut was also
+used for prompt diagnostics. The [dubbing guide](../how-to/dubbing.md#pick-the-translation-model)
+shows the tested model configuration.
+
+The maintained real-model harness then passed `env`, `imports` (38 entrypoints),
+`ollama` and `dub` with the same 12B override. This fresh run included transcription
+and diarization, produced two voice samples and ten translated phrases, and reported
+no translation/synthesis failures or excessive speeds (maximum 1.0×). The dub check
+took 249.31 seconds; all four checks took 263.04 seconds. This run used the harness
+seed behavior and did not reuse the approved demo's frozen transcription.
+
+```bash
+OLLAMA_HOST=127.0.0.1:11435 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+  uv run python scripts/verify_ai_models.py \
+  --only env,imports,ollama,dub --video cam1_1min.mp4 \
+  --workdir verify-results/release-0.61.2 \
+  --ollama-model translategemma:12b --low-memory \
+  --source-lang pl --target-lang en --enable-diarization
+```
+
+Final release preparation passed pre-commit, lock validation, strict documentation
+build, wheel/sdist builds and clean-wheel public-import/render/MCP smoke checks.
+The functional code had passed the full 1,285-test suite. The final source cleanup
+removed a module docstring; all 17 translator tests passed afterward. Package
+contents contain no experiment scripts, media, model caches or private instructions.
+
+#### Fresh two-language sanity checks
+
+After the review fixes, both recordings ran through fresh transcription, diarization,
+per-speaker cloning and background preservation with TranslateGemma 12B, seed 1777
+and `low_memory=True`. Both exports decoded and reported no translation or synthesis
+failures. These checks show that generation success does not establish speech quality.
+
+| Input | Direction | Elapsed | Phrases | Flagged speedups | Maximum speed |
+|---|---|---:|---:|---:|---:|
+| One-minute conversation | Polish to English | 171.04 s | 10 | 0 | 1.04× |
+| Five-minute podcast excerpt | English to Polish | 1,142.58 s | 67 | 49 | 8.4× |
+
+The conversation's translations matched the approved demo, but independent ASR
+flagged possible extra speech around 37 seconds in raw and mixed audio. In the
+podcast, ASR recognized a property-sale sentence in raw speech but missed it after
+3.16× acceleration and in the final mix. The maximum 8.4× adjustment fit a 2.52-second
+“Tak.” output into a 0.30-second source window. Raw Polish speech also had number
+recognition errors. These differences require listening to distinguish synthesis
+and intelligibility errors from recognition errors.
+
+The podcast text review found unit substitutions, duplicated neighboring content,
+and changes to financial actions. The fresh excerpt produced three speaker labels;
+an earlier full-recording run assigned four labels within that same interval. Neither
+count is a verified count of people. The listener also reported inconsistent voices
+and dramatic speedups. This remains a difficult quality case, not a clean quality
+pass or evidence of a regression caused by the review fixes. The
+[roadmap](https://github.com/BartWojtowicz/videopython/blob/main/ROADMAP.md#improve-dubbing-quality) tracks the broader improvement work.
+
+### Dubbing decoder optimization, 0.61.2
+
+On 2026-09-08, full Polish-to-English dubbing of `cam1_10min.mp4` was measured
+on an RTX 2060 SUPER (8 GB), Python 3.12.12, PyTorch 2.13.0+cu130,
+videopython-chatterbox 0.1.7.post1 and pyannote-audio 4.0.7. Both variants include
+the 0.61.1 diarization optimization. The isolated candidate adds only CUDA graph replay
+for the existing decoder's feed-forward and normalization operations.
+
+The comparison calls `VideoDubber.dub_file` with diarization, per-speaker voice
+cloning, background preservation, original-audio retention and `low_memory=True`.
+It includes decoding, model loading, transcription, diarization, separation,
+translation, synthesis, synchronization, mixing and final video output. Imports
+and downloaded model files were warmed before timing. Local instrumentation saves
+intermediate outputs in both variants and adds some overhead.
+
+Translation uses the same Ollama 0.33.3 `qwen3.5:4b` model and seed in both runs.
+This smaller model makes the benchmark practical on this GPU; it does not replace
+the library default or establish translation parity with that larger model.
+The dedicated Ollama server uses `OLLAMA_KEEP_ALIVE=0`. Python, NumPy and PyTorch
+seeds are reset identically before each synthesis call.
+
+| Measurement | Before | Decoder graphs |
+|---|---:|---:|
+| Full dubbing, including final video output | 656.77 s | 568.12 s |
+| Speech synthesis calls, including model loading and reference preparation | 508.00 s | 417.86 s |
+| Peak GPU memory (whole device, sampled every second) | 7,338 MiB | 7,806 MiB |
+| Peak process RSS | 6,993,460 KiB | 6,992,940 KiB |
+
+Full time fell by 13.5%; synthesis time fell by 17.7%. The additional GPU memory
+is a material tradeoff on small GPUs. Capture failures restore the original path.
+Ninety decoder graphs remained active throughout all 21 synthesis calls.
+
+Both runs used the same two speakers, selected reference samples, translated text,
+per-segment expression and seeds. All 21 synthesis calls succeeded with identical
+sample counts. Maximum absolute waveform difference was 4.04e-6 on normalized
+floating-point audio; outputs are not bit-identical. Translation had no failures,
+and synchronization summaries matched, with no truncated segments.
+
+Input SHA-256:
+`deeaa2055a9061ea04fdddafdcc846be0454c677cabc5e1d5c546b595d4e1e7b`.
+
+These are single full-pipeline runs on one recording, supported by repeated short
+synthesis probes. They do not establish universal speedups or bitwise equivalence
+on other hardware, recordings or dependency versions. Reference-cache and attention-
+observer cleanup experiments improved full time by only 0.6% together and were
+excluded from the release because their benefit did not justify the extra code.
+Experimental benchmark helpers and intermediate media are kept outside the commit.
+
+### Dubbing reliability, 0.61.2
+
+Follow-up checks on 2026-09-08 used the same GPU environment and explicitly selected
+`qwen3.5:4b`; the library default remains unchanged. These checks include bounded
+translation and synthesis and are separate from the decoder-only comparison above.
+
+| Check | Result |
+|---|---|
+| Full `cam1_10min.mp4` dubbing | 747.608 s; 21/21 turns generated, no translation or synthesis failures, no timing truncation |
+| First 10 minutes of `all_in_30min.mp4` | Recovery generated 42/42 positive-duration turns; one zero-duration ASR fragment reported as a synthesis failure |
+| Long Polish synthesis | 235 words, ten bounded calls, 105.44 s of raw audio; normalized ASR matched every source word, including the closing sentence |
+| Export validation | Both final MP4 files fully decoded with FFmpeg; cam1 retained video, and the audio-only All-In input retained dubbed and original audio |
+
+The cam1 run preceded the final short-alignment and vocabulary guards. The final
+long-speech probe exercised those guards. All-In's first full run failed on short
+alignment and invalid vocoder tokens; recovery reused successful transcription,
+translation and speech and regenerated failed or unfinished turns. Its final
+127.093 s recovery/reassembly time is **not** a full-pipeline benchmark. A clean
+full All-In run with every final guard has not been measured.
+
+This is a robustness improvement, not a translation or timing quality pass.
+The tested 4B model still reversed meanings and mishandled idioms. All-In timing
+adjustment truncated 33 of 42 generated turns; final ASR confirmed missing closing
+speech. Raw long-turn synthesis retained its endings. The current reported
+truncation-seconds metric also includes time-stretch savings, so it overstates
+actual tail removal. These remain follow-up work.
+
+The implementation suite passed 1,265 tests with CUDA hidden, plus lint, typing
+and strict documentation checks. Experimental scripts, intermediate transcripts,
+and media remain local and are not shipped in the release.
+
+#### Review follow-up
+
+The initial reliability candidate was 13.8% slower than the 656.77 s baseline and
+31.6% slower than the graph-only candidate. Saved stage timings attribute the
+increase to both translation (40.00 → 115.24 s) and synthesis (417.86 → 518.37 s).
+These are different generated workloads; the figures do not isolate individual
+code changes or measure the final branch.
+
+A fresh full cam1 run with the review fixes completed in **702.922 s**: **7.0%
+slower than the 656.77 s baseline**, and 6.0% faster than the initial reliability
+candidate. Translation took 47.119 s; synthesis took 541.291 s across
+51 bounded backend calls. All 21 turns generated successfully, with no translation
+or synthesis failures, no timing truncation and no excessive speed. Peak sampled
+whole-device memory was 7,161 MiB, versus 7,338 MiB in the baseline.
+
+These remain **4B-model compatibility measurements**, not default-model performance
+baselines. The final cam1 output contains 378.64 s of raw speech and 1,326 translated
+words, versus 332.48 s and 1,299 words in the baseline. Changed generated workloads
+prevent attributing the net difference solely to execution overhead. Cam1 translation
+still mishandles the idiom “sezon ogórkowy” as “pickling/cucumber season”.
+
+The fresh full ten-minute All-In run completed in **1,189.936 s**. All 41 usable
+turns generated successfully across 81 bounded calls. Original indices 34 (20 ms)
+and 37 (zero duration) were reported in `synthesis_failures`. There were no
+structural translation failures or hard timing truncations. Translation took
+88.473 s; synthesis took 957.863 s and produced 637.48 s of raw speech. Peak sampled
+whole-device GPU memory was 7,157 MiB. This is a complete run, unlike the earlier
+recovery/reassembly measurement.
+
+**All-In still fails quality.** Twenty-one of 41 turns exceeded the preferred speed;
+mean speed was 2.568× and maximum speed was 16.840×. Inspecting the worst short
+outputs found extra speech in raw TTS output, not merely silence: “Ale” generated
+5.94 s, “Tak.” 4.74 s, and “to.” 3.44 s, with ASR detecting unrequested words. Faster
+timing preserves the generated waveform but cannot repair hallucinated speech or
+make those extreme speeds intelligible. The 4B translator still reverses “the market
+is ripping” into a falling market and confuses valuation multiples with revenue growth.
+
+Both final MP4s fully decoded with every video/audio stream explicitly mapped.
+Cam1 contains H.264 video plus dubbed/original AAC; All-In contains two AAC tracks.
+Final-audio ASR retained both closing sentences, including All-In's previously lost
+“trochę szalony”. Raw longest and closing turns were also transcribed. This checks
+selected coverage risks, not every word or overall listening quality.
+
+The release verification script's `dub` check also passed on a 68.28 s cam1 extract
+with `qwen3.5:4b`, CUDA, low-memory mode, diarization and cloning: three turns, two
+speakers, no translation/synthesis failures, no truncation or excessive speed. The
+script now honors the model override, exposes low-memory mode, reports excessive
+speeds and fails on synthesis failures. This is an operational compatibility check;
+it does not contradict the semantic failures above.
+
+The full suite passed **1,275 tests** with CUDA hidden; typing passed all 144 source
+and test files. The final translator/Ollama checks passed another 27 tests after
+test-typing cleanup. The live Ollama residency probe confirmed the model was loaded
+between calls and absent after explicit unload.
+
+The review fixes bound tiny groups to four turns and ten seconds, reject isolated
+sub-100 ms groups with original-index failure reporting, split unbroken text, and
+restore soft spoken-length hints. Translation explicitly retains Ollama between
+requests and unloads it at the low-memory stage boundary. Requests still isolate
+one source part at a time; this trades batching throughput for segment ownership.
+
+Timing now borrows following silence and preserves the entire generated utterance
+by allowing speeds above the preferred 1.3× maximum. Excessive speeds are reported
+in the timing summary and logs. This avoids deliberate tail clipping, but does not
+guarantee natural delivery or correct translation. Residual tempo-filter duration
+errors are fitted by resampling the entire output, with a possible small pitch shift.
+
+Two fresh-process CUDA pool probes each generated “za”, “Ja” and a full Polish
+sentence twice. Shared pools reserved 178 MiB less than separate pools on all six
+calls, with matching sample counts and maximum waveform difference below 8e-7.
+Timings varied and do not establish a pool-sharing speedup. A separate GPU probe
+verified replay under `no_grad` after capture in inference mode.
+
+The short-alignment dependency fix is prepared as local Chatterbox commit `57fb312`
+(version 0.1.7.post2). Seven direct PyTorch boundary tests and the GPU probes above
+passed without the alignment monkeypatch. At that stage publication was deferred:
+the review candidate retained `>=0.1.7.post1` and the compatibility guard. The full
+cam1 and All-In measurements above used that configuration.
+
+#### Published Chatterbox integration
+
+On 2026-09-08, the published `videopython-chatterbox==0.1.7.post2` wheel was
+installed and the dependency minimum and lock updated. The local alignment
+monkeypatch and its two wrapper tests were removed; vocabulary masking and vocoder
+token validation remain separate protections.
+
+Seven direct PyTorch tests passed against the installed dependency's alignment
+implementation, covering text widths 1–6 and 20. Seeded CUDA voice cloning produced
+“za” (0.96 s) and “Ja” (0.64 s), with the native alignment method unchanged after
+model initialization. A 235-word Polish synthesis produced 105.44 s across ten
+backend calls; all 235 normalized words matched independent ASR, including the
+closing sentence. These examples do not establish that the short-utterance
+hallucinations in the All-In record are fixed.
+
+The English TTS harness initially exhausted GPU memory when loading Whisper while
+the synthesis model was still referenced. Explicitly unloading TTS before ASR
+resolved this: the rerun passed with 0.818 word-set overlap and generated the cloned
+voice sample successfully. The recognized sentence differed in “riverbank” versus
+“river bank”; this overlap metric is not a complete semantic or cloning-quality audit.
+The core suite passed all 1,273 tests (the two obsolete wrapper tests were removed).
+Ruff, formatting, mypy, lock validation, wheel/sdist builds and strict documentation
+build passed. The wheel contains the token protections, excludes the alignment
+monkeypatch and requires the published post2 dependency.
+
+These are functional integration checks, not new full-pipeline benchmarks. The
+cam1 and All-In performance and quality results above still describe the earlier
+dependency configuration.
+
+#### Comparison against merged 0.61.1
+
+On 2026-09-08, the 0.61.2 branch was rebased onto merged `main` at `3ca57b9`.
+`git range-diff` confirmed all four release patches were unchanged; the candidate
+tested here is `f9b9c37`. Separate processes imported each checkout, using the same
+RTX 2060 SUPER, PyTorch 2.13.0+cu130, published Chatterbox 0.1.7.post2, reference WAVs,
+expression settings and per-case seeds. Using post2 on both sides isolates the
+videopython changes; this is not a comparison of the two historical lockfiles.
+
+| Matched check | Merged main | 0.61.2 candidate |
+|---|---:|---:|
+| 235-word Polish passage: generated duration | 30.22 s | 105.44 s |
+| Passage: normalized ASR word edit distance | 216 | 0 |
+| Known short-utterance hallucinations reproduced | 3/3 | 3/3 |
+| Same 41 All-In raw utterances: timing reports tail removal | 31/41 | 0/41 |
+
+The long passage retained all 235 words on the candidate. Main's ASR returned 112
+words, including repeated invented phrases and an unrequested closing, so that
+word count does not represent 112 correctly retained source words. The short cases
+requested “Ale”, “Tak.” and “to.” with original All-In seeds 1793, 1805 and 1812.
+Both versions produced 5.94 s, 4.74 s and 3.44 s, respectively, with the same
+unrequested speech in ASR. Saved PCM samples differed by at most one 16-bit step.
+
+The timing comparison reused identical cached speech in the original turn windows,
+without pipeline gap borrowing. The candidate reported 23 excessive speeds, peaking
+at 35.63×; this is not the earlier full-pipeline maximum of 16.84×. Preserving all
+samples at such speeds does not establish intelligibility. In a separate closing-turn
+check (22.56 s fitted to 17 s), both versions retained the closing phrase in ASR;
+word edit distances were 8 on main and 10 on the candidate. That example does not
+show a transcription-quality improvement from faster timing.
+
+Paired translation checks used the existing `qwen3.5:4b`, seed 1777 and default
+translator settings on cam1 segments 0–2 and All-In segments 30–33. Both versions
+returned all seven segments without structural failures. Both reversed “the market
+is ripping” into “rynek się wali” (the market is collapsing). For “sezon ogórkowy”
+in the January pizzeria discussion, main returned “summer season” and the candidate
+returned “pickling season”; neither preserved the quiet-business-period meaning.
+These examples do not demonstrate better semantic translation on the candidate,
+and do not evaluate the default 27B model. No model downloads were needed.
+
+These targeted checks establish improved long-speech fidelity and avoidance of hard
+tail cuts, not uniformly better dubbing quality. They are not new full-video latency
+benchmarks or listening tests. Post-rebase checks passed 160 dubbing/speech tests
+and 17 translator tests. Raw WAVs, recognized text, settings and per-turn timing
+records are retained locally under `.cache/dubbing/main-quality-comparison/`.
+
+#### Listener follow-up: early finishes on cam1_1min
+
+The listener reported stretch artifacts and a long silence near 38 seconds in both
+one-minute dubs. Both had clamped all three turns to 0.8×. Capturing the candidate's
+raw speech reproduced durations of 4.76 s, 25.08 s and 6.60 s against source windows
+of 7.16 s, 39.64 s and 11.48 s. The second turn begins at 8.02 s: the old minimum
+speed left roughly eight seconds of unused time before its 47.66 s boundary.
+
+That candidate treated the minimum as a preference and reported excessive slowdowns,
+as it did for excessive speedups. A corrected mix reused identical raw
+speech, translations, source audio and background; only timing changes. Rubber Band
+at 0.665×, 0.633× and 0.575× fills all three windows. The second turn's ASR ending
+moves from 23.82 s in the raw clip to 37.66 s in the corrected clip, or approximately
+45.68 s on the video timeline. Some natural trailing silence remains before 47.66 s.
+
+This fixes the early-finish mechanism but does not establish artifact-free speech.
+Normalized ASR word edit counts for raw versus corrected turns were 2/2, 3/9 and
+0/0. The old 0.8× atempo version of the middle turn produced 7 edits while leaving
+the long unused tail. At the full required duration, atempo produced 11 edits;
+Rubber Band's default and long-window settings produced 10 and 11. The selected
+smooth-transient setting produced 9. ASR is an imperfect proxy for perceptual
+quality; the new listening sample still requires review. Existing translation
+errors and short-input hallucinations are unaffected.
+
+Pitch/duration tests cover slowing and accelerating a 220 Hz signal, including
+activity near the output ending. The focused audio/dubbing suite passed 220 tests;
+lint and mypy passed. Both output streams fully decoded. Samples and comparison
+records are retained under `.cache/dubbing/cam1_1min_listen/`, including
+`cam1_1min-0.61.2-pacing-fixed-en.mp4`.
+
+#### Source-word phrase scheduling replaces paragraph slowdowns
+
+The listener rejected the full-window slowdown as unnatural. The next design keeps
+speaker turns for diarization/reference extraction, but derives dubbing phrases from
+validated word timestamps before translation. Sentence boundaries take priority over
+commas; pauses and clauses help bound longer runs. Tiny tails are kept with their
+neighbors. Original source segments are preserved and phrase failures map back to
+them through `source_segment_index`. Missing or inconsistent word timing retains
+the original segment rather than inventing proportional timestamps.
+
+On `cam1_1min.mp4`, three original turns became ten phrases; the middle turn became
+six sentences anchored at 8.02, 13.34, 19.30, 26.44, 33.64 and 39.68 seconds. Shorter
+generated phrases keep their natural pace; available gaps absorb overruns before
+acceleration. The user's preferred range is now 0.9–1.1×. Larger necessary speedups
+remain reported to preserve complete generated speech. Forced slowdowns are removed.
+
+The new full-pipeline review video used the same existing 4B translator, post2
+Chatterbox, seed policy, diarization, speaker cloning and background preservation.
+All ten phrases ran at exactly 1.0×: zero stretches, truncations, excessive speeds,
+translation failures or synthesis failures. A separate check under the new 0.9/1.1
+defaults confirmed every synchronized waveform was sample-identical to raw TTS.
+Both exported streams fully decoded. This removes time-stretch artifacts from this
+sample by avoiding time stretching entirely, rather than selecting another filter.
+
+Final ASR returned 145 words against 145 translated words, with three word edits:
+the negation in “can't say” became “can say”, “health” became “hell”, and an extra
+“Umm” appeared. These require listening review; successful scheduling is not proof
+of exact spoken meaning. The 4B translation still mistranslates the quiet-season
+idiom. Late phrases remain anchored throughout the final part of the video, with
+speech recognized through approximately 59 seconds.
+
+Validation passed 184 focused dubbing, phrase, translation and speech tests, plus
+lint, typing and strict documentation checks. Artifacts are retained under
+`.cache/dubbing/cam1_1min_phrases/`; the review output is
+`cam1_1min-phrases-en.mp4`. This is a pacing/quality check, not a controlled new
+full-video performance benchmark or phoneme-level lip-sync claim.
+
+The listener accepted this phrase-based version for 0.61.2 with the remaining
+sentence pauses. A subsequent placement experiment was discarded: release code
+keeps the original phrase anchors and introduces no accumulated start-time shifts.
+Final local release checks passed 1,283 tests, Ruff/formatting, mypy, lock validation
+and strict documentation build. Wheel and sdist builds passed; a clean wheel install
+passed public-import, render and MCP smoke checks. The wheel requires published
+Chatterbox post2 and excludes the discarded placement experiment.
+
 ### Diarization optimization, 0.61.1
 
 On 2026-09-08, the diarization embedding path was measured on an NVIDIA GeForce
@@ -186,8 +573,10 @@ input established the failure limit.
 | Baseline 3 | 10/17 | 1.085 | 2.000 s |
 | Complete model run | 7/17 | 1.102 | 2.400 s |
 
-The dub verification fails if the timing summary is missing or if one segment loses
-more than 3.0 seconds during synchronization.
+These historical runs used the former truncation threshold. The current dub
+verification fails on missing timing measurements or translation/synthesis failures.
+It reports excessive speeds for listening review; synchronization preserves complete
+generated speech.
 
 ## 4K effects performance
 

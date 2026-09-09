@@ -29,6 +29,12 @@ Diarization skips speaker embeddings for chunk/speaker pairs with no speech. Com
 pyannote embedding backends also share frame extraction across speakers in each chunk, then apply
 each speaker's original mask separately. Segmentation overlap, precision, and clustering
 settings are unchanged. Other embedding models keep the existing extraction path.
+When frame extraction is shared, the backend's `embedding_batch_size` counts audio
+chunks rather than chunk/speaker pairs. Pooling materializes one frame row per active
+pair in addition to the shared chunk frames. Thus, a batch of 32 chunks with three
+active speakers per chunk can hold 32 shared plus 96 pooled frame rows. This uses
+more frame-tensor memory than the upstream batch of 32 pairs; it is not a fourfold
+estimate of total GPU memory. The measured optimization retains this batching strategy.
 
 On a 30-minute five-speaker recording, sharing frame extraction reduced warm diarization
 time from 21.18s to 16.16s, with identical speaker labels and exact timestamps. Small

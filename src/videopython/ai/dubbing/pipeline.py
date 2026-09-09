@@ -160,22 +160,25 @@ class LocalDubbingPipeline:
             self._init_translator(source_lang=source_lang, target_lang=target_lang)
 
         # Translation stage spans 0.35 → 0.50 of overall pipeline progress.
-        # MarianMT runs sequentially over 8-segment batches; on a 15-min
-        # source that's minutes of silent dwell on 0.35 without per-batch
-        # ticks. Map the [0,1] translation fraction onto that 15% window.
+        # Map completed bounded translation requests onto the stage's window.
         def _on_translation_progress(fraction: float) -> None:
             clamped = max(0.0, min(1.0, fraction))
             report_progress(f"Translating text ({int(clamped * 100)}%)", 0.35 + 0.15 * clamped)
 
+        from videopython.ai.dubbing._phrases import timed_phrases
+
+        phrases, parents = timed_phrases(transcription.segments)
         translated_segments = self._translator.translate_segments(
-            segments=transcription.segments,
+            segments=phrases,
             target_lang=target_lang,
             source_lang=source_lang,
             progress_callback=_on_translation_progress,
         )
-        # Capture per-segment failures (always empty for Marian) before
+        # Capture per-segment failures before
         # _maybe_unload nukes the backend in low_memory mode.
-        translation_failures = list(self._translator.translation_failures)
+        translation_failures = sorted({parents[i] for i in self._translator.translation_failures})
+        for segment, parent in zip(translated_segments, parents):
+            segment.source_segment_index = parent
         self._maybe_unload("_translator")
 
         return translated_segments, translation_failures
@@ -428,6 +431,9 @@ class LocalDubbingPipeline:
 
         report_progress("Generating dubbed speech", 0.50)
 
+        from videopython.ai.dubbing._synthesis import MIN_SYNTHESIS_SECONDS, synthesis_groups
+
+        synthesis_failures: list[int] = []
         dubbed_segments: list[Audio] = []
         target_durations: list[float] = []
         start_times: list[float] = []
@@ -436,8 +442,21 @@ class LocalDubbingPipeline:
         # The dict is loop-scoped state so the finally block can clean up.
         speaker_wav_paths: dict[str, Path] = {}
         try:
-            for i, segment in enumerate(translated_segments):
-                if segment.duration < 0.1:
+            for indices in synthesis_groups(translated_segments):
+                i = max(indices, key=lambda index: translated_segments[index].duration)
+                segment = translated_segments[indices[0]]
+                if len(indices) > 1:
+                    segment = segment.model_copy(
+                        update={
+                            "translated_text": " ".join(
+                                translated_segments[index].translated_text for index in indices
+                            ),
+                            "end": translated_segments[indices[-1]].end,
+                        }
+                    )
+                if segment.duration < MIN_SYNTHESIS_SECONDS:
+                    if segment.translated_text.strip():
+                        synthesis_failures.extend(indices)
                     continue
                 # Translation filter (translation.py:_is_translatable_text)
                 # leaves translated_text="" for punctuation-only or empty
@@ -446,8 +465,8 @@ class LocalDubbingPipeline:
                 if not segment.translated_text.strip():
                     continue
 
-                progress = 0.50 + (0.30 * (i / len(translated_segments)))
-                report_progress(f"Generating speech ({i + 1}/{len(translated_segments)})", progress)
+                progress = 0.50 + (0.30 * (indices[0] / len(translated_segments)))
+                report_progress(f"Generating speech ({indices[-1] + 1}/{len(translated_segments)})", progress)
 
                 speaker = segment.speaker or "speaker_0"
                 dubbed_audio = self._tts_segment_audio(
@@ -460,10 +479,21 @@ class LocalDubbingPipeline:
                     expressiveness=expressiveness_per_segment[i],
                 )
                 if dubbed_audio is None:
+                    synthesis_failures.extend(indices)
                     continue
 
                 dubbed_segments.append(dubbed_audio)
-                target_durations.append(segment.duration)
+                # Borrow only unused time before the next original turn, even if
+                # that turn failed translation/synthesis. Never cross a speaker.
+                next_index = indices[-1] + 1
+                next_start = (
+                    translated_segments[next_index].start
+                    if next_index < len(translated_segments)
+                    else source_audio.metadata.duration_seconds
+                )
+                available = max(segment.duration, next_start - segment.start)
+                needed = dubbed_audio.metadata.duration_seconds
+                target_durations.append(max(segment.duration, min(available, needed)))
                 start_times.append(segment.start)
         finally:
             for path in speaker_wav_paths.values():
@@ -504,6 +534,14 @@ class LocalDubbingPipeline:
             timing_summary=timing_summary,
             transcript_quality=transcript_quality,
             translation_failures=translation_failures,
+            synthesis_failures=sorted(
+                {
+                    translated_segments[i].source_segment_index
+                    if translated_segments[i].source_segment_index is not None
+                    else i
+                    for i in synthesis_failures
+                }
+            ),
         )
 
     def revoice(

@@ -2,41 +2,43 @@
 
 from __future__ import annotations
 
+import logging
+import subprocess
+from dataclasses import replace
+from functools import lru_cache
+from typing import Literal
+
 import numpy as np
 
 from videopython.ai.dubbing.models import TimingAdjustment
 from videopython.audio import Audio, AudioMetadata
+
+logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=1)
+def _speech_stretch_method() -> Literal["atempo", "rubberband"]:
+    """Prefer Rubber Band when installed; retain compatibility with core ffmpeg."""
+    result = subprocess.run(["ffmpeg", "-hide_banner", "-filters"], capture_output=True, text=True, check=True)
+    if any(len(fields := line.split()) > 1 and fields[1] == "rubberband" for line in result.stdout.splitlines()):
+        return "rubberband"
+    logger.warning("FFmpeg has no rubberband filter; dubbing falls back to atempo time stretching")
+    return "atempo"
 
 
 class TimingSynchronizer:
     """Synchronizes dubbed audio segments to match original timing.
 
     Adjusts the speed of dubbed audio segments to fit within the timing
-    constraints of the original speech while maintaining natural-sounding speech.
+    constraints of the original speech, preserving complete utterances. Speeds
+    beyond the preferred range are reported because they can sound unnatural.
     """
 
-    # Speed limits for natural-sounding speech
-    MIN_SPEED: float = 0.8  # Slowest allowed (20% slower)
-    MAX_SPEED: float = 1.3  # Fastest allowed (30% faster)
-
-    def __init__(
-        self,
-        min_speed: float | None = None,
-        max_speed: float | None = None,
-    ):
-        """Initialize the timing synchronizer.
-
-        Args:
-            min_speed: Minimum speed factor (default: 0.8).
-            max_speed: Maximum speed factor (default: 1.3).
-        """
-        self.min_speed = min_speed if min_speed is not None else self.MIN_SPEED
-        self.max_speed = max_speed if max_speed is not None else self.MAX_SPEED
-
-        if self.min_speed <= 0:
-            raise ValueError("min_speed must be positive")
-        if self.max_speed <= self.min_speed:
-            raise ValueError("max_speed must be greater than min_speed")
+    def __init__(self, max_speed: float = 1.1):
+        """Set the preferred maximum speed; larger speeds preserve speech when needed."""
+        if not np.isfinite(max_speed) or max_speed < 1.0:
+            raise ValueError("max_speed must be finite and at least 1.0")
+        self.max_speed = max_speed
 
     def synchronize_segment(
         self,
@@ -64,41 +66,62 @@ class TimingSynchronizer:
                 target_duration=target_duration,
                 actual_duration=original_duration,
                 speed_factor=1.0,
-                was_truncated=False,
+                excessive_speed=False,
             )
 
         # Calculate required speed factor
         required_speed = original_duration / target_duration
 
-        # Clamp to acceptable range
-        clamped_speed = max(self.min_speed, min(self.max_speed, required_speed))
-
-        # Check if we need to truncate
-        was_truncated = False
-        if required_speed > self.max_speed:
-            # Even at max speed, audio is too long - will need truncation
-            was_truncated = True
+        # Source-word phrase anchors carry the delivery rhythm. Do not stretch
+        # a shorter translation to fill silence; only accelerate an overrun.
+        speed_factor = max(1.0, required_speed)
 
         # Apply time stretch
-        if abs(clamped_speed - 1.0) > 0.01:
-            synchronized_audio = audio.time_stretch(clamped_speed)
+        if abs(speed_factor - 1.0) > 0.01:
+            synchronized_audio = audio.time_stretch(speed_factor, method=_speech_stretch_method())
         else:
             synchronized_audio = audio
+            speed_factor = 1.0
 
-        # Truncate if still too long
+        # atempo has a small sample-count error. Fit its *whole* output to the
+        # window instead of slicing off the ending. This residual resampling can
+        # shift pitch slightly; the main duration change above preserves pitch.
         actual_duration = synchronized_audio.metadata.duration_seconds
         if actual_duration > target_duration:
-            synchronized_audio = synchronized_audio.slice(0, target_duration)
-            actual_duration = target_duration
-            was_truncated = True
+            frames = max(1, int(target_duration * synchronized_audio.metadata.sample_rate))
+            data = synchronized_audio.data
+            positions = np.linspace(0, len(data) - 1, frames)
+            source_positions = np.arange(len(data))
+            fitted = (
+                np.interp(positions, source_positions, data)
+                if data.ndim == 1
+                else np.column_stack([np.interp(positions, source_positions, channel) for channel in data.T])
+            )
+            speed_factor *= len(data) / frames
+            metadata = replace(
+                synchronized_audio.metadata,
+                frame_count=frames,
+                duration_seconds=frames / synchronized_audio.metadata.sample_rate,
+            )
+            synchronized_audio = Audio(fitted.astype(np.float32), metadata)
+            actual_duration = metadata.duration_seconds
+
+        excessive_speed = speed_factor > self.max_speed + 0.01
+        if excessive_speed:
+            logger.warning(
+                "Dubbed turn %d requires %.2fx speed (preferred maximum %.2fx)",
+                segment_index,
+                speed_factor,
+                self.max_speed,
+            )
 
         return synchronized_audio, TimingAdjustment(
             segment_index=segment_index,
             original_duration=original_duration,
             target_duration=target_duration,
             actual_duration=actual_duration,
-            speed_factor=clamped_speed,
-            was_truncated=was_truncated,
+            speed_factor=speed_factor,
+            excessive_speed=excessive_speed,
         )
 
     def synchronize_segments(
@@ -193,7 +216,15 @@ class TimingSynchronizer:
         output = np.zeros(end_sample, dtype=np.float32)
         for start_sample, seg_data in normalized:
             stop = start_sample + len(seg_data)
-            output[start_sample:stop] += seg_data
+            # Fade only the edges, without copying or cutting the whole phrase.
+            fade_samples = min(round(0.005 * sample_rate), len(seg_data) // 2)
+            if fade_samples:
+                ramp = np.linspace(0, 1, fade_samples, dtype=np.float32)
+                output[start_sample : start_sample + fade_samples] += seg_data[:fade_samples] * ramp
+                output[start_sample + fade_samples : stop - fade_samples] += seg_data[fade_samples:-fade_samples]
+                output[stop - fade_samples : stop] += seg_data[-fade_samples:] * ramp[::-1]
+            else:
+                output[start_sample:stop] += seg_data
 
         # Single post-mix peak guard, equivalent to Audio.overlay's per-call
         # rescale collapsed into one pass. For non-overlapping dub segments

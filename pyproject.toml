@@ -1,6 +1,6 @@
 [project]
 name = "videopython"
-version = "0.61.1"
+version = "0.61.2"
 description = "LLM-friendly Python video editing with JSON plans, local AI, and MCP tools."
 authors = [
     { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
@@ -93,9 +93,9 @@ ai = [
     # Audio source separation (understanding/separation.py)
     "demucs>=4.0.0",
     # Voice cloning TTS (generation/audio.py). Our fork of chatterbox-tts with
-    # corrected metadata; import name is still `chatterbox`. Not upstream — its
-    # `==` pins make [ai] unsatisfiable. See DEVELOPMENT.md "Dependencies".
-    "videopython-chatterbox>=0.1.7.post1",
+    # corrected metadata and short-text alignment fix; import name is `chatterbox`.
+    # Upstream's `==` pins make [ai] unsatisfiable. See DEVELOPMENT.md "Dependencies".
+    "videopython-chatterbox>=0.1.7.post2",
     # Local media generation (generation/*). >=0.35 ships QwenImagePipeline + Wan2.2.
     "diffusers>=0.35.0",
     # Required, despite looking like diffusers' problem: the Wan2.2 i2v pipeline

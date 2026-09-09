@@ -1,26 +1,16 @@
-"""Context-aware dub translation via a local Ollama text model.
-
-``OllamaTranslator`` is the single translation backend: it sends the
-transcription segments to a local Ollama model under a structured-output schema
-and reads back length-budgeted, context-aware translations. The pipeline always
-uses it (the old Marian / llama-cpp backends were removed in the Ollama
-consolidation).
-"""
-
 from __future__ import annotations
 
 import json
-import logging
+from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Callable
 
 from videopython.ai._ollama import OllamaError, OllamaStructuredClient
 from videopython.ai._predictor import ManagedPredictor
+from videopython.ai._text_chunks import split_text
 from videopython.base.transcription import TranscriptionSegment
 
 if TYPE_CHECKING:
     from videopython.ai.dubbing.models import TranslatedSegment
-
-logger = logging.getLogger(__name__)
 
 # Default Ollama text model for translation; override via the `model` arg (and
 # `ollama pull` it first). Any instruct model that supports structured output works.
@@ -28,12 +18,8 @@ DEFAULT_TRANSLATION_MODEL = "qwen3.6:27b"
 
 
 def _is_translatable_text(text: str) -> bool:
-    """Return True if text has enough content to be worth translating.
-
-    Whisper routinely emits punctuation-only or single-character segments
-    (" .", "...", "?", "♪"). Require at least 2 alphanumeric characters.
-    """
-    return sum(1 for c in text if c.isalnum()) >= 2
+    """Ignore punctuation/music markers, but retain single-letter spoken words."""
+    return any(c.isalnum() for c in text)
 
 
 LANGUAGE_NAMES = {
@@ -73,8 +59,10 @@ LANGUAGE_NAMES = {
 }
 
 
-# Average characters per second of natural speech, for the per-segment
-# ``target_chars`` budget. The prompt treats it as a ±15% target, not a cap.
+# Conservative character/token estimate without a language-specific tokenizer.
+_CHARS_PER_TOKEN = 2.0
+
+# Soft spoken-length hints, never a reason to discard source meaning.
 _SPEECH_CHARS_PER_SEC: dict[str, float] = {
     "en": 14.0, "es": 14.0, "pt": 13.5, "it": 13.5, "fr": 13.0, "de": 12.0,
     "pl": 12.5, "nl": 12.5, "ru": 12.0, "uk": 12.0, "cs": 12.0, "sk": 12.0,
@@ -83,22 +71,15 @@ _SPEECH_CHARS_PER_SEC: dict[str, float] = {
     "th": 9.0, "vi": 11.0, "ar": 10.0, "he": 10.0, "hi": 11.0, "ta": 10.0,
     "id": 12.0, "ms": 12.0, "tr": 12.0, "el": 12.0,
 }  # fmt: skip
-_SPEECH_CHARS_DEFAULT = 12.0
 
-# avg_logprob below this marks a transcription window we don't trust.
-_LOW_LOGPROB_HINT_THRESHOLD = -1.0
-
-# Conservative chars/token for sizing chunks without a tokenizer (low end so any
-# source language stays safe), plus prompt-envelope and per-segment overheads.
-_CHARS_PER_TOKEN = 2.0
-_PROMPT_OVERHEAD_TOKENS = 300
-_SEGMENT_ENVELOPE_CHARS = 40
 
 _TRANSLATION_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "translations": {
             "type": "array",
+            "minItems": 1,
+            "maxItems": 1,
             "items": {
                 "type": "object",
                 "properties": {"i": {"type": "integer"}, "translated": {"type": "string"}},
@@ -112,88 +93,56 @@ _TRANSLATION_SCHEMA: dict[str, Any] = {
 }
 
 
-def _chunk_segment_indices(segments: list[TranscriptionSegment], n_ctx: int, max_tokens: int) -> list[list[int]]:
-    """Group positions in ``segments`` into batches that fit one model call.
-
-    Each batch keeps ``prompt_tokens + max_tokens <= n_ctx``, approximated from
-    character length via ``_CHARS_PER_TOKEN``. A segment whose own serialized
-    form exceeds the budget gets its own chunk.
-    """
-    prompt_token_budget = n_ctx - max_tokens - _PROMPT_OVERHEAD_TOKENS
-    if prompt_token_budget <= 0:
-        return [[i] for i in range(len(segments))]
-    char_budget = int(prompt_token_budget * _CHARS_PER_TOKEN)
-
-    chunks: list[list[int]] = []
-    current: list[int] = []
-    current_chars = 0
-    for i, seg in enumerate(segments):
-        seg_chars = len(seg.text) + _SEGMENT_ENVELOPE_CHARS
-        if current and current_chars + seg_chars > char_budget:
-            chunks.append(current)
-            current = []
-            current_chars = 0
-        current.append(i)
-        current_chars += seg_chars
-    if current:
-        chunks.append(current)
-    return chunks
-
-
-def _target_chars_for(duration_seconds: float, target_lang: str) -> int:
-    """Character-count budget for a segment of ``duration_seconds`` in ``target_lang``."""
-    rate = _SPEECH_CHARS_PER_SEC.get(target_lang, _SPEECH_CHARS_DEFAULT)
-    return max(1, int(duration_seconds * rate * 1.15))
-
-
 def _build_system_prompt(source_lang: str, target_lang: str) -> str:
     src_name = LANGUAGE_NAMES.get(source_lang, source_lang)
     tgt_name = LANGUAGE_NAMES.get(target_lang, target_lang)
     return (
         f"You are a professional dub translator. Translate from {src_name} to {tgt_name}.\n"
-        "Preserve register and proper nouns. Match each segment's syllable count so the\n"
-        "dub fits the original timing -- translation is for spoken audio, not subtitles.\n"
-        "Aim for `target_chars` characters per segment (+/-15%).\n"
-        "If a segment is non-speech filler keep it as filler; do not invent content.\n"
-        "If a segment carries `low_confidence`, translate conservatively.\n"
+        "Translate ONLY the target text into natural spoken language. Context is for understanding only: "
+        "never translate or borrow content from context. Preserve every claim, negation, number, unit, "
+        "proper name, and speaker perspective. Interpret idioms by their meaning in context, not literally. "
+        "If low_confidence is set, translate conservatively without inventing missing words. "
+        "Use correct financial and technical terminology. Do not summarize, explain, embellish or "
+        "complete unfinished fragments. Semantic fidelity takes priority over timing or length. "
+        "Prefer concise phrasing when equally faithful, but never omit meaning to fit timing.\n"
+        "Aim for target_chars characters (+/-15%) using concise spoken phrasing. This is a soft "
+        "timing target, not a cap: retain every claim even when it requires more characters.\n"
         "\n"
         'Return a JSON object {"translations": [{"i": <segment_index>, "translated": "<text>"}, ...]} '
         "with exactly one entry per input segment."
     )
 
 
-def _build_user_prompt(segments: list[TranscriptionSegment], target_lang: str) -> str:
-    lines: list[str] = []
-    for idx, seg in enumerate(segments):
-        entry: dict[str, Any] = {
-            "i": idx,
-            "text": seg.text,
-            "target_chars": _target_chars_for(seg.end - seg.start, target_lang),
-        }
-        if seg.avg_logprob is not None and seg.avg_logprob < _LOW_LOGPROB_HINT_THRESHOLD:
-            entry["low_confidence"] = True
-        lines.append(json.dumps(entry, ensure_ascii=False))
-    return "Input segments:\n" + "\n".join(lines) + f"\n\nTranslate all {len(segments)} segments."
-
-
 def _parse_translations(data: dict[str, Any]) -> dict[int, str]:
     """Extract ``{i: translated_text}`` from the model's ``{"translations": [...]}``."""
     out: dict[int, str] = {}
-    for obj in data.get("translations", []):
-        if isinstance(obj, dict) and "i" in obj and "translated" in obj:
-            try:
-                out[int(obj["i"])] = str(obj["translated"])
-            except (TypeError, ValueError):
-                continue
-    return out
+    invalid: set[int] = set()
+    entries = data.get("translations")
+    if not isinstance(entries, list):
+        return {}
+    for obj in entries:
+        if not isinstance(obj, dict) or type(obj.get("i")) is not int:
+            return {}
+        index = obj["i"]
+        value = obj.get("translated")
+        if index in out or index in invalid:
+            out.pop(index, None)
+            invalid.add(index)
+        elif not isinstance(value, str) or not value.strip() or index < 0:
+            invalid.add(index)
+        else:
+            out[index] = " ".join(value.split())
+    return {} if invalid else out
 
 
 class OllamaTranslator(ManagedPredictor):
     """Dub translation via a local Ollama text model.
 
     The model must support Ollama's structured-output ``format``; ``ollama pull
-    <model>`` first. ``n_ctx`` sizes the per-call chunking (long sources are
-    split across calls); ``options`` are extra Ollama generation options.
+    <model>`` first. Long text is split into bounded requests. ``n_ctx`` reserves
+    room for the prompt, source text and ``max_tokens`` output budget. ``options``
+    can override these as ``num_ctx`` and ``num_predict``; effective budgets are
+    validated at construction.
     """
 
     def __init__(
@@ -205,56 +154,26 @@ class OllamaTranslator(ManagedPredictor):
         max_tokens: int = 4096,
         temperature: float = 0.1,
         options: dict[str, Any] | None = None,
+        keep_alive: str | int | None = "5m",
     ) -> None:
-        self.n_ctx = n_ctx
-        self.max_tokens = max_tokens
         client_options = {"temperature": temperature, "num_ctx": n_ctx, "num_predict": max_tokens, **(options or {})}
-        self._client = OllamaStructuredClient(model=model, host=host, options=client_options)
-        self._failures_last_call: list[int] = []
-
-    def _translate_chunk(
-        self, segments: list[TranscriptionSegment], target_lang: str, source_lang: str
-    ) -> dict[int, str]:
-        """One model call. Empty dict on unusable output (caller retries / records failure)."""
-        try:
-            data = self._client.generate_json(
-                system=_build_system_prompt(source_lang, target_lang),
-                text=_build_user_prompt(segments, target_lang),
-                schema=_TRANSLATION_SCHEMA,
+        self.n_ctx = int(client_options["num_ctx"])
+        self.max_tokens = int(client_options["num_predict"])
+        # Reserve space for target-language expansion and the JSON envelope.
+        self._part_chars = min(
+            800,
+            int((self.n_ctx - self.max_tokens - 1000) * _CHARS_PER_TOKEN),
+            int((self.max_tokens - 100) * _CHARS_PER_TOKEN / 2),
+        )
+        if self._part_chars < 40:
+            raise ValueError(
+                f"Translation requires max_tokens (num_predict) >= 140 and n_ctx (num_ctx) "
+                f">= max_tokens + 1020; got n_ctx={self.n_ctx}, max_tokens={self.max_tokens}"
             )
-        except OllamaError:
-            return {}
-        return _parse_translations(data)
-
-    def _translate_chunked(
-        self,
-        segments: list[TranscriptionSegment],
-        target_lang: str,
-        source_lang: str,
-        progress_callback: Callable[[float], None] | None = None,
-        progress_start: float = 0.0,
-        progress_end: float = 1.0,
-    ) -> dict[int, str]:
-        """Translate across one or more calls, each kept under ``n_ctx``."""
-        results: dict[int, str] = {}
-        if not segments:
-            if progress_callback is not None:
-                progress_callback(progress_end)
-            return results
-
-        chunks = _chunk_segment_indices(segments, self.n_ctx, self.max_tokens)
-        if len(chunks) > 1:
-            logger.info("OllamaTranslator: splitting %d segments into %d chunks", len(segments), len(chunks))
-        for chunk_num, chunk_positions in enumerate(chunks):
-            chunk_result = self._translate_chunk([segments[p] for p in chunk_positions], target_lang, source_lang)
-            for local_idx, text in chunk_result.items():
-                # Drop out-of-range model indices; those segments stay "missing" and get retried.
-                if 0 <= local_idx < len(chunk_positions):
-                    results[chunk_positions[local_idx]] = text
-            if progress_callback is not None:
-                fraction = (chunk_num + 1) / len(chunks)
-                progress_callback(progress_start + (progress_end - progress_start) * fraction)
-        return results
+        # Keep the model resident between bounded requests; low-memory pipelines
+        # explicitly unload it at the end of translation before loading TTS.
+        self._client = OllamaStructuredClient(model=model, host=host, options=client_options, keep_alive=keep_alive)
+        self._failures_last_call: list[int] = []
 
     def translate_segments(
         self,
@@ -263,42 +182,66 @@ class OllamaTranslator(ManagedPredictor):
         source_lang: str | None = None,
         progress_callback: Callable[[float], None] | None = None,
     ) -> list[TranslatedSegment]:
-        """Translate segments with a parse-retry pass; unrecovered ones land in
-        ``translation_failures`` with empty text. Progress ramps 0 -> 0.5 (first
-        pass), 0.9 (after retry), 1.0 (done)."""
+        """Translate bounded source parts independently, retrying invalid replies.
+
+        A failed part leaves its entire parent empty in ``translation_failures``.
+        """
         from videopython.ai.dubbing.models import TranslatedSegment
 
         effective_source = source_lang or "en"
         self._failures_last_call = []
 
-        translatable_indices = [i for i, seg in enumerate(segments) if _is_translatable_text(seg.text)]
-        translatable_segments = [segments[i] for i in translatable_indices]
-
-        results = self._translate_chunked(
-            translatable_segments, target_lang, effective_source, progress_callback, 0.0, 0.5
-        )
-
-        missing_local = [li for li in range(len(translatable_segments)) if li not in results]
-        if missing_local:
-            logger.info("OllamaTranslator: retrying %d/%d segments", len(missing_local), len(translatable_segments))
-            retry = self._translate_chunked(
-                [translatable_segments[li] for li in missing_local],
-                target_lang,
-                effective_source,
-                progress_callback,
-                0.5,
-                0.9,
+        units: list[tuple[int, int, str]] = []
+        for parent, segment in enumerate(segments):
+            if _is_translatable_text(segment.text):
+                for part, text in enumerate(split_text(segment.text, self._part_chars)):
+                    units.append((parent, part, text))
+        translated_parts: dict[int, list[str]] = {}
+        failed: set[int] = set()
+        for identity, (parent, part, text) in enumerate(units):
+            before = units[identity - 1][2][-240:] if identity else ""
+            after = units[identity + 1][2][:240] if identity + 1 < len(units) else ""
+            entry: dict[str, Any] = {"i": identity, "parent": parent, "part": part, "text": text}
+            source_chars = len(" ".join(segments[parent].text.split()))
+            part_duration = max(0.0, segments[parent].end - segments[parent].start) * len(text) / source_chars
+            entry["target_chars"] = max(1, round(part_duration * _SPEECH_CHARS_PER_SEC.get(target_lang, 12.0)))
+            logprob = segments[parent].avg_logprob
+            if logprob is not None and logprob < -1.0:
+                entry["low_confidence"] = True
+            prompt = (
+                "Context only (do not translate): "
+                + json.dumps({"before": before, "after": after}, ensure_ascii=False)
+                + "\nTarget:\n"
+                + json.dumps(entry, ensure_ascii=False)
             )
-            for retry_local, text in retry.items():
-                results[missing_local[retry_local]] = text
-        if progress_callback is not None:
-            progress_callback(0.9)
-
-        for li in range(len(translatable_segments)):
-            if li not in results:
-                self._failures_last_call.append(translatable_indices[li])
-
-        translation_for_orig = {translatable_indices[li]: text for li, text in results.items()}
+            translated = None
+            schema = deepcopy(_TRANSLATION_SCHEMA)
+            schema["properties"]["translations"]["items"]["properties"]["i"]["const"] = identity
+            for _attempt in range(2):
+                try:
+                    data = self._client.generate_json(
+                        system=_build_system_prompt(effective_source, target_lang),
+                        text=prompt
+                        + ("\nReturn exactly the requested identity and all target text." if _attempt else ""),
+                        schema=schema,
+                    )
+                    parsed = _parse_translations(data)
+                    if set(parsed) == {identity} and len(parsed[identity]) <= max(80, 6 * len(text)):
+                        translated = parsed[identity]
+                        break
+                except OllamaError:
+                    pass
+            if translated is None:
+                failed.add(parent)
+            else:
+                translated_parts.setdefault(parent, []).append(translated)
+            if progress_callback is not None:
+                progress_callback(0.95 * (identity + 1) / len(units))
+        # Never publish an incomplete parent when just one of its parts failed.
+        self._failures_last_call = sorted(failed)
+        translation_for_orig = {
+            parent: " ".join(parts) for parent, parts in translated_parts.items() if parent not in failed
+        }
         translated_segments = [
             TranslatedSegment(
                 original_segment=seg,
