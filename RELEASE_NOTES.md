@@ -4,6 +4,12 @@ Entries describe the named release. Older APIs, defaults, and limitations can be
 superseded by later entries. Use the [current reference](docs/reference/index.md)
 for new code.
 
+## 0.62.1
+
+- `Video.split()` now requires at least one frame on each side. Zero, the frame
+  count, and out-of-range indices raise a clear `ValueError`. Omitting the index
+  still selects the midpoint; a one-frame video cannot be split.
+
 ## 0.62.0
 
 - Add captioned interview, branded excerpt, and explicit two-pass summary examples
