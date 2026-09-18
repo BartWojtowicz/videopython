@@ -124,6 +124,31 @@ def test_video_from_image():
     assert np.array_equal(video.frames[-1], img)
 
 
+@pytest.mark.parametrize("frame_index, expected_index", [(None, 2), (1, 1), (4, 4)])
+def test_split_preserves_frames_and_audio(frame_index: int | None, expected_index: int):
+    video = Video.from_frames(np.arange(60, dtype=np.uint8).reshape(5, 2, 2, 3), fps=10)
+    video.audio = _tone(video.total_seconds, sample_rate=8000)
+
+    left, right = video.split(frame_index)
+
+    np.testing.assert_array_equal(left.frames, video.frames[:expected_index])
+    np.testing.assert_array_equal(right.frames, video.frames[expected_index:])
+    np.testing.assert_array_equal(left.audio.data, video.audio.data[: expected_index * 800])
+    np.testing.assert_array_equal(right.audio.data, video.audio.data[expected_index * 800 :])
+    for part in (left, right):
+        assert part.fps == video.fps
+        assert part.audio.metadata.sample_rate == video.audio.metadata.sample_rate
+        assert part.audio.metadata.duration_seconds == pytest.approx(part.total_seconds)
+
+
+@pytest.mark.parametrize("frame_count, frame_index", [(5, 0), (5, 5), (5, -1), (5, 6), (1, None)])
+def test_split_rejects_empty_parts(frame_count: int, frame_index: int | None):
+    video = Video.from_frames(np.zeros((frame_count, 2, 2, 3), dtype=np.uint8), fps=10)
+
+    with pytest.raises(ValueError, match="Split must leave at least one frame on each side"):
+        video.split(frame_index)
+
+
 @pytest.mark.parametrize(
     "video_path, original_metadata",
     [

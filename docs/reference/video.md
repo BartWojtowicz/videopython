@@ -19,6 +19,7 @@ import numpy as np
 video = Video.from_image(np.zeros((1080, 1920, 3), dtype=np.uint8), fps=24, length_seconds=3.0)
 
 combined = video_a + video_b        # concat; requires matching fps and dimensions
+first, rest = video.split(frame_index=24)
 
 video = video.add_audio_from_file("music.mp3")               # overlays existing audio
 video = video.add_audio_from_file("narration.mp3", overlay=False)   # replaces it
