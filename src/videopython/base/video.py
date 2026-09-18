@@ -533,11 +533,18 @@ class Video:
         return self.fps is not None and self.frames is not None and self.audio is not None
 
     def split(self, frame_index: int | None = None) -> tuple[Video, Video]:
-        if frame_index:
-            if not (0 <= frame_index <= len(self.frames)):
-                raise ValueError(f"frame_idx must be between 0 and {len(self.frames)}, got {frame_index}")
-        else:
+        """Split before a frame and divide audio at the same time.
+
+        ``None`` selects ``len(self.frames) // 2``. The index must be strictly
+        between zero and the frame count so both parts contain frames.
+
+        Raises:
+            ValueError: If the split would leave either part empty.
+        """
+        if frame_index is None:
             frame_index = len(self.frames) // 2
+        if not 0 < frame_index < len(self.frames):
+            raise ValueError("Split must leave at least one frame on each side")
 
         split_videos = (
             self.from_frames(self.frames[:frame_index], self.fps),
