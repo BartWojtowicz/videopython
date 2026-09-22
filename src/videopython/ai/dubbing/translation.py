@@ -61,6 +61,7 @@ LANGUAGE_NAMES = {
 
 # Conservative character/token estimate without a language-specific tokenizer.
 _CHARS_PER_TOKEN = 2.0
+_MAX_BATCH_UNITS = 8
 
 # Soft spoken-length hints, never a reason to discard source meaning.
 _SPEECH_CHARS_PER_SEC: dict[str, float] = {
@@ -79,7 +80,6 @@ _TRANSLATION_SCHEMA: dict[str, Any] = {
         "translations": {
             "type": "array",
             "minItems": 1,
-            "maxItems": 1,
             "items": {
                 "type": "object",
                 "properties": {"i": {"type": "integer"}, "translated": {"type": "string"}},
@@ -196,11 +196,8 @@ class OllamaTranslator(ManagedPredictor):
             if _is_translatable_text(segment.text):
                 for part, text in enumerate(split_text(segment.text, self._part_chars)):
                     units.append((parent, part, text))
-        translated_parts: dict[int, list[str]] = {}
-        failed: set[int] = set()
+        entries: list[dict[str, Any]] = []
         for identity, (parent, part, text) in enumerate(units):
-            before = units[identity - 1][2][-240:] if identity else ""
-            after = units[identity + 1][2][:240] if identity + 1 < len(units) else ""
             entry: dict[str, Any] = {"i": identity, "parent": parent, "part": part, "text": text}
             source_chars = len(" ".join(segments[parent].text.split()))
             part_duration = max(0.0, segments[parent].end - segments[parent].start) * len(text) / source_chars
@@ -208,35 +205,63 @@ class OllamaTranslator(ManagedPredictor):
             logprob = segments[parent].avg_logprob
             if logprob is not None and logprob < -1.0:
                 entry["low_confidence"] = True
-            prompt = (
-                "Context only (do not translate): "
-                + json.dumps({"before": before, "after": after}, ensure_ascii=False)
-                + "\nTarget:\n"
-                + json.dumps(entry, ensure_ascii=False)
-            )
-            translated = None
-            schema = deepcopy(_TRANSLATION_SCHEMA)
-            schema["properties"]["translations"]["items"]["properties"]["i"]["const"] = identity
+            entries.append(entry)
+
+        batches: list[list[int]] = []
+        batch: list[int] = []
+        batch_chars = 0
+        for identity, (_, _, text) in enumerate(units):
+            if batch and (len(batch) == _MAX_BATCH_UNITS or batch_chars + len(text) > self._part_chars * 4):
+                batches.append(batch)
+                batch = []
+                batch_chars = 0
+            batch.append(identity)
+            batch_chars += len(text)
+        if batch:
+            batches.append(batch)
+
+        translated_by_identity: dict[int, str] = {}
+        failed: set[int] = set()
+        for identities in batches:
+            pending = set(identities)
             for _attempt in range(2):
+                requested = sorted(pending)
+                before = units[requested[0] - 1][2][-240:] if requested[0] else ""
+                after = units[requested[-1] + 1][2][:240] if requested[-1] + 1 < len(units) else ""
+                prompt = (
+                    "Context only (do not translate): "
+                    + json.dumps({"before": before, "after": after}, ensure_ascii=False)
+                    + "\nTargets:\n"
+                    + json.dumps([entries[i] for i in requested], ensure_ascii=False)
+                )
+                schema = deepcopy(_TRANSLATION_SCHEMA)
+                schema["properties"]["translations"]["minItems"] = len(requested)
+                schema["properties"]["translations"]["maxItems"] = len(requested)
+                schema["properties"]["translations"]["items"]["properties"]["i"]["enum"] = requested
                 try:
                     data = self._client.generate_json(
                         system=_build_system_prompt(effective_source, target_lang),
-                        text=prompt
-                        + ("\nReturn exactly the requested identity and all target text." if _attempt else ""),
+                        text=prompt + ("\nReturn every requested identity and all target text." if _attempt else ""),
                         schema=schema,
                     )
                     parsed = _parse_translations(data)
-                    if set(parsed) == {identity} and len(parsed[identity]) <= max(80, 6 * len(text)):
-                        translated = parsed[identity]
+                    if set(parsed) <= pending:
+                        for identity, translated in parsed.items():
+                            if len(translated) <= max(80, 6 * len(units[identity][2])):
+                                translated_by_identity[identity] = translated
+                                pending.remove(identity)
+                    if not pending:
                         break
                 except OllamaError:
                     pass
-            if translated is None:
-                failed.add(parent)
-            else:
-                translated_parts.setdefault(parent, []).append(translated)
+            failed.update(units[identity][0] for identity in pending)
             if progress_callback is not None:
-                progress_callback(0.95 * (identity + 1) / len(units))
+                progress_callback(0.95 * (identities[-1] + 1) / len(units))
+
+        translated_parts: dict[int, list[str]] = {}
+        for identity, (parent, _, _) in enumerate(units):
+            if identity in translated_by_identity:
+                translated_parts.setdefault(parent, []).append(translated_by_identity[identity])
         # Never publish an incomplete parent when just one of its parts failed.
         self._failures_last_call = sorted(failed)
         translation_for_orig = {

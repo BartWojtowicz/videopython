@@ -373,10 +373,7 @@ def source_has_audio_stream(source_path: Path) -> bool:
     Drives the native silent-track contract: a source with no audio stream
     gets an ``anullsrc`` silence input instead of ``-i source`` audio.
     """
-    try:
-        info = _ffmpeg.probe(source_path)
-    except Exception:
-        return False
+    info = _ffmpeg.probe(source_path)
     return any(s.get("codec_type") == "audio" for s in info.get("streams", []))
 
 

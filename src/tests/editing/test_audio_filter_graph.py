@@ -147,6 +147,17 @@ class TestPerOpDurationParity:
 
 
 class TestNoAudioSource:
+    def test_probe_failure_is_not_treated_as_silent_input(self, monkeypatch):
+        import videopython.editing.streaming as streaming
+
+        def fail_probe(_path):
+            raise RuntimeError("probe failed")
+
+        monkeypatch.setattr(streaming._ffmpeg, "probe", fail_probe)
+
+        with pytest.raises(RuntimeError, match="probe failed"):
+            source_has_audio_stream(SMALL_VIDEO_PATH)
+
     def test_source_without_audio_gets_native_silent_track(self, render):
         # SMALL_VIDEO_PATH has no audio stream -> anullsrc silence, not a Python
         # Audio.create_silent round-trip.

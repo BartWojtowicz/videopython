@@ -1998,6 +1998,7 @@ class TestVideoDubberDubFile:
             input_path=input_path,
             output_path=output_path,
             target_lang="es",
+            checkpoint_dir=tmp_path / "checkpoint",
         )
 
         names = [c[0] for c in calls]
@@ -2005,6 +2006,8 @@ class TestVideoDubberDubFile:
         assert calls[0][1]["file_path"] == str(input_path)
         assert calls[1][1]["source_audio"] is sample_audio
         assert calls[1][1]["target_lang"] == "es"
+        assert calls[1][1]["checkpoint"].root == tmp_path / "checkpoint"
+        assert (tmp_path / "checkpoint" / "manifest.json").exists()
         assert calls[2][1]["video_path"] == str(input_path)
         assert calls[2][1]["output_path"] == str(output_path)
         # Dubbed audio is forwarded by reference, not via a temp file.

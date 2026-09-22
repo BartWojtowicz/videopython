@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
@@ -130,6 +131,7 @@ class VideoDubber:
         progress_callback: Callable[[str, float], None] | None = None,
         transcription: Any = None,
         keep_original_audio: bool = False,
+        checkpoint_dir: str | Path | None = None,
     ) -> DubbingResult:
         """Dub a video file in place on disk without loading video frames into memory.
 
@@ -158,6 +160,9 @@ class VideoDubber:
                 to add them via pyannote (requires word-level timings).
             keep_original_audio: If True, retain the source audio in the output
                 as a secondary track behind the dubbed one (editorial A/B).
+            checkpoint_dir: Directory for restartable transcription, translation,
+                and generated-speech artifacts. Reusing the directory resumes a
+                matching run; different source files or settings are rejected.
 
         Returns:
             ``DubbingResult`` with the dubbed audio, translated segments, and
@@ -171,6 +176,37 @@ class VideoDubber:
 
         if not input_path.exists():
             raise FileNotFoundError(f"Input video not found: {input_path}")
+
+        checkpoint = None
+        if checkpoint_dir is not None:
+            from videopython.ai.dubbing._checkpoint import DubbingCheckpoint
+
+            source_stat = input_path.stat()
+            transcription_digest = None
+            if transcription is not None:
+                transcription_digest = hashlib.sha256(transcription.model_dump_json().encode()).hexdigest()
+            backend_type = type(self._tts_backend)
+            checkpoint = DubbingCheckpoint(
+                Path(checkpoint_dir),
+                {
+                    "version": 1,
+                    "source": {
+                        "path": str(input_path.resolve()),
+                        "size": source_stat.st_size,
+                        "mtime_ns": source_stat.st_mtime_ns,
+                    },
+                    "config": self.config.model_dump(mode="json"),
+                    "run": {
+                        "target_lang": target_lang,
+                        "source_lang": source_lang,
+                        "preserve_background": preserve_background,
+                        "voice_clone": voice_clone,
+                        "enable_diarization": enable_diarization,
+                        "transcription": transcription_digest,
+                        "tts_backend": f"{backend_type.__module__}.{backend_type.__qualname__}",
+                    },
+                },
+            )
 
         logger.info("dub_file: loading audio from %s", input_path)
         source_audio = Audio.from_path(input_path)
@@ -187,6 +223,7 @@ class VideoDubber:
             enable_diarization=enable_diarization,
             progress_callback=progress_callback,
             transcription=transcription,
+            checkpoint=checkpoint,
         )
 
         # Stream the dubbed Audio directly into ffmpeg via stdin instead of

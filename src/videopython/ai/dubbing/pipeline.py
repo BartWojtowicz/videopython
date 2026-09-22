@@ -15,6 +15,7 @@ from videopython.ai.dubbing.timing import TimingSynchronizer
 from videopython.ai.dubbing.translation import DEFAULT_TRANSLATION_MODEL, OllamaTranslator
 
 if TYPE_CHECKING:
+    from videopython.ai.dubbing._checkpoint import DubbingCheckpoint
     from videopython.ai.dubbing._tts_backend import SpeechBackend
     from videopython.ai.dubbing.models import TranslatedSegment
     from videopython.audio import Audio
@@ -301,6 +302,7 @@ class LocalDubbingPipeline:
         enable_diarization: bool = False,
         progress_callback: Callable[[str, float], None] | None = None,
         transcription: Any | None = None,
+        checkpoint: DubbingCheckpoint | None = None,
     ) -> DubbingResult:
         """Run the dubbing pipeline against the given source audio.
 
@@ -321,14 +323,21 @@ class LocalDubbingPipeline:
                 a supplied ``transcription`` that has no speakers, runs pyannote
                 standalone and overlays speakers onto the supplied words. Ignored when
                 the supplied transcription already has speaker labels.
+            checkpoint: Internal file-run checkpoint supplied by ``VideoDubber.dub_file``.
         """
 
         def report_progress(stage: str, progress: float) -> None:
             if progress_callback:
                 progress_callback(stage, progress)
 
+        transcription_source = "provided"
+        if transcription is None and checkpoint is not None:
+            transcription = checkpoint.load_transcription()
+            if transcription is not None:
+                transcription_source = "checkpointed"
+
         if transcription is not None:
-            report_progress("Using provided transcription", 0.05)
+            report_progress(f"Using {transcription_source} transcription", 0.05)
             if transcription.speakers:
                 logger.info(
                     "Using provided transcription: %d segment(s), %d speaker(s)",
@@ -360,6 +369,9 @@ class LocalDubbingPipeline:
         else:
             report_progress("Transcribing audio", 0.05)
             transcription = self._transcribe(source_audio, enable_diarization)
+
+        if checkpoint is not None:
+            checkpoint.save_transcription(transcription)
 
         if not transcription.segments:
             return DubbingResult(
@@ -404,9 +416,16 @@ class LocalDubbingPipeline:
             voice_samples = voice_sample.extract(vocal_audio, background_audio, transcription)
 
         report_progress("Translating text", 0.35)
-        translated_segments, translation_failures = self._translate(
-            transcription, detected_lang, target_lang, report_progress
-        )
+        checkpointed_translation = checkpoint.load_translation() if checkpoint is not None else None
+        if checkpointed_translation is None:
+            translated_segments, translation_failures = self._translate(
+                transcription, detected_lang, target_lang, report_progress
+            )
+            if checkpoint is not None:
+                checkpoint.save_translation(translated_segments, translation_failures)
+        else:
+            translated_segments, translation_failures = checkpointed_translation
+            report_progress("Using checkpointed translation", 0.50)
 
         # Per-segment expressiveness derived from source vocals RMS.
         # Computed before vocal_audio is released so the TTS loop doesn't
@@ -435,6 +454,7 @@ class LocalDubbingPipeline:
 
         synthesis_failures: list[int] = []
         dubbed_segments: list[Audio] = []
+        speech_paths: list[Path] = []
         target_durations: list[float] = []
         start_times: list[float] = []
 
@@ -469,20 +489,28 @@ class LocalDubbingPipeline:
                 report_progress(f"Generating speech ({indices[-1] + 1}/{len(translated_segments)})", progress)
 
                 speaker = segment.speaker or "speaker_0"
-                dubbed_audio = self._tts_segment_audio(
-                    segment=segment,
-                    speaker=speaker,
-                    target_lang=target_lang,
-                    voice_clone=voice_clone,
-                    voice_samples=voice_samples,
-                    speaker_wav_paths=speaker_wav_paths,
-                    expressiveness=expressiveness_per_segment[i],
-                )
+                checkpoint_path = checkpoint.speech_path(indices) if checkpoint is not None else None
+                dubbed_audio = checkpoint.load_speech(indices) if checkpoint is not None else None
+                if dubbed_audio is None:
+                    dubbed_audio = self._tts_segment_audio(
+                        segment=segment,
+                        speaker=speaker,
+                        target_lang=target_lang,
+                        voice_clone=voice_clone,
+                        voice_samples=voice_samples,
+                        speaker_wav_paths=speaker_wav_paths,
+                        expressiveness=expressiveness_per_segment[i],
+                    )
                 if dubbed_audio is None:
                     synthesis_failures.extend(indices)
                     continue
 
-                dubbed_segments.append(dubbed_audio)
+                if checkpoint is None:
+                    dubbed_segments.append(dubbed_audio)
+                else:
+                    if checkpoint_path is None or not checkpoint_path.exists():
+                        checkpoint_path = checkpoint.save_speech(indices, dubbed_audio)
+                    speech_paths.append(checkpoint_path)
                 # Borrow only unused time before the next original turn, even if
                 # that turn failed translation/synthesis. Never cross a speaker.
                 next_index = indices[-1] + 1
@@ -501,19 +529,26 @@ class LocalDubbingPipeline:
 
         self._maybe_unload("_tts")
 
-        report_progress("Synchronizing timing", 0.85)
         if self._synchronizer is None:
             self._init_synchronizer()
         assert self._synchronizer is not None
 
-        synchronized_segments, adjustments = self._synchronizer.synchronize_segments(dubbed_segments, target_durations)
-        timing_summary = TimingSummary.from_adjustments(adjustments)
-        del dubbed_segments
-
-        report_progress("Assembling final audio", 0.90)
         total_duration = source_audio.metadata.duration_seconds
-        dubbed_speech = self._synchronizer.assemble_with_timing(synchronized_segments, start_times, total_duration)
-        del synchronized_segments
+        if checkpoint is None:
+            report_progress("Synchronizing timing", 0.85)
+            synchronized_segments, adjustments = self._synchronizer.synchronize_segments(
+                dubbed_segments, target_durations
+            )
+            del dubbed_segments
+            report_progress("Assembling final audio", 0.90)
+            dubbed_speech = self._synchronizer.assemble_with_timing(synchronized_segments, start_times, total_duration)
+            del synchronized_segments
+        else:
+            report_progress("Synchronizing and assembling checkpointed speech", 0.85)
+            dubbed_speech, adjustments = self._synchronizer.synchronize_files_and_assemble(
+                speech_paths, target_durations, start_times, total_duration
+            )
+        timing_summary = TimingSummary.from_adjustments(adjustments)
 
         final_audio = self._finalise_audio(dubbed_speech, source_audio, background_audio)
         # Drop the local; in low_memory this releases the background

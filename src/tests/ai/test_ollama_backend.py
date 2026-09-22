@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
+from videopython.ai._ollama import OllamaError
 from videopython.ai.auto_edit import OllamaVisionLLM, PlannerError
 from videopython.ai.keyframe import KEYFRAME_MAX_DIM, downscale_keyframe, encode_png_b64
 
@@ -171,3 +172,14 @@ def test_image_call_retries_with_reported_context_requirement() -> None:
 
     assert len(fake.calls) == 2
     assert fake.calls[1]["options"]["num_ctx"] == 16384
+
+
+def test_request_error_is_normalized() -> None:
+    backend = OllamaVisionLLM(model="m")
+    fake = _FakeClient("{}", errors=[ConnectionError("server restarted")])
+    _inject(backend, fake)
+
+    with pytest.raises(OllamaError, match="server restarted") as caught:
+        backend._client.generate_json(system="s", text="t", images=None, schema={})
+
+    assert isinstance(caught.value.__cause__, ConnectionError)

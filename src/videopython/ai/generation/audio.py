@@ -202,15 +202,11 @@ class TextToMusic(ManagedPredictor):
 
     def _init_local(self) -> None:
         """Initialize local MusicGen model."""
-        import os
-
         from videopython.ai._optional import require
 
         _transformers = require("transformers", feature="TextToMusic")
         AutoProcessor = _transformers.AutoProcessor
         MusicgenForConditionalGeneration = _transformers.MusicgenForConditionalGeneration
-
-        os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
         requested_device = self.device
         device = select_device(self.device, mps_allowed=True)

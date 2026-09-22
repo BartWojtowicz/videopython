@@ -72,9 +72,9 @@ def test_unbroken_translation_is_bounded_with_soft_timing_and_full_progress():
     entries = []
 
     def generate(**kwargs):
-        entry = json.loads(kwargs["text"].split("\nTarget:\n")[1])
-        entries.append(entry)
-        return {"translations": [{"i": entry["i"], "translated": "translated"}]}
+        batch = json.loads(kwargs["text"].split("\nTargets:\n")[1])
+        entries.extend(batch)
+        return {"translations": [{"i": entry["i"], "translated": "translated"} for entry in batch]}
 
     translator._client.generate_json = Mock(side_effect=generate)
     progress = []
@@ -101,14 +101,20 @@ def test_parse_translations() -> None:
 def test_translate_segments_happy_path() -> None:
     translator, fake = _translator_with(
         [
-            json.dumps({"translations": [{"i": 0, "translated": "hola"}]}),
-            json.dumps({"translations": [{"i": 1, "translated": "mundo"}]}),
+            json.dumps(
+                {
+                    "translations": [
+                        {"i": 0, "translated": "hola"},
+                        {"i": 1, "translated": "mundo"},
+                    ]
+                }
+            ),
         ]
     )
     out = translator.translate_segments([_seg("hello"), _seg("world")], target_lang="es", source_lang="en")
     assert [s.translated_text for s in out] == ["hola", "mundo"]
     assert translator.translation_failures == []
-    assert fake.calls == 2
+    assert fake.calls == 1
     assert all(call["keep_alive"] == "5m" for call in fake.chat_kwargs)
 
 
@@ -116,14 +122,13 @@ def test_translate_segments_retries_missing() -> None:
     translator, fake = _translator_with(
         [
             json.dumps({"translations": [{"i": 0, "translated": "hola"}]}),  # i=1 missing
-            json.dumps({"translations": []}),
             json.dumps({"translations": [{"i": 1, "translated": "mundo"}]}),  # stable identity on retry
         ]
     )
     out = translator.translate_segments([_seg("hello"), _seg("world")], target_lang="es")
     assert [s.translated_text for s in out] == ["hola", "mundo"]
     assert translator.translation_failures == []
-    assert fake.calls == 3
+    assert fake.calls == 2
 
 
 def test_translate_segments_records_failures() -> None:
@@ -168,14 +173,8 @@ class _EchoOllama:
         **kwargs: Any,
     ) -> SimpleNamespace:
         self.calls += 1
-        indices: list[int] = []
-        for line in messages[1]["content"].splitlines():
-            line = line.strip()
-            if line.startswith("{") and '"i"' in line:
-                try:
-                    indices.append(int(json.loads(line)["i"]))
-                except (ValueError, KeyError, TypeError):
-                    pass
+        entries = json.loads(messages[1]["content"].split("\nTargets:\n")[1].split("\nReturn every")[0])
+        indices = [entry["i"] for entry in entries]
         content = json.dumps({"translations": [{"i": i, "translated": f"t{i}"} for i in indices]})
         return SimpleNamespace(message=SimpleNamespace(content=content))
 
@@ -193,9 +192,30 @@ def test_translate_segments_multiple_chunks() -> None:
     assert translator.translation_failures == []
 
 
+def test_translation_batches_at_most_eight_units() -> None:
+    translator = OllamaTranslator(model="m")
+    fake = _EchoOllama()
+    translator._client._client = fake
+
+    out = translator.translate_segments([_seg(f"source {i}") for i in range(17)], target_lang="es")
+
+    assert fake.calls == 3
+    assert all(segment.translated_text for segment in out)
+
+
 def test_ollama_error_in_both_passes_records_failure() -> None:
     translator, _ = _translator_with(["not json at all"])  # OllamaError on every call
     out = translator.translate_segments([_seg("hello")], target_lang="es")
+    assert out[0].translated_text == ""
+    assert translator.translation_failures == [0]
+
+
+def test_ollama_request_error_retries_and_records_failure() -> None:
+    translator, fake = _translator_with(["{}"])
+    with patch.object(fake, "chat", side_effect=ConnectionError("server restarted")) as chat:
+        out = translator.translate_segments([_seg("hello")], target_lang="es")
+
+    assert chat.call_count == 2
     assert out[0].translated_text == ""
     assert translator.translation_failures == [0]
 

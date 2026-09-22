@@ -160,11 +160,14 @@ result = dubber.dub_file(
     target_lang="es",
     voice_clone=True,
     preserve_background=True,
+    checkpoint_dir="dubbed.checkpoint",
 )
 ```
 
-Peak memory includes model weights, audio tracks, and intermediate speech. Audio
-memory grows with duration, but video resolution does not affect decoded-frame memory. See [Dub a video](dubbing.md).
+With a checkpoint, generated speech is stored on disk and loaded one group at a time
+during timing and assembly. Peak memory still includes model weights and full-length
+audio tracks, but video resolution does not affect decoded-frame memory. See
+[Dub a video](dubbing.md) for resume behavior.
 
 ## Notes
 

@@ -58,6 +58,21 @@ all affected real-model checks. Follow [Verify local AI models](docs/how-to/veri
 and record results in the [verification records](docs/reference/verification.md).
 The release workflow does not enforce this manual check.
 
+For a Linux host with an NVIDIA GPU, measure a complete file-based dubbing run with:
+
+```bash
+uv run --group ai python scripts/benchmark_dubbing.py source.mp4 dubbed.mp4 \
+  --result-dir benchmark-results/run-name \
+  --source-language en \
+  --target-language pl \
+  --translator-model qwen3.5:4b
+```
+
+The worker runs in a child process so the parent can write a report after a worker OOM.
+`report.md` contains per-stage wall time and peak RAM/VRAM. `samples.csv`,
+`events.jsonl`, `worker.log`, and `run.json` contain the evidence behind the summary.
+The resource sampler requires Linux `/proc`; VRAM measurements require `nvidia-smi`.
+
 ### Linting & type checking
 
 [Pre-commit](https://pre-commit.com/) runs [Ruff](https://docs.astral.sh/ruff/) and [mypy](https://github.com/python/mypy) locally and in CI.

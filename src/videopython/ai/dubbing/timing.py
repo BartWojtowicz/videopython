@@ -6,6 +6,7 @@ import logging
 import subprocess
 from dataclasses import replace
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 import numpy as np
@@ -215,16 +216,7 @@ class TimingSynchronizer:
 
         output = np.zeros(end_sample, dtype=np.float32)
         for start_sample, seg_data in normalized:
-            stop = start_sample + len(seg_data)
-            # Fade only the edges, without copying or cutting the whole phrase.
-            fade_samples = min(round(0.005 * sample_rate), len(seg_data) // 2)
-            if fade_samples:
-                ramp = np.linspace(0, 1, fade_samples, dtype=np.float32)
-                output[start_sample : start_sample + fade_samples] += seg_data[:fade_samples] * ramp
-                output[start_sample + fade_samples : stop - fade_samples] += seg_data[fade_samples:-fade_samples]
-                output[stop - fade_samples : stop] += seg_data[-fade_samples:] * ramp[::-1]
-            else:
-                output[start_sample:stop] += seg_data
+            self._mix_segment(output, start_sample, seg_data, sample_rate)
 
         # Single post-mix peak guard, equivalent to Audio.overlay's per-call
         # rescale collapsed into one pass. For non-overlapping dub segments
@@ -241,3 +233,69 @@ class TimingSynchronizer:
             frame_count=end_sample,
         )
         return Audio(output, metadata)
+
+    def synchronize_files_and_assemble(
+        self,
+        paths: list[Path],
+        target_durations: list[float],
+        start_times: list[float],
+        total_duration: float,
+    ) -> tuple[Audio, list[TimingAdjustment]]:
+        """Synchronize and mix checkpointed speech while loading one file at a time."""
+        if len(paths) != len(target_durations) or len(paths) != len(start_times):
+            raise ValueError("Checkpointed speech, duration, and start-time counts must match")
+        if any(start_time < 0 for start_time in start_times):
+            raise ValueError("Start times must be non-negative")
+        if not paths:
+            return Audio.create_silent(total_duration, stereo=False), []
+
+        first = Audio.from_path(paths[0])
+        sample_rate = first.metadata.sample_rate
+        sample_width = first.metadata.sample_width
+        end_sample = max(
+            int(total_duration * sample_rate),
+            max(
+                int(np.ceil(start_time * sample_rate)) + int(np.ceil(duration * sample_rate))
+                for start_time, duration in zip(start_times, target_durations)
+            ),
+        )
+        output = np.zeros(end_sample, dtype=np.float32)
+        adjustments: list[TimingAdjustment] = []
+
+        for i, (path, target_duration, start_time) in enumerate(zip(paths, target_durations, start_times)):
+            audio = first if i == 0 else Audio.from_path(path)
+            audio, adjustment = self.synchronize_segment(audio, target_duration, i)
+            adjustments.append(adjustment)
+            if audio.metadata.sample_rate != sample_rate:
+                audio = audio.resample(sample_rate)
+            if audio.metadata.channels > 1:
+                audio = audio.to_mono()
+            start_sample = int(np.ceil(start_time * sample_rate))
+            stop = start_sample + len(audio.data)
+            if stop > len(output):
+                output = np.pad(output, (0, stop - len(output)))
+            self._mix_segment(output, start_sample, audio.data, sample_rate)
+
+        max_amplitude = float(np.max(np.abs(output))) if output.size else 0.0
+        if max_amplitude > 1.0:
+            output /= max_amplitude
+        metadata = AudioMetadata(
+            sample_rate=sample_rate,
+            channels=1,
+            sample_width=sample_width,
+            duration_seconds=len(output) / sample_rate,
+            frame_count=len(output),
+        )
+        return Audio(output, metadata), adjustments
+
+    @staticmethod
+    def _mix_segment(output: np.ndarray, start_sample: int, data: np.ndarray, sample_rate: int) -> None:
+        stop = start_sample + len(data)
+        fade_samples = min(round(0.005 * sample_rate), len(data) // 2)
+        if fade_samples:
+            ramp = np.linspace(0, 1, fade_samples, dtype=np.float32)
+            output[start_sample : start_sample + fade_samples] += data[:fade_samples] * ramp
+            output[start_sample + fade_samples : stop - fade_samples] += data[fade_samples:-fade_samples]
+            output[stop - fade_samples : stop] += data[-fade_samples:] * ramp[::-1]
+        else:
+            output[start_sample:stop] += data

@@ -129,20 +129,23 @@ class OllamaStructuredClient:
         auto_num_ctx = image_count > 0 and "num_ctx" not in options
         if auto_num_ctx:
             options = {**options, "num_ctx": _num_ctx_for_images(image_count)}
-        kwargs: dict[str, Any] = {}
-        if self._supports_thinking():
-            kwargs["think"] = False
-        if self.keep_alive is not None:
-            kwargs["keep_alive"] = self.keep_alive
         client = self._get_client()
         try:
+            kwargs: dict[str, Any] = {}
+            if self._supports_thinking():
+                kwargs["think"] = False
+            if self.keep_alive is not None:
+                kwargs["keep_alive"] = self.keep_alive
             response = client.chat(model=self.model, messages=messages, format=schema, options=options, **kwargs)
         except Exception as exc:
             retry_num_ctx = _num_ctx_after_overflow(str(exc), options["num_ctx"]) if auto_num_ctx else None
             if retry_num_ctx is None:
-                raise
+                raise OllamaError(f"Ollama request failed: {exc}") from exc
             options = {**options, "num_ctx": retry_num_ctx}
-            response = client.chat(model=self.model, messages=messages, format=schema, options=options, **kwargs)
+            try:
+                response = client.chat(model=self.model, messages=messages, format=schema, options=options, **kwargs)
+            except Exception as retry_exc:
+                raise OllamaError(f"Ollama request failed: {retry_exc}") from retry_exc
         if getattr(response, "done_reason", None) == "length":
             raise OllamaError("Ollama exhausted its output budget; refusing an incomplete response")
         content = response.message.content

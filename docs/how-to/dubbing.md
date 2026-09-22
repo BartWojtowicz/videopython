@@ -23,6 +23,7 @@ result = dubber.dub_file(
     source_lang="en",        # omit to auto-detect
     voice_clone=True,        # keep the original speaker's voice
     preserve_background=True,  # keep music and effects under the dub
+    checkpoint_dir="interview_es.checkpoint",
 )
 
 print(f"Translated {result.num_segments} segments")
@@ -32,6 +33,12 @@ Two things happen automatically on this path: subtitle streams are copied throug
 the source, and the dubbed audio is gain-matched to the source; see the
 [file-output reference](../reference/ai/dubbing.md#videodubber). Add `keep_original_audio=True` to retain
 the source audio as a second track for A/B review — the dub stays the default track.
+
+For a long run, set `checkpoint_dir`. The pipeline writes its transcription,
+translation, and each generated speech group there. Run the same call again after an
+interruption to reuse those artifacts. The source file, dubbing settings, and supplied
+transcription must match; use a different directory when any of them changes. Remove
+the directory when you no longer need to resume the run.
 
 ## Dub an in-memory video
 

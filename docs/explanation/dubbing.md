@@ -22,11 +22,11 @@ does not select a new voice reference for every sentence.
 
 ## Translation and synthesis use bounded inputs
 
-Translation sends one source part per request with nearby text marked as context.
-It asks for concise speech without dropping meaning. Sequential requests isolate
-segment identities but add request overhead. Invalid identities, missing output,
-or exhausted output budgets trigger retries. A failed part makes its parent a
-translation failure.
+Translation sends bounded batches of source parts with nearby text marked as context.
+It asks for concise speech without dropping meaning. Each response retains stable
+segment identities. Missing entries retry separately, so one bad entry does not discard
+valid translations from the same batch. Request failures and invalid or exhausted
+responses use the same retry path. A failed part makes its parent a translation failure.
 
 Local speech synthesis splits long text into bounded calls and joins their audio
 before timing the parent phrase. Calls near the speech-token limit retry with
@@ -36,6 +36,19 @@ incomplete generation, but cannot prove that every requested word was spoken.
 Tiny adjacent fragments can join within one speaker. Isolated fragments below the
 minimum duration are reported as synthesis failures. The reference documents these
 limits and how failures map to source entries.
+
+## File checkpoints isolate completed model work
+
+File-based dubbing can persist the transcription, complete translation result, and each
+generated speech group. The checkpoint manifest binds those artifacts to the source
+file and run settings. A resumed run still loads the source and repeats source
+separation, but it does not repeat completed Whisper, translation, or speech-generation
+work.
+
+Checkpointed speech stays on disk through generation. Timing and assembly load one
+group at a time into the final track, which prevents the collection of generated speech
+from growing in memory with the segment count. The final audio and full-length source
+tracks still require memory.
 
 ## Timing preserves source anchors
 

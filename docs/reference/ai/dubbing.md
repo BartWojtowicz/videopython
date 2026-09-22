@@ -24,7 +24,9 @@ rejected.
 `dub_file` copies subtitle streams through automatically and gain-matches the dub to the
 source with BS.1770 integrated loudness (`pyloudnorm`; falls back to peak match under
 400 ms, post-gain peaks clamped to 0.99). `keep_original_audio=True` retains the source
-audio as a secondary track.
+audio as a secondary track. `checkpoint_dir` stores a manifest, `transcription.json`,
+`translation.json`, and per-group WAV files. Reusing a matching directory resumes the
+run; a source or setting mismatch raises `ValueError`.
 
 ::: videopython.ai.dubbing.VideoDubber
 
@@ -120,6 +122,11 @@ model tag and host. Vision is not required.
 and must be at least `max_tokens + 1020`. The `options` keys `num_predict` and
 `num_ctx` override these values. Invalid effective budgets raise at construction.
 These are allocation estimates, not tokenizer guarantees.
+
+Adjacent source parts are sent in batches of at most eight, also bounded by the input
+character budget. If a response omits entries, only the missing identities are retried.
+Ollama transport and server errors are normalized to `OllamaError`, so they use the
+same two-attempt failure accounting as invalid structured output.
 
 `keep_alive` defaults to five minutes between requests. `None` uses the server
 policy. `unload()` requests release on the Ollama server. A failed release logs a
