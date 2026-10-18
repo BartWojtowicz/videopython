@@ -4,6 +4,11 @@ Entries describe the named release. Older APIs, defaults, and limitations can be
 superseded by later entries. Use the [current reference](docs/reference/index.md)
 for new code.
 
+## 0.62.2
+
+- Add `VideoDubber.prepare_dub_file()` and `dub_file(translation_path=...)` for
+  reviewing translations before source separation and speech synthesis.
+
 ## 0.62.1
 
 - `Video.split()` now requires at least one frame on each side. Zero, the frame

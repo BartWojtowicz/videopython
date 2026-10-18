@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 from videopython.ai.dubbing.config import DubbingConfig
-from videopython.ai.dubbing.models import DubbingResult, RevoiceResult
+from videopython.ai.dubbing.models import DubbingResult, RevoiceResult, TranslatedSegment
 
 if TYPE_CHECKING:
     from videopython.ai.dubbing._tts_backend import SpeechBackend
@@ -118,6 +119,88 @@ class VideoDubber:
         )
         return video.add_audio(result.dubbed_audio, overlay=False)
 
+    @staticmethod
+    def _load_translation_file(
+        translation_path: Path,
+        target_lang: str,
+    ) -> tuple[Any, list[TranslatedSegment], list[int], str]:
+        from videopython.base.transcription import Transcription
+
+        payload = json.loads(translation_path.read_text(encoding="utf-8"))
+        if payload["format_version"] != 1:
+            raise ValueError(f"Unsupported translation file version: {payload['format_version']}")
+        if payload["target_lang"] != target_lang:
+            raise ValueError(f"Translation file targets {payload['target_lang']!r}, not {target_lang!r}")
+
+        transcription = Transcription.model_validate(payload["transcription"])
+        segments = [TranslatedSegment.model_validate(value) for value in payload["segments"]]
+        failures = []
+        for source_index in payload["translation_failures"]:
+            affected = [
+                segment
+                for segment in segments
+                if segment.source_segment_index == source_index
+                and any(character.isalnum() for character in segment.original_text)
+            ]
+            if not affected or any(not segment.translated_text.strip() for segment in affected):
+                failures.append(source_index)
+        return transcription, segments, failures, payload["source_lang"]
+
+    def prepare_dub_file(
+        self,
+        input_path: str | Path,
+        target_lang: str,
+        translation_path: str | Path,
+        source_lang: str | None = None,
+        enable_diarization: bool = False,
+        progress_callback: Callable[[str, float], None] | None = None,
+        transcription: Any = None,
+    ) -> Path:
+        """Write an editable translation file without synthesizing speech.
+
+        Edit only ``segments[].translated_text`` in the returned file, then pass
+        it to :meth:`dub_file` as ``translation_path``.
+        """
+        from videopython.audio import Audio
+
+        input_path = Path(input_path)
+        translation_path = Path(translation_path)
+        if not input_path.exists():
+            raise FileNotFoundError(f"Input video not found: {input_path}")
+
+        source_audio = Audio.from_path(input_path)
+        if self._local_pipeline is None:
+            self._init_local_pipeline()
+        source_transcription, translated_segments, failures, detected_lang = self._local_pipeline.prepare_translation(
+            source_audio=source_audio,
+            target_lang=target_lang,
+            source_lang=source_lang,
+            enable_diarization=enable_diarization,
+            progress_callback=progress_callback,
+            transcription=transcription,
+        )
+        translation_path.parent.mkdir(parents=True, exist_ok=True)
+        translation_path.write_text(
+            json.dumps(
+                {
+                    "format_version": 1,
+                    "instructions": (
+                        "Edit only segments[].translated_text, then pass this file to dub_file as translation_path."
+                    ),
+                    "source_lang": detected_lang,
+                    "target_lang": target_lang,
+                    "transcription": source_transcription.model_dump(mode="json"),
+                    "segments": [segment.model_dump(mode="json") for segment in translated_segments],
+                    "translation_failures": failures,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        return translation_path
+
     def dub_file(
         self,
         input_path: str | Path,
@@ -129,6 +212,7 @@ class VideoDubber:
         enable_diarization: bool = False,
         progress_callback: Callable[[str, float], None] | None = None,
         transcription: Any = None,
+        translation_path: str | Path | None = None,
         keep_original_audio: bool = False,
     ) -> DubbingResult:
         """Dub a video file in place on disk without loading video frames into memory.
@@ -156,6 +240,9 @@ class VideoDubber:
                 step. Speaker labels on the supplied transcription drive per-speaker
                 voice cloning. If it has no speakers, pass ``enable_diarization=True``
                 to add them via pyannote (requires word-level timings).
+            translation_path: Translation JSON from :meth:`prepare_dub_file`. When
+                provided, its transcription and reviewed translations replace
+                ``transcription`` and skip Whisper and translation.
             keep_original_audio: If True, retain the source audio in the output
                 as a secondary track behind the dubbed one (editorial A/B).
 
@@ -175,6 +262,16 @@ class VideoDubber:
         logger.info("dub_file: loading audio from %s", input_path)
         source_audio = Audio.from_path(input_path)
 
+        translated_segments = None
+        translation_failures = None
+        if translation_path is not None:
+            transcription, translated_segments, translation_failures, prepared_source_lang = (
+                self._load_translation_file(Path(translation_path), target_lang)
+            )
+            if source_lang is not None and source_lang != prepared_source_lang:
+                raise ValueError(f"Translation file uses source language {prepared_source_lang!r}, not {source_lang!r}")
+            source_lang = prepared_source_lang
+
         if self._local_pipeline is None:
             self._init_local_pipeline()
 
@@ -187,6 +284,8 @@ class VideoDubber:
             enable_diarization=enable_diarization,
             progress_callback=progress_callback,
             transcription=transcription,
+            translated_segments=translated_segments,
+            translation_failures=translation_failures,
         )
 
         # Stream the dubbed Audio directly into ffmpeg via stdin instead of
