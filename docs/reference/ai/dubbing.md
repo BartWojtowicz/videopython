@@ -11,6 +11,7 @@ Entry points:
 
 | Method | Input → output | Notes |
 |---|---|---|
+| `prepare_dub_file(input_path, ...)` | path → editable JSON path | Stops after translation for manual review |
 | `dub_file(input_path, output_path, ...)` | path → file | Never loads frames; video is stream-copied |
 | `dub(video, ...)` | `Video` → `DubbingResult` | |
 | `dub_and_replace(video, ...)` | `Video` → `Video` | Convenience over `dub` |
@@ -24,7 +25,9 @@ rejected.
 `dub_file` copies subtitle streams through automatically and gain-matches the dub to the
 source with BS.1770 integrated loudness (`pyloudnorm`; falls back to peak match under
 400 ms, post-gain peaks clamped to 0.99). `keep_original_audio=True` retains the source
-audio as a secondary track.
+audio as a secondary track. `prepare_dub_file` writes the source transcription and
+translated segments to editable JSON without running separation or synthesis. Edit only
+`segments[].translated_text`, then pass the file back as `dub_file(translation_path=...)`.
 
 ::: videopython.ai.dubbing.VideoDubber
 

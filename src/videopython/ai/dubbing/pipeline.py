@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from videopython.ai.dubbing import audio_ops, voice_sample
 from videopython.ai.dubbing.config import DubbingConfig
 from videopython.ai.dubbing.models import DubbingResult, Expressiveness, RevoiceResult, SeparatedAudio, TimingSummary
-from videopython.ai.dubbing.quality import GarbageTranscriptError, assess_transcript
+from videopython.ai.dubbing.quality import GarbageTranscriptError, TranscriptQuality, assess_transcript
 from videopython.ai.dubbing.timing import TimingSynchronizer
 from videopython.ai.dubbing.translation import DEFAULT_TRANSLATION_MODEL, OllamaTranslator
 
@@ -291,42 +291,13 @@ class LocalDubbingPipeline:
             final_audio = dubbed_speech
         return audio_ops.loudness_match(final_audio, source_audio)
 
-    def process(
+    def _resolve_transcription(
         self,
         source_audio: Audio,
-        target_lang: str,
-        source_lang: str | None = None,
-        preserve_background: bool = True,
-        voice_clone: bool = True,
-        enable_diarization: bool = False,
-        progress_callback: Callable[[str, float], None] | None = None,
-        transcription: Any | None = None,
-    ) -> DubbingResult:
-        """Run the dubbing pipeline against the given source audio.
-
-        Args:
-            source_audio: Source audio track to dub. Callers with a ``Video``
-                object should pass ``video.audio``; callers with only a file path
-                can use ``Audio.from_path(path)`` to avoid loading video frames.
-            transcription: Optional pre-computed Transcription object. When provided,
-                the internal Whisper transcription step is skipped (saving time and VRAM).
-                Must be a ``videopython.base.transcription.Transcription`` instance
-                with populated ``segments``. Speaker labels on the supplied transcription
-                drive per-speaker voice cloning. If the supplied transcription has no
-                speakers and ``enable_diarization=True``, pyannote is run standalone on
-                ``source_audio`` and speakers are attached to the supplied words
-                (requires word-level timings).
-            enable_diarization: When True, run speaker diarization to enable per-speaker
-                voice cloning. With ``transcription=None``, runs alongside Whisper. With
-                a supplied ``transcription`` that has no speakers, runs pyannote
-                standalone and overlays speakers onto the supplied words. Ignored when
-                the supplied transcription already has speaker labels.
-        """
-
-        def report_progress(stage: str, progress: float) -> None:
-            if progress_callback:
-                progress_callback(stage, progress)
-
+        enable_diarization: bool,
+        transcription: Any | None,
+        report_progress: Callable[[str, float], None],
+    ) -> Transcription:
         if transcription is not None:
             report_progress("Using provided transcription", 0.05)
             if transcription.speakers:
@@ -360,6 +331,101 @@ class LocalDubbingPipeline:
         else:
             report_progress("Transcribing audio", 0.05)
             transcription = self._transcribe(source_audio, enable_diarization)
+        return transcription
+
+    def _assess_transcription(self, transcription: Transcription, source_audio: Audio) -> TranscriptQuality:
+        quality = assess_transcript(transcription, source_audio.metadata.duration_seconds)
+        if quality.recommendation == "reject" and self.config.strict_quality:
+            raise GarbageTranscriptError(
+                f"Refusing to dub: {', '.join(quality.flags)}",
+                quality,
+            )
+        if quality.recommendation in ("warn", "reject"):
+            logger.warning(
+                "Transcript quality flags raised: %s (recommendation=%s)",
+                ", ".join(quality.flags),
+                quality.recommendation,
+            )
+        return quality
+
+    def prepare_translation(
+        self,
+        source_audio: Audio,
+        target_lang: str,
+        source_lang: str | None = None,
+        enable_diarization: bool = False,
+        progress_callback: Callable[[str, float], None] | None = None,
+        transcription: Any | None = None,
+    ) -> tuple[Transcription, list[TranslatedSegment], list[int], str]:
+        """Transcribe and translate without separating or synthesizing audio."""
+
+        def report_progress(stage: str, progress: float) -> None:
+            if progress_callback:
+                progress_callback(stage, progress)
+
+        transcription = self._resolve_transcription(
+            source_audio,
+            enable_diarization,
+            transcription,
+            report_progress,
+        )
+        detected_lang = source_lang or transcription.language or "en"
+        if not transcription.segments:
+            translated_segments: list[TranslatedSegment] = []
+            translation_failures: list[int] = []
+        else:
+            self._assess_transcription(transcription, source_audio)
+            report_progress("Translating text", 0.35)
+            translated_segments, translation_failures = self._translate(
+                transcription, detected_lang, target_lang, report_progress
+            )
+        report_progress("Translation ready for review", 1.0)
+        return transcription, translated_segments, translation_failures, detected_lang
+
+    def process(
+        self,
+        source_audio: Audio,
+        target_lang: str,
+        source_lang: str | None = None,
+        preserve_background: bool = True,
+        voice_clone: bool = True,
+        enable_diarization: bool = False,
+        progress_callback: Callable[[str, float], None] | None = None,
+        transcription: Any | None = None,
+        translated_segments: list[TranslatedSegment] | None = None,
+        translation_failures: list[int] | None = None,
+    ) -> DubbingResult:
+        """Run the dubbing pipeline against the given source audio.
+
+        Args:
+            source_audio: Source audio track to dub. Callers with a ``Video``
+                object should pass ``video.audio``; callers with only a file path
+                can use ``Audio.from_path(path)`` to avoid loading video frames.
+            transcription: Optional pre-computed Transcription object. When provided,
+                the internal Whisper transcription step is skipped (saving time and VRAM).
+                Must be a ``videopython.base.transcription.Transcription`` instance
+                with populated ``segments``. Speaker labels on the supplied transcription
+                drive per-speaker voice cloning. If the supplied transcription has no
+                speakers and ``enable_diarization=True``, pyannote is run standalone on
+                ``source_audio`` and speakers are attached to the supplied words
+                (requires word-level timings).
+            enable_diarization: When True, run speaker diarization to enable per-speaker
+                voice cloning. With ``transcription=None``, runs alongside Whisper. With
+                a supplied ``transcription`` that has no speakers, runs pyannote
+                standalone and overlays speakers onto the supplied words. Ignored when
+                the supplied transcription already has speaker labels.
+        """
+
+        def report_progress(stage: str, progress: float) -> None:
+            if progress_callback:
+                progress_callback(stage, progress)
+
+        transcription = self._resolve_transcription(
+            source_audio,
+            enable_diarization and translated_segments is None,
+            transcription,
+            report_progress,
+        )
 
         if not transcription.segments:
             return DubbingResult(
@@ -370,22 +436,7 @@ class LocalDubbingPipeline:
                 target_lang=target_lang,
             )
 
-        # Cheap heuristic gate before the expensive Demucs/translation/TTS
-        # stages. Lets strict_quality callers refuse-and-refund without
-        # running the rest of the pipeline; non-strict runs continue but
-        # surface the assessment on DubbingResult.
-        transcript_quality = assess_transcript(transcription, source_audio.metadata.duration_seconds)
-        if transcript_quality.recommendation == "reject" and self.config.strict_quality:
-            raise GarbageTranscriptError(
-                f"Refusing to dub: {', '.join(transcript_quality.flags)}",
-                transcript_quality,
-            )
-        if transcript_quality.recommendation in ("warn", "reject"):
-            logger.warning(
-                "Transcript quality flags raised: %s (recommendation=%s)",
-                ", ".join(transcript_quality.flags),
-                transcript_quality.recommendation,
-            )
+        transcript_quality = self._assess_transcription(transcription, source_audio)
 
         detected_lang = source_lang or transcription.language or "en"
 
@@ -403,10 +454,14 @@ class LocalDubbingPipeline:
             report_progress("Extracting voice samples", 0.25)
             voice_samples = voice_sample.extract(vocal_audio, background_audio, transcription)
 
-        report_progress("Translating text", 0.35)
-        translated_segments, translation_failures = self._translate(
-            transcription, detected_lang, target_lang, report_progress
-        )
+        if translated_segments is None:
+            report_progress("Translating text", 0.35)
+            translated_segments, translation_failures = self._translate(
+                transcription, detected_lang, target_lang, report_progress
+            )
+        else:
+            report_progress("Using reviewed translation", 0.50)
+            translation_failures = translation_failures if translation_failures is not None else []
 
         # Per-segment expressiveness derived from source vocals RMS.
         # Computed before vocal_audio is released so the TTS loop doesn't

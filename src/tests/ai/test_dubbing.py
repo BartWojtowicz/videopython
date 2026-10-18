@@ -1,5 +1,7 @@
 """Tests for video dubbing functionality."""
 
+import json
+
 import numpy as np
 import pytest
 
@@ -1055,6 +1057,35 @@ class TestLocalDubbingPipelineLowMemory:
         pipeline._maybe_unload("_transcriber")  # should not raise
 
 
+def test_prepare_translation_stops_before_separation_and_synthesis(sample_audio, sample_segment, monkeypatch):
+    from videopython.ai.dubbing.pipeline import LocalDubbingPipeline
+    from videopython.base.transcription import Transcription
+
+    transcription = Transcription(segments=[sample_segment], language="en")
+    translated = TranslatedSegment(
+        original_segment=sample_segment,
+        translated_text="Hola mundo",
+        source_lang="en",
+        target_lang="es",
+        source_segment_index=0,
+    )
+    pipeline = LocalDubbingPipeline()
+    monkeypatch.setattr(pipeline, "_translate", lambda *args: ([translated], []))
+    monkeypatch.setattr(
+        pipeline,
+        "_separate",
+        lambda *args: pytest.fail("preparation must stop before source separation"),
+    )
+
+    result = pipeline.prepare_translation(
+        source_audio=sample_audio,
+        target_lang="es",
+        transcription=transcription,
+    )
+
+    assert result == (transcription, [translated], [], "en")
+
+
 class TestVideoDubberLowMemory:
     """Tests for low_memory plumbing from VideoDubber to LocalDubbingPipeline."""
 
@@ -1926,6 +1957,70 @@ class TestVideoDubberDubFile:
                 output_path=tmp_path / "out.mp4",
                 target_lang="es",
             )
+
+    def test_reviewed_translation_workflow(self, tmp_path, sample_audio, sample_segment, monkeypatch):
+        import videopython.ai.dubbing.remux as remux_mod
+        from videopython.ai.dubbing import VideoDubber
+        from videopython.audio import audio as audio_mod
+        from videopython.base.transcription import Transcription
+
+        input_path = tmp_path / "in.mp4"
+        input_path.write_bytes(b"fake")
+        output_path = tmp_path / "out.mp4"
+        translation_path = tmp_path / "review" / "translation.json"
+        transcription = Transcription(segments=[sample_segment], language="en")
+        translated = TranslatedSegment(
+            original_segment=sample_segment,
+            translated_text="Hola mundo",
+            source_lang="en",
+            target_lang="es",
+            source_segment_index=0,
+        )
+        calls = []
+
+        monkeypatch.setattr(audio_mod.Audio, "from_path", classmethod(lambda cls, path: sample_audio))
+        monkeypatch.setattr(remux_mod, "replace_audio_stream_from_audio", lambda **kwargs: None)
+
+        class FakePipeline:
+            def prepare_translation(self, **_kwargs):
+                return transcription, [translated], [0], "en"
+
+            def process(self, **kwargs):
+                calls.append(kwargs)
+                return DubbingResult(
+                    dubbed_audio=sample_audio,
+                    translated_segments=kwargs["translated_segments"],
+                    source_transcription=kwargs["transcription"],
+                    source_lang=kwargs["source_lang"],
+                    target_lang=kwargs["target_lang"],
+                )
+
+        monkeypatch.setattr(
+            VideoDubber, "_init_local_pipeline", lambda self: setattr(self, "_local_pipeline", FakePipeline())
+        )
+
+        dubber = VideoDubber()
+        result_path = dubber.prepare_dub_file(
+            input_path=input_path,
+            target_lang="es",
+            translation_path=translation_path,
+        )
+        payload = json.loads(translation_path.read_text())
+        payload["segments"][0]["translated_text"] = "Edited translation"
+        translation_path.write_text(json.dumps(payload))
+
+        result = dubber.dub_file(
+            input_path=input_path,
+            output_path=output_path,
+            target_lang="es",
+            translation_path=translation_path,
+        )
+
+        assert result_path == translation_path
+        assert payload["format_version"] == 1
+        assert result.translated_segments[0].translated_text == "Edited translation"
+        assert calls[0]["transcription"] == transcription
+        assert calls[0]["translation_failures"] == []
 
     def test_dub_file_orchestration(self, tmp_path, sample_audio, sample_segment, monkeypatch):
         """dub_file extracts audio, runs pipeline, and streams dubbed audio to ffmpeg.

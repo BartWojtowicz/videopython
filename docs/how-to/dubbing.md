@@ -33,6 +33,40 @@ the source, and the dubbed audio is gain-matched to the source; see the
 [file-output reference](../reference/ai/dubbing.md#videodubber). Add `keep_original_audio=True` to retain
 the source audio as a second track for A/B review — the dub stays the default track.
 
+## Review translations before synthesis
+
+Prepare an editable translation file before running source separation and speech
+synthesis:
+
+```python
+translation_path = dubber.prepare_dub_file(
+    input_path="interview.mp4",
+    target_lang="es",
+    source_lang="en",
+    translation_path="interview_es.json",
+)
+```
+
+Open the returned JSON file and edit only `segments[].translated_text`. The source text
+for each entry is in `segments[].original_segment.text`. Then pass the reviewed file to
+`dub_file`:
+
+```python
+result = dubber.dub_file(
+    input_path="interview.mp4",
+    output_path="interview_es.mp4",
+    target_lang="es",
+    source_lang="en",
+    translation_path=translation_path,
+    voice_clone=True,
+    preserve_background=True,
+)
+```
+
+The final call uses the saved transcription and reviewed translations, so it skips
+Whisper and Ollama. Use the translation file with the same source video and target
+language that produced it.
+
 ## Dub an in-memory video
 
 When you need the frames in Python anyway:
