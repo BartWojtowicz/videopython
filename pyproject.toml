@@ -1,6 +1,6 @@
 [project]
 name = "videopython"
-version = "0.62.2"
+version = "0.62.3"
 description = "LLM-friendly Python video editing with JSON plans, local AI, and MCP tools."
 authors = [
     { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
@@ -41,7 +41,7 @@ dependencies = [
     "numpy>=1.25.2",
     "soxr>=0.5",  # polyphase resampling for Audio.resample; the engine librosa uses
     "opencv-python-headless>=4.9.0.80",
-    "pillow>=12.1.1",
+    "pillow>=13.0.0",
     "resvg-py>=0.3.2",
     "tqdm>=4.66.3",
     "pydantic>=2.8.0",
@@ -50,7 +50,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "imagehash>=4.3",
-    "mcp>=1.27,<2",
+    "mcp>=1.30,<2",
     "pre-commit>=3.8.0",
     "pyloudnorm>=0.1.1",
     "ruff>=0.1.14",
@@ -122,7 +122,7 @@ ai = [
 # Agent-editing pipeline: analysis + AI editing operations, without generation,
 # dubbing, diarization, source separation, or TTS. Pin MCP <2 — v2 is breaking.
 mcp = [
-    "mcp>=1.27,<2",
+    "mcp>=1.30,<2",
     "faster-whisper>=1.2.1",
     "transnetv2-pytorch>=1.0.5",
     "transformers>=5.2.0",
@@ -171,8 +171,7 @@ ignore_missing_imports = true
 # No overrides, deliberately: they are a uv workspace feature and do not ship in
 # the wheel, so anything patched here is invisible to `pip install`. Fix the
 # dependency's metadata instead — see DEVELOPMENT.md "Dependencies".
-# requests: CVE floor. pygments <2.20.0: 2.20.0 breaks mkdocs (passes None to html.escape).
-constraint-dependencies = ["requests>=2.33.0", "pygments>=2.19.2,<2.20.0"]
+constraint-dependencies = ["requests>=2.33.0", "pygments>=2.21.0"]
 
 [build-system]
 requires = ["hatchling"]

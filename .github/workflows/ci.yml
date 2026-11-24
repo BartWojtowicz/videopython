@@ -98,7 +98,7 @@ jobs:
           uv venv --python 3.14 .wheel-smoke
           wheel=$(find dist -name '*.whl' -print -quit)
           uv pip install --python "${{ matrix.python }}" "$wheel"
-          uv pip install --python "${{ matrix.python }}" "mcp>=1.27,<2"
+          uv pip install --python "${{ matrix.python }}" "mcp>=1.30,<2"
       - name: Smoke-test public imports, rendering, and MCP
         shell: bash
         run: "${{ matrix.python }} .github/smoke_wheel.py"
