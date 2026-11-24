@@ -4,6 +4,11 @@ Entries describe the named release. Older APIs, defaults, and limitations can be
 superseded by later entries. Use the [current reference](docs/reference/index.md)
 for new code.
 
+## 0.62.3
+
+- Update dependencies to address security alerts. Require Pillow 13.0.0 or
+  later and MCP SDK 1.30 or later within the 1.x series.
+
 ## 0.62.2
 
 - Add `VideoDubber.prepare_dub_file()` and `dub_file(translation_path=...)` for
