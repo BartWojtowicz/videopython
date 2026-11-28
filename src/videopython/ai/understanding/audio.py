@@ -482,16 +482,9 @@ class AudioToText(ManagedPredictor):
         return rebuilt
 
     def _transcribe_local(self, audio: Audio, vocabulary: list[str], language: str | None = None) -> Transcription:
-        """Transcribe using local Whisper model.
+        """Use voiced audio for automatic language detection when VAD is enabled.
 
-        When ``enable_vad`` is True (default), Silero VAD locates voiced
-        regions and a 30s voiced window is used for Whisper language
-        detection -- avoiding the well-known failure where Whisper locks
-        onto the wrong language because the first 30s of input is silence
-        or music. The detected language is then passed into
-        ``transcribe()`` so chunked decoding stays consistent. If VAD
-        finds no speech, an empty Transcription is returned without
-        invoking Whisper.
+        If VAD finds no speech, return an empty transcript before decoding.
         """
         if self._model is None:
             self._init_local()

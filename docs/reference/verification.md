@@ -243,6 +243,14 @@ The recipe is limited to frame-aligned cuts from one source with no transitions
 or retiming. It requires an intermediate file and a second encode. No model ran,
 and these checks do not assess transcription accuracy or music suitability.
 
+## Transcription language override
+
+For 1.0.1, a 16-second English speech clip was decoded twice on CPU with the
+cached multilingual Whisper `tiny` model and default voice activity detection.
+Automatic detection and an explicit `language="en"` each produced three segments
+and serialized `language` as `"en"`. The decoder unit test separately checks that
+an explicit language skips the detection call.
+
 ## Speech candidate selection
 
 On 2026-09-09, speech selection used fresh audio from seconds 300–390 of

@@ -10,6 +10,11 @@ Transcription result models (`videopython.base`) and the subtitle-burning operat
 These are Pydantic models. Use `model_dump()` or `model_dump_json()` to serialize them,
 and `model_validate()` or `model_validate_json()` to load them.
 
+For decoded speech, `Transcription.language` contains the language code Whisper
+used. This can be the detected language or the language supplied by the caller.
+Silence and input rejected by voice activity detection produce an empty transcript
+with `language=None`.
+
 `TranscriptionWord.word` retains the supplied token text, including whitespace.
 `TranscriptionSegment.from_words()` inserts one space between those values; it does
 not infer whether adjacent values are complete words or tokenizer fragments. Thus
