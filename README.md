@@ -2,7 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/videopython)](https://pypi.org/project/videopython/)
 [![Python](https://img.shields.io/pypi/pyversions/videopython)](https://pypi.org/project/videopython/)
-[![License](https://img.shields.io/github/license/BartWojtowicz/videopython)](LICENSE)
+[![License](https://img.shields.io/github/license/BartWojtowicz/videopython)](https://github.com/BartWojtowicz/videopython/blob/main/LICENSE)
 [![CI](https://github.com/BartWojtowicz/videopython/actions/workflows/ci.yml/badge.svg)](https://github.com/BartWojtowicz/videopython/actions/workflows/ci.yml)
 
 Structured, local-first video editing for Python and AI agents.
@@ -85,11 +85,11 @@ runtimes and FFmpeg builds, or a second in-memory operation engine.
 
 ## Project status
 
-Videopython is pre-1.0, so public interfaces can still change. See the
-[compatibility policy](docs/reference/compatibility.md) for public contracts and
-versioning rules, and [release notes](RELEASE_NOTES.md)
+Videopython follows semantic versioning. See the
+[compatibility policy](https://videopython.com/reference/compatibility/) for public contracts and
+versioning rules, and [release notes](https://github.com/BartWojtowicz/videopython/blob/main/RELEASE_NOTES.md)
 for changes between versions. Report vulnerabilities through the [security
-policy](SECURITY.md).
+policy](https://github.com/BartWojtowicz/videopython/blob/main/SECURITY.md).
 
 For local setup, tests, documentation builds, and releases, see
-[DEVELOPMENT.md](DEVELOPMENT.md).
+[DEVELOPMENT.md](https://github.com/BartWojtowicz/videopython/blob/main/DEVELOPMENT.md).

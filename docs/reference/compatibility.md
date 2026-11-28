@@ -1,7 +1,6 @@
 # Compatibility
 
-Videopython follows semantic versioning from version 1.0. Before 1.0, a minor release
-can contain incompatible changes. These changes are listed in the release notes.
+Videopython follows semantic versioning for the public contracts listed below.
 
 ## Public contracts
 
@@ -19,11 +18,9 @@ modules, and undocumented attributes are implementation details.
 
 ## Version changes
 
-After 1.0:
-
-- a patch release fixes behavior without changing a documented contract;
-- a minor release can add APIs, optional fields, operations, or error codes;
-- a major release can remove or rename APIs, add required inputs, reject previously valid
+- A patch release fixes behavior without changing a documented contract.
+- A minor release can add APIs, optional fields, operations, or error codes.
+- A major release can remove or rename APIs, add required inputs, reject previously valid
   plans, or change the meaning of an existing field or code.
 
 A supported Python version, operating system, or FFmpeg version is not removed in a

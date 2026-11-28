@@ -1,16 +1,46 @@
 # Verification records
 
 These point-in-time measurements support release checks and implementation decisions.
-Older entries include candidate designs that were later replaced. The
-[final dubbing review](#final-dubbing-review-0612) describes the latest recorded
-dubbing release result; API behavior belongs in the reference pages. These records
-describe the tested environment and are not performance guarantees for other
-hardware, inputs, or dependency versions.
+Older entries include candidate designs that were later replaced. Each record
+describes the tested environment. For current API behavior, see the reference pages.
 
 For the interfaces covered by the AI checks, see [AI generation](ai/generation.md),
 [AI understanding](ai/understanding.md), and [Dubbing](ai/dubbing.md). For the design
 decision supported by the effects profile, see [The streaming
 engine](../explanation/streaming-engine.md#why-pixel-effects-are-not-ffmpeg-filters).
+
+## Release checks for 1.0.0
+
+On 2026-11-28, a JavaScript client using `@modelcontextprotocol/sdk` 1.32.2
+connected over stdio to the installed `1.0.0rc1` wheel on macOS arm64 with
+Python 3.12.14. The server used a speech-only analyzer configuration with
+Whisper tiny on CPU and voice activity detection disabled.
+
+The 10-second source had two spoken passages against red and green backgrounds.
+The client called `analyze_video` and `build_catalog`, selected the passage about
+apples by its transcript (5.18–7.60 s), then called `validate_edit` and
+`run_edit`. FFmpeg decoded all 60 output frames as green. A separate Whisper
+base.en pass on the exported audio recovered “Green apples are waiting on the
+kitchen table.”
+
+The same candidate wheel ran `prepare_dub_file()` on a Spanish announcement
+with a supplied transcript. Local Ollama 0.40.17 with `qwen2.5:0.5b` returned
+“The train departs from the station at eight o'clock in the morning.” The reviewer
+changed only `translated_text` to “The last train leaves at midnight.”
+`dub_file()` used `videopython-chatterbox 0.1.7.post3` on CPU with the default English voice
+and kept the Spanish track as secondary audio. Whisper base.en transcribed the
+default audio track of the exported MP4 as “The last train leaves at midnight.”
+FFmpeg found both audio tracks. The decoded video hash matched the source.
+In listening review, the maintainer heard a wind-like sound after “midnight.”
+A repeat with the same seed (321) captured the waveform before synchronization.
+Chatterbox produced 4.56 seconds for a 5-second slot. The timing factor was 1.0.
+The raw and exported waveforms had a correlation of 0.9999 between 2.0 and
+4.5 seconds. The maintainer accepted this synthesis artifact as a known
+limitation for 1.0.0.
+
+All 98 files under `videopython/` in the stable wheel matched the candidate
+wheel byte for byte. The installed stable wheel passed the FFmpeg render and
+MCP handshake checks on macOS arm64.
 
 ## Chatterbox post3 integration
 

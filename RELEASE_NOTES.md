@@ -4,6 +4,13 @@ Entries describe the named release. Older APIs, defaults, and limitations can be
 superseded by later entries. Use the [current reference](docs/reference/index.md)
 for new code.
 
+## 1.0.0
+
+- The documented Python API, edit-plan JSON format, and MCP tools now follow
+  the [compatibility policy](docs/reference/compatibility.md).
+- `VideoDubber.dub_file()` accepts `keep_original_audio` in its original positional
+  slot. Pass a reviewed translation file by keyword with `translation_path=path`.
+
 ## 0.62.4
 
 - `VideoEdit.run_to_file()` rejects destinations that refer to input media and

@@ -63,9 +63,8 @@ Requires the `[ai]` extra ([Install](../install.md)).
 ## Import patterns
 
 ```python
-from videopython import Video                      # the one top-level convenience
-
-from videopython.base import Video, VideoMetadata, FrameIterator, Transcription
+from videopython import Video, VideoMetadata
+from videopython.base import FrameIterator, Transcription
 from videopython.audio import Audio, AudioMetadata
 
 from videopython.editing import VideoEdit, SegmentConfig      # plans

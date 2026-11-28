@@ -65,7 +65,8 @@ result = dubber.dub_file(
 
 The final call uses the saved transcription and reviewed translations, so it skips
 Whisper and Ollama. Use the translation file with the same source video and target
-language that produced it.
+language that produced it. Listen to each phrase through the pause that follows it.
+Chatterbox can produce trailing noise even when the spoken words are correct.
 
 ## Dub an in-memory video
 

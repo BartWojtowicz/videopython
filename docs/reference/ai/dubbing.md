@@ -12,7 +12,7 @@ Entry points:
 | Method | Input → output | Notes |
 |---|---|---|
 | `prepare_dub_file(input_path, ...)` | path → editable JSON path | Stops after translation for manual review |
-| `dub_file(input_path, output_path, ...)` | path → file | Never loads frames; video is stream-copied |
+| `dub_file(input_path, output_path, ...)` | path → `DubbingResult` | Writes the output file and copies the source video stream |
 | `dub(video, ...)` | `Video` → `DubbingResult` | |
 | `dub_and_replace(video, ...)` | `Video` → `Video` | Convenience over `dub` |
 | `revoice(video, text, ...)` / `revoice_and_replace(...)` | `Video` → result / `Video` | New words, original voice |

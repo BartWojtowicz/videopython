@@ -5,7 +5,14 @@ cut, resized to vertical, fading in from black. Then you will add a second piece
 footage and let videopython stitch the two together.
 
 You need videopython and FFmpeg installed ([Install](../install.md)) and one `.mp4` file at least 28 seconds long.
-Save it next to your script as `input.mp4`. Nothing here needs a GPU or the `[ai]` extra.
+Save it next to your script as `input.mp4`. For a practice file, run this command in
+that directory:
+
+```bash
+ffmpeg -n -f lavfi -i testsrc2=size=320x180:rate=12 -t 28 -c:v libx264 input.mp4
+```
+
+The tutorial uses only core editing.
 
 ## Step 1 — Look at the source
 
@@ -81,8 +88,7 @@ edit.run_to_file("output.mp4")
 ```
 
 `run_to_file()` is the only execution engine. It streams FFmpeg decode → your operations
-→ FFmpeg encode, one frame at a time, so peak memory is roughly constant no matter how
-long the source is. Play `output.mp4`: a 10-second vertical clip that fades up from
+→ FFmpeg encode with bounded frame buffers. Play `output.mp4`: a 10-second vertical clip that fades up from
 black.
 
 You can control the encode:
@@ -164,7 +170,7 @@ edit.run_to_file("output.mp4")
   plus optional `post_operations` over the concatenated result.
 - `validate()` is a **dry run over metadata** — it predicts the output and reports
   structured errors without decoding anything.
-- `run_to_file()` **streams**, so memory does not grow with the length of the video.
+- `run_to_file()` **streams** with bounded frame buffers.
 - The dict form and the class form are the same models; the dict form *is* the JSON.
 
 ## Next
