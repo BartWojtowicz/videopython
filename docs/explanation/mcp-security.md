@@ -46,8 +46,7 @@ It creates parent directories and replaces an existing file at that path.
 
 - changes the suffix to `.mp4`;
 - creates missing parent directories;
-- overwrites an existing output file through FFmpeg;
-- can remove an incomplete output if rendering fails.
+- uses the same [output replacement rules](../reference/video-edit.md#usage) as Python renders.
 
 There is no output-directory allowlist and no confirmation prompt. Treat `output_path`
 as a trusted instruction from the connected client.

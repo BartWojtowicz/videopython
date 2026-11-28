@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import shutil
 import tempfile
 from pathlib import Path
 from typing import Annotated, Any, Callable, Literal, Protocol, get_args, overload, runtime_checkable
@@ -31,7 +32,7 @@ from videopython import _ffmpeg
 from videopython.base.video import ALLOWED_VIDEO_FORMATS, ALLOWED_VIDEO_PRESETS, Video, VideoMetadata
 from videopython.editing._schema import array_field_schema, field_schema, optional_model_field_schema
 from videopython.editing.audio_ops import MusicBed, build_music_bed_filter_complex
-from videopython.editing.effects import Effect
+from videopython.editing.effects import Effect, FullImageOverlay, ImageOverlay
 from videopython.editing.errors import PlanError, PlanErrorCode, PlanRepair, PlanValidationError
 from videopython.editing.operation import FilterCtx, Operation, _to_strict_schema
 from videopython.editing.progress import RenderProgress, _Progress
@@ -414,32 +415,32 @@ def _window_errors(op: Operation, duration: float, location: str) -> list[_Locat
     return out
 
 
-def _concat_errors(metas: list[VideoMetadata]) -> list[_LocatedError]:
+def _concat_errors(formats: list[tuple[float, int, int]]) -> list[_LocatedError]:
     """``CONCAT_MISMATCH`` errors for fps/dimension divergence across segments."""
-    if len(metas) <= 1:
+    if len(formats) <= 1:
         return []
     out: list[_LocatedError] = []
-    first = metas[0]
-    for j, other in enumerate(metas[1:], start=1):
-        if first.fps != other.fps:
+    fps, width, height = formats[0]
+    for j, (other_fps, other_width, other_height) in enumerate(formats[1:], start=1):
+        if fps != other_fps:
             out.append(
                 (
-                    f"Segment 0 fps ({first.fps}) != segment {j} fps ({other.fps}); "
+                    f"Segment 0 fps ({fps}) != segment {j} fps ({other_fps}); "
                     "all segments must share fps for concatenation.",
                     PlanError(
                         PlanErrorCode.CONCAT_MISMATCH,
                         location=f"segments[{j}]",
                         field="fps",
-                        value=other.fps,
-                        limit=first.fps,
+                        value=other_fps,
+                        limit=fps,
                     ),
                 )
             )
-        if (first.width, first.height) != (other.width, other.height):
+        if (width, height) != (other_width, other_height):
             out.append(
                 (
-                    f"Segment 0 dimensions ({first.width}x{first.height}) != "
-                    f"segment {j} ({other.width}x{other.height}); all segments must share dimensions.",
+                    f"Segment 0 dimensions ({width}x{height}) != "
+                    f"segment {j} ({other_width}x{other_height}); all segments must share dimensions.",
                     PlanError(PlanErrorCode.CONCAT_MISMATCH, location=f"segments[{j}]", field="dimensions"),
                 )
             )
@@ -959,16 +960,11 @@ class VideoEdit(BaseModel):
             "required": ["segments"],
             "additionalProperties": False,
         }
-        if not strict:
-            return schema
-        # Inlining the op union as `items` buried its `$defs` while its `$ref`s
-        # stayed root-relative (`#/$defs/X`), so they dangled. Hoist the (shared)
-        # defs to this schema's root before the strict pass, so every ref
-        # resolves and the result is a submittable provider grammar.
-        op_defs = op_schema.pop("$defs", None)
-        if op_defs:
-            schema["$defs"] = op_defs
-        return _to_strict_schema(schema)
+        # The union uses root-relative references in both operation slots.
+        definitions = op_schema.pop("$defs", None)
+        if definitions:
+            schema["$defs"] = definitions
+        return _to_strict_schema(schema) if strict else schema
 
     # --------------------------------------------------------------- validate
 
@@ -1519,7 +1515,7 @@ class VideoEdit(BaseModel):
         if len(seg_outputs) != len(self.segments):
             return None, errors
         outputs = [seg_outputs[i] for i in range(len(self.segments))]
-        for message, err in _concat_errors(outputs):
+        for message, err in _concat_errors([(meta.fps, meta.width, meta.height) for meta in outputs]):
             emit(message, err)
         for message, err in _transition_duration_errors(list(self.segments), outputs):
             emit(message, err)
@@ -1636,11 +1632,40 @@ class VideoEdit(BaseModel):
         output_path = Path(output_path).with_suffix(f".{format}")
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
+        if output_path.exists():
+            sources = [segment.source for segment in self.segments]
+            if self.music_bed is not None:
+                sources.append(self.music_bed.source)
+            for operations in [*(segment.operations for segment in self.segments), self.post_operations]:
+                sources.extend(op.source for op in operations if isinstance(op, (ImageOverlay, FullImageOverlay)))
+            if any(source.exists() and output_path.samefile(source) for source in sources):
+                raise ValueError(f"Output path refers to input media: {output_path}")
+
         progress = _Progress(on_progress)
-        on_frame = progress.advance if on_progress is not None else None
+        with tempfile.TemporaryDirectory(dir=output_path.parent) as directory:
+            staged = Path(directory) / output_path.name
+            on_frame = progress.advance if on_progress is not None else None
+            self._render_to_file(staged, format, preset, crf, context, progress, on_frame)
+            progress.start("complete")
+            if output_path.is_file():
+                shutil.copymode(output_path, staged)
+            staged.replace(output_path)
+        progress.finish()
+        return output_path
+
+    def _render_to_file(
+        self,
+        output_path: Path,
+        format: ALLOWED_VIDEO_FORMATS,
+        preset: ALLOWED_VIDEO_PRESETS,
+        crf: int,
+        context: dict[str, Any] | None,
+        progress: _Progress,
+        on_frame: Callable[[int], None] | None,
+    ) -> None:
         progress.start("compilation")
-        plans = self._compile_streaming_plans(context)
         self._assert_music_bed_supported()
+        plans = self._compile_streaming_plans(context)
 
         # The program flows through up to three stages, each writing to its own
         # temp file: assemble segments -> apply post_operations -> mix music bed.
@@ -1659,6 +1684,10 @@ class VideoEdit(BaseModel):
             return p
 
         try:
+            formats = [(plan.final_fps, plan.final_width, plan.final_height) for plan in plans]
+            errors = _concat_errors(formats)
+            if errors:
+                raise PlanValidationError(errors[0][0], [error for _, error in errors])
             self._assert_transitions_runnable(plans)
             progress.finish()
             # Stage 1: assemble the segments.
@@ -1742,9 +1771,6 @@ class VideoEdit(BaseModel):
 
                 progress.finish()
 
-            progress.start("complete")
-            progress.finish()
-            return assembled
         finally:
             for p in intermediates:
                 p.unlink(missing_ok=True)

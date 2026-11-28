@@ -220,8 +220,7 @@ class TestJsonSchema:
     def test_schema_op_class_and_field_descriptions_flow_through(self):
         """Each op in the union must carry a class description plus per-field descriptions."""
         schema = VideoEdit.json_schema()
-        op_schema = schema["properties"]["segments"]["items"]["properties"]["operations"]["items"]
-        defs = op_schema.get("$defs") or op_schema.get("definitions") or {}
+        defs = schema["$defs"]
         assert defs, "Operation union schema missing $defs"
 
         # Only entries with an `op` discriminator field are Operation subclasses;
@@ -1483,6 +1482,17 @@ class TestPlanValidationErrors:
         assert err.code is PlanErrorCode.EFFECT_WINDOW_EXCEEDS_DURATION
         assert err.location == "segments[0].operations[0]"
         assert err.field == "window.stop"
+
+    @pytest.mark.parametrize("operation", [{"op": "resize", "width": 160}, {"op": "resample_fps", "fps": 12}])
+    def test_render_rejects_concat_mismatch(self, tmp_path, operation):
+        edit = VideoEdit.from_dict({"segments": [_segment(), _segment(operations=[{"op": "film_grain"}, operation])]})
+        target = tmp_path / "mismatch.mp4"
+        with pytest.raises(PlanValidationError) as caught:
+            edit.run_to_file(target)
+
+        assert caught.value.errors == edit.check(SMALL_VIDEO_METADATA)
+        assert caught.value.errors[0].code == PlanErrorCode.CONCAT_MISMATCH
+        assert not target.exists()
 
     def test_concat_mismatch_fps(self):
         meta_a = VideoMetadata(width=320, height=240, fps=30.0, frame_count=60, total_seconds=2.0)

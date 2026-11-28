@@ -100,7 +100,8 @@ For long or memory-constrained runs, see
     `[ai]` installs
     [`videopython-chatterbox`](https://pypi.org/project/videopython-chatterbox/) rather
     than `chatterbox-tts`. The fork has corrected dependency metadata and a
-    short-text alignment fix. The import name remains `chatterbox`.
+    short-text alignment fix. Its speech output, including speech used for local
+    dubbing, has no Perth audio watermark. The import name remains `chatterbox`.
 
     Both distributions install a top-level `chatterbox` package — never install
     `chatterbox-tts` alongside `[ai]`.

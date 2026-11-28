@@ -12,6 +12,7 @@ from typing import Any
 
 import numpy as np
 import pytest
+from jsonschema import validate
 
 from tests.test_config import BIG_VIDEO_PATH, SMALL_VIDEO_PATH
 from videopython.ai.auto_edit import (
@@ -230,6 +231,13 @@ def test_resolve_plan_unknown_ids_raise() -> None:
 
 def test_editplan_schema_nonstrict() -> None:
     schema = EditPlan.json_schema()
+    validate(
+        {
+            "segments": [{"scene_id": "clip#1", "operations": [{"op": "resize", "width": 160}]}],
+            "post_operations": [{"op": "color_adjust", "brightness": 0.1}],
+        },
+        schema,
+    )
     assert schema["type"] == "object"
     assert "segments" in schema["properties"]
     seg_items = schema["properties"]["segments"]["items"]

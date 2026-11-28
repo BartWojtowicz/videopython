@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from jsonschema import validate
+
 from videopython.editing import PlanError, PlanErrorCode, PlanRepair, VideoEdit
 
 _FIXTURES = Path(__file__).with_name("fixtures")
@@ -25,7 +27,9 @@ def _without_schema_annotations(value: Any) -> Any:
 
 def test_saved_video_edit_plan_round_trips() -> None:
     text = (_FIXTURES / "video_edit_plan.json").read_text(encoding="utf-8")
-    assert VideoEdit.from_json(text).to_dict() == json.loads(text)
+    saved = json.loads(text)
+    assert VideoEdit.from_json(text).to_dict() == saved
+    validate(saved, VideoEdit.json_schema())
 
 
 def _video_edit_contract() -> dict[str, Any]:
