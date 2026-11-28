@@ -23,7 +23,9 @@ transcription = AudioToText().transcribe(video)
 
 Model sizes: `tiny`, `base`, `small`, `medium`, `large`, `turbo` (default). Diarization is
 opt-in with `enable_diarization=True`. VAD-gated language detection runs by default;
-`enable_vad=False` detects from the leading audio instead.
+`enable_vad=False` detects from the leading audio instead. When you know the spoken language,
+pass its Whisper language code, for example `transcribe(video, language="en")`.
+This skips language detection and preserves the VAD setting.
 
 Diarization skips speaker embeddings for chunk/speaker pairs with no speech. Compatible
 pyannote embedding backends also share frame extraction across speakers in each chunk, then apply

@@ -139,6 +139,18 @@ class TestVadShortCircuit:
 class TestLanguageDetectionThreading:
     """Detected language must be passed into Whisper's transcribe() call."""
 
+    def test_explicit_language_skips_detection(self, cpu_transcriber, fake_whisper, monkeypatch):
+        from unittest.mock import Mock
+
+        detect = Mock(return_value="ja")
+        monkeypatch.setattr(audio_mod.AudioToText, "_run_vad", lambda self, _a: [(0.0, 1.0)])
+        monkeypatch.setattr(audio_mod.AudioToText, "_detect_language", detect)
+
+        cpu_transcriber.transcribe(_short_audio(), language="en")
+
+        detect.assert_not_called()
+        assert fake_whisper.transcribe_calls[0]["language"] == "en"
+
     def test_plain_branch_passes_language(
         self,
         cpu_transcriber: audio_mod.AudioToText,
