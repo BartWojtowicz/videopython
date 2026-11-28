@@ -47,7 +47,8 @@ LLM auto-editing planner. The heavy ML dependencies load lazily at first use, so
 `import videopython` stays fast even with `[ai]` installed.
 
 `[mcp]` installs the `videopython-mcp` stdio server and the focused local stack it uses:
-transcription, scene detection and captioning, face and object operations, and Ollama.
+transcription, scene detection and captioning, face and object operations, and the
+Ollama Python client.
 It does not install generation, dubbing, diarization, VAD, source separation, or TTS.
 Install `[ai,mcp]` only when the same environment also needs those capabilities. See
 [Drive editing from an MCP agent](how-to/mcp-server.md). Before connecting an agent,
@@ -60,9 +61,11 @@ translation, and the `AutoEditor` planner call a configured [Ollama](https://oll
 server. MCP uses Ollama for captioning; the connected agent supplies its own planner.
 There is no in-process fallback.
 
+Install Ollama on the model host. If the service is stopped, start it with
+`ollama serve`. In a second terminal, download the default model:
+
 ```bash
-ollama serve                # start the local daemon
-ollama pull qwen3.6:27b     # the default vision / translation model
+ollama pull qwen3.6:27b
 ```
 
 Captioning and planning require a vision model with structured-output `format` support.

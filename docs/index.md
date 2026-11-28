@@ -27,7 +27,6 @@ edit = VideoEdit.from_dict({
         {"source": "raw.mp4", "start": 10, "end": 25,
          "operations": [
              {"op": "resize", "width": 1080, "height": 1920},
-             {"op": "resample_fps", "fps": 30},
              {"op": "fade", "mode": "in", "duration": 0.5},
          ]},
     ],
