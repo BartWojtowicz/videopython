@@ -4,6 +4,11 @@ Entries describe the named release. Older APIs, defaults, and limitations can be
 superseded by later entries. Use the [current reference](docs/reference/index.md)
 for new code.
 
+## 1.0.1
+
+- Pass a known language to `AudioToText.transcribe()` with the optional
+  `language` keyword. Omit it to keep automatic language detection.
+
 ## 1.0.0
 
 - The documented Python API, edit-plan JSON format, and MCP tools now follow

@@ -481,7 +481,7 @@ class AudioToText(ManagedPredictor):
         _attach_confidence_by_overlap(rebuilt.segments, whisper_segments)
         return rebuilt
 
-    def _transcribe_local(self, audio: Audio, vocabulary: list[str]) -> Transcription:
+    def _transcribe_local(self, audio: Audio, vocabulary: list[str], language: str | None = None) -> Transcription:
         """Transcribe using local Whisper model.
 
         When ``enable_vad`` is True (default), Silero VAD locates voiced
@@ -498,12 +498,12 @@ class AudioToText(ManagedPredictor):
 
         audio_mono = audio.to_mono().resample(_WHISPER_SAMPLE_RATE)
 
-        language: str | None = None
         if self.enable_vad:
             voiced_spans = self._run_vad(audio_mono)
             if not voiced_spans:
                 return Transcription(segments=[])
-            language = self._detect_language(audio_mono, voiced_spans)
+            if language is None:
+                language = self._detect_language(audio_mono, voiced_spans)
 
         if self.enable_diarization:
             return self._transcribe_with_diarization(audio_mono, language, vocabulary)
@@ -511,8 +511,13 @@ class AudioToText(ManagedPredictor):
         transcription_result = self._run_whisper(audio_mono.data, language, vocabulary)
         return self._process_transcription_result(transcription_result)
 
-    def transcribe(self, media: Audio | Video, vocabulary: list[str] | None = None) -> Transcription:
+    def transcribe(
+        self, media: Audio | Video, vocabulary: list[str] | None = None, *, language: str | None = None
+    ) -> Transcription:
         """Transcribe audio or video to text.
+
+        ``language`` sets the decoder language and skips automatic detection.
+        VAD still removes empty input. ``None`` uses automatic detection.
 
         ``vocabulary`` overrides the constructor default for this call only;
         a per-call list wins over the instance's vocabulary so one
@@ -531,4 +536,4 @@ class AudioToText(ManagedPredictor):
             raise TypeError(f"Unsupported media type: {type(media)}. Expected Audio or Video.")
 
         effective_vocab = self.vocabulary if vocabulary is None else _normalize_vocabulary(vocabulary)
-        return self._transcribe_local(audio, effective_vocab)
+        return self._transcribe_local(audio, effective_vocab, language)
