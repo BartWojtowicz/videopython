@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Videopython is pre-1.0. Security fixes are released for the latest version only. Update
+We release security fixes for the latest stable version. Update
 to the latest PyPI release before reporting a problem that might already be fixed.
 
 ## Report a vulnerability

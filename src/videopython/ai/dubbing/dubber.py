@@ -212,8 +212,9 @@ class VideoDubber:
         enable_diarization: bool = False,
         progress_callback: Callable[[str, float], None] | None = None,
         transcription: Any = None,
-        translation_path: str | Path | None = None,
         keep_original_audio: bool = False,
+        *,
+        translation_path: str | Path | None = None,
     ) -> DubbingResult:
         """Dub a video file in place on disk without loading video frames into memory.
 

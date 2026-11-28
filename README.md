@@ -85,7 +85,7 @@ runtimes and FFmpeg builds, or a second in-memory operation engine.
 
 ## Project status
 
-Videopython is pre-1.0, so public interfaces can still change. See the
+Videopython follows semantic versioning. See the
 [compatibility policy](docs/reference/compatibility.md) for public contracts and
 versioning rules, and [release notes](RELEASE_NOTES.md)
 for changes between versions. Report vulnerabilities through the [security

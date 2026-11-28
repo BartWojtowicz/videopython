@@ -2151,12 +2151,7 @@ class TestVideoDubberDubFile:
 
         monkeypatch.setattr(remux_mod, "replace_audio_stream_from_audio", fake_replace)
 
-        VideoDubber().dub_file(
-            input_path=input_path,
-            output_path=tmp_path / "out.mp4",
-            target_lang="es",
-            keep_original_audio=True,
-        )
+        VideoDubber().dub_file(input_path, tmp_path / "out.mp4", "es", None, True, True, False, None, None, True)
 
         assert captured.get("keep_original_audio") is True
 
