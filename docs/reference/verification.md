@@ -12,6 +12,23 @@ For the interfaces covered by the AI checks, see [AI generation](ai/generation.m
 decision supported by the effects profile, see [The streaming
 engine](../explanation/streaming-engine.md#why-pixel-effects-are-not-ffmpeg-filters).
 
+## Chatterbox post3 integration
+
+On 2026-11-28, a local videopython wheel from source tree
+`4ab4226a63c98d8b51b12ac50164367dfc2fbbd3` ran with the PyPI release of
+`videopython-chatterbox 0.1.7.post3` on macOS arm64, Python 3.12.14.
+The test used the locked TTS dependencies, including setuptools 84.2.1,
+PyTorch 2.13.0 and Transformers 5.14.1. Plain pip also resolved the wheel's
+combined AI and MCP extras in a fresh environment without Perth.
+
+`TextToSpeech(device="cpu", language="en")` synthesized “The quick brown fox
+jumps over the lazy dog near the river bank.” The second call used the first
+output as its voice sample. With PyTorch seed 321 and Chatterbox model revision
+`5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18`, the two WAV files contained
+70,080 and 79,680 mono samples at 24 kHz. Whisper base.en transcribed both
+sentences with “riverbank” as one word. This check covered speech content and
+the voice-sample input path. Speaker similarity requires listening review.
+
 ## Release preparation, 0.62.0
 
 Local checks on 2026-09-09 used Linux and Python 3.12.12. The package, lockfile,

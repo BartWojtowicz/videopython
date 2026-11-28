@@ -114,9 +114,8 @@ class EditPlan(BaseModel):
             "required": ["segments"],
             "additionalProperties": False,
         }
-        if not strict:
-            return schema
-        op_defs = op_schema.pop("$defs", None)
-        if op_defs:
-            schema["$defs"] = op_defs
-        return _to_strict_schema(schema)
+        # The union uses root-relative references in both operation slots.
+        definitions = op_schema.pop("$defs", None)
+        if definitions:
+            schema["$defs"] = definitions
+        return _to_strict_schema(schema) if strict else schema

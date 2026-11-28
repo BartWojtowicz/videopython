@@ -1,6 +1,6 @@
 [project]
 name = "videopython"
-version = "0.62.3"
+version = "0.62.4"
 description = "LLM-friendly Python video editing with JSON plans, local AI, and MCP tools."
 authors = [
     { name = "Bartosz Wójtowicz", email = "bartoszwojtowicz@outlook.com" },
@@ -49,6 +49,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "jsonschema>=4",
     "imagehash>=4.3",
     "mcp>=1.30,<2",
     "pre-commit>=3.8.0",
@@ -67,6 +68,7 @@ dev = [
     # Capped <1.2.3: that release added a hard dependency on `properdocs` (an
     # unrelated MkDocs fork) purely to print an ad during every docs build.
     "mkdocs-redirects>=1.2,<1.2.3",
+    "types-jsonschema>=4.26.0.20261006",
 ]
 # Thin dev-workflow group so `uv sync` / uv.lock keep working. References the
 # `[ai]` extra so dev installs every AI capability (single source of truth).
@@ -95,7 +97,7 @@ ai = [
     # Voice cloning TTS (generation/audio.py). Our fork of chatterbox-tts with
     # corrected metadata and short-text alignment fix; import name is `chatterbox`.
     # Upstream's `==` pins make [ai] unsatisfiable. See DEVELOPMENT.md "Dependencies".
-    "videopython-chatterbox>=0.1.7.post2",
+    "videopython-chatterbox>=0.1.7.post3",
     # Local media generation (generation/*). >=0.35 ships QwenImagePipeline + Wan2.2.
     "diffusers>=0.35.0",
     # Required, despite looking like diffusers' problem: the Wan2.2 i2v pipeline

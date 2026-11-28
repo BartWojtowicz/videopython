@@ -37,6 +37,10 @@ predicted = edit.validate()
 edit.run_to_file("output.mp4", crf=20, preset="medium")
 ```
 
+The destination must differ from the input media after the output format suffix is applied.
+The renderer writes the final stage to a temporary file beside the destination and
+replaces the destination after encoding succeeds.
+
 ## Render progress
 
 Pass `on_progress` to `run_to_file()` to receive immutable `RenderProgress` events:

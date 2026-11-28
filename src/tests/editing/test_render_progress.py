@@ -1,3 +1,4 @@
+import shutil
 import subprocess
 
 import numpy as np
@@ -16,7 +17,12 @@ def test_render_progress_preserves_output(tmp_path, framewise):
         {"segments": [{"source": SMALL_VIDEO_PATH, "start": 0, "end": 1, "operations": operations}]}
     )
     events = []
-    result = edit.run_to_file(tmp_path / "progress.mp4", on_progress=events.append)
+    destination = tmp_path / "progress.mp4"
+    destination.touch(mode=0o600)
+    previous_mode = destination.stat().st_mode
+    result = edit.run_to_file(destination, on_progress=events.append)
+    assert result == destination
+    assert result.stat().st_mode == previous_mode
     plain = edit.run_to_file(tmp_path / "plain.mp4")
     np.testing.assert_array_equal(Video.from_path(result).frames, Video.from_path(plain).frames)
     assert events[0].stage == "compilation"
@@ -63,6 +69,18 @@ def test_multistage_progress(tmp_path):
     assert [e.stage for e in events if e.finished] == ["compilation", "segment", "audio_mix", "complete"]
 
 
+def test_render_preserves_source_at_output_path(tmp_path):
+    source = tmp_path / "source.mp4"
+    shutil.copyfile(SMALL_VIDEO_PATH, source)
+    original = source.read_bytes()
+    edit = VideoEdit.from_dict({"segments": [{"source": source, "start": 0, "end": 1}]})
+
+    with pytest.raises(ValueError, match="refers to input media"):
+        edit.run_to_file(source.with_suffix(".mov"))
+
+    assert source.read_bytes() == original
+
+
 def test_ffmpeg_failure_does_not_report_success(tmp_path, monkeypatch):
     original = _ffmpeg.run_with_progress
 
@@ -73,9 +91,11 @@ def test_ffmpeg_failure_does_not_report_success(tmp_path, monkeypatch):
     edit = VideoEdit.from_dict({"segments": [{"source": SMALL_VIDEO_PATH, "start": 0, "end": 1}]})
     events = []
     target = tmp_path / "failed.mp4"
+    target.write_bytes(b"previous output")
     with pytest.raises(_ffmpeg.FFmpegRunError):
         edit.run_to_file(target, on_progress=events.append)
-    assert not target.exists()
+    assert target.read_bytes() == b"previous output"
+    assert list(tmp_path.iterdir()) == [target]
     assert not any(e.stage == "complete" or (e.stage == "segment" and e.finished) for e in events)
 
 

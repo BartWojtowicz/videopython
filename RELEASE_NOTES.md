@@ -4,6 +4,19 @@ Entries describe the named release. Older APIs, defaults, and limitations can be
 superseded by later entries. Use the [current reference](docs/reference/index.md)
 for new code.
 
+## 0.62.4
+
+- `VideoEdit.run_to_file()` rejects destinations that refer to input media and
+  replaces an existing output only after rendering succeeds.
+- Direct renders now report `concat_mismatch` before encoding when segments
+  have different output dimensions or frame rates, matching plan validation.
+- Fix operation references in the default `VideoEdit` and `EditPlan` JSON schemas.
+  JSON Schema validators can now validate segment and post-operation lists.
+- Require `videopython-chatterbox>=0.1.7.post3` for local speech synthesis.
+  Generated speech, including the default dubbing voice track, no longer carries
+  a Perth audio watermark. The lockfile drops Perth and updates setuptools,
+  certifi, PyTorch Lightning, and PyAV.
+
 ## 0.62.3
 
 - Update dependencies to address security alerts. Require Pillow 13.0.0 or
